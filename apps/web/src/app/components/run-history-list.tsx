@@ -6,6 +6,7 @@ import {
   runResultOutcomeLabel,
   runResultOutcomeTone,
 } from "../lib/presentation/public-vocabulary";
+import { neutralLinkButtonClassName } from "./control-styles";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
@@ -86,7 +87,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         />
         <div className="flex flex-wrap gap-2 xl:justify-end">
           <Link
-            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+            className={neutralLinkButtonClassName}
             href={`/run-history/${summary.runId}`}
           >
             View report{" "}
@@ -123,7 +124,7 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
         {number(history.totalCount)} runs exist. Return to page 1 to view the latest runs.
       </p>
       <Link
-        className="mt-3 inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+        className={`${neutralLinkButtonClassName} mt-3`}
         href="/run-history"
       >
         View page 1
@@ -152,7 +153,7 @@ function PaginationControls({ history }: { history: RunHistoryListResponse }) {
 function PaginationLink({ children, page }: { children: string; page: number }) {
   return (
     <Link
-      className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+      className={neutralLinkButtonClassName}
       href={`/run-history?page=${page}`}
     >
       {children}

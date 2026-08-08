@@ -14,7 +14,7 @@ const dashboardNavItems = [
 ] as const;
 
 const linkClassName =
-  "rounded-lg px-2.5 py-2 text-sm font-semibold hover:bg-surface-muted hover:text-ink";
+  "inline-flex min-h-11 items-center rounded-lg px-2.5 py-2 text-sm font-semibold hover:bg-surface-muted hover:text-ink";
 
 function isCurrentRoute(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
@@ -62,7 +62,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
       <button
         aria-controls="dashboard-navigation-panel"
         aria-expanded={open}
-        className="hidden min-h-10 rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-ink max-[900px]:block"
+        className="hidden min-h-11 rounded-lg border border-control-border bg-surface px-3.5 py-2.5 text-sm font-semibold text-ink max-[900px]:block"
         onClick={() => setOpen((current) => !current)}
         ref={toggleRef}
         type="button"

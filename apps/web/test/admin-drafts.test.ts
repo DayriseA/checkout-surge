@@ -149,9 +149,28 @@ describe("admin drafts", () => {
     policy.deploymentHardCaps.maxTotalRequests = 90_000;
     mutate(draft);
     expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual({
-      message: `This configuration creates ${computedTotal} requests; the permitted maximum is 90000 requests.`,
+      message: `This configuration creates ${computedTotal.toLocaleString("en-US")} requests; the permitted maximum is 90,000 requests.`,
       fields,
     });
+  });
+
+  it("groups a displayed 100000 cap while preserving the exact draft and payload number", () => {
+    const preset = presetFixture("buyer-spike");
+    const draft = draftFromPreset(preset);
+    const policy = policyFixture();
+    draft.buyerCount = "100000";
+    draft.duplicateEachBuyerAttempt = true;
+
+    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual({
+      message:
+        "This configuration creates 200,000 requests; the permitted maximum is 100,000 requests.",
+      fields: ["buyerCount", "duplicateEachBuyerAttempt"],
+    });
+    expect(draft.buyerCount).toBe("100000");
+
+    draft.duplicateEachBuyerAttempt = false;
+    const valid = buildEffectiveRunConfig(draft, preset, policy);
+    expect(valid.values?.trafficConfig).toMatchObject({ buyerCount: 100000 });
   });
 
   it("merges editable runtime policy fields without losing deployment hard caps", () => {

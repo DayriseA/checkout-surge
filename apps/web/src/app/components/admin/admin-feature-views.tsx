@@ -12,7 +12,7 @@ import {
   percentageMinimum,
   positiveIntegerMinimum,
 } from "@checkout-surge/contracts";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 import type {
   DraftFieldError,
   DraftFormError,
@@ -25,16 +25,13 @@ import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { formatCount } from "../../lib/presentation/format";
 import { trafficModeLabel } from "../../lib/presentation/public-vocabulary";
 import { ConfigGroup, FieldRow } from "../config-presentation";
+import { buttonClassName, inputClassName, primaryButtonClassName } from "../control-styles";
 import { ErrorNotice } from "../error-notice";
 import { StatusPill } from "../status-pill";
 import { AdminNoticeView } from "./admin-notice";
 
 export const panelClassName = "min-w-0 self-start rounded-lg border border-border bg-surface p-4";
-export const buttonClassName =
-  "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
-export const primaryButtonClassName =
-  "min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60";
-const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink";
+export { buttonClassName, primaryButtonClassName };
 
 export function AdminRuntimePolicyView({
   draft,
@@ -339,6 +336,13 @@ export function AdminPresetView({
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
+  const presetListPendingReasonId = useId();
+  const startPendingReasonId = useId();
+  const startBlockedReasonId = useId();
+  const saveReasonId = useId();
+  const copyPendingReasonId = useId();
+  const archiveReasonId = useId();
+  const duplicateReasonId = useId();
   const actionPendingReason = isPending ? "A preset action is in progress." : null;
   const saveReason = selectedPreset
     ? (actionPendingReason ?? saveUnavailableReason(selectedPreset))
@@ -368,6 +372,7 @@ export function AdminPresetView({
         >
           {presets.map((preset) => (
             <button
+              aria-describedby={actionPendingReason ? presetListPendingReasonId : undefined}
               aria-pressed={preset.slug === selectedPreset?.slug}
               className={`${preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName} [overflow-wrap:anywhere]`}
               disabled={isPending}
@@ -379,7 +384,9 @@ export function AdminPresetView({
             </button>
           ))}
           {actionPendingReason ? (
-            <p className="m-0 text-xs text-muted">{actionPendingReason}</p>
+            <p className="m-0 text-xs text-muted" id={presetListPendingReasonId}>
+              {actionPendingReason}
+            </p>
           ) : null}
           {presetsRead.status === "unavailable" ? <Unavailable read={presetsRead} /> : null}
         </div>
@@ -509,6 +516,14 @@ export function AdminPresetView({
             <div className="flex flex-wrap gap-2">
               <div>
                 <button
+                  aria-describedby={
+                    [
+                      actionPendingReason ? startPendingReasonId : null,
+                      startBlockedReason ? startBlockedReasonId : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined
+                  }
                   className={primaryButtonClassName}
                   disabled={isPending || startBlocked}
                   onClick={onStart}
@@ -517,11 +532,25 @@ export function AdminPresetView({
                   Run once with these values
                 </button>
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{actionPendingReason}</p>
+                  <p
+                    className="m-0 mt-1 max-w-64 text-xs text-muted"
+                    id={startPendingReasonId}
+                  >
+                    {actionPendingReason}
+                  </p>
+                ) : null}
+                {startBlockedReason ? (
+                  <p
+                    className="m-0 mt-1 max-w-64 text-xs text-muted"
+                    id={startBlockedReasonId}
+                  >
+                    {startBlockedReason}
+                  </p>
                 ) : null}
               </div>
               <div>
                 <button
+                  aria-describedby={saveReason ? saveReasonId : undefined}
                   className={buttonClassName}
                   disabled={
                     isPending ||
@@ -533,11 +562,14 @@ export function AdminPresetView({
                   Save preset
                 </button>
                 {saveReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{saveReason}</p>
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={saveReasonId}>
+                    {saveReason}
+                  </p>
                 ) : null}
               </div>
               <div>
                 <button
+                  aria-describedby={actionPendingReason ? copyPendingReasonId : undefined}
                   className={buttonClassName}
                   disabled={isPending}
                   onClick={onCopyToCustom}
@@ -546,11 +578,17 @@ export function AdminPresetView({
                   Copy saved values to custom scenario
                 </button>
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{actionPendingReason}</p>
+                  <p
+                    className="m-0 mt-1 max-w-64 text-xs text-muted"
+                    id={copyPendingReasonId}
+                  >
+                    {actionPendingReason}
+                  </p>
                 ) : null}
               </div>
               <div>
                 <button
+                  aria-describedby={archiveReason ? archiveReasonId : undefined}
                   className={buttonClassName}
                   disabled={isPending || !selectedPreset.canArchive}
                   onClick={onArchive}
@@ -559,13 +597,12 @@ export function AdminPresetView({
                   Archive preset
                 </button>
                 {archiveReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted">{archiveReason}</p>
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={archiveReasonId}>
+                    {archiveReason}
+                  </p>
                 ) : null}
               </div>
             </div>
-            {startBlockedReason ? (
-              <p className="m-0 text-sm text-muted">{startBlockedReason}</p>
-            ) : null}
             <form
               className="grid grid-cols-[minmax(160px,1fr)_auto] gap-2 max-[560px]:grid-cols-1"
               onSubmit={(event) => {
@@ -584,6 +621,7 @@ export function AdminPresetView({
                 value={duplicateTargetSlug}
               />
               <button
+                aria-describedby={duplicateReason ? duplicateReasonId : undefined}
                 className={`${buttonClassName} self-end`}
                 disabled={isPending || selectedPreset.slug === "public-custom"}
                 type="submit"
@@ -591,7 +629,12 @@ export function AdminPresetView({
                 Duplicate saved preset
               </button>
               {duplicateReason ? (
-                <p className="col-span-full m-0 text-xs text-muted">{duplicateReason}</p>
+                <p
+                  className="col-span-full m-0 text-xs text-muted"
+                  id={duplicateReasonId}
+                >
+                  {duplicateReason}
+                </p>
               ) : null}
             </form>
           </div>
@@ -741,7 +784,7 @@ function TrafficEditor({
         <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <label
-            className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
+            className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong"
             key={mode}
           >
             <input
@@ -1231,7 +1274,7 @@ function intrinsicInputBounds(field: string): {
   }
   if (field === "orderProcessConcurrency") {
     return {
-      help: `Allowed range: ${positiveIntegerMinimum}–${orderProcessConcurrencyHardCap}.`,
+      help: `Allowed range: ${formatCount(positiveIntegerMinimum)}–${formatCount(orderProcessConcurrencyHardCap)}.`,
     };
   }
   return {
@@ -1254,7 +1297,7 @@ function Checkbox({
 }) {
   return (
     <div className="grid gap-1">
-      <label className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong">
+      <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
         <input
           aria-describedby={error && id ? `${id}-error` : undefined}
           aria-invalid={error ? true : undefined}

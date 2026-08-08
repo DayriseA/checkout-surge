@@ -22,6 +22,11 @@ import {
   oversoldUnitsFromTerminalInventory,
 } from "../lib/presentation/run-result-presentation";
 import { ConfigGroup, FieldRow } from "./config-presentation";
+import {
+  inputClassName,
+  neutralLinkButtonClassName,
+  primaryButtonClassName,
+} from "./control-styles";
 import { GoldSignals } from "./gold-signals";
 import { RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
@@ -531,7 +536,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
         <label className="grid gap-1 text-sm font-semibold text-muted-strong">
           Identifier type
           <select
-            className="min-h-10 rounded-lg border border-border bg-surface px-3"
+            className={inputClassName}
             defaultValue={filter?.kind ?? "publicOrderId"}
             name="filterKind"
           >
@@ -543,7 +548,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
         <label className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-muted-strong">
           Identifier
           <input
-            className="min-h-10 rounded-lg border border-border bg-surface px-3"
+            className={inputClassName}
             defaultValue={filter?.value ?? ""}
             name="filterValue"
             placeholder="Enter an exact identifier"
@@ -552,14 +557,14 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
           />
         </label>
         <button
-          className="min-h-10 rounded-lg bg-accent px-4 py-2 font-semibold text-white"
+          className={`${primaryButtonClassName} px-4 py-2`}
           type="submit"
         >
           Search
         </button>
         {filter ? (
           <a
-            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2 font-semibold text-muted-strong"
+            className={`${neutralLinkButtonClassName} py-2 text-base`}
             href={`/run-history/${encodeURIComponent(detail.summary.runId)}`}
           >
             Clear

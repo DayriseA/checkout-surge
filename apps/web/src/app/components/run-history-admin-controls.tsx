@@ -7,6 +7,11 @@ import { FiTrash2 } from "react-icons/fi";
 import { formatCount } from "../lib/presentation/format";
 import { AdminNoticeView } from "./admin/admin-notice";
 import { ConfirmationDialog } from "./confirmation-dialog";
+import {
+  buttonClassName,
+  dangerLinkButtonClassName,
+  inputClassName,
+} from "./control-styles";
 import { RunHistoryAdminProvider } from "./run-history-admin-context";
 import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-deletion";
 
@@ -47,7 +52,7 @@ export function RunHistoryAdminControls({
     <RunHistoryAdminProvider value={rowAdmin}>
       {showBulkControls ? (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <label className="flex items-center gap-2 text-sm font-semibold text-muted-strong">
+          <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
             <input
               aria-label="Select all visible runs"
               checked={allVisibleSelected}
@@ -72,14 +77,14 @@ export function RunHistoryAdminControls({
         <div className="fixed bottom-6 right-6 z-40 flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xl">
           <p className="m-0 text-sm font-semibold text-muted-strong">{selectedCount} selected</p>
           <button
-            className="min-h-10 rounded-lg border border-border px-3 py-2 text-sm font-semibold text-muted-strong"
+            className={`${buttonClassName} px-3 py-2 text-sm`}
             onClick={deletion.clearSelection}
             type="button"
           >
             Clear
           </button>
           <button
-            className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 text-sm font-semibold text-danger"
+            className={dangerLinkButtonClassName}
             onClick={() =>
               deletion.openIntent({
                 kind: "runs",
@@ -119,7 +124,7 @@ export function RunHistoryAdminControls({
           <label className="grid gap-1 text-sm font-semibold text-muted-strong">
             <span>Type {deleteAllRunHistoryConfirmationToken} to confirm</span>
             <input
-              className="min-h-10 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
+              className={inputClassName}
               onChange={(event) => deletion.setDeleteAllConfirmation(event.target.value)}
               value={deletion.deleteAllConfirmation}
             />

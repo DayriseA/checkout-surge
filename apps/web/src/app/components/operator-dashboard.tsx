@@ -32,6 +32,10 @@ import {
   RunOutcomesPanel,
   SystemStatusPanel,
 } from "./dashboard-panels";
+import {
+  neutralLinkButtonClassName,
+  primaryButtonClassName,
+} from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
@@ -41,10 +45,8 @@ import { RunConclusion } from "./run-conclusion";
 import { ScenarioStrip } from "./scenario-strip";
 import { StatusPill } from "./status-pill";
 
-const actionClassName =
-  "inline-flex min-h-10 items-center rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white";
-const secondaryActionClassName =
-  "inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 font-semibold text-muted-strong";
+const actionClassName = `inline-flex items-center ${primaryButtonClassName}`;
+const secondaryActionClassName = `${neutralLinkButtonClassName} text-base`;
 
 export function OperatorDashboard({
   initialRecovery,

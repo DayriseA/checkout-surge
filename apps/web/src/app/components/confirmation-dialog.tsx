@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import { buttonClassName, dangerLinkButtonClassName } from "./control-styles";
 
 export interface ConfirmationDialogProps {
   open: boolean;
@@ -71,7 +72,7 @@ export function ConfirmationDialog({
         <button
           // biome-ignore lint/a11y/noAutofocus: Destructive confirmations initially focus the least-destructive action.
           autoFocus
-          className="min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:opacity-60"
+          className={buttonClassName}
           disabled={pending}
           onClick={onCancel}
           type="button"
@@ -79,7 +80,7 @@ export function ConfirmationDialog({
           Cancel
         </button>
         <button
-          className="min-h-10 rounded-lg border border-danger bg-danger-soft px-3.5 py-2.5 font-semibold text-danger disabled:opacity-60"
+          className={dangerLinkButtonClassName}
           disabled={pending || confirmDisabled}
           onClick={onConfirm}
           type="button"

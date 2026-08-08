@@ -116,6 +116,9 @@ describe("public visitor mental model", () => {
     expect(signalSection).not.toContain("starting stock falling");
     expect(diagram).toContain('role="img"');
     expect(diagram).toContain('aria-labelledby="architecture-diagram-title');
+    expect(markup).toContain("Architecture diagram scrolls sideways.");
+    expect(markup).toContain('aria-label="Scrollable architecture diagram"');
+    expect(markup).toContain('tabindex="0"');
     expect(diagram.match(/<rect/g)).toHaveLength(7);
     for (const label of [
       "Simulated buyers",

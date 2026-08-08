@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminPassphraseHeaderName, adminSessionProxyPath } from "../../lib/control-paths";
+import { inputClassName, primaryButtonClassName } from "../control-styles";
 
 const maximumTimeoutMs = 2_147_483_647;
 
@@ -115,7 +116,7 @@ export function AdminSignInView({
           <span>Admin passphrase</span>
           <input
             autoComplete="current-password"
-            className="min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink"
+            className={inputClassName}
             disabled={isPending || retryAfterMs !== null}
             name="passphrase"
             onChange={(event) => onPassphraseChange(event.target.value)}
@@ -124,7 +125,7 @@ export function AdminSignInView({
           />
         </label>
         <button
-          className="min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className={primaryButtonClassName}
           disabled={isPending || retryAfterMs !== null}
           type="submit"
         >

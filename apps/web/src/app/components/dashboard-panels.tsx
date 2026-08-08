@@ -35,6 +35,7 @@ import {
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
 import { ErrorNotice } from "./error-notice";
+import { buttonClassName } from "./control-styles";
 import { StatusPill } from "./status-pill";
 import {
   deriveHarnessPreparation,
@@ -65,9 +66,6 @@ const leadDetailClassName = "m-0 mb-3 text-xs leading-5 text-muted";
 const factTermClassName = "mb-1 text-xs font-bold text-muted";
 const factValueClassName = "m-0 [overflow-wrap:anywhere] text-base font-bold text-ink";
 const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
-const controlButtonClassName =
-  "min-h-10 rounded-lg border border-border bg-surface px-3.5 py-2.5 font-semibold text-muted-strong disabled:cursor-not-allowed disabled:opacity-60";
-
 /** The unit tag carried by load-generator latency samples. */
 const millisecondUnit = "ms";
 
@@ -263,7 +261,7 @@ export function RecoveryStatusPanel({
         <div className="flex flex-wrap justify-end gap-2">
           {onRefresh && recovery.status !== "loading" && !retryWaitActive ? (
             <button
-              className={`${controlButtonClassName} min-h-9 px-3 py-2 text-sm`}
+              className={`${buttonClassName} px-3 py-2 text-sm`}
               disabled={isRefreshing}
               onClick={onRefresh}
               type="button"
@@ -452,8 +450,6 @@ export function RequestSurgePanel({
                   : loadGeneratorEvidenceAbsence
               }
             />
-          </dl>
-          <dl className={stackedFactGridClassName}>
             {reservationThroughput ? (
               <>
                 <Fact

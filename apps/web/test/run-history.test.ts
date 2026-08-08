@@ -94,14 +94,15 @@ describe("run history", () => {
     expect(
       screen.getByRole("link", {
         name: "View report for Preview 1k run from 2026-06-20 00:00:00 UTC",
-      }),
-    ).toBeTruthy();
+      }).classList,
+    ).toContain("min-h-11");
     expect(
       screen.getByRole("link", {
         name: "View report for Surge 5k run from 2026-06-20 00:01:00 UTC",
       }),
     ).toBeTruthy();
     const pagination = screen.getByRole("navigation", { name: "Run history pages" });
+    expect(within(pagination).getByRole("link", { name: "Next" }).classList).toContain("min-h-11");
     expect(
       within(pagination).queryByRole("button", { name: "Delete all run summaries" }),
     ).toBeNull();
@@ -141,6 +142,7 @@ describe("run history", () => {
     );
     expect(outOfRange).toContain("Page 3 does not exist");
     expect(outOfRange).toContain("View page 1");
+    expect(outOfRange).toContain("min-h-11");
     expect(outOfRange).not.toContain("summaries");
   });
 

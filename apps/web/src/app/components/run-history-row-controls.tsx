@@ -20,17 +20,19 @@ export function RunHistoryRowControls({
   return (
     <div className="flex shrink-0 items-center gap-2">
       {showSelection ? (
-        <input
-          aria-label={`Select run ${runId}`}
-          checked={admin.isSelected(runId)}
-          className="size-4 cursor-pointer accent-danger"
-          onChange={() => admin.toggleSelection(runId)}
-          type="checkbox"
-        />
+        <label className="inline-flex size-11 items-center justify-center">
+          <input
+            aria-label={`Select run ${runId}`}
+            checked={admin.isSelected(runId)}
+            className="size-4 cursor-pointer accent-danger"
+            onChange={() => admin.toggleSelection(runId)}
+            type="checkbox"
+          />
+        </label>
       ) : null}
       <button
         aria-label={`Delete run ${presetName} (${runId})`}
-        className="inline-flex size-8 items-center justify-center rounded-lg border border-transparent text-muted hover:border-danger hover:bg-danger-soft hover:text-danger"
+        className="inline-flex size-11 items-center justify-center rounded-lg border border-transparent text-muted hover:border-danger hover:bg-danger-soft hover:text-danger"
         onClick={() => admin.requestRunDeletion(runId, presetName)}
         title={`Delete run ${presetName}`}
         type="button"

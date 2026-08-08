@@ -70,6 +70,10 @@ describe("AdminSignIn", () => {
       (screen.getByRole("button", { name: "Signing in…" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByLabelText("Admin passphrase").classList).toContain(
+      "disabled:bg-surface-muted",
+    );
+    expect(screen.getByRole("button", { name: "Signing in…" }).classList).toContain("min-h-11");
 
     resolveRequest?.(jsonResponse({ authenticated: true }));
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
@@ -154,6 +158,7 @@ describe("AdminSignOut", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AdminSignOut />);
+    expect(screen.getByRole("button", { name: "Sign out" }).classList).toContain("min-h-11");
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
     expect(fetchMock.mock.calls[0]).toEqual([

@@ -42,13 +42,11 @@ import { ErrorNotice } from "./error-notice";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
+import { inputClassName, primaryButtonClassName } from "./control-styles";
 
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
 const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
-const primaryButtonClassName =
-  "min-h-10 rounded-lg border border-accent bg-accent px-3.5 py-2.5 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60";
-const inputClassName = "min-h-10 min-w-0 rounded-lg border border-border bg-bg px-3 py-2 text-ink";
 const recommendedPresetSlug = "preview-1k";
 
 type TrafficMode = AcceptedRunConfigSnapshot["trafficConfig"]["mode"];
@@ -570,7 +568,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       value={customDraft.buyerCount}
                     />
                     <div className="grid content-start gap-1 text-sm font-semibold text-muted-strong">
-                      <span className="flex min-h-10 items-center gap-2">
+                      <label
+                        className="flex min-h-11 items-center gap-2"
+                        htmlFor="custom-duplicate"
+                      >
                         <input
                           aria-describedby="custom-duplicate-description"
                           checked={customDraft.duplicateEachBuyerAttempt}
@@ -583,8 +584,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           }
                           type="checkbox"
                         />
-                        <label htmlFor="custom-duplicate">Duplicate each buyer attempt</label>
-                      </span>
+                        Duplicate each buyer attempt
+                      </label>
                       <span
                         className="font-normal leading-5 text-muted"
                         id="custom-duplicate-description"
@@ -1249,7 +1250,7 @@ function TrafficModeSelector({
         const id = `custom-traffic-mode-${trafficMode}`;
         return (
           <label
-            className="flex min-h-10 items-center gap-2 text-sm font-semibold text-muted-strong"
+            className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong"
             htmlFor={id}
             key={trafficMode}
           >

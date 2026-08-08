@@ -69,6 +69,7 @@ import {
 } from "../../lib/presentation/freshness";
 import { deriveFreshnessPresentationState } from "../../lib/presentation/run-presentation-state";
 import { ConfirmationDialog } from "../confirmation-dialog";
+import { buttonClassName } from "../control-styles";
 import { ErrorNotice } from "../error-notice";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
@@ -77,7 +78,6 @@ import {
   AdminErpDiagnosticsView,
   AdminPresetView,
   AdminRuntimePolicyView,
-  buttonClassName,
   currentRunStatus,
   EffectiveChangeList,
   EffectiveRunPreview,

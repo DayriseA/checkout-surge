@@ -33,6 +33,9 @@ describe("RunHistoryAdminControls", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     const confirm = screen.getByRole("button", { name: "Delete all summaries" });
+    expect(screen.getByRole("textbox").classList).toContain("border-control-border");
+    expect(screen.getByRole("textbox").classList).toContain("bg-surface");
+    expect(screen.getByRole("textbox").classList).not.toContain("bg-bg");
     expect(fetchMock).not.toHaveBeenCalled();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
     await user.type(screen.getByRole("textbox"), "delete");
@@ -50,9 +53,24 @@ describe("RunHistoryAdminControls", () => {
     renderSurface();
 
     expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
-    await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[0]?.runId}` }));
+    const firstCheckbox = screen.getByRole("checkbox", {
+      name: `Select run ${summaries[0]?.runId}`,
+    });
+    expect(firstCheckbox.parentElement?.classList).toContain("size-11");
+    expect(
+      screen.getByRole("checkbox", { name: "Select all visible runs" }).closest("label")?.classList,
+    ).toContain("min-h-11");
+    expect(
+      screen.getByRole("button", {
+        name: `Delete run ${summaries[0]?.presetName} (${summaries[0]?.runId})`,
+      }).classList,
+    ).toContain("size-11");
+    await user.click(firstCheckbox);
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[1]?.runId}` }));
-    expect(screen.getByRole("button", { name: "Delete selected (2)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete selected (2)" }).classList).toContain(
+      "min-h-11",
+    );
+    expect(screen.getByRole("button", { name: "Clear" }).classList).toContain("min-h-11");
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();

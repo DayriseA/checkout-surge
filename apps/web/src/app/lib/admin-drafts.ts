@@ -15,6 +15,7 @@ import {
   erpChaosConfigSchema,
   publicRuntimePolicyMutableSchema,
 } from "@checkout-surge/contracts";
+import { formatCount } from "./presentation/format";
 
 export type TrafficMode = DemoPresetContract["trafficConfig"]["mode"];
 export type RunConfigBase = Pick<
@@ -329,8 +330,8 @@ export function buildEffectiveRunConfig(
       formErrors.push({
         message:
           typeof computedTotal === "number" && typeof permittedMaximum === "number"
-            ? `This configuration creates ${computedTotal} requests; the permitted maximum is ${permittedMaximum} requests.`
-            : `Total requests exceed the permitted maximum of ${policy.deploymentHardCaps.maxTotalRequests} requests.`,
+            ? `This configuration creates ${formatCount(computedTotal) ?? computedTotal} requests; the permitted maximum is ${formatCount(permittedMaximum) ?? permittedMaximum} requests.`
+            : `Total requests exceed the permitted maximum of ${formatCount(policy.deploymentHardCaps.maxTotalRequests) ?? policy.deploymentHardCaps.maxTotalRequests} requests.`,
         fields:
           draft.mode === "buyer-spike"
             ? ["buyerCount", "duplicateEachBuyerAttempt"]

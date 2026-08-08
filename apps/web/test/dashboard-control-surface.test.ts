@@ -18,6 +18,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { AdminRuntimePolicyView } from "../src/app/components/admin/admin-feature-views.js";
 import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
+import { RecoveryStatusPanel } from "../src/app/components/dashboard-panels.js";
 import {
   derivePresetCardFacts,
   PublicDemoEntry,
@@ -25,10 +26,28 @@ import {
 } from "../src/app/components/public-demo-entry.js";
 import { draftFromRuntimePolicy } from "../src/app/lib/admin-drafts.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
+import { deriveRunPresentationState } from "../src/app/lib/presentation/run-presentation-state.js";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 describe("dashboard control surface", () => {
+  it("keeps the Watch refresh control at the shared 44px target", () => {
+    const recovery = available(recoveryFixture(null));
+    const markup = renderToStaticMarkup(
+      createElement(RecoveryStatusPanel, {
+        onRefresh: () => undefined,
+        presentation: deriveRunPresentationState(recovery),
+        realtimeStatus: "connected",
+        recovery,
+      }),
+    );
+    const refreshClasses =
+      markup.match(/<button[^>]*class="([^"]*)"[^>]*>Refresh<\/button>/)?.[1]?.split(" ") ?? [];
+
+    expect(refreshClasses).toContain("min-h-11");
+    expect(refreshClasses).not.toContain("min-h-9");
+  });
+
   it("renders the public visitor entry with curated and bounded custom starts", () => {
     const markup = renderToStaticMarkup(
       createElement(PublicDemoEntry, { surface: publicSurfaceFixture(null) }),
@@ -47,6 +66,11 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Capacity (orders/second)");
     expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Build your own run"));
     expect(markup).toContain("<form");
+    expect(markup).not.toContain("bg-bg");
+    expect(markup).toContain("min-h-11");
+    expect(markup).toContain("border-control-border");
+    expect(markup).toContain("disabled:bg-surface-muted");
+    expect(markup).toContain("aria-[invalid=true]:border-danger");
     expect(markup).toContain('noValidate=""');
     expect(markup).toContain("<legend");
     expect(markup).toContain(">Buyers</legend>");
@@ -380,6 +404,9 @@ describe("dashboard control surface", () => {
 
     expect(markup).toContain("Protected operator surface");
     expect(markup).toContain("Sign in");
+    expect(markup).not.toContain("bg-bg");
+    expect(markup).toContain("min-h-11");
+    expect(markup).toContain("border-control-border");
     expect(markup).not.toContain("Reset demo");
     expect(markup).not.toContain("Run once with these values");
     expect(markup).not.toContain("Save public policy");

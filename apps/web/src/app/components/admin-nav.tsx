@@ -10,7 +10,7 @@ export function AdminSignOut() {
 
   return (
     <button
-      className="rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink disabled:opacity-60"
+      className="inline-flex min-h-11 items-center rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink disabled:opacity-60"
       disabled={pending}
       onClick={async () => {
         setPending(true);

@@ -499,6 +499,10 @@ describe("admin feature controllers", () => {
     await act(async () => vi.advanceTimersByTimeAsync(dashboardStaleAfterMs));
     expect(screen.getByText("2026-06-20 00:00:10 UTC · stale")).toBeTruthy();
     expect(screen.getByText("Status is stale — refresh before starting")).toBeTruthy();
+    expectControlDescription(
+      screen.getByRole("button", { name: "Run once with these values" }),
+      "Status is stale — refresh before starting",
+    );
   });
 
   it("keeps last-known-good state disconnected until a reconnect refresh succeeds", async () => {
@@ -643,7 +647,9 @@ describe("admin feature controllers", () => {
     expect(screen.getByLabelText("Worker concurrency").getAttribute("max")).toBeNull();
     expect(screen.getByLabelText("Worker concurrency").getAttribute("min")).toBeNull();
     expect(screen.getByLabelText("Worker concurrency").getAttribute("step")).toBeNull();
-    expect(screen.getByText(`Allowed range: 1–${orderProcessConcurrencyHardCap}.`)).toBeTruthy();
+    expect(
+      screen.getByText(`Allowed range: 1–${orderProcessConcurrencyHardCap.toLocaleString("en-US")}.`),
+    ).toBeTruthy();
   });
 
   it("describes canonical ERP bounds without inert numeric attributes", () => {
@@ -1062,6 +1068,18 @@ describe("admin feature controllers", () => {
         ? "Public presets cannot be saved from the admin editor."
         : "This read-only preset cannot be saved.",
     );
+    expectControlDescription(
+      screen.getByRole("button", { name: "Save preset" }),
+      preset.visibility === "public"
+        ? "Public presets cannot be saved from the admin editor."
+        : "This read-only preset cannot be saved.",
+    );
+    expectControlDescription(
+      screen.getByRole("button", { name: "Archive preset" }),
+      preset.visibility === "public"
+        ? "Public presets cannot be archived."
+        : "Read-only and system presets cannot be archived.",
+    );
   });
 
   it("allows public Custom to be copied while explaining why it cannot be duplicated", () => {
@@ -1093,6 +1111,10 @@ describe("admin feature controllers", () => {
     ).toBe(true);
     expect(document.body.textContent).not.toContain("cannot be copied to itself");
     expect(document.body.textContent).toContain("The public Custom scenario cannot be duplicated.");
+    expectControlDescription(
+      screen.getByRole("button", { name: "Duplicate saved preset" }),
+      "The public Custom scenario cannot be duplicated.",
+    );
   });
 
   it("keeps selection and draft when dirty switching is cancelled, then discards on confirm", async () => {
@@ -1336,6 +1358,19 @@ describe("admin feature controllers", () => {
     expect(
       screen.getByRole("button", { name: "Run once with these values" }).parentElement?.textContent,
     ).toContain("A preset action is in progress.");
+    for (const name of [
+      "Second preset",
+      "Run once with these values",
+      "Save preset",
+      "Copy saved values to custom scenario",
+      "Archive preset",
+      "Duplicate saved preset",
+    ]) {
+      expectControlDescription(
+        screen.getByRole("button", { name }),
+        "A preset action is in progress.",
+      );
+    }
 
     await user.click(buyerCount);
     await user.keyboard("{Control>}a{/Control}9999");
@@ -1633,7 +1668,7 @@ describe("admin feature controllers", () => {
       values: [["Buyer count", "50000"]] as const,
       checkedLabel: "Duplicate attempts",
       message:
-        "This configuration creates 100000 requests; the permitted maximum is 90000 requests.",
+        "This configuration creates 100,000 requests; the permitted maximum is 90,000 requests.",
     },
     {
       mode: "constant arrival",
@@ -1653,7 +1688,7 @@ describe("admin feature controllers", () => {
       ] as const,
       checkedLabel: undefined,
       message:
-        "This configuration creates 91000 requests; the permitted maximum is 90000 requests.",
+        "This configuration creates 91,000 requests; the permitted maximum is 90,000 requests.",
     },
   ])("blocks derived deployment totals for $mode save and start", async ({
     prepare,
@@ -2426,6 +2461,10 @@ describe("admin feature controllers", () => {
     expect(document.body.textContent).toContain(
       "The server reports this preset can't be archived right now.",
     );
+    expectControlDescription(
+      screen.getByRole("button", { name: "Archive preset" }),
+      "The server reports this preset can't be archived right now.",
+    );
     expect(screen.getByRole("link", { name: "Refresh presets" }).getAttribute("href")).toBe(
       "/admin",
     );
@@ -2967,6 +3006,11 @@ function deferred<T>() {
     resolve = next;
   });
   return { promise, resolve };
+}
+
+function expectControlDescription(control: HTMLElement, text: string): void {
+  const descriptionIds = control.getAttribute("aria-describedby")?.split(/\s+/) ?? [];
+  expect(descriptionIds.map((id) => document.getElementById(id)?.textContent)).toContain(text);
 }
 
 function jsonResponse(payload: unknown, status = 200): Response {

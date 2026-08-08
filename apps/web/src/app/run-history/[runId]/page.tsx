@@ -7,6 +7,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorNotice } from "../../components/error-notice";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
+import { neutralLinkButtonClassName } from "../../components/control-styles";
 import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
@@ -69,7 +70,7 @@ export default async function RunHistoryDetailPage({
       <>
         <header className="mb-4">
           <Link
-            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+            className={neutralLinkButtonClassName}
             href="/run-history"
           >
             Back to run history
@@ -127,7 +128,7 @@ export default async function RunHistoryDetailPage({
           detail={adminDetail.data}
           navigation={
             <Link
-              className="mb-4 inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+              className={`${neutralLinkButtonClassName} mb-4`}
               href="/run-history"
             >
               Back to run history
@@ -151,7 +152,7 @@ export default async function RunHistoryDetailPage({
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <Link
-            className="inline-flex min-h-10 items-center rounded-lg border border-border px-3.5 py-2.5 text-sm font-semibold text-muted-strong"
+            className={neutralLinkButtonClassName}
             href="/run-history"
           >
             Back to run history

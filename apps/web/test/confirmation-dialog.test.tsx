@@ -22,6 +22,11 @@ describe("ConfirmationDialog", () => {
     expect(screen.getByText("Destructive action")).toBeTruthy();
     expect(screen.getByRole("alert")).toHaveProperty("textContent", "The reset failed.");
     expect(screen.getByRole("textbox", { name: "Confirmation value" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" }).classList).toContain(
+      "border-control-border",
+    );
+    expect(screen.getByRole("button", { name: "Cancel" }).classList).toContain("min-h-11");
+    expect(dialog.innerHTML).not.toContain("bg-bg");
 
     rerender(dialogElement({ open: false }));
     await waitFor(() => expect((dialog as HTMLDialogElement).open).toBe(false));

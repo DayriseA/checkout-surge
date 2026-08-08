@@ -51,6 +51,8 @@ describe("DashboardNav", () => {
 
     const toggle = screen.getByRole("button", { name: "Menu" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(toggle.classList).toContain("min-h-11");
+    expect(toggle.classList).toContain("border-control-border");
 
     toggle.focus();
     await user.keyboard("{Enter}");
@@ -62,6 +64,10 @@ describe("DashboardNav", () => {
     expect(panel).not.toBeNull();
     expect(panel?.id).toBe(panelId);
     const links = within(panel as HTMLElement).getAllByRole("link");
+    for (const link of links) {
+      expect(link.classList).toContain("min-h-11");
+      expect(link.classList).toContain("inline-flex");
+    }
     expect(links.map((link) => link.textContent?.trim())).toEqual([
       "Demo",
       "Watch",

@@ -144,7 +144,13 @@ export default function AboutPage() {
 function ArchitectureDiagram() {
   return (
     <figure className="m-0 mt-5">
-      <div className="overflow-x-auto">
+      <p className="m-0 mb-2 text-sm text-muted">Architecture diagram scrolls sideways.</p>
+      <section
+        aria-label="Scrollable architecture diagram"
+        className="overflow-x-auto"
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The overflow region must be keyboard-scrollable.
+        tabIndex={0}
+      >
         <svg
           aria-labelledby="architecture-diagram-title architecture-diagram-description"
           className="h-auto min-w-[900px] w-full"
@@ -185,7 +191,7 @@ function ArchitectureDiagram() {
           <DiagramNode label="Simulated ERP" tone="slow" x={810} y={115} />
           <DiagramNode label="PostgreSQL" tone="durable" x={810} y={18} />
         </svg>
-      </div>
+      </section>
       <figcaption className="mt-2 text-sm leading-6 text-muted">
         Fast path: atomic stock reservation in Redis. Slow path: queued processing and durable
         outcomes in PostgreSQL.

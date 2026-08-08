@@ -157,6 +157,58 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
   });
 
+  it("keeps every request-surge fact and absence state in one compact grid", () => {
+    const projection = projectionFixture();
+    const markup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery: available(projection),
+        freshness: liveFreshness,
+      }),
+    );
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const panel = panelSection(document, "Traffic arrival and responses");
+    const grids = panel.querySelectorAll("dl");
+    const expectedLabels = [
+      "request arrival rate",
+      "Attempts dispatched",
+      "Dispatch duration",
+      "Response completion rate",
+      "Configured start delay",
+      "Time until checkout attempts begin",
+      "Response latency",
+      "HTTP failure rate",
+      "Peak reservation rate",
+      "Reservations in",
+      "sold-out rejections recorded by Checkout-Surge",
+    ];
+
+    expect(grids).toHaveLength(1);
+    const renderedLabels = [...(grids[0]?.querySelectorAll("dt") ?? [])].map(
+      (term) => term.textContent?.toLowerCase() ?? "",
+    );
+    const labelPositions = expectedLabels.map((label) =>
+      renderedLabels.findIndex((renderedLabel) =>
+        renderedLabel.startsWith(label.toLowerCase()),
+      ),
+    );
+    expect(labelPositions.every((position) => position >= 0)).toBe(true);
+    expect(labelPositions).toEqual([...labelPositions].sort((left, right) => left - right));
+
+    projection.inventory = null;
+    const absentMarkup = renderToStaticMarkup(
+      createElement(RequestSurgePanel, {
+        recovery: available(projection),
+        freshness: liveFreshness,
+      }),
+    );
+    const absentDocument = new DOMParser().parseFromString(absentMarkup, "text/html");
+    const absentGrid = panelSection(
+      absentDocument,
+      "Traffic arrival and responses",
+    ).querySelector("dl.m-0.grid.grid-cols-3");
+    expect(absentGrid?.textContent).toContain("Waiting for inventory evidence");
+  });
+
   it("separates run ERP outcomes from shared runtime state and labels both clocks", () => {
     const projection = projectionFixture();
     const runMarkup = renderToStaticMarkup(
