@@ -704,7 +704,60 @@ describe("run history", () => {
     }
   });
 
-  it("surfaces failed, pending, and truncated order evidence in the collapsed presentation", () => {
+  it("presents instrumentation and collection limits without escalating the exception panel", () => {
+    const detail = adminDetailFixture();
+    detail.orders.totalCount = 240;
+    detail.orders.matchedCount = 240;
+    detail.orders.truncated = true;
+    detail.exceptionSummary.truncatedCollections = 1;
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const exceptionSummary = document.querySelector('[aria-label="Exception summary"]');
+
+    expect(exceptionSummary?.classList).toContain("border-border");
+    expect(exceptionSummary?.classList).toContain("bg-surface");
+    expect(exceptionSummary?.classList).not.toContain("border-warning");
+    expect(exceptionSummary?.textContent).toContain("Clean run · no exceptions require attention.");
+    expect(exceptionSummary?.textContent).toContain("Instrumentation limitations: 1");
+    expect(exceptionSummary?.textContent).toContain("Display-limited collections: 1");
+    expect(markup).toContain("240 total · 0 warnings · showing newest 1 of 240");
+  });
+
+  it("labels a failed attempt with retries remaining without failure or evidence-loss styling", () => {
+    const detail = adminDetailFixture();
+    const successfulAttempt = detail.erpAttempts.records[0];
+    if (!successfulAttempt) throw new Error("Expected an ERP attempt fixture.");
+    detail.exceptionSummary.generatorWarnings = 0;
+    detail.erpAttempts.totalCount = 2;
+    detail.erpAttempts.matchedCount = 2;
+    detail.erpAttempts.records = [
+      {
+        ...successfulAttempt,
+        attemptId: "99999999-9999-4999-8999-999999999990",
+        attemptNumber: 1,
+        status: "failed",
+        terminal: false,
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+      },
+      { ...successfulAttempt, attemptNumber: 2 },
+    ];
+
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const retryStatus = [...document.querySelectorAll("span")].find((element) =>
+      element.textContent?.includes("failed · retry scheduled"),
+    );
+
+    expect(retryStatus).toBeDefined();
+    expect(retryStatus?.classList).not.toContain("text-danger");
+    expect(markup).not.toContain("missing terminal evidence");
+    expect(markup).not.toContain("Missing terminal evidence");
+    expect(markup).toContain("2 total · 0 warnings · complete view");
+  });
+
+  it("surfaces failed and pending order evidence alongside neutral display limits", () => {
     const detail = adminDetailFixture();
     detail.orders = {
       totalCount: 25,
@@ -738,15 +791,26 @@ describe("run history", () => {
     detail.exceptionSummary.failedOrders = 1;
     detail.exceptionSummary.pendingWork = 1;
     detail.exceptionSummary.truncatedCollections = 1;
+    const terminalAttempt = detail.erpAttempts.records[0];
+    if (!terminalAttempt) throw new Error("Expected an ERP attempt fixture.");
+    terminalAttempt.status = "failed";
+    terminalAttempt.terminal = true;
+    terminalAttempt.errorCode = "erp_rejected";
+    detail.erpAttempts.warningCount = 1;
 
     const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const terminalFailure = [...document.querySelectorAll("span")].find((element) =>
+      element.textContent?.includes("failed · erp_rejected"),
+    );
 
     expect(markup).toContain("ord_failed");
     expect(markup).toContain("<code>erp_rejected</code>");
     expect(markup).toContain("2026-06-20 00:00:06 UTC");
     expect(markup).toContain("ord_pending");
     expect(markup).toContain("Missing terminal evidence");
-    expect(markup).toContain("25 total · 1 warnings · records omitted");
+    expect(terminalFailure?.classList).toContain("text-danger");
+    expect(markup).toContain("25 total · 1 warnings · showing newest 2 of 25");
   });
 
   it("renders API-filtered results as a deterministic chronological trace", () => {
@@ -824,17 +888,18 @@ describe("run history", () => {
     };
     detail.orders.totalCount = 2;
     detail.orders.matchedCount = 2;
+    detail.orders.limit = 1;
     detail.orders.truncated = true;
     detail.orders.nextCursor = "c1";
 
     const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
 
-    expect(markup).toContain("Some matching records are omitted from this response.");
+    expect(markup).toContain("Some matching collections are display-limited on this page.");
     expect(markup).toContain("2 matches of 2 total");
-    expect(markup).toContain("records omitted");
+    expect(markup).toContain("showing newest 1 of 2");
   });
 
-  it("labels an empty cursor page as omitted filtered evidence", () => {
+  it("labels an empty cursor page as display-limited filtered evidence", () => {
     const detail = adminDetailFixture();
     detail.query = {
       filter: { kind: "publicOrderId", value: "ord_history_1" },
@@ -848,14 +913,15 @@ describe("run history", () => {
       detail.eventTimeline,
     ]) {
       collection.records = [];
+      collection.limit = 1;
       collection.truncated = true;
     }
 
     const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
 
-    expect(markup).toContain("Some matching records are omitted from this response.");
+    expect(markup).toContain("Some matching collections are display-limited on this page.");
     expect(markup).toContain("1 matches of 1 total");
-    expect(markup).toContain("records omitted");
+    expect(markup).toContain("showing 0 of 1 on this page");
     expect(markup).toContain("No matching records are included on this page in order outcomes.");
   });
 
@@ -878,6 +944,7 @@ describe("run history", () => {
     expect(markup).toContain(
       "No records are included on this page in order outcomes; the page may be beyond the recorded set.",
     );
+    expect(markup).toContain("showing 0 of 1 on this page");
     expect(markup).not.toContain("Showing the newest");
     expect(markup).not.toContain("No records matched this search");
   });

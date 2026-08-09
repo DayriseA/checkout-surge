@@ -694,7 +694,7 @@ describe("run history service", () => {
       terminal: false,
       httpStatus: 503,
     });
-    expect(adminDetail?.erpAttempts.warningCount).toBe(3);
+    expect(adminDetail?.erpAttempts.warningCount).toBe(1);
     expect(adminDetail?.erpAttemptSummary).toMatchObject({
       totalCount: 3,
       byStatus: { succeeded: 0, failed: 2, timedOut: 1 },

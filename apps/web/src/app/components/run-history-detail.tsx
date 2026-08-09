@@ -342,8 +342,10 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
       <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
         <CollectionHeader
+          cursorPaged={cursorPaged}
           filtered={detail.query.filter !== undefined}
           matchedCount={detail.orders.matchedCount}
+          shownCount={detail.orders.records.length}
           warningCount={detail.orders.warningCount}
           title="Order outcomes"
           totalCount={detail.orders.totalCount}
@@ -417,11 +419,11 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             cells: [
               `${attempt.publicOrderId} / ${attempt.attemptNumber}`,
               <span
-                className={attempt.status === "succeeded" && attempt.terminal ? "" : "text-danger"}
+                className={attempt.terminal && attempt.status !== "succeeded" ? "text-danger" : ""}
                 key="status"
               >
                 {attempt.status}
-                {!attempt.terminal ? " · missing terminal evidence" : ""}
+                {!attempt.terminal ? " · retry scheduled" : ""}
                 {attempt.errorCode ? (
                   <>
                     {" "}
@@ -442,6 +444,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 : []),
             ],
           }))}
+          cursorPaged={cursorPaged}
           title="ERP attempts"
           filtered={detail.query.filter !== undefined}
           matchedCount={detail.erpAttempts.matchedCount}
@@ -468,6 +471,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               ["Correlation", codeValue(notification.correlationId)],
             ],
           }))}
+          cursorPaged={cursorPaged}
           title={publicVocabulary.notifications}
           filtered={detail.query.filter !== undefined}
           matchedCount={detail.notifications.matchedCount}
@@ -498,6 +502,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               ["Correlation", codeValue(event.correlationId)],
             ],
           }))}
+          cursorPaged={cursorPaged}
           title="Event timeline"
           filtered={detail.query.filter !== undefined}
           matchedCount={detail.eventTimeline.matchedCount}
@@ -557,10 +562,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
             type="search"
           />
         </label>
-        <button
-          className={`${primaryButtonClassName} px-4 py-2`}
-          type="submit"
-        >
+        <button className={`${primaryButtonClassName} px-4 py-2`} type="submit">
           Search
         </button>
         {filter ? (
@@ -580,7 +582,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
           {matchedCount === 0
             ? `No records matched ${filter.kind} “${filter.value}” in this run.`
             : `${formatNumber(matchedCount)} record matches across all collections for ${filter.kind} “${filter.value}”.`}
-          {truncated ? " Some matching records are omitted from this response." : ""}
+          {truncated ? " Some matching collections are display-limited on this page." : ""}
         </p>
       ) : (
         <p className="m-0 mt-3 text-sm font-semibold text-muted-strong">
@@ -594,6 +596,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
 }
 
 function CollectionPanel({
+  cursorPaged,
   emptyLabel,
   headers,
   records,
@@ -604,6 +607,7 @@ function CollectionPanel({
   truncated,
   warningCount,
 }: {
+  cursorPaged: boolean;
   emptyLabel: string;
   headers: string[];
   records: Array<{
@@ -622,8 +626,10 @@ function CollectionPanel({
   return (
     <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
       <CollectionHeader
+        cursorPaged={cursorPaged}
         filtered={filtered}
         matchedCount={matchedCount}
+        shownCount={records.length}
         title={title}
         totalCount={totalCount}
         truncated={truncated}
@@ -657,32 +663,40 @@ function collectionEmptyLabel(
 }
 
 function CollectionHeader({
+  cursorPaged,
   filtered,
   matchedCount,
+  shownCount,
   title,
   totalCount,
   truncated,
   warningCount,
 }: {
+  cursorPaged: boolean;
   filtered: boolean;
   matchedCount: number;
+  shownCount: number;
   title: string;
   totalCount: number;
   truncated: boolean;
   warningCount: number;
 }) {
-  const needsAttention = warningCount > 0 || truncated;
+  const displayedTotal = filtered ? matchedCount : totalCount;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <h2 className="m-0 text-base font-bold leading-tight text-ink">{title}</h2>
       <p
-        className={`m-0 text-xs font-bold uppercase ${needsAttention ? "text-warning" : "text-muted"}`}
+        className={`m-0 text-xs font-bold uppercase ${warningCount > 0 ? "text-warning" : "text-muted"}`}
       >
         {filtered
           ? `${formatNumber(matchedCount)} matches of ${formatNumber(totalCount)} total`
           : `${formatNumber(totalCount)} total`}{" "}
         · {formatNumber(warningCount)} warnings
-        {truncated ? " · records omitted" : " · complete"}
+        {truncated
+          ? cursorPaged
+            ? ` · showing ${formatNumber(shownCount)} of ${formatNumber(displayedTotal)} on this page`
+            : ` · showing newest ${formatNumber(shownCount)} of ${formatNumber(displayedTotal)}`
+          : " · complete view"}
       </p>
     </div>
   );
@@ -787,15 +801,18 @@ function ExceptionSummary({
   outcome: ReturnType<typeof deriveRunResult>["outcome"];
   summary: AdminRunHistoryDetailResponse["exceptionSummary"];
 }) {
-  const entries = [
+  const exceptionEntries = [
     ["broken invariants", summary.brokenInvariants],
     ["failed orders", summary.failedOrders],
     ["pending work", summary.pendingWork],
     ["delivery exceptions", summary.partialDelivery],
-    ["generator warnings", summary.generatorWarnings],
-    ["truncated collections", summary.truncatedCollections],
   ] as const;
-  const exceptions = entries.filter(([, count]) => count > 0);
+  const exceptions = exceptionEntries.filter(([, count]) => count > 0);
+  const limitationEntries = [
+    ["Instrumentation limitations", summary.generatorWarnings],
+    ["Display-limited collections", summary.truncatedCollections],
+  ] as const;
+  const limitations = limitationEntries.filter(([, count]) => count > 0);
   const classification =
     summary.maximumClassification === "expected_population_difference"
       ? null
@@ -838,6 +855,12 @@ function ExceptionSummary({
               .filter(Boolean)
               .join(" · ")}
       </p>
+      {limitations.length > 0 ? (
+        <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
+          Limitations ·{" "}
+          {limitations.map(([label, count]) => `${label}: ${formatNumber(count)}`).join(" · ")}
+        </p>
+      ) : null}
     </section>
   );
 }

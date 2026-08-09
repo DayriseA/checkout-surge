@@ -213,7 +213,7 @@ export class RunHistoryService implements RunHistoryController {
       .select({
         totalCount: count(),
         matchedCount: sql<number>`(count(*) filter (where ${erpAttemptFilter}))::int`,
-        warningCount: sql<number>`(count(*) filter (where ${erpAttemptFilter} and (${erpAttempts.status} in ('failed', 'timed_out') or not ${erpAttempts.terminal})))::int`,
+        warningCount: sql<number>`(count(*) filter (where ${erpAttemptFilter} and ${erpAttempts.terminal} and ${erpAttempts.status} in ('failed', 'timed_out')))::int`,
         succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
         failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
         timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
