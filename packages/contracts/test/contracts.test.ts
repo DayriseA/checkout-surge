@@ -294,12 +294,14 @@ describe("shared lifecycle vocabulary", () => {
     expect(trafficDeliveryStatusValues).toEqual(["complete", "warning", "degraded", "failed"]);
   });
 
-  it("exposes the documented dashboard metric names", () => {
-    expect(metricNameValues).toContain("traffic.request_arrival_rate");
-    expect(metricNameValues).toContain("traffic.response_completion_rate");
-    expect(metricNameValues).toContain("traffic.attempts_dispatched");
-    expect(metricNameValues).toContain("queue.depth");
-    expect(metricNameValues).toContain("inventory.sold_out_rejection");
+  it("exposes the dashboard metric names", () => {
+    expect(metricNameValues).toEqual([
+      "traffic.request_arrival_rate",
+      "traffic.response_completion_rate",
+      "traffic.attempts_dispatched",
+      "traffic.latency",
+      "traffic.failure_rate",
+    ]);
   });
 });
 

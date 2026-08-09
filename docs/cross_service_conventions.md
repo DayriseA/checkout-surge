@@ -314,9 +314,6 @@ The reserved canonical metric names are:
 - `traffic.request_arrival_rate`
 - `traffic.response_completion_rate`
 - `traffic.attempts_dispatched`
-- `queue.depth`
-- `inventory.remaining`
-- `inventory.sold_out_rejection`
 
 Dashboard traffic metrics also use:
 

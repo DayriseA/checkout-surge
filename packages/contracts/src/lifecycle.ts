@@ -92,8 +92,5 @@ export const metricNameValues = [
   "traffic.attempts_dispatched",
   "traffic.latency",
   "traffic.failure_rate",
-  "queue.depth",
-  "inventory.remaining",
-  "inventory.sold_out_rejection",
 ] as const;
 export const metricNameSchema = z.enum(metricNameValues);
