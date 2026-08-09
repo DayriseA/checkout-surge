@@ -29,7 +29,7 @@ import {
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   buildEffectiveRunConfig,
   buildErpChaosFromDraft,
@@ -121,6 +121,17 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   const freshness = deriveAdminFreshness(recovery, realtimeStatus, now);
   const hasReadFailure = recovery.status === "unavailable" || recoveryController.hasSyncIssue;
   const startBlocked = isRunStartBlocked(recovery, freshness, hasReadFailure);
+  const hasPreservedAvailableRetryScheduled =
+    recovery.status === "available" &&
+    recoveryController.hasSyncIssue &&
+    recoveryController.isRetryScheduled;
+  const isRefreshDisabled =
+    recoveryController.isRefreshing ||
+    hasPreservedAvailableRetryScheduled ||
+    (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0);
+  const refreshDisabledReason = hasPreservedAvailableRetryScheduled
+    ? "Wait for the automatic retry countdown before refreshing."
+    : undefined;
   const [runtimePolicy, setRuntimePolicy] = useState(props.initialRuntimePolicy);
 
   useEffect(() => {
@@ -146,9 +157,11 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
       <div className="grid items-start gap-4 lg:grid-cols-2">
         <AdminCurrentRunPanel
           isPending={recoveryController.isRefreshing}
+          isRefreshDisabled={isRefreshDisabled}
           isRetryScheduled={recoveryController.isRetryScheduled}
           onRefresh={recoveryController.retryNow}
           recovery={recovery}
+          refreshDisabledReason={refreshDisabledReason}
           freshness={freshness}
           hasSyncIssue={recoveryController.hasSyncIssue}
           retriesExhausted={recoveryController.retriesExhausted}
@@ -158,12 +171,10 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
         />
         <AdminReadinessPanel read={props.initialReadiness} />
         <AdminRoutineActions
-          isRefreshDisabled={
-            recoveryController.isRefreshing ||
-            (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0)
-          }
+          isRefreshDisabled={isRefreshDisabled}
           isRefreshing={recoveryController.isRefreshing}
           onRefresh={recoveryController.retryNow}
+          refreshDisabledReason={refreshDisabledReason}
         />
         <AdminPresetController
           initialPresets={props.initialPresets}
@@ -219,11 +230,15 @@ function AdminRoutineActions({
   isRefreshDisabled,
   isRefreshing,
   onRefresh,
+  refreshDisabledReason,
 }: {
   isRefreshDisabled: boolean;
   isRefreshing: boolean;
   onRefresh: () => Promise<void>;
+  refreshDisabledReason?: string | undefined;
 }) {
+  const refreshDisabledReasonId = useId();
+
   return (
     <section className={`${panelClassName} lg:col-span-2`} id="routine-actions">
       <h2 className="m-0 text-base font-bold leading-tight text-ink">Routine actions</h2>
@@ -231,14 +246,22 @@ function AdminRoutineActions({
         Review shared state before using the controls in each section.
       </p>
       <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          className={buttonClassName}
-          disabled={isRefreshDisabled}
-          onClick={() => void onRefresh()}
-          type="button"
-        >
-          {isRefreshing ? "Refreshing current run" : "Refresh current run"}
-        </button>
+        <div>
+          <button
+            aria-describedby={refreshDisabledReason ? refreshDisabledReasonId : undefined}
+            className={buttonClassName}
+            disabled={isRefreshDisabled}
+            onClick={() => void onRefresh()}
+            type="button"
+          >
+            {isRefreshing ? "Refreshing current run" : "Refresh current run"}
+          </button>
+          {refreshDisabledReason ? (
+            <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={refreshDisabledReasonId}>
+              {refreshDisabledReason}
+            </p>
+          ) : null}
+        </div>
         <a className={buttonClassName} href="#presets">
           Start from a preset
         </a>
@@ -318,9 +341,11 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
 
 export function AdminCurrentRunPanel({
   isPending,
+  isRefreshDisabled,
   isRetryScheduled,
   onRefresh,
   recovery,
+  refreshDisabledReason,
   freshness,
   hasSyncIssue,
   retriesExhausted,
@@ -329,9 +354,11 @@ export function AdminCurrentRunPanel({
   syncIssue,
 }: {
   isPending: boolean;
+  isRefreshDisabled: boolean;
   isRetryScheduled: boolean;
   onRefresh: () => Promise<void>;
   recovery: BackendRead<DashboardProjection>;
+  refreshDisabledReason?: string | undefined;
   freshness: Freshness;
   hasSyncIssue: boolean;
   retriesExhausted: boolean;
@@ -339,8 +366,8 @@ export function AdminCurrentRunPanel({
   retryDelayMs: number | null;
   syncIssue: BackendRead<DashboardProjection> | null;
 }) {
+  const refreshDisabledReasonId = useId();
   const startBlocked = isRunStartBlocked(recovery, freshness, hasSyncIssue);
-  const retryWaitActive = recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0;
   const readFailed = recovery.status === "unavailable" || hasSyncIssue;
   const presentedFreshness =
     readFailed && freshness.state !== "disconnected"
@@ -387,8 +414,9 @@ export function AdminCurrentRunPanel({
       )}
       {syncIssue ? <Unavailable read={syncIssue} /> : null}
       <button
+        aria-describedby={refreshDisabledReason ? refreshDisabledReasonId : undefined}
         className={`${buttonClassName} mt-4`}
-        disabled={isPending || retryWaitActive}
+        disabled={isRefreshDisabled}
         onClick={() => void onRefresh()}
         type="button"
       >
@@ -400,6 +428,11 @@ export function AdminCurrentRunPanel({
             ? "Retry recovery"
             : "Refresh status"}
       </button>
+      {refreshDisabledReason ? (
+        <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={refreshDisabledReasonId}>
+          {refreshDisabledReason}
+        </p>
+      ) : null}
       {isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 mt-2 text-sm text-muted">
           Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.

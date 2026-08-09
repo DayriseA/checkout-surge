@@ -357,6 +357,68 @@ describe("admin feature controllers", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("keeps both refresh controls enabled during ordinary unavailable retries", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn());
+
+    render(
+      <AdminAuthenticatedSurface
+        {...surfaceProps(null)}
+        initialRecovery={{ status: "unavailable", reason: "Recovery unavailable." }}
+      />,
+    );
+
+    expect(screen.getByText("Automatic retry 1 in 1 seconds.")).toBeTruthy();
+    for (const refresh of [
+      screen.getByRole("button", { name: "Retry recovery" }),
+      screen.getByRole("button", { name: "Refresh current run" }),
+    ]) {
+      expect((refresh as HTMLButtonElement).disabled).toBe(false);
+      expect(refresh.getAttribute("aria-describedby")).toBeNull();
+    }
+  });
+
+  it("disables both refresh controls during preserved-available backoff", async () => {
+    vi.useFakeTimers();
+    const rateLimited = canonicalErrorResponse("Recovery is rate limited.", 429);
+    rateLimited.headers.set("retry-after", "1");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(rateLimited)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...recoveryFixture(null),
+          revision: 2,
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+    screen.getByRole("button", { name: "Refresh status" }).click();
+    await act(async () => Promise.resolve());
+
+    const panelRefresh = screen.getByRole("button", { name: "Retry recovery" });
+    const routineRefresh = screen.getByRole("button", { name: "Refresh current run" });
+    for (const refresh of [panelRefresh, routineRefresh]) {
+      expect((refresh as HTMLButtonElement).disabled).toBe(true);
+      expectControlDescription(
+        refresh,
+        "Wait for the automatic retry countdown before refreshing.",
+      );
+    }
+    expect(screen.getByText("Automatic retry 1 in 1 seconds.")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    await act(async () => Promise.resolve());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((screen.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect((routineRefresh as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("applies external lifecycle projections to current-run state and start gating in order", () => {
     vi.stubGlobal("EventSource", InjectedEventSource);
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
@@ -439,6 +501,7 @@ describe("admin feature controllers", () => {
         observedAt: projection.recoveredAt,
         final: false,
       },
+      isRefreshDisabled: false,
       isRetryScheduled: false,
       onRefresh: async () => undefined,
       recovery,
