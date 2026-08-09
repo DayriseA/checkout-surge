@@ -1,31 +1,14 @@
 import {
   buyOutcomeHeaderName,
-  type ConstantArrivalTrafficConfig,
   deriveLoadExecutionPlan,
-  type LoadExecutionPlan,
   loadRunIdHeaderName,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 
-export interface GeneratedK6Script {
-  contents: string;
-  plannedRequests: number;
-  executionPlan: LoadExecutionPlan;
-}
-
 export const k6ScenarioGracefulStop = "30s";
 
-export function resolveConstantArrivalExecutionPlan(
-  traffic: ConstantArrivalTrafficConfig,
-): Extract<LoadExecutionPlan, { trafficMode: "constant-arrival-rate" }> {
-  return deriveLoadExecutionPlan(traffic) as Extract<
-    LoadExecutionPlan,
-    { trafficMode: "constant-arrival-rate" }
-  >;
-}
-
-export function generateK6Script(input: TrafficExecutionStartRequest): GeneratedK6Script {
+export function generateK6Script(input: TrafficExecutionStartRequest) {
   const traffic = input.configSnapshot.trafficConfig;
   const executionPlan = deriveLoadExecutionPlan(traffic);
   const plannedRequests = executionPlan.plannedEmittedAttempts;
