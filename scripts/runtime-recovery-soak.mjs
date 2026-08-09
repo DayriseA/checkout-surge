@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const defaultBudgetWindowSeconds = 60;
@@ -107,13 +108,7 @@ async function readIdleRecovery(dashboardBaseUrl, fetch) {
 }
 
 async function fetchWithTimeout(fetch, url, timeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { cache: "no-store", signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetch(url, { cache: "no-store", signal: AbortSignal.timeout(timeoutMs) });
 }
 
 function envUrl(env, name, fallback) {
@@ -128,10 +123,6 @@ function positiveIntegerEnv(env, name, fallback) {
     throw new Error(`${name} must be a positive integer.`);
   }
   return value;
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const isEntrypoint =
