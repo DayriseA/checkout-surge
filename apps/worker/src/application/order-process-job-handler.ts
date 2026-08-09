@@ -123,12 +123,6 @@ export class OrderProcessingPersistenceError extends Error {
   }
 }
 
-export function createLocalOrderConfirmation(): OrderConfirmation {
-  return {
-    confirm: async () => undefined,
-  };
-}
-
 export function createOrderProcessJobHandler(dependencies: {
   confirmation: OrderConfirmation;
   persistence: OrderTransitionPersistence;
