@@ -15,10 +15,7 @@ import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
-import {
-  createLocalOrderConfirmation,
-  createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
-} from "../../src/application/order-process-job-handler.js";
+import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
@@ -44,20 +41,6 @@ const job: OrderProcessJob = {
   quantity: 1,
   queuedAt: queuedAt.toISOString(),
 };
-
-function createOrderProcessJobHandler(
-  dependencies: Omit<
-    Parameters<typeof createProductionOrderProcessJobHandler>[0],
-    "publishBusinessOutcomeUpdate" | "notificationRecordPublisher" | "recovery"
-  >,
-) {
-  return createProductionOrderProcessJobHandler({
-    ...dependencies,
-    publishBusinessOutcomeUpdate: async () => undefined,
-    notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
-    recovery: { handoff: async () => undefined, resolve: async () => undefined },
-  });
-}
 
 describe("queued order dispatch recovery", () => {
   let connection!: ReturnType<typeof createDatabaseConnection>;
@@ -96,9 +79,12 @@ describe("queued order dispatch recovery", () => {
       connection: { url: redisUrl, maxRetriesPerRequest: null },
       concurrency: 1,
       handler: createOrderProcessJobHandler({
-        confirmation: createLocalOrderConfirmation(),
+        confirmation: { confirm: async () => undefined },
         persistence: new PostgresOrderTransitionPersistence(connection.db),
         logger: createSilentLogger("worker"),
+        publishBusinessOutcomeUpdate: async () => undefined,
+        notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
+        recovery: { handoff: async () => undefined, resolve: async () => undefined },
       }),
       logger: createSilentLogger("worker"),
     });

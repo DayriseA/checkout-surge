@@ -158,25 +158,6 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
-  it("publishes a simulated notification job after confirmation", async () => {
-    const notificationRecordPublisher = {
-      publishForConfirmedOrder: vi.fn().mockResolvedValue(undefined),
-    };
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-      persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
-      notificationRecordPublisher,
-    });
-
-    await handler.handle(job, delivery);
-
-    expect(notificationRecordPublisher.publishForConfirmedOrder).toHaveBeenCalledWith(
-      job,
-      expect.any(String),
-    );
-  });
-
   it("preserves run identity when publishing notification and business outcome updates", async () => {
     const notificationRecordPublisher = {
       publishForConfirmedOrder: vi.fn().mockResolvedValue(undefined),
@@ -265,21 +246,6 @@ describe("order-process application workflow", () => {
         transition: "processing",
       }),
     );
-  });
-
-  it("publishes business outcome updates for processing and confirmation transitions", async () => {
-    const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
-      persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
-      publishBusinessOutcomeUpdate,
-    });
-
-    await handler.handle(job, delivery);
-
-    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "processing");
-    expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "confirmed");
   });
 
   it("does not fail the job when business outcome publication fails", async () => {
