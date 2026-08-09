@@ -1,4 +1,4 @@
-import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -104,17 +104,16 @@ describe("HTTP ERP order confirmation", () => {
       ),
     );
     const runConfigReader = {
-      read: vi.fn().mockResolvedValue(
-        runConfigSnapshot({
-          erpConfig: {
-            latencyMs: 375,
-            maxTps: 9,
-            errorRate: 0.2,
-            forcedOutage: true,
-            requestTimeoutMs: 125,
-          },
-        }),
-      ),
+      read: vi.fn().mockResolvedValue({
+        ...previewRunConfigSnapshotFixture(),
+        erpConfig: {
+          latencyMs: 375,
+          maxTps: 9,
+          errorRate: 0.2,
+          forcedOutage: true,
+          requestTimeoutMs: 125,
+        },
+      }),
     };
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
@@ -600,43 +599,5 @@ function sequenceClock(...dates: Date[]): () => Date {
     }
 
     return date;
-  };
-}
-
-function runConfigSnapshot(
-  overrides: Partial<AcceptedRunConfigSnapshot> = {},
-): AcceptedRunConfigSnapshot {
-  return {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 30,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 1000,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-    },
-    ...overrides,
   };
 }
