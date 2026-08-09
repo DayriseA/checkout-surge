@@ -51,19 +51,16 @@ export function requireControlServiceToken(ctx: ProxyRequestContext): string | R
   return token;
 }
 
-export async function readJsonRequest(ctx: ProxyRequestContext): Promise<unknown | Response> {
+export async function parseJsonRequest<T>(
+  ctx: ProxyRequestContext,
+  schema: ContractSchema<T>,
+): Promise<T | Response> {
+  let input: unknown;
   try {
-    return await ctx.request.json();
+    input = await ctx.request.json();
   } catch {
     return jsonError(ctx, 400, "invalid_request", "Request body must be valid JSON.");
   }
-}
-
-export function validateJson<T>(
-  ctx: ProxyRequestContext,
-  input: unknown,
-  schema: ContractSchema<T>,
-): T | Response {
   const parsed = schema.safeParse(input);
 
   if (parsed.success) {

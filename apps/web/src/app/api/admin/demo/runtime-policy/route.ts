@@ -7,8 +7,7 @@ import { authorizeAdminProxy } from "../../../../lib/server/admin-proxy";
 import {
   apiBaseUrl,
   createProxyRequestContext,
-  readJsonRequest,
-  validateJson,
+  parseJsonRequest,
 } from "../../../../lib/server/backend-proxy";
 
 export async function GET(request: Request): Promise<Response> {
@@ -27,12 +26,7 @@ export async function PUT(request: Request): Promise<Response> {
   const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(ctx);
-  if (body instanceof Response) {
-    return body;
-  }
-
-  const parsed = validateJson(ctx, body, adminPublicRuntimePolicyUpdateRequestSchema);
+  const parsed = await parseJsonRequest(ctx, adminPublicRuntimePolicyUpdateRequestSchema);
   if (parsed instanceof Response) {
     return parsed;
   }

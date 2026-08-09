@@ -9,21 +9,15 @@ import {
 import {
   apiBaseUrl,
   createProxyRequestContext,
+  parseJsonRequest,
   proxyJson,
-  readJsonRequest,
   requireControlServiceToken,
-  validateJson,
 } from "../../../../lib/server/backend-proxy";
 import { resolvePublicVisitorIdentity } from "../../../../lib/server/public-visitor";
 
 export async function POST(request: Request) {
   const ctx = createProxyRequestContext(request);
-  const body = await readJsonRequest(ctx);
-  if (body instanceof Response) {
-    return body;
-  }
-
-  const payload = validateJson(ctx, body, startDemoRunRequestSchema);
+  const payload = await parseJsonRequest(ctx, startDemoRunRequestSchema);
   if (payload instanceof Response) {
     return payload;
   }
