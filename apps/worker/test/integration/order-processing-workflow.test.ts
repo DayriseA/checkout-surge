@@ -716,22 +716,15 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       });
 
       persistenceAvailable = true;
-      const recoveryPublishFailures: unknown[] = [];
       const scanner = createNotificationRecoveryScanner({
         persistence: new PostgresNotificationRecoveryPersistence(connection.db),
         publisher: notificationRecordPublisher,
         logger,
         scanIntervalMs: 1000,
         batchSize: 10,
-        reportPublishFailure: (report) => {
-          recoveryPublishFailures.push(report.error);
-        },
       });
 
       const scanResult = await scanner.scanOnce();
-      if (scanResult.failed > 0) {
-        throw recoveryPublishFailures[0] ?? new Error("Notification recovery publish failed.");
-      }
       expect(scanResult).toEqual({
         candidates: 1,
         published: 1,

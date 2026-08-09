@@ -183,90 +183,102 @@ describe("order-process application workflow", () => {
   it("does not fail a confirmed order when notification job publication fails", async () => {
     const publishError = new Error("queue unavailable");
     const transitionToConfirmed = vi.fn().mockResolvedValue(confirmedTransition);
-    const reportNotificationRecordPublishFailure = vi.fn();
+    const logger = createSilentLogger("worker");
+    vi.spyOn(logger, "child").mockReturnValue(logger as never);
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => {
+      throw new Error("logging unavailable");
+    });
     const handler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
       persistence: createPersistence({ transitionToConfirmed }),
-      logger: createSilentLogger("worker"),
+      logger,
       notificationRecordPublisher: {
         publishForConfirmedOrder: vi.fn().mockRejectedValue(publishError),
       },
-      reportNotificationRecordPublishFailure,
     });
 
     await handler.handle(job, delivery);
 
     expect(transitionToConfirmed).toHaveBeenCalledOnce();
-    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: publishError,
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: publishError,
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,
         correlationId: job.correlationId,
-      }),
+      },
+      "Order confirmed but notification-recording job publication failed.",
     );
   });
 
-  it("includes run identity in non-fatal side-effect failure reports", async () => {
+  it("includes run identity in non-fatal side-effect failure logs", async () => {
     const notificationError = new Error("notification queue unavailable");
     const outcomeError = new Error("dashboard publish unavailable");
-    const reportNotificationRecordPublishFailure = vi.fn();
-    const reportBusinessOutcomeUpdateFailure = vi.fn();
+    const logger = createSilentLogger("worker");
+    vi.spyOn(logger, "child").mockReturnValue(logger as never);
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => {
+      throw new Error("logging unavailable");
+    });
     const handler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
       persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
+      logger,
       notificationRecordPublisher: {
         publishForConfirmedOrder: vi.fn().mockRejectedValue(notificationError),
       },
-      reportNotificationRecordPublishFailure,
       publishBusinessOutcomeUpdate: vi.fn().mockRejectedValue(outcomeError),
-      reportBusinessOutcomeUpdateFailure,
     });
 
     await handler.handle(runScopedJob, delivery);
 
-    expect(reportNotificationRecordPublishFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: notificationError,
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: notificationError,
         orderId: runScopedJob.orderId,
         saleOfferId: runScopedJob.saleOfferId,
         runId: runScopedJob.runId,
         correlationId: runScopedJob.correlationId,
-      }),
+      },
+      "Order confirmed but notification-recording job publication failed.",
     );
-    expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: outcomeError,
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: outcomeError,
         orderId: runScopedJob.orderId,
         saleOfferId: runScopedJob.saleOfferId,
         runId: runScopedJob.runId,
         correlationId: runScopedJob.correlationId,
         transition: "processing",
-      }),
+      },
+      "Order transition succeeded but dashboard business outcome publication failed.",
     );
   });
 
   it("does not fail the job when business outcome publication fails", async () => {
     const publishError = new Error("redis unavailable");
-    const reportBusinessOutcomeUpdateFailure = vi.fn();
+    const logger = createSilentLogger("worker");
+    vi.spyOn(logger, "child").mockReturnValue(logger as never);
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => {
+      throw new Error("logging unavailable");
+    });
     const handler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
       persistence: createPersistence(),
-      logger: createSilentLogger("worker"),
+      logger,
       publishBusinessOutcomeUpdate: vi.fn().mockRejectedValue(publishError),
-      reportBusinessOutcomeUpdateFailure,
     });
 
     await handler.handle(job, delivery);
 
-    expect(reportBusinessOutcomeUpdateFailure).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: publishError,
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: publishError,
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,
         correlationId: job.correlationId,
-      }),
+        transition: "processing",
+      },
+      "Order transition succeeded but dashboard business outcome publication failed.",
     );
   });
 

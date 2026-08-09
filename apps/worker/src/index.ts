@@ -109,18 +109,6 @@ export async function startWorker(): Promise<void> {
     logger,
     scanIntervalMs: config.notificationRecoveryScanIntervalMs,
     batchSize: config.notificationRecoveryBatchSize,
-    reportPublishFailure: (report) => {
-      logger.error(
-        {
-          err: report.error,
-          orderId: report.orderId,
-          saleOfferId: report.saleOfferId,
-          ...(report.runId ? { runId: report.runId } : {}),
-          correlationId: report.correlationId,
-        },
-        "Notification recovery could not publish a notification-recording job.",
-      );
-    },
   });
   const orderDispatchScanner = createOrderDispatchScanner({
     persistence: new PostgresOrderDispatchPersistence(database.db),
@@ -129,18 +117,6 @@ export async function startWorker(): Promise<void> {
     scanIntervalMs: config.orderDispatchScanIntervalMs,
     batchSize: config.orderDispatchBatchSize,
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
-    reportPublishFailure: (report) => {
-      logger.error(
-        {
-          err: report.error,
-          orderId: report.job.orderId,
-          saleOfferId: report.job.saleOfferId,
-          ...(report.job.runId ? { runId: report.job.runId } : {}),
-          correlationId: report.job.correlationId,
-        },
-        "Order dispatch recovery could not publish an order-processing job.",
-      );
-    },
   });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
@@ -209,37 +185,12 @@ export async function startWorker(): Promise<void> {
       isTemporaryConfirmationFailure,
       shouldRetryWithoutFailingOrder,
       notificationRecordPublisher,
-      reportNotificationRecordPublishFailure: (report) => {
-        logger.error(
-          {
-            err: report.error,
-            orderId: report.orderId,
-            saleOfferId: report.saleOfferId,
-            ...(report.runId ? { runId: report.runId } : {}),
-            correlationId: report.correlationId,
-          },
-          "Order confirmed but notification-recording job publication failed.",
-        );
-      },
       publishBusinessOutcomeUpdate: async (job) => {
         businessOutcomePublications.markDirty({
           saleOfferId: job.saleOfferId,
           ...(job.runId ? { runId: job.runId } : {}),
           correlationId: job.correlationId,
         });
-      },
-      reportBusinessOutcomeUpdateFailure: (report) => {
-        logger.error(
-          {
-            err: report.error,
-            orderId: report.orderId,
-            saleOfferId: report.saleOfferId,
-            ...(report.runId ? { runId: report.runId } : {}),
-            correlationId: report.correlationId,
-            transition: report.transition,
-          },
-          "Order transition succeeded but dashboard business outcome publication failed.",
-        );
       },
     }),
     logger,
@@ -260,18 +211,6 @@ export async function startWorker(): Promise<void> {
           ...(job.runId ? { runId: job.runId } : {}),
           correlationId: job.correlationId,
         });
-      },
-      reportBusinessOutcomeUpdateFailure: (report) => {
-        logger.error(
-          {
-            err: report.error,
-            orderId: report.orderId,
-            saleOfferId: report.saleOfferId,
-            ...(report.runId ? { runId: report.runId } : {}),
-            correlationId: report.correlationId,
-          },
-          "Notification record succeeded but dashboard business outcome publication failed.",
-        );
       },
     }),
     logger,

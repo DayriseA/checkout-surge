@@ -13,14 +13,6 @@ export interface NotificationRecoveryPersistence {
   }): Promise<RecoverableNotificationOrder[]>;
 }
 
-export interface NotificationRecoveryPublishFailureReport {
-  error: unknown;
-  orderId: string;
-  saleOfferId: string;
-  runId?: string;
-  correlationId: string;
-}
-
 export interface NotificationRecoveryScanResult {
   candidates: number;
   published: number;
@@ -39,7 +31,6 @@ export function createNotificationRecoveryScanner(dependencies: {
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;
-  reportPublishFailure?: (report: NotificationRecoveryPublishFailureReport) => void;
 }): NotificationRecoveryScanner {
   let interval: NodeJS.Timeout | null = null;
   let inFlight: Promise<void> | null = null;
@@ -58,7 +49,20 @@ export function createNotificationRecoveryScanner(dependencies: {
         published += 1;
       } catch (error) {
         failed += 1;
-        reportPublishFailure(dependencies, candidate.job, error);
+        try {
+          dependencies.logger.error(
+            {
+              err: error,
+              orderId: candidate.job.orderId,
+              saleOfferId: candidate.job.saleOfferId,
+              ...(candidate.job.runId ? { runId: candidate.job.runId } : {}),
+              correlationId: candidate.job.correlationId,
+            },
+            "Notification recovery could not publish a notification-recording job.",
+          );
+        } catch {
+          // Logging must not stop recovery scanning.
+        }
       }
     }
 
@@ -108,35 +112,4 @@ export function createNotificationRecoveryScanner(dependencies: {
       await inFlight;
     },
   };
-}
-
-function reportPublishFailure(
-  dependencies: {
-    logger: CheckoutSurgeLogger;
-    reportPublishFailure?: (report: NotificationRecoveryPublishFailureReport) => void;
-  },
-  job: OrderProcessJob,
-  error: unknown,
-): void {
-  const report = {
-    error,
-    orderId: job.orderId,
-    saleOfferId: job.saleOfferId,
-    ...(job.runId ? { runId: job.runId } : {}),
-    correlationId: job.correlationId,
-  };
-
-  if (dependencies.reportPublishFailure) {
-    try {
-      dependencies.reportPublishFailure(report);
-    } catch {
-      // Reporting is non-critical; the next recovery scan can retry publication.
-    }
-    return;
-  }
-
-  dependencies.logger.error(
-    report,
-    "Notification recovery could not publish a notification-recording job.",
-  );
 }

@@ -33,16 +33,18 @@ describe("order dispatch scanner", () => {
     const publisher = {
       enqueue: vi.fn().mockRejectedValueOnce(publishError).mockResolvedValue(undefined),
     };
-    const reportPublishFailure = vi.fn();
+    const logger = createSilentLogger("worker");
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => {
+      throw new Error("logging unavailable");
+    });
     const scanner = createOrderDispatchScanner({
       persistence,
       publisher,
-      logger: createSilentLogger("worker"),
+      logger,
       scanIntervalMs: 1000,
       batchSize: 25,
       minimumQueuedAgeMs: 5000,
       now: () => new Date("2026-06-21T00:00:10.000Z"),
-      reportPublishFailure,
     });
 
     await expect(scanner.scanOnce()).resolves.toEqual({ candidates: 2, published: 1, failed: 1 });
@@ -53,7 +55,15 @@ describe("order dispatch scanner", () => {
       limit: 25,
     });
     expect(publisher.enqueue).toHaveBeenCalledTimes(4);
-    expect(reportPublishFailure).toHaveBeenCalledWith({ error: publishError, job: jobs[0] });
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: publishError,
+        orderId: jobs[0]?.orderId,
+        saleOfferId: jobs[0]?.saleOfferId,
+        correlationId: jobs[0]?.correlationId,
+      },
+      "Order dispatch recovery could not publish an order-processing job.",
+    );
   });
 
   it("does not overlap scheduled scans and waits for in-flight work on close", async () => {

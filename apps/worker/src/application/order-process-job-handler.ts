@@ -73,18 +73,11 @@ export interface NotificationRecordPublisher {
   publishForConfirmedOrder(job: OrderProcessJob, confirmedAt: string): Promise<void>;
 }
 
-export interface BusinessOutcomeUpdateFailureReport {
-  error: unknown;
-  orderId: string;
-  saleOfferId: string;
-  runId?: string;
-  correlationId: string;
-  transition: "processing" | "retrying" | "confirmed" | "failed";
-}
+type BusinessOutcomeTransition = "processing" | "retrying" | "confirmed" | "failed";
 
 type BusinessOutcomeUpdatePublisher = (
   job: OrderProcessJob,
-  transition: BusinessOutcomeUpdateFailureReport["transition"],
+  transition: BusinessOutcomeTransition,
 ) => Promise<void>;
 
 export class OrderFailurePersistenceError extends AggregateError {
@@ -130,15 +123,7 @@ export function createOrderProcessJobHandler(dependencies: {
   isTemporaryConfirmationFailure?: (error: unknown) => boolean;
   shouldRetryWithoutFailingOrder?: (error: unknown) => boolean;
   publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
-  reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   notificationRecordPublisher: NotificationRecordPublisher;
-  reportNotificationRecordPublishFailure?: (report: {
-    error: unknown;
-    orderId: string;
-    saleOfferId: string;
-    runId?: string;
-    correlationId: string;
-  }) => void;
   recovery: OrderRecoveryHandoff;
 }): OrderProcessJobHandler {
   return {
@@ -340,13 +325,6 @@ export function createOrderProcessJobHandler(dependencies: {
 async function publishNotificationRecordJobWithoutFailingOrder(
   dependencies: {
     notificationRecordPublisher: NotificationRecordPublisher;
-    reportNotificationRecordPublishFailure?: (report: {
-      error: unknown;
-      orderId: string;
-      saleOfferId: string;
-      runId?: string;
-      correlationId: string;
-    }) => void;
   },
   job: OrderProcessJob,
   confirmedAt: string,
@@ -355,58 +333,49 @@ async function publishNotificationRecordJobWithoutFailingOrder(
   try {
     await dependencies.notificationRecordPublisher.publishForConfirmedOrder(job, confirmedAt);
   } catch (error) {
-    const report = {
-      error,
-      orderId: job.orderId,
-      saleOfferId: job.saleOfferId,
-      ...(job.runId ? { runId: job.runId } : {}),
-      correlationId: job.correlationId,
-    };
-
-    if (dependencies.reportNotificationRecordPublishFailure) {
-      try {
-        dependencies.reportNotificationRecordPublishFailure(report);
-      } catch {
-        // Reporting is non-critical; the confirmed order remains authoritative.
-      }
-      return;
+    try {
+      logger.error(
+        {
+          err: error,
+          orderId: job.orderId,
+          saleOfferId: job.saleOfferId,
+          ...(job.runId ? { runId: job.runId } : {}),
+          correlationId: job.correlationId,
+        },
+        "Order confirmed but notification-recording job publication failed.",
+      );
+    } catch {
+      // Logging must not fail the durable confirmed transition.
     }
-
-    logger.error(report, "Confirmed order notification job publication failed.");
   }
 }
 
 async function publishBusinessOutcomeUpdateWithoutFailingJob(
   dependencies: {
     publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
-    reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
   },
   job: OrderProcessJob,
-  transition: BusinessOutcomeUpdateFailureReport["transition"],
+  transition: BusinessOutcomeTransition,
   logger: CheckoutSurgeLogger,
 ): Promise<void> {
   try {
     await dependencies.publishBusinessOutcomeUpdate(job, transition);
   } catch (error) {
-    const report: BusinessOutcomeUpdateFailureReport = {
-      error,
-      orderId: job.orderId,
-      saleOfferId: job.saleOfferId,
-      ...(job.runId ? { runId: job.runId } : {}),
-      correlationId: job.correlationId,
-      transition,
-    };
-
-    if (dependencies.reportBusinessOutcomeUpdateFailure) {
-      try {
-        dependencies.reportBusinessOutcomeUpdateFailure(report);
-      } catch {
-        // Reporting is non-critical; the durable order transition remains authoritative.
-      }
-      return;
+    try {
+      logger.error(
+        {
+          err: error,
+          orderId: job.orderId,
+          saleOfferId: job.saleOfferId,
+          ...(job.runId ? { runId: job.runId } : {}),
+          correlationId: job.correlationId,
+          transition,
+        },
+        "Order transition succeeded but dashboard business outcome publication failed.",
+      );
+    } catch {
+      // Logging must not fail the durable order transition.
     }
-
-    logger.error(report, "Dashboard business outcome publication failed.");
   }
 }
 
