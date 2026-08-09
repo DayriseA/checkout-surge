@@ -17,20 +17,11 @@ import {
 } from "../persistence/postgres-order-transition-persistence.js";
 import type { OrderProcessConsumer } from "./order-process-consumer.js";
 
-export interface OrderProcessJobFailureReport {
-  jobId?: string;
-  jobName: string;
-  attemptNumber: number;
-  attemptsMade: number;
-  error: Error;
-}
-
 export interface CreateBullMqOrderProcessConsumerOptions {
   connection: ConnectionOptions;
   concurrency: number;
   handler: OrderProcessJobHandler;
   logger: CheckoutSurgeLogger;
-  reportFailure?: (report: OrderProcessJobFailureReport) => void | Promise<void>;
   recovery: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
   admission?: OrderProcessAdmission;
   admissionDelayMs?: number;
@@ -96,26 +87,17 @@ export function createBullMqOrderProcessConsumer(
   let isQueueConnectionReady = false;
 
   worker.on("failed", (job, error) => {
-    const report: OrderProcessJobFailureReport = {
-      ...(job?.id ? { jobId: job.id } : {}),
-      jobName: job?.name ?? orderProcessJobName,
-      attemptNumber: job?.attemptsMade ?? 0,
-      attemptsMade: job?.attemptsMade ?? 0,
-      error,
-    };
-
     options.logger.error(
       {
         err: error,
-        ...(report.jobId ? { jobId: report.jobId } : {}),
-        jobName: report.jobName,
-        attemptNumber: report.attemptNumber,
-        attemptsMade: report.attemptsMade,
+        ...(job?.id ? { jobId: job.id } : {}),
+        jobName: job?.name ?? orderProcessJobName,
+        attemptNumber: job?.attemptsMade ?? 0,
+        attemptsMade: job?.attemptsMade ?? 0,
         ...correlationLogContext(job?.data),
       },
       "Order-processing job failed.",
     );
-    reportFailureSafely(options, report);
   });
 
   worker.on("completed", (job) => {
@@ -187,27 +169,6 @@ export function createBullMqOrderProcessConsumer(
       }
     },
   };
-}
-
-function reportFailureSafely(
-  options: CreateBullMqOrderProcessConsumerOptions,
-  report: OrderProcessJobFailureReport,
-): void {
-  if (!options.reportFailure) {
-    return;
-  }
-
-  try {
-    void Promise.resolve(options.reportFailure(report)).catch((error: unknown) =>
-      logFailureReporterError(options.logger, error),
-    );
-  } catch (error) {
-    logFailureReporterError(options.logger, error);
-  }
-}
-
-function logFailureReporterError(logger: CheckoutSurgeLogger, error: unknown): void {
-  logger.error({ err: error }, "Order-processing failure reporter threw an error.");
 }
 
 function correlationLogContext(data: unknown): { correlationId?: string } {

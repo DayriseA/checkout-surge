@@ -53,7 +53,6 @@ describe("BullMQ process-local admission", () => {
   });
 
   it("keeps saturated work visible and processes it later without consuming attempts", async () => {
-    const reportFailure = vi.fn();
     let releaseFirst: (() => void) | undefined;
     const firstBlocked = new Promise<void>((resolve) => (releaseFirst = resolve));
     const deliveries: number[] = [];
@@ -72,7 +71,6 @@ describe("BullMQ process-local admission", () => {
       admissionDelayMs: 30,
       handler: { handle },
       logger: createSilentLogger("worker"),
-      reportFailure,
     });
     consumers.push(consumer);
     consumer.start();
@@ -90,7 +88,6 @@ describe("BullMQ process-local admission", () => {
     releaseFirst?.();
     await vi.waitFor(async () => expect(handle).toHaveBeenCalledTimes(2), { timeout: 5000 });
     expect(deliveries).toEqual([0, 0]);
-    expect(reportFailure).not.toHaveBeenCalled();
   });
 
   it("waits for held work on shutdown and closes local admission", async () => {
