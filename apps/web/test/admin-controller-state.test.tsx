@@ -26,6 +26,7 @@ import {
   AdminMaintenancePanel,
   AdminPresetController,
   AdminRuntimePolicyController,
+  policyChangeSummary,
   serverFieldErrors,
 } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { buildEffectiveRunConfig, draftFromPreset } from "../src/app/lib/admin-drafts.js";
@@ -2257,11 +2258,125 @@ describe("admin feature controllers", () => {
     expect(dialog.textContent).toContain(
       "governs future public starts; already accepted runs are unaffected",
     );
-    expect(within(dialog).getByText("Public run budget")).toBeTruthy();
-    expect(dialog.textContent).toContain('"windowSeconds":300');
-    expect(dialog.textContent).toContain('"windowSeconds":400');
+    expect(within(dialog).getByText("publicRunBudget.windowSeconds")).toBeTruthy();
+    expect(dialog.textContent).toContain("300");
+    expect(dialog.textContent).toContain("400");
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("summarizes policy changes at field level", () => {
+    const current = runtimePolicyFixture(10_000, 300).policy;
+    const { deploymentHardCaps: _deploymentHardCaps, ...proposed } = structuredClone(current);
+    proposed.isPublicRunBudgetEnforced = false;
+    proposed.publicRunBudget.windowSeconds = 400;
+    proposed.publicRunBudget.globalMaxStarts = 8;
+
+    expect(policyChangeSummary(current, proposed)).toEqual([
+      { label: "Budget enforcement", oldValue: "on", proposedValue: "off" },
+      { label: "publicRunBudget.windowSeconds", oldValue: 300, proposedValue: 400 },
+      { label: "publicRunBudget.globalMaxStarts", oldValue: 6, proposedValue: 8 },
+    ]);
+  });
+
+  it("summarizes same-mode traffic changes at field level", () => {
+    const current = runtimePolicyFixture(10_000, 300).policy;
+    const { deploymentHardCaps: _deploymentHardCaps, ...proposed } = structuredClone(current);
+    const traffic = proposed.publicCustomDefaults.trafficConfig;
+    if (traffic.mode !== "buyer-spike") throw new Error("Expected buyer-spike fixture.");
+    traffic.buyerCount = 1200;
+    traffic.duplicateEachBuyerAttempt = true;
+
+    expect(policyChangeSummary(current, proposed)).toEqual([
+      {
+        label: "publicCustomDefaults.trafficConfig.buyerCount",
+        oldValue: 1000,
+        proposedValue: 1200,
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.duplicateEachBuyerAttempt",
+        oldValue: "false",
+        proposedValue: "true",
+      },
+    ]);
+  });
+
+  it("summarizes traffic mode transitions with unavailable field placeholders", () => {
+    const current = runtimePolicyFixture(10_000, 300).policy;
+    const { deploymentHardCaps: _deploymentHardCaps, ...proposed } = structuredClone(current);
+    proposed.publicCustomDefaults.trafficConfig = {
+      mode: "constant-arrival-rate",
+      ratePerSecond: 25,
+      startDelaySeconds: 0,
+      durationSeconds: 2,
+      quantityPerAttempt: 1,
+      k6Vus: { preAllocatedVus: 10, maxVus: 20 },
+    };
+
+    expect(policyChangeSummary(current, proposed)).toEqual([
+      {
+        label: "publicCustomDefaults.trafficConfig.mode",
+        oldValue: "buyer-spike",
+        proposedValue: "constant-arrival-rate",
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.buyerCount",
+        oldValue: 1000,
+        proposedValue: "—",
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.duplicateEachBuyerAttempt",
+        oldValue: "false",
+        proposedValue: "—",
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.ratePerSecond",
+        oldValue: "—",
+        proposedValue: 25,
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.maxDurationSeconds",
+        oldValue: 2,
+        proposedValue: "—",
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.durationSeconds",
+        oldValue: "—",
+        proposedValue: 2,
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.k6Vus.preAllocatedVus",
+        oldValue: "—",
+        proposedValue: 10,
+      },
+      {
+        label: "publicCustomDefaults.trafficConfig.k6Vus.maxVus",
+        oldValue: "—",
+        proposedValue: 20,
+      },
+    ]);
+  });
+
+  it("summarizes public custom limit changes at field level", () => {
+    const current = runtimePolicyFixture(10_000, 300).policy;
+    const { deploymentHardCaps: _deploymentHardCaps, ...proposed } = structuredClone(current);
+    proposed.publicCustomLimits.maxBuyers = 12_000;
+    proposed.publicCustomLimits.allowForcedOutage = true;
+    proposed.publicCustomLimits.allowedTrafficModes = ["buyer-spike"];
+
+    expect(policyChangeSummary(current, proposed)).toEqual([
+      { label: "publicCustomLimits.maxBuyers", oldValue: 10_000, proposedValue: 12_000 },
+      {
+        label: "publicCustomLimits.allowForcedOutage",
+        oldValue: "false",
+        proposedValue: "true",
+      },
+      {
+        label: "publicCustomLimits.allowedTrafficModes",
+        oldValue: '["buyer-spike","constant-arrival-rate"]',
+        proposedValue: '["buyer-spike"]',
+      },
+    ]);
   });
 
   it("surfaces a newer policy failure while retaining dirty drafts and preset caps", async () => {
