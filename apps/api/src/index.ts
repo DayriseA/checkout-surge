@@ -497,22 +497,16 @@ export async function startApiServer(): Promise<void> {
     });
     await dashboardProjectionDirtySubscriber.start();
 
-    process.once("SIGTERM", () => {
+    const handleShutdown = () => {
       void close()
         .then(() => process.exit(0))
         .catch((error: unknown) => {
           logger.error({ err: error }, "API shutdown failed.");
           process.exit(1);
         });
-    });
-    process.once("SIGINT", () => {
-      void close()
-        .then(() => process.exit(0))
-        .catch((error: unknown) => {
-          logger.error({ err: error }, "API shutdown failed.");
-          process.exit(1);
-        });
-    });
+    };
+    process.once("SIGTERM", handleShutdown);
+    process.once("SIGINT", handleShutdown);
 
     await warnWhenListenBacklogIsCapped({ requestedBacklog: config.listenBacklog, logger });
 
