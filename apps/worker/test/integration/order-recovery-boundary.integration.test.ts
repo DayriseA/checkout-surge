@@ -92,7 +92,12 @@ run("PostgreSQL durable order recovery boundary", () => {
   it("claims one lease at a time and resolves after a restart-safe replay", async () => {
     await requirePersistence().recordRecoverable({
       job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "source-job" },
+      delivery: {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+        deliveryId: "source-job",
+      },
       sourceJobId: "source-job",
       sourceDisposition: "source-job:1",
       reason: "erp_local_persistence_unavailable",
@@ -109,7 +114,12 @@ run("PostgreSQL durable order recovery boundary", () => {
     now = new Date("2026-06-22T00:00:31.000Z");
     await requirePersistence().recordRecoverable({
       job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "retained-source" },
+      delivery: {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+        deliveryId: "retained-source",
+      },
       sourceJobId: "retained-source",
       sourceDisposition: "retained-source:1",
       reason: "failed_queue_job_reconciliation",

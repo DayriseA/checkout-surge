@@ -4,7 +4,7 @@ import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkou
 export interface OrderProcessDeliveryMetadata {
   attemptNumber: number;
   attemptsMade: number;
-  maxAttempts?: number;
+  maxAttempts: number;
   recoveryKey?: string;
   /** Stable BullMQ/durable publication identity for this delivery. */
   deliveryId?: string;
@@ -411,7 +411,7 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
 }
 
 export function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
-  return delivery.maxAttempts !== undefined && delivery.attemptNumber < delivery.maxAttempts;
+  return delivery.attemptNumber < delivery.maxAttempts;
 }
 
 function isAcceptedConfirmationPersistenceError(error: unknown): error is {

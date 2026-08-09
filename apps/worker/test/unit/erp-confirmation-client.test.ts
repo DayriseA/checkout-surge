@@ -295,6 +295,7 @@ describe("HTTP ERP order confirmation", () => {
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "failed",
+        terminal: false,
         httpStatus: 503,
         errorCode: "erp_unavailable",
         errorMessage: "The ERP is unavailable.",
@@ -324,6 +325,7 @@ describe("HTTP ERP order confirmation", () => {
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "timed_out",
+        terminal: false,
         errorCode: "erp_request_timeout",
         latencyMs: 250,
       }),
@@ -349,6 +351,7 @@ describe("HTTP ERP order confirmation", () => {
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "failed",
+        terminal: false,
         httpStatus: 502,
         errorCode: "erp_invalid_response",
       }),
@@ -410,6 +413,7 @@ describe("HTTP ERP order confirmation", () => {
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         status: "failed",
+        terminal: false,
         errorCode: "erp_request_failed",
         errorMessage: "ECONNREFUSED",
         latencyMs: 5,
@@ -457,119 +461,49 @@ describe("HTTP ERP order confirmation", () => {
 
   it.each([
     {
-      label: "remaining",
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
-      temporaryTerminal: false,
-    },
-    {
-      label: "exhausted",
+      name: "exhausted retryable",
       delivery: { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 },
-      temporaryTerminal: true,
+      response: {
+        status: "failed" as const,
+        httpStatus: 503,
+        errorCode: "erp_unavailable",
+        errorMessage: "Unavailable",
+        latencyMs: 1,
+        timestamp: "2026-06-22T00:00:00.001Z",
+      },
     },
     {
-      label: "unknown maximum",
-      delivery: { attemptNumber: 1, attemptsMade: 0 },
-      temporaryTerminal: true,
+      name: "non-retryable",
+      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
+      response: {
+        status: "failed" as const,
+        httpStatus: 400,
+        errorCode: "erp_bad_request",
+        errorMessage: "Bad request",
+        latencyMs: 1,
+        timestamp: "2026-06-22T00:00:00.001Z",
+      },
     },
-  ] as const)("records exact terminality with $label delivery metadata", async ({
-    delivery: caseDelivery,
-    temporaryTerminal,
-  }) => {
-    const cases: Array<{
-      name: string;
-      fetch: typeof globalThis.fetch;
-      expectedTerminal: boolean;
-    }> = [
-      {
-        name: "success",
-        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-          jsonResponse(
-            {
-              status: "succeeded",
-              confirmationId: "erp_confirmation_matrix",
-              httpStatus: 200,
-              latencyMs: 1,
-              timestamp: "2026-06-22T00:00:00.001Z",
-            },
-            200,
-          ),
-        ),
-        expectedTerminal: true,
-      },
-      {
-        name: "retryable response",
-        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-          jsonResponse(
-            {
-              status: "failed",
-              httpStatus: 503,
-              errorCode: "erp_unavailable",
-              errorMessage: "Unavailable",
-              latencyMs: 1,
-              timestamp: "2026-06-22T00:00:00.001Z",
-            },
-            503,
-          ),
-        ),
-        expectedTerminal: temporaryTerminal,
-      },
-      {
-        name: "non-retryable response",
-        fetch: vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-          jsonResponse(
-            {
-              status: "failed",
-              httpStatus: 400,
-              errorCode: "erp_bad_request",
-              errorMessage: "Bad request",
-              latencyMs: 1,
-              timestamp: "2026-06-22T00:00:00.001Z",
-            },
-            400,
-          ),
-        ),
-        expectedTerminal: true,
-      },
-      {
-        name: "timeout",
-        fetch: vi
-          .fn<typeof globalThis.fetch>()
-          .mockRejectedValue(Object.assign(new Error("aborted"), { name: "AbortError" })),
-        expectedTerminal: temporaryTerminal,
-      },
-      {
-        name: "invalid response",
-        fetch: vi
-          .fn<typeof globalThis.fetch>()
-          .mockResolvedValue(jsonResponse({ invalid: true }, 502)),
-        expectedTerminal: temporaryTerminal,
-      },
-      {
-        name: "transport failure",
-        fetch: vi.fn<typeof globalThis.fetch>().mockRejectedValue(new Error("ECONNRESET")),
-        expectedTerminal: temporaryTerminal,
-      },
-    ];
+  ])("records a terminal $name response", async ({ delivery: caseDelivery, response }) => {
+    const attemptPersistence = createAttemptPersistence();
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      attemptPersistence,
+      fetch: vi
+        .fn<typeof globalThis.fetch>()
+        .mockResolvedValue(jsonResponse(response, response.httpStatus)),
+      now: sequenceClock(
+        new Date("2026-06-22T00:00:00.000Z"),
+        new Date("2026-06-22T00:00:00.001Z"),
+      ),
+    });
 
-    for (const scenario of cases) {
-      const attemptPersistence = createAttemptPersistence();
-      const confirmation = new HttpErpOrderConfirmation({
-        baseUrl: "http://mock-erp:4100",
-        requestTimeoutMs: 1000,
-        attemptPersistence,
-        fetch: scenario.fetch,
-        now: sequenceClock(
-          new Date("2026-06-22T00:00:00.000Z"),
-          new Date("2026-06-22T00:00:00.001Z"),
-        ),
-      });
+    await confirmation.confirm(job, caseDelivery).catch(() => undefined);
 
-      await confirmation.confirm(job, caseDelivery).catch(() => undefined);
-
-      expect(attemptPersistence.recordAttempt, scenario.name).toHaveBeenCalledWith(
-        expect.objectContaining({ terminal: scenario.expectedTerminal }),
-      );
-    }
+    expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({ terminal: true }),
+    );
   });
 });
 

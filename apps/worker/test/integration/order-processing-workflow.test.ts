@@ -170,6 +170,7 @@ describe("PostgreSQL worker order transitions", () => {
     const processingTransition = await persistence.transitionToProcessing(job, {
       attemptNumber: 2,
       attemptsMade: 1,
+      maxAttempts: 4,
     });
     expect(processingTransition).toMatchObject({
       changed: true,
@@ -178,6 +179,7 @@ describe("PostgreSQL worker order transitions", () => {
     const confirmedTransition = await persistence.transitionToConfirmed(job, {
       attemptNumber: 2,
       attemptsMade: 1,
+      maxAttempts: 4,
     });
     expect(confirmedTransition).toMatchObject({
       changed: true,
@@ -248,7 +250,11 @@ describe("PostgreSQL worker order transitions", () => {
 
     try {
       await expect(
-        persistence.transitionToProcessing(job, { attemptNumber: 1, attemptsMade: 0 }),
+        persistence.transitionToProcessing(job, {
+          attemptNumber: 1,
+          attemptsMade: 0,
+          maxAttempts: 1,
+        }),
       ).rejects.toThrow();
       const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
       const processingEvents = await connection.db
@@ -271,7 +277,7 @@ describe("PostgreSQL worker order transitions", () => {
 
   it("serializes concurrent duplicate deliveries without duplicate lifecycle events", async () => {
     const persistence = new PostgresOrderTransitionPersistence(connection.db);
-    const delivery = { attemptNumber: 1, attemptsMade: 0 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 };
 
     const processingResults = await Promise.all([
       persistence.transitionToProcessing(job, delivery),
@@ -319,8 +325,16 @@ describe("PostgreSQL worker order transitions", () => {
     await expect(notificationPersistence.record(notificationJob)).rejects.toBeInstanceOf(
       NotificationBeforeConfirmationError,
     );
-    await transitionPersistence.transitionToProcessing(job, { attemptNumber: 1, attemptsMade: 0 });
-    await transitionPersistence.transitionToConfirmed(job, { attemptNumber: 1, attemptsMade: 0 });
+    await transitionPersistence.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+    });
+    await transitionPersistence.transitionToConfirmed(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+    });
 
     await expect(notificationPersistence.record(notificationJob)).resolves.toEqual({
       recorded: true,
@@ -370,7 +384,7 @@ describe("PostgreSQL worker order transitions", () => {
       if (!time) throw new Error("Unexpected clock read");
       return time;
     });
-    const delivery = { attemptNumber: 4, attemptsMade: 3 };
+    const delivery = { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 };
 
     await persistence.transitionToProcessing(job, delivery);
     const failedTransition = await persistence.transitionToFailed(
@@ -381,7 +395,7 @@ describe("PostgreSQL worker order transitions", () => {
     const replay = await persistence.transitionToFailed(
       job,
       { code: "different", message: "must not overwrite" },
-      { attemptNumber: 5, attemptsMade: 4 },
+      { attemptNumber: 5, attemptsMade: 4, maxAttempts: 5 },
     );
 
     const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
@@ -412,7 +426,7 @@ describe("PostgreSQL worker order transitions", () => {
 
     await persistence.recordAttempt({
       job,
-      delivery: { attemptNumber: 3, attemptsMade: 2 },
+      delivery: { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
       status: "failed",
       terminal: true,
       httpStatus: 503,
@@ -480,7 +494,13 @@ describe("PostgreSQL worker order transitions", () => {
     const persistence = new PostgresErpAttemptPersistence(connection.db);
     await persistence.recordAttempt({
       job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: `${status}-${terminal}` },
+      delivery: {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        // Terminal retryable failures only occur on an exhausted budget.
+        maxAttempts: terminal ? 1 : 2,
+        deliveryId: `${status}-${terminal}`,
+      },
       status,
       terminal,
       latencyMs: 10,
@@ -564,13 +584,13 @@ describe("PostgreSQL worker order transitions", () => {
     await expect(
       persistence.transitionToProcessing(
         { ...job, orderId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
-        { attemptNumber: 1, attemptsMade: 0 },
+        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
       ),
     ).rejects.toBeInstanceOf(OrderNotFoundError);
     const mismatch = await persistence
       .transitionToProcessing(
         { ...job, correlationId: "wrong-correlation", quantity: 2 },
-        { attemptNumber: 1, attemptsMade: 0 },
+        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
       )
       .catch((error: unknown) => error);
     expect(mismatch).toBeInstanceOf(OrderJobIdentityMismatchError);

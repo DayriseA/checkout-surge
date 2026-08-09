@@ -13,7 +13,7 @@ const job = {
 
 const record = {
   job,
-  delivery: { attemptNumber: 1, attemptsMade: 0 },
+  delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
   status: "succeeded" as const,
   terminal: true,
   httpStatus: 200,
