@@ -536,6 +536,8 @@ describe("admin feature controllers", () => {
         syncIssue={syncIssue}
       />,
     );
+    expect(screen.getByText("2026-06-20 00:00:10 UTC · stale")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("Read failed");
     expect(screen.getByRole("button", { name: "Retry recovery" })).toBeTruthy();
   });
 
@@ -614,7 +616,13 @@ describe("admin feature controllers", () => {
 
   it("labels unsupported live updates and blocks start", async () => {
     vi.stubGlobal("EventSource", undefined);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => canonicalErrorResponse("Dashboard recovery failed", 503)),
+    );
+    const user = userEvent.setup();
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+    await user.click(screen.getByRole("button", { name: "Refresh status" }));
 
     await waitFor(() =>
       expect(
@@ -624,6 +632,7 @@ describe("admin feature controllers", () => {
     );
     expect(screen.getByText("2026-06-20 00:00:10 UTC · live updates unsupported")).toBeTruthy();
     expect(screen.getByText("live updates unsupported")).toBeTruthy();
+    expect(screen.getByText("The latest information is temporarily unavailable")).toBeTruthy();
   });
 
   it("refreshes current-run recovery after a successful start", async () => {

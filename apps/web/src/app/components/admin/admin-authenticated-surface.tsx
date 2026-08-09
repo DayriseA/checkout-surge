@@ -370,7 +370,7 @@ export function AdminCurrentRunPanel({
   const startBlocked = isRunStartBlocked(recovery, freshness, hasSyncIssue);
   const readFailed = recovery.status === "unavailable" || hasSyncIssue;
   const presentedFreshness =
-    readFailed && freshness.state !== "disconnected"
+    readFailed && freshness.state !== "disconnected" && freshness.state !== "unsupported"
       ? { ...freshness, state: "stale" as const }
       : freshness;
   const freshnessPresentation = deriveFreshnessPresentationState(presentedFreshness);
