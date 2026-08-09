@@ -47,8 +47,6 @@ export interface DeadLetterRecord {
   observedAt: Date;
 }
 
-export interface RecoveryJobPublisher extends OrderJobPublisher {}
-
 export interface FailedOrderJobReader {
   findFailedOrderJobs(limit: number): Promise<
     Array<{
@@ -97,7 +95,7 @@ export function createOrderRecoveryHandoff(
 
 export function createOrderRecoveryScanner(dependencies: {
   persistence: OrderRecoveryPersistence;
-  publisher: RecoveryJobPublisher;
+  publisher: OrderJobPublisher;
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;

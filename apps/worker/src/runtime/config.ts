@@ -1,29 +1,6 @@
 import { orderProcessConcurrencyHardCap } from "@checkout-surge/contracts";
 
-export interface WorkerConfig {
-  databaseUrl: string;
-  healthHost: string;
-  healthPort: number;
-  redisUrl: string;
-  orderProcessConcurrency: number;
-  notificationRecordConcurrency: number;
-  notificationRecoveryScanIntervalMs: number;
-  notificationRecoveryBatchSize: number;
-  orderDispatchScanIntervalMs: number;
-  orderDispatchBatchSize: number;
-  orderDispatchMinimumQueuedAgeMs: number;
-  orderRecoveryScanIntervalMs: number;
-  orderRecoveryBatchSize: number;
-  orderRecoveryLeaseMs: number;
-  orderRecoveryMaxAttempts: number;
-  postgresPoolMax: number;
-  mockErpBaseUrl: string;
-  erpRequestTimeoutMs: number;
-  erpCircuitFailureThreshold: number;
-  erpCircuitResetTimeoutMs: number;
-}
-
-export function loadWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
+export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
   const config = {
     databaseUrl: requireEnv(env, "DATABASE_URL"),
     healthHost: env.HEALTH_HOST?.trim() || env.HOST?.trim() || "0.0.0.0",
