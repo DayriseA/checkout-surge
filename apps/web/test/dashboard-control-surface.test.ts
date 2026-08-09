@@ -12,6 +12,7 @@ import {
   type PublicPresetListResponse,
   type PublicRuntimePolicyResponse,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -669,36 +670,17 @@ function demoPresetFixture(
 }
 
 function configSnapshotFixture() {
+  const previewConfig = previewRunConfigSnapshotFixture();
+  if (previewConfig.trafficConfig.mode !== "buyer-spike") {
+    throw new Error("Expected the Preview 1k fixture to use buyer-spike traffic.");
+  }
+
   return {
-    trafficConfig: {
-      mode: "buyer-spike" as const,
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 2,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
+    ...previewConfig,
+    trafficConfig: previewConfig.trafficConfig,
     erpConfig: {
-      latencyMs: 80,
+      ...previewConfig.erpConfig,
       maxTps: 100,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
-    backpressureConfig: {
-      queueName: "orders:process" as const,
-      physicalQueueName: "orders-process" as const,
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }
