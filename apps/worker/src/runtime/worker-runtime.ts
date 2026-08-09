@@ -6,11 +6,6 @@ import type { NotificationRecordConsumer } from "../queue/notification-record-co
 import type { OrderProcessConsumer } from "../queue/order-process-consumer.js";
 import type { WorkerHealthServer } from "../server.js";
 
-export interface WorkerRuntime {
-  start(): Promise<void>;
-  close(): Promise<void>;
-}
-
 export function createWorkerRuntime(options: {
   healthServer: WorkerHealthServer;
   healthHost: string;
@@ -26,7 +21,7 @@ export function createWorkerRuntime(options: {
   closePostgres: () => Promise<void>;
   closeRedis: () => Promise<void>;
   logger: CheckoutSurgeLogger;
-}): WorkerRuntime {
+}) {
   let started = false;
   let closePromise: Promise<void> | null = null;
 

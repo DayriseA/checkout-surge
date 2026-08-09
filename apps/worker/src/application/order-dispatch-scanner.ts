@@ -9,8 +9,6 @@ export interface OrderDispatchPersistence {
   }): Promise<OrderProcessJob[]>;
 }
 
-export interface OrderDispatchPublisher extends OrderJobPublisher {}
-
 export interface OrderDispatchScanResult {
   candidates: number;
   published: number;
@@ -30,7 +28,7 @@ export interface OrderDispatchScanner {
  */
 export function createOrderDispatchScanner(dependencies: {
   persistence: OrderDispatchPersistence;
-  publisher: OrderDispatchPublisher;
+  publisher: OrderJobPublisher;
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;

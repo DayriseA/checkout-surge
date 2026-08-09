@@ -7,20 +7,14 @@ import {
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { GeneratedRunPublicationFence } from "../application/generated-run-publication-fence.js";
-import type { OrderDispatchPublisher } from "../application/order-dispatch-scanner.js";
-import type {
-  FailedOrderJobReader,
-  RecoveryJobPublisher,
-} from "../application/order-recovery-scanner.js";
+import type { OrderJobPublisher } from "../application/order-job-publisher.js";
+import type { FailedOrderJobReader } from "../application/order-recovery-scanner.js";
 import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
 } from "./bullmq-order-process-consumer.js";
 
-export interface WorkerOrderProcessJobPublisher
-  extends OrderDispatchPublisher,
-    RecoveryJobPublisher,
-    FailedOrderJobReader {
+export interface WorkerOrderProcessJobPublisher extends OrderJobPublisher, FailedOrderJobReader {
   close(): Promise<void>;
 }
 
