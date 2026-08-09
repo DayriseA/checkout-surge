@@ -1,32 +1,23 @@
 "use client";
 
-import { type DashboardProjection, dashboardProjectionSchema } from "@checkout-surge/contracts";
+import {
+  type DashboardProjection,
+  dashboardEventsPath,
+  dashboardProjectionSchema,
+} from "@checkout-surge/contracts";
 import { useEffect, useRef, useState } from "react";
-import { dashboardEventsUrl } from "../../lib/realtime";
 import type { RealtimeConnectionStatus } from "../dashboard-panels";
-
-interface EventSourceLike {
-  addEventListener(type: string, listener: EventListener): void;
-  removeEventListener(type: string, listener: EventListener): void;
-  close(): void;
-}
-
-type EventSourceConstructor = new (url: string) => EventSourceLike;
 
 export interface UseDashboardProjectionsOptions {
   onProjection: (projection: DashboardProjection) => void;
   onOpen: () => void;
   onDisconnect: () => void;
-  eventSourceConstructor?: EventSourceConstructor;
-  url?: string;
 }
 
 export function useDashboardProjections({
   onProjection,
   onOpen,
   onDisconnect,
-  eventSourceConstructor,
-  url = dashboardEventsUrl(),
 }: UseDashboardProjectionsOptions): RealtimeConnectionStatus {
   const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
   const projectionCallbackRef = useRef(onProjection);
@@ -37,13 +28,12 @@ export function useDashboardProjections({
   disconnectCallbackRef.current = onDisconnect;
 
   useEffect(() => {
-    const Constructor = eventSourceConstructor ?? globalThis.EventSource;
-    if (!Constructor) {
+    if (!globalThis.EventSource) {
       setStatus("unsupported");
       return;
     }
 
-    const source = new Constructor(url) as EventSourceLike;
+    const source = new globalThis.EventSource(dashboardEventsPath);
     let connectionState: RealtimeConnectionStatus = "connecting";
     const handleOpen: EventListener = () => {
       if (connectionState === "connected") return;
@@ -79,7 +69,7 @@ export function useDashboardProjections({
       source.removeEventListener("message", handleMessage);
       source.close();
     };
-  }, [eventSourceConstructor, url]);
+  }, []);
 
   return status;
 }
