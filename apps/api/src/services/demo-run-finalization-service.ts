@@ -61,14 +61,7 @@ export interface DemoRunFinalizationController {
   finalizeReadyRuns(): Promise<number>;
 }
 
-type FinalizationDecision =
-  | { ready: false; blockers: string[]; timeoutAt: Date }
-  | {
-      ready: true;
-      terminalStatus: "completed" | "failed";
-      failureReason: InternalRunFailureReason | null;
-      businessOutcome: BusinessOutcomeSummary;
-    };
+type FinalizationDecision = { ready: false; blockers: string[]; timeoutAt: Date } | { ready: true };
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
   constructor(
@@ -355,24 +348,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return { ready: false, blockers, timeoutAt };
     }
 
-    const failureReason = this.deriveFailureReason({
-      delivery: evidence.delivery,
-      http: evidence.http,
-      transportAttemptCounts: evidence.transportAttemptCounts,
-      trafficFailed:
-        input.run.trafficStatus === "failed" || Boolean(input.finalization.errorMessage),
-      businessTimedOut: businessBlockers.length > 0 && timedOut,
-      accountingTimedOut: businessBlockers.length === 0 && !accounting.accounted && timedOut,
-      escalatedRecoveryCount: recoveryPressure.escalatedCount,
-      reconciliationTimedOut: timedOut && pendingRedisCount > 0,
-    });
-
-    return {
-      ready: true,
-      terminalStatus: failureReason ? "failed" : "completed",
-      failureReason,
-      businessOutcome,
-    };
+    return { ready: true };
   }
 
   private drainTimeoutAt(run: typeof demoRuns.$inferSelect): Date {

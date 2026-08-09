@@ -50,6 +50,5 @@ export interface TerminalDemoRunWriter {
     runId: string,
     prepare: (db: CheckoutSurgeDatabase) => Promise<TerminalDemoRunSummaryInput | null>,
   ): Promise<boolean>;
-  writeAfterTerminalClaim(input: TerminalDemoRunSummaryInput): Promise<boolean>;
   writeAfterTerminalClaims(inputs: TerminalDemoRunSummaryInput[]): Promise<number>;
 }

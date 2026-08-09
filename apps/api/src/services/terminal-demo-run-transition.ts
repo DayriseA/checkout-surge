@@ -97,16 +97,6 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
   }
 
   /**
-   * Inserts the immutable summary after a caller has already claimed the
-   * terminal transition. Reset uses this split phase to fence admission before
-   * it captures business state. Ordinary finalization should continue to use
-   * write(), which keeps its claim and summary insert atomic.
-   */
-  async writeAfterTerminalClaim(input: TerminalDemoRunSummaryInput): Promise<boolean> {
-    return (await this.writeAfterTerminalClaims([input])) === 1;
-  }
-
-  /**
    * Inserts all summaries in one transaction after their terminal claims. A
    * reset can therefore retry a failed batch without cleaning queues after a
    * subset of immutable summaries has already committed.

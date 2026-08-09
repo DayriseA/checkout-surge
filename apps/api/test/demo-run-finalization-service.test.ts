@@ -1133,6 +1133,13 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureCategory: "traffic",
     });
+    const [summary] = await db
+      .select({ failureReason: demoRunSummaries.failureReason })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run))
+      .limit(1);
+
+    expect(summary?.failureReason).toBe("traffic_delivery_major_shortfall");
   });
 
   it("reports transport-only major loss before a generic traffic-process failure", async () => {
@@ -1180,6 +1187,13 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureCategory: "traffic",
     });
+    const [summary] = await db
+      .select({ failureReason: demoRunSummaries.failureReason })
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run))
+      .limit(1);
+
+    expect(summary?.failureReason).toBe("traffic_outcome_unexpected_responses");
   });
 
   it("completes the motivating degraded transport-loss profile without a failure reason", async () => {
