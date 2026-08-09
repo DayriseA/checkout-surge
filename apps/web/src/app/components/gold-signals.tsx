@@ -2,7 +2,6 @@ import type {
   ConsistencyLagSummary,
   DemoRunStatus,
   RequestArrivalSummary,
-  RunSignalTimelineHeadline,
   RunSignalTimelineSummary,
 } from "@checkout-surge/contracts";
 import { hasObservedRequestArrivals } from "@checkout-surge/contracts";
@@ -249,34 +248,6 @@ export function GoldSignals({
         {`Shared axis: 0s ${axis.startLabel} · ${formatAxisSeconds(xMax)} ${axis.endLabel}`}
       </p>
     </section>
-  );
-}
-
-export function GoldSignalHeadlines({
-  acceptedReservations,
-  arrivalSummary,
-  headline,
-  oversoldUnits,
-}: {
-  acceptedReservations: number | null;
-  arrivalSummary: RequestArrivalSummary;
-  headline: RunSignalTimelineHeadline | null;
-  /** Null whenever the authoritative inventory snapshot for the run is missing. */
-  oversoldUnits: number | null;
-}) {
-  return (
-    <SignalHeadlineGrid
-      headlines={deriveSignalHeadlines({
-        acceptedReservations,
-        arrivalSummary,
-        failedOrders: null,
-        liveLag: null,
-        oversoldUnits,
-        runStatus: "completed",
-        startingStock: headline?.inventoryDrain.startingStock ?? null,
-        terminalSummary: headline,
-      })}
-    />
   );
 }
 
