@@ -1009,6 +1009,7 @@ const runConfigFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = 
 ];
 
 export function AdminErpDiagnosticsView({
+  controlsDisabledReason,
   errorRate,
   erpChaos,
   fieldErrors,
@@ -1030,6 +1031,7 @@ export function AdminErpDiagnosticsView({
   showValidationSummary,
   validationSummaryRevision,
 }: {
+  controlsDisabledReason?: string | undefined;
   errorRate: string;
   erpChaos: BackendRead<ErpChaosStatus>;
   fieldErrors: Record<string, DraftFieldError>;
@@ -1051,6 +1053,7 @@ export function AdminErpDiagnosticsView({
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
+  const controlsDisabledReasonId = useId();
   const current = erpChaos.status === "available" ? erpChaos.data : null;
   const caps = current?.effectiveSafetyCaps;
   const latestRead = latestErpChaosRead ?? erpChaos;
@@ -1154,23 +1157,32 @@ export function AdminErpDiagnosticsView({
           onChange={onForcedOutageChange}
         />
       </div>
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button
-          className={buttonClassName}
-          disabled={isPending || erpChaos.status !== "available"}
-          onClick={onApply}
-          type="button"
-        >
-          Apply ERP controls
-        </button>
-        <button
-          className={buttonClassName}
-          disabled={isPending || erpChaos.status !== "available"}
-          onClick={onReset}
-          type="button"
-        >
-          Reset ERP controls
-        </button>
+      <div className="mt-4">
+        <div className="flex flex-wrap gap-2">
+          <button
+            aria-describedby={controlsDisabledReason ? controlsDisabledReasonId : undefined}
+            className={buttonClassName}
+            disabled={isPending || erpChaos.status !== "available"}
+            onClick={onApply}
+            type="button"
+          >
+            Apply ERP controls
+          </button>
+          <button
+            aria-describedby={controlsDisabledReason ? controlsDisabledReasonId : undefined}
+            className={buttonClassName}
+            disabled={isPending || erpChaos.status !== "available"}
+            onClick={onReset}
+            type="button"
+          >
+            Reset ERP controls
+          </button>
+        </div>
+        {controlsDisabledReason ? (
+          <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={controlsDisabledReasonId}>
+            {controlsDisabledReason}
+          </p>
+        ) : null}
       </div>
       {erpChaos.status === "unavailable" ? <Unavailable read={erpChaos} /> : null}
       {erpChaos.status === "available" && latestRead.status === "unavailable" ? (

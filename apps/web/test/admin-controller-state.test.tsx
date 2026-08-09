@@ -744,9 +744,18 @@ describe("admin feature controllers", () => {
 
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
     await user.click(confirmationButton("Apply ERP controls"));
-    expect(
-      (document.querySelector("#erp-fault-injection button") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    const erpPanel = document.querySelector("#erp-fault-injection");
+    if (!erpPanel) throw new Error("Expected ERP fault-injection panel.");
+    for (const control of [
+      within(erpPanel as HTMLElement).getByRole("button", { name: "Apply ERP controls" }),
+      within(erpPanel as HTMLElement).getByRole("button", { name: "Reset ERP controls" }),
+    ]) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      expectControlDescription(
+        control,
+        "A change is being applied — wait before applying or resetting ERP controls.",
+      );
+    }
     expect((screen.getByRole("button", { name: "Reset demo" }) as HTMLButtonElement).disabled).toBe(
       false,
     );
@@ -786,6 +795,13 @@ describe("admin feature controllers", () => {
       screen.getByText(`Allowed range: ${nonnegativeNumberMinimum}–5000 milliseconds.`),
     ).toBeTruthy();
     expect(screen.getByText(`Allowed range: ${percentageMinimum}–1.`)).toBeTruthy();
+    for (const control of [
+      screen.getByRole("button", { name: "Apply ERP controls" }),
+      screen.getByRole("button", { name: "Reset ERP controls" }),
+    ]) {
+      expect((control as HTMLButtonElement).disabled).toBe(false);
+      expect(control.getAttribute("aria-describedby")).toBeNull();
+    }
   });
 
   it("keeps a dirty ERP draft across props and submits its exact values", async () => {
@@ -840,19 +856,23 @@ describe("admin feature controllers", () => {
     ).toBe(false);
   });
 
-  it("disables ERP Apply when no authoritative caps are available", () => {
+  it("explains disabled ERP controls when no authoritative caps are available", () => {
     render(
       <AdminErpDiagnosticsController
         initialErpChaos={{ status: "unavailable", reason: "ERP not loaded" }}
       />,
     );
 
-    expect(
-      (screen.getByRole("button", { name: "Apply ERP controls" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
-    expect(
-      (screen.getByRole("button", { name: "Reset ERP controls" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
+    for (const control of [
+      screen.getByRole("button", { name: "Apply ERP controls" }),
+      screen.getByRole("button", { name: "Reset ERP controls" }),
+    ]) {
+      expect((control as HTMLButtonElement).disabled).toBe(true);
+      expectControlDescription(
+        control,
+        "Diagnostics status is unavailable — refresh before applying or resetting ERP controls.",
+      );
+    }
     expect(screen.getByRole("alert")).toBeTruthy();
   });
 

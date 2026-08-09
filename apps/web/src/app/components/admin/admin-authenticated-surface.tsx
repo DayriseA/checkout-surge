@@ -1337,6 +1337,11 @@ export function AdminErpDiagnosticsController({
   } | null>(null);
   const [confirmationError, setConfirmationError] = useState<AdminNotice | null>(null);
   const isDraftDirtyRef = useRef(false);
+  const controlsDisabledReason = isPending
+    ? "A change is being applied — wait before applying or resetting ERP controls."
+    : erpChaos.status === "unavailable"
+      ? "Diagnostics status is unavailable — refresh before applying or resetting ERP controls."
+      : undefined;
 
   useEffect(() => {
     setLatestErpChaosRead(initialErpChaos);
@@ -1424,6 +1429,7 @@ export function AdminErpDiagnosticsController({
   return (
     <>
       <AdminErpDiagnosticsView
+        controlsDisabledReason={controlsDisabledReason}
         errorRate={draft.errorRate}
         erpChaos={erpChaos}
         fieldErrors={fieldErrors}
