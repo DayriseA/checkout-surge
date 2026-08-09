@@ -338,11 +338,12 @@ describe("load-orchestrator readiness", () => {
   });
 
   it("marks the API readiness dependency unavailable when the API readiness request times out", async () => {
-    vi.useFakeTimers();
     const fetchApi = vi.fn<typeof globalThis.fetch>(
       (_input, init) =>
         new Promise<Response>((_resolve, reject) => {
-          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+            once: true,
+          });
         }),
     );
     const readiness = createLoadOrchestratorReadiness(
@@ -353,18 +354,39 @@ describe("load-orchestrator readiness", () => {
       },
     );
 
-    try {
-      const checksPromise = readiness.checks();
-      await vi.advanceTimersByTimeAsync(25);
-      const checks = await checksPromise;
+    const checks = await readiness.checks();
 
-      expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
-        status: "unavailable",
-        message: "API readiness check timed out after 25ms.",
-      });
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
+      status: "unavailable",
+      message: "API readiness check timed out after 25ms.",
+    });
+  });
+
+  it("keeps the API readiness timeout classification while reading the response body", async () => {
+    const fetchApi = vi.fn<typeof globalThis.fetch>(async (_input, init) => {
+      const signal = init?.signal;
+      return {
+        ok: true,
+        json: () =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          }),
+      } as Response;
+    });
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ apiBaseUrl: "http://api.test" }),
+      {
+        apiReadinessTimeoutMs: 25,
+        fetch: fetchApi,
+      },
+    );
+
+    const checks = await readiness.checks();
+
+    expect(readinessCheck(checks, "api_readiness_reachable")).toMatchObject({
+      status: "unavailable",
+      message: "API readiness check timed out after 25ms.",
+    });
   });
 
   it("marks the API readiness dependency unavailable when the API is not ready", async () => {

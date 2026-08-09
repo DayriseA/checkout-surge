@@ -65,15 +65,16 @@ async function apiReadinessCheck(
   }
 
   const url = joinUrl(trimmedApiBaseUrl, options.path);
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs);
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(options.fetch, url, options.timeoutMs);
+    response = await options.fetch(url, { signal: timeoutSignal });
   } catch (error) {
     return {
       name: apiReadinessCheckName,
       status: "unavailable",
-      message: error instanceof Error ? error.message : "API readiness request failed.",
+      message: apiReadinessErrorMessage(error, timeoutSignal, options.timeoutMs),
     };
   }
 
@@ -95,6 +96,14 @@ async function apiReadinessCheck(
       };
     }
   } catch (error) {
+    if (isTimeoutSignal(timeoutSignal)) {
+      return {
+        name: apiReadinessCheckName,
+        status: "unavailable",
+        message: `API readiness check timed out after ${options.timeoutMs}ms.`,
+      };
+    }
+
     return {
       name: apiReadinessCheckName,
       status: "unavailable",
@@ -111,29 +120,21 @@ async function apiReadinessCheck(
   };
 }
 
-async function fetchWithTimeout(
-  fetchApi: typeof fetch,
-  url: string,
+function apiReadinessErrorMessage(
+  error: unknown,
+  timeoutSignal: AbortSignal,
   timeoutMs: number,
-): Promise<Response> {
-  const controller = new AbortController();
-  let timedOut = false;
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-
-  try {
-    return await fetchApi(url, { signal: controller.signal });
-  } catch (error) {
-    if (timedOut) {
-      throw new Error(`API readiness check timed out after ${timeoutMs}ms.`);
-    }
-
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+): string {
+  if (isTimeoutSignal(timeoutSignal)) {
+    return `API readiness check timed out after ${timeoutMs}ms.`;
   }
+  return error instanceof Error ? error.message : "API readiness request failed.";
+}
+
+function isTimeoutSignal(signal: AbortSignal): boolean {
+  return (
+    signal.aborted && signal.reason instanceof DOMException && signal.reason.name === "TimeoutError"
+  );
 }
 
 function joinUrl(baseUrl: string, path: string): string {

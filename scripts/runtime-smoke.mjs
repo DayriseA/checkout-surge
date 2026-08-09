@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { randomUUID } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import {
   adminGeneratedRunTeardownPath,
@@ -954,23 +955,17 @@ async function requestJson(url, init, fetchImpl, timeoutMs = requestTimeoutMs) {
 }
 
 async function readHttpResponse(url, init, fetchImpl, timeoutMs = requestTimeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const response = await fetchImpl(url, {
+    cache: "no-store",
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await response.text();
+  if (!text) return { response, body: null };
   try {
-    const response = await fetchImpl(url, {
-      cache: "no-store",
-      ...init,
-      signal: controller.signal,
-    });
-    const text = await response.text();
-    if (!text) return { response, body: null };
-    try {
-      return { response, body: JSON.parse(text) };
-    } catch {
-      return { response, body: text };
-    }
-  } finally {
-    clearTimeout(timeout);
+    return { response, body: JSON.parse(text) };
+  } catch {
+    return { response, body: text };
   }
 }
 
@@ -1033,10 +1028,6 @@ function combineErrors(primaryError, secondaryError, stage) {
     [primaryError, secondaryError],
     `${message(primaryError)}; failed ${stage}: ${message(secondaryError)}`,
   );
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function message(error) {
