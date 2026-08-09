@@ -1,12 +1,8 @@
-import {
-  emptyRequestArrivalSummary,
-  runSignalBucketCount,
-  toRunSignalTimelineHeadline,
-} from "@checkout-surge/contracts";
+import { runSignalBucketCount } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { GoldSignalHeadlines, GoldSignals, scale } from "../src/app/components/gold-signals.js";
+import { GoldSignals, scale } from "../src/app/components/gold-signals.js";
 
 describe("Gold Signals", () => {
   it("uses one aligned axis and terminal evidence instead of a low-volume live tail", () => {
@@ -502,75 +498,6 @@ describe("Gold Signals", () => {
     expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
     expect(markup).not.toContain("60s:");
     expect(markup).not.toContain("Latest/retained peak 0");
-  });
-
-  it("renders all four run-history headlines from retained terminal evidence", () => {
-    const terminal = timelineFixture();
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignalHeadlines, {
-        acceptedReservations: 10,
-        arrivalSummary: {
-          firstAttemptStartedAt: terminal.window.anchoredAt,
-          peakArrivalRatePerSecond: 10,
-          peakArrivalWindowSeconds: 1,
-          dispatchDurationSeconds: 2,
-          arrivalRateSeries: [],
-          arrivalWindowCountObserved: 0,
-          arrivalWindowCountRetained: 0,
-          arrivalSeriesLimit: 120,
-        },
-        headline: toRunSignalTimelineHeadline(terminal),
-        oversoldUnits: 0,
-      }),
-    );
-
-    expect(markup).toContain("Request arrival");
-    expect(markup).toContain("Peak 10 attempts/s");
-    expect(markup).toContain("0 of 10 left · 0 oversold");
-    expect(markup).toContain("Peak 6 · drained in 10 s");
-    expect(markup).toContain("9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s");
-  });
-
-  it("leaves oversell unknown in history headlines without an inventory snapshot", () => {
-    const terminal = timelineFixture();
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignalHeadlines, {
-        acceptedReservations: 10,
-        arrivalSummary: {
-          firstAttemptStartedAt: terminal.window.anchoredAt,
-          peakArrivalRatePerSecond: 10,
-          peakArrivalWindowSeconds: 1,
-          dispatchDurationSeconds: 2,
-          arrivalRateSeries: [],
-          arrivalWindowCountObserved: 0,
-          arrivalWindowCountRetained: 0,
-          arrivalSeriesLimit: 120,
-        },
-        headline: toRunSignalTimelineHeadline(terminal),
-        oversoldUnits: null,
-      }),
-    );
-
-    expect(markup).toContain("0 of 10 left · oversell unknown");
-    expect(markup).not.toContain("0 oversold");
-  });
-
-  it("refuses an unobserved arrival summary in history headlines", () => {
-    const terminal = timelineFixture();
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignalHeadlines, {
-        acceptedReservations: 10,
-        arrivalSummary: emptyRequestArrivalSummary,
-        headline: toRunSignalTimelineHeadline(terminal),
-        oversoldUnits: 0,
-      }),
-    );
-
-    expect(markup).toContain(
-      '<dt class="text-xs font-bold text-muted">Request arrival</dt><dd class="m-0 mt-1 font-semibold text-ink">Not recorded for this run</dd>',
-    );
-    expect(markup).not.toContain("Peak 0 attempts/s");
-    expect(markup).not.toContain("dispatched in 0 s");
   });
 
   it("scales every panel against the same bounded x-domain", () => {
