@@ -34,22 +34,16 @@ export async function startMockErp(): Promise<void> {
     return closePromise;
   };
 
-  process.once("SIGTERM", () => {
+  const handleShutdown = () => {
     void close()
       .then(() => process.exit(0))
       .catch((error: unknown) => {
         logger.error({ err: error }, "Mock ERP shutdown failed.");
         process.exit(1);
       });
-  });
-  process.once("SIGINT", () => {
-    void close()
-      .then(() => process.exit(0))
-      .catch((error: unknown) => {
-        logger.error({ err: error }, "Mock ERP shutdown failed.");
-        process.exit(1);
-      });
-  });
+  };
+  process.once("SIGTERM", handleShutdown);
+  process.once("SIGINT", handleShutdown);
 
   try {
     await server.listen({

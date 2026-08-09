@@ -252,22 +252,16 @@ export async function startWorker(): Promise<void> {
     return shutdownPromise;
   };
 
-  process.once("SIGTERM", () => {
+  const handleShutdown = () => {
     void shutdown()
       .then(() => process.exit(0))
       .catch((error: unknown) => {
         logger.error({ err: error }, "Worker shutdown failed.");
         process.exit(1);
       });
-  });
-  process.once("SIGINT", () => {
-    void shutdown()
-      .then(() => process.exit(0))
-      .catch((error: unknown) => {
-        logger.error({ err: error }, "Worker shutdown failed.");
-        process.exit(1);
-      });
-  });
+  };
+  process.once("SIGTERM", handleShutdown);
+  process.once("SIGINT", handleShutdown);
 
   try {
     await runtime.start();
