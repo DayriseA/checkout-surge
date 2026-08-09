@@ -17,10 +17,9 @@ import {
   createProxyRequestContext,
   jsonError,
   type ProxyRequestContext,
+  parseJsonRequest,
   proxyJson,
-  readJsonRequest,
   requireControlServiceToken,
-  validateJson,
 } from "../src/app/lib/server/backend-proxy.js";
 import {
   initializeWebServerConfig,
@@ -215,21 +214,58 @@ describe("backend proxy request context", () => {
       "admin_session_required",
     );
     expect(sessionResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
+  });
 
-    const jsonFailure = await readJsonRequest(
+  it("parses and validates JSON request bodies", async () => {
+    const parsed = await parseJsonRequest(
+      ctxWith(
+        "parse-corr",
+        new Request("http://dashboard.local", {
+          method: "POST",
+          body: JSON.stringify({ ok: true }),
+        }),
+      ),
+      successSchema,
+    );
+
+    expect(parsed).toEqual({ ok: true });
+  });
+
+  it("distinguishes malformed JSON from valid JSON that violates the contract", async () => {
+    const jsonFailure = await parseJsonRequest(
       ctxWith(
         "local-corr",
         new Request("http://dashboard.local", { method: "POST", body: "not-json" }),
       ),
+      successSchema,
     );
     const jsonResponse = jsonFailure as Response;
     expect(jsonResponse.status).toBe(400);
-    expect(errorPayloadSchema.parse(await jsonResponse.json()).code).toBe("invalid_request");
+    expect(errorPayloadSchema.parse(await jsonResponse.json())).toMatchObject({
+      code: "invalid_request",
+      correlationId: "local-corr",
+      message: "Request body must be valid JSON.",
+    });
+    expect(jsonResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
 
-    const validationFailure = validateJson(ctx, { unexpected: true }, successSchema);
+    const validationFailure = await parseJsonRequest(
+      ctxWith(
+        "local-corr",
+        new Request("http://dashboard.local", {
+          method: "POST",
+          body: JSON.stringify({ unexpected: true }),
+        }),
+      ),
+      successSchema,
+    );
     const validationResponse = validationFailure as Response;
     expect(validationResponse.status).toBe(400);
-    expect(errorPayloadSchema.parse(await validationResponse.json()).code).toBe("invalid_request");
+    expect(errorPayloadSchema.parse(await validationResponse.json())).toMatchObject({
+      code: "invalid_request",
+      correlationId: "local-corr",
+      message: "Request body did not match the shared contract.",
+    });
+    expect(validationResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
   });
 
   it("returns a canonical control-token-not-configured envelope when the token is missing", async () => {

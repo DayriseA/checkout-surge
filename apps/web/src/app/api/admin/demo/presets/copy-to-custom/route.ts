@@ -7,8 +7,7 @@ import { authorizeAdminProxy } from "../../../../../lib/server/admin-proxy";
 import {
   apiBaseUrl,
   createProxyRequestContext,
-  readJsonRequest,
-  validateJson,
+  parseJsonRequest,
 } from "../../../../../lib/server/backend-proxy";
 
 export async function POST(request: Request): Promise<Response> {
@@ -16,12 +15,7 @@ export async function POST(request: Request): Promise<Response> {
   const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(ctx);
-  if (body instanceof Response) {
-    return body;
-  }
-
-  const parsed = validateJson(ctx, body, copyDemoPresetToCustomRequestSchema);
+  const parsed = await parseJsonRequest(ctx, copyDemoPresetToCustomRequestSchema);
   if (parsed instanceof Response) {
     return parsed;
   }

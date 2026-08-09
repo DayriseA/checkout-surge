@@ -7,9 +7,8 @@ import { authorizeAdminProxy } from "../../../lib/server/admin-proxy";
 import {
   createProxyRequestContext,
   mockErpBaseUrl,
+  parseJsonRequest,
   proxyJson,
-  readJsonRequest,
-  validateJson,
 } from "../../../lib/server/backend-proxy";
 
 export async function GET(request: Request): Promise<Response> {
@@ -27,12 +26,7 @@ export async function PUT(request: Request): Promise<Response> {
   const admin = authorizeAdminProxy(ctx);
   if (admin instanceof Response) return admin;
 
-  const body = await readJsonRequest(ctx);
-  if (body instanceof Response) {
-    return body;
-  }
-
-  const config = validateJson(ctx, body, erpChaosConfigSchema);
+  const config = await parseJsonRequest(ctx, erpChaosConfigSchema);
   if (config instanceof Response) {
     return config;
   }
