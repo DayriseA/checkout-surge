@@ -31,14 +31,16 @@ describe("notification recovery scanner", () => {
         .mockRejectedValueOnce(publishError)
         .mockResolvedValueOnce(undefined),
     };
-    const reportPublishFailure = vi.fn();
+    const logger = createSilentLogger("worker");
+    const logError = vi.spyOn(logger, "error").mockImplementation(() => {
+      throw new Error("logging unavailable");
+    });
     const scanner = createNotificationRecoveryScanner({
       persistence,
       publisher,
-      logger: createSilentLogger("worker"),
+      logger,
       scanIntervalMs: 1000,
       batchSize: 25,
-      reportPublishFailure,
     });
 
     await expect(scanner.scanOnce()).resolves.toEqual({
@@ -60,12 +62,15 @@ describe("notification recovery scanner", () => {
       job,
       "2026-06-21T00:00:02.000Z",
     );
-    expect(reportPublishFailure).toHaveBeenCalledWith({
-      error: publishError,
-      orderId: job.orderId,
-      saleOfferId: job.saleOfferId,
-      runId: job.runId,
-      correlationId: job.correlationId,
-    });
+    expect(logError).toHaveBeenCalledWith(
+      {
+        err: publishError,
+        orderId: job.orderId,
+        saleOfferId: job.saleOfferId,
+        runId: job.runId,
+        correlationId: job.correlationId,
+      },
+      "Notification recovery could not publish a notification-recording job.",
+    );
   });
 });

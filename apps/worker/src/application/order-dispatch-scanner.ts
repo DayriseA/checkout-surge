@@ -34,7 +34,6 @@ export function createOrderDispatchScanner(dependencies: {
   batchSize: number;
   minimumQueuedAgeMs: number;
   now?: () => Date;
-  reportPublishFailure?: (report: { error: unknown; job: OrderProcessJob }) => void;
 }): OrderDispatchScanner {
   let interval: NodeJS.Timeout | null = null;
   let inFlight: Promise<void> | null = null;
@@ -56,7 +55,20 @@ export function createOrderDispatchScanner(dependencies: {
         published += 1;
       } catch (error) {
         failed += 1;
-        reportPublishFailure(dependencies, job, error);
+        try {
+          dependencies.logger.error(
+            {
+              err: error,
+              orderId: job.orderId,
+              saleOfferId: job.saleOfferId,
+              ...(job.runId ? { runId: job.runId } : {}),
+              correlationId: job.correlationId,
+            },
+            "Order dispatch recovery could not publish an order-processing job.",
+          );
+        } catch {
+          // Logging must not stop recovery scanning.
+        }
       }
     }
 
@@ -106,34 +118,4 @@ export function createOrderDispatchScanner(dependencies: {
       await inFlight;
     },
   };
-}
-
-function reportPublishFailure(
-  dependencies: {
-    logger: CheckoutSurgeLogger;
-    reportPublishFailure?: (report: { error: unknown; job: OrderProcessJob }) => void;
-  },
-  job: OrderProcessJob,
-  error: unknown,
-): void {
-  const report = { error, job };
-
-  if (dependencies.reportPublishFailure) {
-    try {
-      dependencies.reportPublishFailure(report);
-    } catch {
-      // Reporting is non-critical; a later scan can retry publication.
-    }
-    return;
-  }
-
-  dependencies.logger.error(
-    {
-      err: error,
-      orderId: job.orderId,
-      saleOfferId: job.saleOfferId,
-      correlationId: job.correlationId,
-    },
-    "Order dispatch recovery could not publish an order-processing job.",
-  );
 }

@@ -13,13 +13,6 @@ export function createNotificationRecordJobHandler(dependencies: {
   persistence: NotificationRecordPersistence;
   logger: CheckoutSurgeLogger;
   publishBusinessOutcomeUpdate: (job: NotificationRecordJob) => Promise<void>;
-  reportBusinessOutcomeUpdateFailure?: (report: {
-    error: unknown;
-    orderId: string;
-    saleOfferId: string;
-    runId?: string;
-    correlationId: string;
-  }) => void;
 }): NotificationRecordJobHandler {
   return {
     handle: async (job) => {
@@ -48,13 +41,6 @@ export function createNotificationRecordJobHandler(dependencies: {
 async function publishBusinessOutcomeUpdateWithoutFailingJob(
   dependencies: {
     publishBusinessOutcomeUpdate: (job: NotificationRecordJob) => Promise<void>;
-    reportBusinessOutcomeUpdateFailure?: (report: {
-      error: unknown;
-      orderId: string;
-      saleOfferId: string;
-      runId?: string;
-      correlationId: string;
-    }) => void;
   },
   job: NotificationRecordJob,
   logger: CheckoutSurgeLogger,
@@ -62,26 +48,19 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
   try {
     await dependencies.publishBusinessOutcomeUpdate(job);
   } catch (error) {
-    const report = {
-      error,
-      orderId: job.orderId,
-      saleOfferId: job.saleOfferId,
-      ...(job.runId ? { runId: job.runId } : {}),
-      correlationId: job.correlationId,
-    };
-
-    if (dependencies.reportBusinessOutcomeUpdateFailure) {
-      try {
-        dependencies.reportBusinessOutcomeUpdateFailure(report);
-      } catch {
-        // Reporting is non-critical; the durable notification record remains authoritative.
-      }
-      return;
+    try {
+      logger.error(
+        {
+          err: error,
+          orderId: job.orderId,
+          saleOfferId: job.saleOfferId,
+          ...(job.runId ? { runId: job.runId } : {}),
+          correlationId: job.correlationId,
+        },
+        "Notification record succeeded but dashboard business outcome publication failed.",
+      );
+    } catch {
+      // Logging must not fail the durable notification record.
     }
-
-    logger.error(
-      report,
-      "Dashboard business outcome publication failed after notification record.",
-    );
   }
 }
