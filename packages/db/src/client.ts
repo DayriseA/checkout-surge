@@ -1,9 +1,7 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
-import * as schema from "./schema.js";
 
-export type CheckoutSurgeSchema = typeof schema;
-export type CheckoutSurgeDatabase = PostgresJsDatabase<CheckoutSurgeSchema>;
+export type CheckoutSurgeDatabase = PostgresJsDatabase;
 export type SqlClient = ReturnType<typeof postgres>;
 export type SqlClientOptions = NonNullable<Parameters<typeof postgres>[1]>;
 
@@ -24,7 +22,7 @@ export function createSqlClient(databaseUrl: string, options: SqlClientOptions =
 }
 
 export function createDatabase(sqlClient: SqlClient): CheckoutSurgeDatabase {
-  return drizzle(sqlClient, { schema });
+  return drizzle(sqlClient);
 }
 
 /** Bind direct postgres.js queries to an operation signal. */
