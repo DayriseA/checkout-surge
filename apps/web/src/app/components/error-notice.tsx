@@ -6,6 +6,7 @@ import {
   type ErrorPresentationContextName,
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
+import { neutralLinkButtonClassName } from "./control-styles";
 
 export function ErrorNotice({
   read,
@@ -37,11 +38,11 @@ export function ErrorNotice({
       ? "border-[#ecd08f] bg-warning-soft text-warning"
       : "border-[#f7b4ad] bg-danger-soft text-danger";
   const actionNode: ReactNode = action.href ? (
-    <a className="font-semibold underline" href={action.href}>
+    <a className={neutralLinkButtonClassName} href={action.href}>
       {action.label}
     </a>
   ) : retryAction ? (
-    <button className="font-semibold underline" onClick={retryAction} type="button">
+    <button className={neutralLinkButtonClassName} onClick={retryAction} type="button">
       {action.label}
     </button>
   ) : action.kind === "retry" || action.kind === "check" ? null : action.label ? (
