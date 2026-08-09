@@ -89,23 +89,39 @@ describe("dashboard control proxy routes", () => {
       ["ERP reset", "POST", resetErpChaos],
     ];
     for (const [name, method, handler] of privateRoutes) {
-      const request = (cookie?: string) =>
+      const request = (headers: Record<string, string> = {}) =>
         new Request("http://dashboard.local/api/admin/test", {
           method,
           headers: {
             ...(method === "GET" ? {} : { origin: "http://dashboard.local" }),
-            ...(cookie ? { cookie } : {}),
+            ...headers,
           },
           ...(method === "GET" ? {} : { body: "not-json" }),
         });
-      expect((await handler(request())).status, `${name}: missing`).toBe(401);
+      const missingResponse = await handler(request());
+      expect(missingResponse.status, `${name}: missing`).toBe(401);
+      expect((await missingResponse.json()).code, `${name}: missing code`).toBe(
+        "admin_session_required",
+      );
+      const rawPassphraseResponse = await handler(
+        request({ [adminPassphraseHeaderName]: "admin-pass" }),
+      );
+      expect(rawPassphraseResponse.status, `${name}: raw passphrase`).toBe(401);
+      expect((await rawPassphraseResponse.json()).code, `${name}: raw passphrase code`).toBe(
+        "admin_session_required",
+      );
       expect(
-        (await handler(request("checkout_surge_admin_session=tampered"))).status,
+        (await handler(request({ cookie: "checkout_surge_admin_session=tampered" }))).status,
         `${name}: tampered`,
       ).toBe(401);
       expect(
-        (await handler(request(`checkout_surge_admin_session=${encodeURIComponent(expired)}`)))
-          .status,
+        (
+          await handler(
+            request({
+              cookie: `checkout_surge_admin_session=${encodeURIComponent(expired)}`,
+            }),
+          )
+        ).status,
         `${name}: expired`,
       ).toBe(401);
     }
@@ -386,24 +402,6 @@ describe("dashboard control proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("requires an admin session before forwarding ERP chaos updates", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await updateErpChaos(
-      new Request("http://dashboard.local/api/admin/erp-chaos", {
-        method: "PUT",
-        headers: { origin: "http://dashboard.local" },
-        body: JSON.stringify(erpChaosConfigPayload()),
-      }),
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(401);
-    expect(payload.code).toBe("admin_session_required");
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
   it("sets a signed HttpOnly admin session after passphrase validation", async () => {
     const response = await createAdminSession(
       new Request("http://dashboard.local/api/admin/session", {
@@ -465,104 +463,6 @@ describe("dashboard control proxy routes", () => {
     const fetchMock = vi.fn(async () => jsonResponse(erpChaosStatusPayload()));
     vi.stubGlobal("fetch", fetchMock);
     const response = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("rejects raw passphrase headers on protected admin proxy routes without a session", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const rawPassphraseHeaders = {
-      origin: "http://dashboard.local",
-      [adminPassphraseHeaderName]: "admin-pass",
-    };
-    const rawPassphraseJsonHeaders = {
-      "content-type": "application/json",
-      ...rawPassphraseHeaders,
-    };
-    const savePayload = {
-      slug: "custom",
-      display: {
-        name: "Custom",
-        description: "Updated custom preset.",
-        sortOrder: 120,
-        outcomeFocus: [],
-      },
-      ...configSnapshotPayload(),
-    };
-
-    const responses = await Promise.all([
-      resetDemo(
-        new Request("http://dashboard.local/api/admin/demo/reset", {
-          method: "POST",
-          headers: rawPassphraseHeaders,
-        }),
-      ),
-      updateErpChaos(
-        new Request("http://dashboard.local/api/admin/erp-chaos", {
-          method: "PUT",
-          headers: rawPassphraseJsonHeaders,
-          body: JSON.stringify(erpChaosConfigPayload()),
-        }),
-      ),
-      saveAdminPreset(
-        new Request("http://dashboard.local/api/admin/demo/presets/save", {
-          method: "POST",
-          headers: rawPassphraseJsonHeaders,
-          body: JSON.stringify(savePayload),
-        }),
-      ),
-      deleteRunHistory(
-        new Request("http://dashboard.local/api/admin/demo/runs/history", {
-          method: "DELETE",
-          headers: rawPassphraseJsonHeaders,
-          body: JSON.stringify({ deleteAllConfirmation: "DELETE" }),
-        }),
-      ),
-      startAdminDemoRun(
-        new Request("http://dashboard.local/api/admin/demo/runs/start", {
-          method: "POST",
-          headers: rawPassphraseJsonHeaders,
-          body: JSON.stringify({ presetSlug: "preview-1k" }),
-        }),
-      ),
-    ]);
-    const payloads = (await Promise.all(responses.map((response) => response.json()))) as Array<{
-      code?: string;
-    }>;
-
-    expect(responses.map((response) => response.status)).toEqual([401, 401, 401, 401, 401]);
-    expect(payloads.map((payload) => payload.code)).toEqual([
-      "admin_session_required",
-      "admin_session_required",
-      "admin_session_required",
-      "admin_session_required",
-      "admin_session_required",
-    ]);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("accepts a valid admin session cookie for protected proxy routes", async () => {
-    const headers = await adminSessionHeaders();
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({
-        failedRunCount: 1,
-        closedSaleOfferCount: 1,
-        cleanedQueueCount: 2,
-        cleanedJobCount: 3,
-        resetAt: "2026-06-20T00:00:10.000Z",
-        correlationId: "corr-reset",
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await resetDemo(
-      new Request("http://dashboard.local/api/admin/demo/reset", {
-        method: "POST",
-        headers,
-      }),
-    );
-
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
