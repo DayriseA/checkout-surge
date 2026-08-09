@@ -400,46 +400,6 @@ describe("BullMQ order-processing boundary", () => {
     );
     expect(handle).not.toHaveBeenCalled();
   });
-
-  it("isolates a throwing failure reporter and continues consuming jobs", async () => {
-    const reporterCalled = deferred<void>();
-    const nextJobHandled = deferred<OrderProcessJob>();
-    const logger = createSilentLogger("worker");
-    const errorLog = vi.spyOn(logger, "error");
-    consumer = createBullMqOrderProcessConsumer({
-      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
-      concurrency: 1,
-      handler: {
-        handle: async (payload) => {
-          if (payload.orderId === job.orderId) throw new Error("job failed");
-          nextJobHandled.resolve(payload);
-        },
-      },
-      logger,
-      reportFailure: () => {
-        reporterCalled.resolve(undefined);
-        throw new Error("Reporter unavailable");
-      },
-    });
-
-    consumer.start();
-    await queue.add(orderProcessJobName, job, {
-      jobId: "reporter-error-job",
-    });
-    await reporterCalled.promise;
-    await queue.add(orderProcessJobName, {
-      ...job,
-      orderId: "44444444-4444-4444-8444-444444444444",
-    });
-
-    await expect(nextJobHandled.promise).resolves.toMatchObject({
-      orderId: "44444444-4444-4444-8444-444444444444",
-    });
-    expect(errorLog).toHaveBeenCalledWith(
-      expect.objectContaining({ err: expect.any(Error) }),
-      "Order-processing failure reporter threw an error.",
-    );
-  });
 });
 
 describe("BullMQ notification-recording boundary", () => {

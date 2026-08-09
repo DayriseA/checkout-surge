@@ -67,7 +67,6 @@ import {
 } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
-import type { OrderProcessJobFailureReport } from "../../src/queue/bullmq-order-process-consumer.js";
 import type { OrderProcessConsumer } from "../../src/queue/order-process-consumer.js";
 import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
@@ -864,7 +863,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           new Date("2026-06-21T00:00:02.020Z"),
         ),
       }),
-      undefined,
       isTemporaryErpConfirmationError,
     );
     consumer.start();
@@ -921,7 +919,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         resetTimeoutMs: 1000,
         isCountedFailure: (error) => error === confirmationFailure,
       }),
-      undefined,
       (error) => error === confirmationFailure || isTemporaryErpCircuitError(error),
       (error) => error instanceof ErpCircuitOpenError,
     );
@@ -958,7 +955,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   });
 
   it("persists terminal order failure after the ERP retry budget is exhausted", async () => {
-    const failed = deferred<OrderProcessJobFailureReport>();
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -984,7 +980,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           new Date("2026-06-21T00:00:01.015Z"),
         ),
       }),
-      failed.resolve,
       isTemporaryErpConfirmationError,
     );
     consumer.start();
@@ -994,8 +989,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       backoff: { type: "exponential", delay: 10 },
       jobId: job.orderId,
     });
-    const report = await failed.promise;
-    await waitForOrderStatus(connection, "failed");
+    await waitForFailedOrderProcessingState(connection, queue, 1);
+    const bullJob = await queue.getJob(job.orderId);
     const [attempt] = await connection.db
       .select()
       .from(erpAttempts)
@@ -1005,7 +1000,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       (event) => event.eventName === "order.failed",
     );
 
-    expect(report).toMatchObject({ jobId: job.orderId, attemptsMade: 1 });
+    expect(await bullJob?.getState()).toBe("failed");
+    expect(bullJob?.attemptsMade).toBe(1);
     expect(fetch).toHaveBeenCalledOnce();
     expect(attempt).toMatchObject({
       attemptNumber: 1,
@@ -1029,30 +1025,19 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("persists an injected failure and leaves the BullMQ job failed with attempt metadata", async () => {
     const confirmationError = new Error("injected confirmation failure");
-    const failed = deferred<OrderProcessJobFailureReport>();
-    consumer = buildConsumer(
-      connection,
-      { confirm: vi.fn().mockRejectedValue(confirmationError) },
-      failed.resolve,
-    );
+    consumer = buildConsumer(connection, { confirm: vi.fn().mockRejectedValue(confirmationError) });
     consumer.start();
 
     await queue.add(orderProcessJobName, job, { jobId: job.orderId });
-    const report = await failed.promise;
-    await waitForOrderStatus(connection, "failed");
+    await waitForFailedOrderProcessingState(connection, queue, 0);
     const bullJob = await queue.getJob(job.orderId);
     const failedEvent = (await readOrderEvents(connection, ids.order)).find(
       (event) => event.eventName === "order.failed",
     );
 
-    expect(report).toMatchObject({
-      jobId: job.orderId,
-      attemptNumber: 1,
-      attemptsMade: 1,
-      error: confirmationError,
-    });
     expect(await bullJob?.getState()).toBe("failed");
     expect(bullJob?.attemptsMade).toBe(1);
+    expect(bullJob?.failedReason).toBe(confirmationError.message);
     expect(failedEvent?.payload).toMatchObject({ attemptNumber: 1, attemptsMade: 0 });
   });
 });
@@ -1060,7 +1045,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 function buildConsumer(
   connection: ReturnType<typeof createDatabaseConnection>,
   confirmation: OrderConfirmation,
-  reportFailure?: (report: OrderProcessJobFailureReport) => void,
   isTemporaryConfirmationFailure?: (error: unknown) => boolean,
   shouldRetryWithoutFailingOrder?: (error: unknown) => boolean,
 ): OrderProcessConsumer {
@@ -1076,7 +1060,6 @@ function buildConsumer(
       ...(shouldRetryWithoutFailingOrder ? { shouldRetryWithoutFailingOrder } : {}),
     }),
     logger,
-    ...(reportFailure ? { reportFailure } : {}),
   });
 }
 
@@ -1262,6 +1245,32 @@ async function waitForOrderStatus(
   );
 }
 
+async function waitForFailedOrderProcessingState(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  queue: Queue<OrderProcessJob, void, typeof orderProcessJobName>,
+  expectedAttemptCount: number,
+): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      const queuedJob = await queue.getJob(job.orderId);
+      const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+      const attempts = await connection.db
+        .select()
+        .from(erpAttempts)
+        .where(eq(erpAttempts.orderId, ids.order));
+      const failedEvents = (await readOrderEvents(connection, ids.order)).filter(
+        (event) => event.eventName === "order.failed",
+      );
+
+      expect(await queuedJob?.getState()).toBe("failed");
+      expect(order?.status).toBe("failed");
+      expect(attempts).toHaveLength(expectedAttemptCount);
+      expect(failedEvents).toHaveLength(1);
+    },
+    { timeout: 10_000, interval: 25 },
+  );
+}
+
 async function waitForNotificationCount(
   connection: ReturnType<typeof createDatabaseConnection>,
   expectedCount: number,
@@ -1394,14 +1403,6 @@ function trafficCompletionReportFixture(): TrafficCompletionReport {
     completedAt: "2026-06-21T00:00:03.000Z",
     correlationId: job.correlationId,
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((promiseResolve) => {
-    resolve = promiseResolve;
-  });
-  return { promise, resolve };
 }
 
 function sequenceClock(...dates: Date[]): () => Date {
