@@ -1,4 +1,5 @@
 import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { describe, expect, it, vi } from "vitest";
 import { ErpCircuitBreaker } from "../../src/application/erp-circuit-breaker.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
@@ -33,16 +34,7 @@ describe("run-scoped order confirmation backpressure", () => {
     const runConfigReader = {
       read: vi.fn().mockResolvedValue(
         runConfigSnapshot({
-          backpressureConfig: {
-            queueName: "orders:process",
-            physicalQueueName: "orders-process",
-            orderProcessConcurrency: 1,
-            retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-            drainTimeoutSeconds: 300,
-            pendingPersistenceRetryAfterSeconds: 30,
-            circuitBreakerFailureThreshold: 5,
-            circuitBreakerResetTimeoutMs: 10_000,
-          },
+          orderProcessConcurrency: 1,
         }),
       ),
     };
@@ -79,10 +71,7 @@ describe("run-scoped order confirmation backpressure", () => {
       [
         "55555555-5555-4555-8555-555555555555",
         runConfigSnapshot({
-          backpressureConfig: {
-            ...runConfigSnapshot().backpressureConfig,
-            circuitBreakerFailureThreshold: 2,
-          },
+          circuitBreakerFailureThreshold: 2,
         }),
       ],
     ]);
@@ -112,10 +101,7 @@ describe("run-scoped order confirmation backpressure", () => {
     snapshots.set(
       runId,
       runConfigSnapshot({
-        backpressureConfig: {
-          ...runConfigSnapshot().backpressureConfig,
-          circuitBreakerResetTimeoutMs: 20_000,
-        },
+        circuitBreakerResetTimeoutMs: 20_000,
       }),
     );
     await confirmation.confirm(job, delivery);
@@ -147,21 +133,15 @@ describe("run-scoped order confirmation backpressure", () => {
       [
         runA,
         runConfigSnapshot({
-          backpressureConfig: {
-            ...runConfigSnapshot().backpressureConfig,
-            circuitBreakerFailureThreshold: 2,
-            circuitBreakerResetTimeoutMs: 1_000,
-          },
+          circuitBreakerFailureThreshold: 2,
+          circuitBreakerResetTimeoutMs: 1_000,
         }),
       ],
       [
         runB,
         runConfigSnapshot({
-          backpressureConfig: {
-            ...runConfigSnapshot().backpressureConfig,
-            circuitBreakerFailureThreshold: 3,
-            circuitBreakerResetTimeoutMs: 2_000,
-          },
+          circuitBreakerFailureThreshold: 3,
+          circuitBreakerResetTimeoutMs: 2_000,
         }),
       ],
     ]);
@@ -256,12 +236,8 @@ describe("run-scoped order confirmation backpressure", () => {
       runConfigReader: {
         read: async () =>
           runConfigSnapshot({
-            backpressureConfig: {
-              ...runConfigSnapshot().backpressureConfig,
-              orderProcessConcurrency: 1,
-              retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-              circuitBreakerResetTimeoutMs: 100,
-            },
+            orderProcessConcurrency: 1,
+            circuitBreakerResetTimeoutMs: 100,
           }),
       },
       circuitBreakerFactory: factory,
@@ -309,39 +285,15 @@ describe("run-scoped order confirmation backpressure", () => {
 });
 
 function runConfigSnapshot(
-  overrides: Partial<AcceptedRunConfigSnapshot> = {},
+  backpressureOverrides: Partial<AcceptedRunConfigSnapshot["backpressureConfig"]> = {},
 ): AcceptedRunConfigSnapshot {
+  const snapshot = previewRunConfigSnapshotFixture();
+
   return {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 1000,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 30,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: {
-      startingStock: 1000,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
-    },
-    erpConfig: {
-      latencyMs: 80,
-      maxTps: 250,
-      errorRate: 0,
-      forcedOutage: false,
-      requestTimeoutMs: 2000,
-    },
+    ...snapshot,
     backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
-      orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
-      pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
+      ...snapshot.backpressureConfig,
+      ...backpressureOverrides,
     },
-    ...overrides,
   };
 }

@@ -1,5 +1,6 @@
-import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { orderProcessBullMqQueueName, orderProcessJobName } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
@@ -24,27 +25,14 @@ function url() {
   return process.env.TEST_REDIS_URL;
 }
 
-function snapshot(orderProcessConcurrency: number): AcceptedRunConfigSnapshot {
+function snapshot(orderProcessConcurrency: number) {
+  const snapshot = previewRunConfigSnapshotFixture();
+
   return {
-    trafficConfig: {
-      mode: "buyer-spike",
-      buyerCount: 1,
-      duplicateEachBuyerAttempt: false,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 1,
-      quantityPerAttempt: 1,
-    },
-    inventoryConfig: { startingStock: 1, quantityPerCheckout: 1, reservationHoldMinutes: 1 },
-    erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false, requestTimeoutMs: 1 },
+    ...snapshot,
     backpressureConfig: {
-      queueName: "orders:process",
-      physicalQueueName: "orders-process",
+      ...snapshot.backpressureConfig,
       orderProcessConcurrency,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 10 },
-      drainTimeoutSeconds: 1,
-      pendingPersistenceRetryAfterSeconds: 1,
-      circuitBreakerFailureThreshold: 1,
-      circuitBreakerResetTimeoutMs: 1,
     },
   };
 }
