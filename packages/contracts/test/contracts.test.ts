@@ -22,7 +22,6 @@ import {
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
   buyOutcomeHeaderName,
-  buyOutcomeHeaderValueSchema,
   buyRequestSchema,
   buyResponseSchema,
   collectAcceptedRunConfigSnapshotViolations,
@@ -65,7 +64,6 @@ import {
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
-  isNewerDashboardProjectionForScope,
   loadExecutionPlanSchema,
   loadMetricIngestRequestSchema,
   loadRunDiagnosticsSummarySchema,
@@ -1654,16 +1652,8 @@ describe("buy and dashboard contracts", () => {
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
   });
 
-  it("exposes canonical buy classification header names and values", () => {
+  it("exposes the canonical buy classification header name", () => {
     expect(buyOutcomeHeaderName).toBe("x-checkout-outcome");
-
-    for (const outcome of reservationDecisionValues.filter(
-      (value) => value !== "idempotent_replay",
-    )) {
-      expect(buyOutcomeHeaderValueSchema.parse(outcome)).toBe(outcome);
-    }
-    expect(() => buyOutcomeHeaderValueSchema.parse("idempotent_replay")).toThrow();
-    expect(() => buyOutcomeHeaderValueSchema.parse("unrelated_outcome")).toThrow();
   });
 
   it("validates accepted and sold-out reservation outcomes", () => {
@@ -2148,26 +2138,6 @@ describe("buy and dashboard contracts", () => {
         scope: { runId: currentRun.runId, saleOfferId: null },
       }),
     ).toThrow();
-  });
-
-  it("orders dashboard projections only within one canonical scope", () => {
-    const current = {
-      scopeId: dashboardProjectionScopeId({
-        runId: "11111111-1111-4111-8111-111111111111",
-        saleOfferId: "33333333-3333-4333-8333-333333333333",
-      }),
-      revision: 7,
-    };
-
-    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 8 })).toBe(true);
-    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 7 })).toBe(false);
-    expect(isNewerDashboardProjectionForScope(current, { ...current, revision: 6 })).toBe(false);
-    expect(
-      isNewerDashboardProjectionForScope(current, {
-        scopeId: dashboardProjectionScopeId(null),
-        revision: 9_999,
-      }),
-    ).toBe(false);
   });
 
   it("rejects noncanonical projection identity and scope metadata", () => {

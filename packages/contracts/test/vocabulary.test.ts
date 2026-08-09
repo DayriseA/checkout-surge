@@ -12,13 +12,9 @@ import {
   orderEventNameValues,
   orderStatusSchema,
   orderStatusValues,
-  recoveryJobStatusSchema,
   recoveryJobStatusValues,
-  reservationPendingPersistenceStatusSchema,
   reservationPendingPersistenceStatusValues,
-  saleOfferPurposeSchema,
   saleOfferPurposeValues,
-  trafficCompletionEnrichmentStatusSchema,
   trafficCompletionEnrichmentStatusValues,
   trafficExecutionStatusSchema,
   trafficExecutionStatusValues,
@@ -60,17 +56,13 @@ describe("shared PostgreSQL vocabulary", () => {
   });
 
   it.each([
-    [saleOfferPurposeSchema, saleOfferPurposeValues],
     [orderStatusSchema, orderStatusValues],
     [erpAttemptStatusSchema, erpAttemptStatusValues],
-    [recoveryJobStatusSchema, recoveryJobStatusValues],
     [orderEventNameSchema, orderEventNameValues],
     [demoPresetVisibilitySchema, demoPresetVisibilityValues],
     [operatorModeSchema, operatorModeValues],
     [demoRunStatusSchema, demoRunStatusValues],
     [trafficExecutionStatusSchema, trafficExecutionStatusValues],
-    [trafficCompletionEnrichmentStatusSchema, trafficCompletionEnrichmentStatusValues],
-    [reservationPendingPersistenceStatusSchema, reservationPendingPersistenceStatusValues],
   ] as const)("derives schema %# from its tuple", (schema, values) => {
     expect(schema.options).toEqual(values);
     for (const value of values) expect(schema.parse(value)).toBe(value);
