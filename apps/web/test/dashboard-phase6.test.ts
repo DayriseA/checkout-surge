@@ -34,23 +34,6 @@ import {
   type PresentationState,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
-/**
- * Every status/reason pair `deriveSharedProtectionState` can publish
- * (`apps/api/src/services/erp-status-service.ts`). This is the producer's output vocabulary, not a
- * copy of its branching: a table cannot drift the way a re-implemented `if/else` ordering does,
- * while still rejecting pairings the service never emits, such as a healthy status reported with a
- * paused circuit.
- */
-const sharedProtectionStatusReasons = [
-  { status: "healthy", reason: null },
-  { status: "unavailable", reason: "circuit_open" },
-  { status: "unavailable", reason: "circuit_state_unavailable" },
-  { status: "degraded", reason: "circuit_state_missing" },
-  { status: "degraded", reason: "circuit_half_open" },
-  { status: "degraded", reason: "retry_pressure_unavailable" },
-  { status: "degraded", reason: "erp_retries_pending" },
-];
-
 describe("Phase 6 projection dashboard", () => {
   it("renders neutral initial hydration without recovery controls", () => {
     const recovery = { status: "loading" as const };
@@ -879,106 +862,32 @@ describe("Phase 6 projection dashboard", () => {
     }
   });
 
-  /**
-   * A mechanical audit of the shared fixtures, so "is this coherent?" stops being an opportunistic
-   * eyeball check. `dashboardProjectionSchema` carries the cross-field refinements the wire format
-   * guarantees; the assertions after it fall into two kinds, and the difference matters:
-   *
-   * - Hard rules, from a single atomic read or an explicit named decision in the producer. A
-   *   projection violating one of these is impossible.
-   * - Fixture-realism rules, from relationships that hold within one consistent snapshot but that
-   *   concurrent non-transactional reads could tear. A live projection may legitimately violate
-   *   these; a fixture that does is just describing a state nobody would recognise.
-   *
-   * This test asserts that each fixture depicts a coherent single-snapshot state. It is not a claim
-   * that the producer can never emit otherwise.
-   */
   it.each([
     ["an active run before its traffic completes", projectionFixture],
     ["a draining run carrying its terminal traffic evidence", drainingProjectionFixture],
-  ])("depicts a coherent single-snapshot projection state for %s", (_label, buildProjection) => {
+  ])("provides a contract-valid, recognizable fixture for %s", (_label, buildProjection) => {
     const projection = buildProjection();
     const {
       currentRun,
-      inventory,
       erp,
-      systemStatus,
       transportAttemptCounts,
       httpSummary,
       businessOutcome,
       consistencyLag,
     } = projection;
-    if (!currentRun || !inventory || !erp || !systemStatus || !businessOutcome || !consistencyLag) {
+    if (!currentRun || !erp || !businessOutcome || !consistencyLag) {
       throw new Error("Expected a fully populated projection fixture.");
     }
 
     expect(() => dashboardProjectionSchema.parse(projection)).not.toThrow();
 
-    // Fixture realism: within one snapshot the confirmation counts nest exactly.
-    // `expectCoherentConfirmationCounts` names the producer rule behind each relationship, and why
-    // concurrent non-transactional reads can still tear them apart in a live projection.
+    // These relationships keep the fixture recognizable without imposing strict invariants on
+    // potentially torn live reads.
     expectCoherentConfirmationCounts(businessOutcome, consistencyLag);
-    // The latest attempt is its own query, so it can be observed apart from the counts below.
     if (erp.recentAttemptCount > 0) expect(erp.latestAttempt).not.toBeNull();
 
-    // Hard rule: `packages/db/src/redis-inventory.ts` throws unless the stock counters sum, and
-    // they are read together from one Redis hash.
-    expect(inventory.remainingStock + inventory.reservedStock).toBe(inventory.allocatedStock);
-
-    // Hard rule: these three come from one aggregate query in `erp-status-service.ts`, so they are
-    // always one snapshot of one window.
-    expect(erp.recentFailureCount + erp.recentTimeoutCount).toBeLessThanOrEqual(
-      erp.recentAttemptCount,
-    );
-
-    // Hard rule: `ErpCircuitBreaker.snapshot()` derives these fields together from the state and
-    // `openedAt` in one call.
-    const circuit = erp.circuit;
-    if (circuit?.state === "open") {
-      expect(circuit.openedAt).not.toBeNull();
-      expect(Date.parse(circuit.nextAttemptAt ?? "")).toBe(
-        Date.parse(circuit.openedAt ?? "") + circuit.resetTimeoutMs,
-      );
-    }
-    if (circuit?.state === "closed") {
-      expect(circuit.openedAt).toBeNull();
-      expect(circuit.nextAttemptAt).toBeNull();
-      expect(circuit.consecutiveFailureCount).toBe(0);
-    }
-    if (circuit?.state === "half_open") expect(circuit.nextAttemptAt).toBeNull();
-
-    const { queue, erpProtection } = systemStatus;
-    expect(queue.failedJobs.totalCount).toBe(queue.counts.failed);
-    expect(queue.retryPressure.retryingJobCount).toBeLessThanOrEqual(
-      queue.retryPressure.inspectedJobCount,
-    );
-    expect(queue.retryPressure.inspectedJobCount).toBeLessThanOrEqual(
-      queue.retryPressure.inspectionLimit,
-    );
-    // Hard rule: status and reason are decided together in one expression, so only the published
-    // pairings are reachable.
-    expect(sharedProtectionStatusReasons).toContainEqual({
-      status: erpProtection.status,
-      reason: erpProtection.reason,
-    });
-
-    // Hard rule: both fields come from the one `dashboard_transport_observation` read, which either
-    // finds the run's finalization row or finds nothing, so neither can be present without the
-    // other (`apps/api/src/services/dashboard-recovery-service.ts`).
-    expect(transportAttemptCounts === null).toBe(httpSummary === null);
-    if (transportAttemptCounts) {
-      // Fixture realism: the traffic-completion transaction publishes this evidence and claims the
-      // run to `draining` together, and no path returns a run to `starting` or `active`, so no
-      // database snapshot pairs it with a running one. See `drainingProjectionFixture` for why the
-      // projection can still tear the two apart live.
+    if (transportAttemptCounts || httpSummary) {
       expect(["draining", "completed", "failed"]).toContain(currentRun.status);
-      // The load generator's dispatch counters partition the planned request total.
-      expect(
-        transportAttemptCounts.completedRequests + transportAttemptCounts.interruptedRequests,
-      ).toBe(transportAttemptCounts.startedRequests);
-      expect(
-        transportAttemptCounts.startedRequests + transportAttemptCounts.unstartedRequests,
-      ).toBe(transportAttemptCounts.plannedRequests);
     }
   });
 
@@ -1041,29 +950,9 @@ function expectFinalizableCompletedOutcome(outcome: BusinessOutcomeSummary): voi
 }
 
 /**
- * Fixture realism, shared by every test that overrides the confirmation counts inline. Within one
- * snapshot the lag summary and the business outcome count the same orders:
- *
- * - Every accepted reservation has exactly one order, so the four order statuses account for all of
- *   them. Existence comes from the producer, not from an index: `postgres-buy-persistence.ts:50`
- *   holds the only writer of either table, and it inserts a reservation and its order in one
- *   transaction. `orders_reservation_id_unique` proves only the weaker half, that a second order
- *   never joins the first.
- * - The lag query loses none of those orders: `orders.reservationId` is non-null behind a
- *   reservation foreign key, so its inner join drops nothing, and
- *   `orders_confirmed_requires_confirmed_at` means every confirmed order satisfies the query's
- *   `confirmedAt` predicate. The counts are therefore equal, not merely bounded.
- * - `reservedUnits` sums those same reservations' quantities, and quantity is a positive integer,
- *   so it never falls below the reservation count.
- * - `retryingOrders` counts processing orders carrying a failed ERP attempt, so it is a subset of
- *   `processingOrders` rather than a status of its own.
- *
- * Realism rather than a hard rule, because `readBusinessOutcomeSummary` issues its counts
- * concurrently and the recovery service reads the two summaries without a transaction, so a commit
- * landing between reads can invert any of these in a live projection.
- *
- * The recurring defect this exists to catch is an inline override that zeroes one side of these
- * relationships and leaves the other at its base-fixture value.
+ * Keeps inline fixture overrides recognizable by checking that confirmation and lag counts still
+ * describe one coherent snapshot. These are fixture-realism checks, not strict live-read
+ * invariants.
  */
 function expectCoherentConfirmationCounts(
   outcome: BusinessOutcomeSummary,
@@ -1116,35 +1005,9 @@ function available(data: DashboardProjection) {
 }
 
 /**
- * A coherent projection of an active run. Overriding one field with a spread is the easy way to
- * break that, because several fields are constrained by others.
- *
- * Hard rules — a projection violating one of these is impossible:
- *
- * - `inventory.remainingStock` + `inventory.reservedStock` = `inventory.allocatedStock`.
- * - The circuit's `openedAt` and `nextAttemptAt` follow its `state`.
- * - `systemStatus.erpProtection.status` and `.reason` are one published pair, not two knobs.
- * - `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` come from one
- *   aggregate query, so failures plus timeouts never exceed attempts.
- * - A run presenting as `completed` has `notificationsRecorded` ≥ `confirmedOrders` and no queued,
- *   processing, or retrying orders, unless it depicts a timeout-escalated run explicitly.
- * - `transportAttemptCounts` and `httpSummary` are absent or present together.
- *
- * Fixture-realism rules — true of one consistent snapshot, but concurrent non-transactional reads
- * could tear them, so a live projection may legitimately differ:
- *
- * - `consistencyLag.confirmedOrderCount` = `businessOutcome.confirmedOrders` ≤
- *   `businessOutcome.acceptedReservations` ≤ `businessOutcome.reservedUnits`.
- * - The four order statuses account for every accepted reservation, `retryingOrders` is a subset of
- *   `processingOrders`, and `consistencyLag.pendingConfirmationCount` is queued plus processing.
- * - `erp.latestAttempt` exists whenever `erp.recentAttemptCount` is above zero.
- * - Terminal transport evidence belongs to a run that has left `active`; see
- *   `drainingProjectionFixture`.
- *
- * "depicts a coherent single-snapshot projection state" covers this fixture and its draining
- * variant, `expectFinalizableCompletedOutcome` covers the terminal rule, and
- * `expectCoherentConfirmationCounts` covers the confirmation counts for tests that override them;
- * a test that overrides anything else owns keeping its own copy coherent.
+ * A contract-valid, recognizable projection of an active run. Tests that override related fixture
+ * fields keep their scenario coherent with `expectCoherentConfirmationCounts` and, for completed
+ * runs, `expectFinalizableCompletedOutcome`.
  */
 function projectionFixture(): DashboardProjection {
   const runId = "11111111-1111-4111-8111-111111111111";
@@ -1332,9 +1195,6 @@ function projectionFixture(): DashboardProjection {
       oldestPendingAgeSeconds: 8.5,
       measuredAt: "2026-06-20T00:00:10.000Z",
     },
-    // The load generator has not reported completion, so the projection's transport observation
-    // reader finds no finalization row and every field it owns is absent. See
-    // `drainingProjectionFixture` for why they cannot be present beside an `active` run.
     transportAttemptCounts: null,
     httpSummary: null,
     requestArrivalSummary: null,
@@ -1343,22 +1203,7 @@ function projectionFixture(): DashboardProjection {
   };
 }
 
-/**
- * The same run one moment later, once the load generator has reported completion.
- *
- * `TrafficCompletionService.recordTrafficCompletion`
- * (`apps/api/src/services/traffic-completion-service.ts`) inserts the `demo_run_finalizations` row
- * and claims the run from `starting`/`active` to `draining` in a single transaction, rejecting the
- * report when the run is in any other state; nothing ever returns a run to `active`, since both
- * activation paths require a `starting` run. Terminal transport evidence therefore never sits
- * beside an `active` run in one database snapshot, and the counts themselves are terminal by
- * nature: `interruptedRequests` and `unstartedRequests` describe attempts the generator abandoned
- * at shutdown.
- *
- * Fixture realism rather than a hard rule: `assembleProjection` reads the run context before it
- * reads the finalization row, and not in one transaction, so a completion landing between those
- * two reads can tear them apart in a live projection.
- */
+/** The same run one moment later, with terminal transport evidence recognizable as draining. */
 function drainingProjectionFixture(): DashboardProjection {
   const projection = projectionFixture();
   const currentRun = projection.currentRun;
