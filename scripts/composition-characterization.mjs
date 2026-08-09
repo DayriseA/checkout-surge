@@ -109,11 +109,14 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
     observedStatuses.has("draining"),
     `run never exposed draining status (${[...observedStatuses].join(", ")})`,
   );
-  assert(terminalRun.status === "completed", "sold-out characterization run did not complete");
+  if (terminalRun.status !== "completed") {
+    const detail = await adminRunDetail(runId);
+    throw new Error(
+      `sold-out characterization run did not complete: ${detail.internalFailureReason}; ${JSON.stringify(terminalRun)}`,
+    );
+  }
 
-  const history = await jsonRequest(`${apiBaseUrl}/demo/runs/history?page=1&pageSize=10`);
-  const summary = history.summaries?.find((candidate) => candidate.runId === runId);
-  assert(summary, "terminal run summary was not durable");
+  const summary = terminalRun;
   assert(
     summary.transportAttemptCounts?.plannedRequests === 20,
     "sold-out characterization planned request count drifted",
@@ -139,7 +142,7 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
     "notification handoff did not complete",
   );
 
-  const detail = await jsonRequest(`${apiBaseUrl}/demo/runs/history/${runId}`);
+  const detail = await adminRunDetail(runId);
   assert(
     detail.orders?.totalCount === 1,
     "history detail did not preserve the single idempotent order",
@@ -194,7 +197,7 @@ async function characterizeRepresentativeSurge() {
   const terminalRun = await waitForRun(runId, observedStatuses);
   assert(["completed", "failed"].includes(terminalRun.status), "surge-10k did not finalize");
 
-  const detail = await jsonRequest(`${apiBaseUrl}/demo/runs/history/${runId}`);
+  const detail = await adminRunDetail(runId);
   const summary = detail.summary;
   assert(
     summary.transportAttemptCounts?.plannedRequests === 10_000,
@@ -304,7 +307,10 @@ async function waitForRun(runId, observedStatuses) {
       } else {
         const history = await jsonRequest(`${apiBaseUrl}/demo/runs/history?page=1&pageSize=10`);
         const terminalRun = history.summaries?.find((candidate) => candidate.runId === runId);
-        if (terminalRun) return terminalRun;
+        if (terminalRun) {
+          const detail = await jsonRequest(`${apiBaseUrl}/demo/runs/history/${runId}`);
+          return detail.summary;
+        }
       }
       lastPollError = undefined;
     } catch (error) {
@@ -360,14 +366,20 @@ async function openAndDisconnectSse() {
   });
 }
 
-async function jsonRequest(url) {
+async function jsonRequest(url, headers = {}) {
   const response = await fetch(url, {
-    headers: { accept: "application/json" },
+    headers: { accept: "application/json", ...headers },
     signal: AbortSignal.timeout(10_000),
   });
   const body = await response.json();
   assert(response.ok, `${url} returned HTTP ${response.status}: ${JSON.stringify(body)}`);
   return body;
+}
+
+function adminRunDetail(runId) {
+  return jsonRequest(`${apiBaseUrl}/admin/demo/runs/history/${runId}`, {
+    "x-control-service-token": controlToken,
+  });
 }
 
 async function textRequest(url) {
@@ -390,11 +402,15 @@ function requireRunIdentity(started) {
 }
 
 function compose(...args) {
-  const result = spawnSync("docker", ["compose", ...args], {
-    cwd: process.cwd(),
-    env: composeEnv,
-    stdio: "inherit",
-  });
+  const result = spawnSync(
+    "docker",
+    ["compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml", ...args],
+    {
+      cwd: process.cwd(),
+      env: composeEnv,
+      stdio: "inherit",
+    },
+  );
   if (result.error) throw result.error;
   if (result.status !== 0)
     throw new Error(`docker compose ${args.join(" ")} exited with ${result.status}`);
