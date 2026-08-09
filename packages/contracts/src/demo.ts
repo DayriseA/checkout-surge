@@ -11,7 +11,6 @@ import {
   operatorModeSchema,
   orderEventNameSchema,
   orderStatusSchema,
-  trafficDeliveryStatusSchema,
   trafficExecutionStatusSchema,
 } from "./lifecycle.js";
 import {
@@ -897,10 +896,3 @@ export const adminGeneratedRunTeardownResponseSchema = z.discriminatedUnion("out
 export type AdminGeneratedRunTeardownResponse = z.infer<
   typeof adminGeneratedRunTeardownResponseSchema
 >;
-
-export const trafficDeliveryStatusSummarySchema = z
-  .object({
-    status: trafficDeliveryStatusSchema,
-    summary: trafficDeliverySummarySchema,
-  })
-  .strict();

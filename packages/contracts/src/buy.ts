@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { orderSummarySchema, reservationSummarySchema } from "./entities.js";
-import { orderStatusSchema, publicBuyOutcomeValues } from "./lifecycle.js";
+import { orderStatusSchema } from "./lifecycle.js";
 
 export { publicBuyOutcomeValues } from "./lifecycle.js";
 
@@ -14,8 +14,6 @@ import {
 
 export const loadRunIdHeaderName = "x-load-run-id" as const;
 export const buyOutcomeHeaderName = "x-checkout-outcome" as const;
-
-export const buyOutcomeHeaderValueSchema = z.enum(publicBuyOutcomeValues);
 
 export const buyRequestSchema = z
   .object({

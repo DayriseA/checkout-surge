@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
-export const saleOfferPurposeSchema = z.enum(saleOfferPurposeValues);
 
 export const publicBuyOutcomeValues = [
   "reservation_secured",
@@ -25,7 +24,6 @@ export const erpAttemptStatusSchema = z.enum(erpAttemptStatusValues);
 export type ErpAttemptStatus = z.infer<typeof erpAttemptStatusSchema>;
 
 export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
-export const recoveryJobStatusSchema = z.enum(recoveryJobStatusValues);
 
 export const orderEventNameValues = [
   "reservation.secured",
@@ -45,9 +43,6 @@ export const reservationPendingPersistenceStatusValues = [
   "reconciled",
   "exhausted",
 ] as const;
-export const reservationPendingPersistenceStatusSchema = z.enum(
-  reservationPendingPersistenceStatusValues,
-);
 
 export const demoPresetVisibilityValues = ["public", "admin"] as const;
 export const demoPresetVisibilitySchema = z.enum(demoPresetVisibilityValues);
@@ -78,9 +73,6 @@ export const trafficExecutionStatusSchema = z.enum(trafficExecutionStatusValues)
 export type TrafficExecutionStatus = z.infer<typeof trafficExecutionStatusSchema>;
 
 export const trafficCompletionEnrichmentStatusValues = ["pending", "completed"] as const;
-export const trafficCompletionEnrichmentStatusSchema = z.enum(
-  trafficCompletionEnrichmentStatusValues,
-);
 
 export const trafficDeliveryStatusValues = ["complete", "warning", "degraded", "failed"] as const;
 export const trafficDeliveryStatusSchema = z.enum(trafficDeliveryStatusValues);

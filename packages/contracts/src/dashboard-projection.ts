@@ -194,10 +194,3 @@ export const dashboardProjectionSchema = z
     }
   });
 export type DashboardProjection = z.infer<typeof dashboardProjectionSchema>;
-
-export function isNewerDashboardProjectionForScope(
-  current: Pick<DashboardProjection, "scopeId" | "revision">,
-  candidate: Pick<DashboardProjection, "scopeId" | "revision">,
-): boolean {
-  return current.scopeId === candidate.scopeId && candidate.revision > current.revision;
-}
