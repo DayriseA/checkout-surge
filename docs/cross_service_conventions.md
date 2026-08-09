@@ -94,7 +94,7 @@ The rules above govern the wire format. This section governs what a person reads
 - **Formatting never carries meaning.** A shared formatter states how long something took; the label states which boundaries were measured. Actual traffic dispatch, configured maximum dispatch time, checkout response, simulated ERP call, drain, convergence, and reservation-to-confirmation stay separately named even though they share a rendering.
 - **Overall run duration** spans `startedAt` (run acceptance) to the terminal finalization timestamp, exposed as `endedAt` on a run history summary and `finalizedAt` on a run. Failed runs use the same pair because a failed run still reached a terminal transition. A record missing either boundary has no duration and renders an explicit no-duration state; it is never zero and never back-filled from the configured dispatch limit or any other interval.
 
-Implementation lives in `apps/web/src/app/lib/presentation/format.ts` and `apps/web/src/app/lib/presentation/run-duration.ts`. Components select the correct named measurement and formatter variant; they do not redefine timezone, rounding, or grouping policy.
+Formatting implementation lives in `apps/web/src/app/lib/presentation/format.ts`; the overall run duration itself is derived by the API run-history service and delivered as `overallDurationMs` on run history responses. Components select the correct named measurement and formatter variant; they do not redefine timezone, rounding, or grouping policy.
 
 #### Sanctioned exemptions
 

@@ -14,7 +14,6 @@ import {
   trafficDeliveryStatusTone,
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
-import { deriveOverallRunDuration } from "../lib/presentation/run-duration";
 import { buildRunHistoryTrace } from "../lib/presentation/run-history-trace";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import {
@@ -45,7 +44,9 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   const config = run.configSnapshot;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
   const runPresentation = deriveTerminalSummaryPresentation(result);
-  const overallDuration = deriveOverallRunDuration(summary);
+  const overallDuration =
+    formatDurationMs(detail.overallDurationMs) ??
+    (summary.startedAt ? "— unusable lifecycle boundary" : "— no recorded start");
   const failure = summary.failureCategory
     ? publicFailureExplanation(summary.failureCategory)
     : null;
@@ -97,7 +98,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
-              ["Overall run duration", overallDuration.text],
+              ["Overall run duration", overallDuration],
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],

@@ -957,6 +957,7 @@ describe("run-history cross-route time and duration presentation", () => {
     const adminDetail = adminDetailFixture();
     const { startedAt: _adminStartedAt, ...adminSummary } = adminDetail.summary;
     adminDetail.summary = adminSummary;
+    adminDetail.overallDurationMs = null;
 
     const listMarkup = renderToStaticMarkup(createElement(RunHistoryList, { history }));
     const publicMarkup = renderToStaticMarkup(
@@ -1138,6 +1139,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
 
   return {
     query: { limit: 20 },
+    overallDurationMs: 10_000,
     summary: {
       ...detail.summary,
       id: "66666666-6666-4666-8666-666666666666",

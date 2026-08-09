@@ -374,6 +374,7 @@ export class RunHistoryService implements RunHistoryController {
       query,
       summary,
       run: toDemoRunSnapshot(source.runRow),
+      overallDurationMs: deriveOverallDurationMs(summary.startedAt, summary.endedAt),
       exceptionSummary: toRunHistoryExceptionSummary(summary, diagnostics, truncatedCollections),
       ...(source.runRow.failureReason
         ? {

@@ -674,6 +674,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
   return {
     query: { limit: 20 },
     summary,
+    overallDurationMs: 10_000,
     exceptionSummary: {
       maximumClassification: "expected_population_difference",
       brokenInvariants: 0,

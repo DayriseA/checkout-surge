@@ -485,6 +485,7 @@ export const adminRunHistoryDetailResponseSchema = z
     query: adminRunHistoryDetailQuerySchema,
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
+    overallDurationMs: nonnegativeNumberSchema.nullable(),
     exceptionSummary: runHistoryExceptionSummarySchema,
     internalFailureReason: internalRunFailureReasonSchema.optional(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,

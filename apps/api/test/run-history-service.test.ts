@@ -107,6 +107,18 @@ describe("run history service", () => {
     expect(firstPage.summaries[0]?.convergenceDurationSeconds).toBeNull();
   });
 
+  it("uses the public duration derivation for protected detail", async () => {
+    const service = createService(connection);
+    await seedHistory(requireConnection(connection).db);
+
+    const [publicDetail, protectedDetail] = await Promise.all([
+      service.detail(ids.newerRun),
+      service.adminDetail(ids.newerRun),
+    ]);
+
+    expect(protectedDetail?.overallDurationMs).toBe(publicDetail?.overallDurationMs);
+  });
+
   it("keeps list payloads headline-only and detail payloads series-bearing", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);

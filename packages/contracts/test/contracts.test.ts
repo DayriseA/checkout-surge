@@ -2512,6 +2512,7 @@ describe("public runtime policy contract", () => {
         query: { limit: 20 },
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        overallDurationMs: null,
         exceptionSummary: {
           maximumClassification: detail.result.maximumClassification,
           brokenInvariants: 0,
@@ -2605,6 +2606,10 @@ describe("public runtime policy contract", () => {
         timestamp,
       }),
     ).not.toThrow();
+    expect(adminRunHistoryDetailResponseSchema.shape.overallDurationMs.parse(null)).toBeNull();
+    expect(() =>
+      adminRunHistoryDetailResponseSchema.shape.overallDurationMs.parse(-1),
+    ).toThrow();
     const exceptionSummary = {
       maximumClassification: "correctness_failure" as const,
       brokenInvariants: 1,
