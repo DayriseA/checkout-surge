@@ -454,6 +454,7 @@ describe("admin feature controllers", () => {
     expect(currentRunPanel.getByText("active")).toBeTruthy();
     expect(currentRunPanel.getByRole("status").textContent).toBe("Traffic: active");
     expect(start.disabled).toBe(true);
+    expectControlDescription(start, "Run is active — wait before starting another");
 
     act(() =>
       source?.emit(
@@ -467,6 +468,7 @@ describe("admin feature controllers", () => {
     );
     expect(currentRunPanel.getAllByText("completed")).toHaveLength(2);
     expect(start.disabled).toBe(false);
+    expect(start.getAttribute("aria-describedby")).toBeNull();
 
     act(() =>
       source?.emit(
@@ -565,10 +567,60 @@ describe("admin feature controllers", () => {
     await act(async () => vi.advanceTimersByTimeAsync(dashboardStaleAfterMs));
     expect(screen.getByText("2026-06-20 00:00:10 UTC · stale")).toBeTruthy();
     expect(screen.getByText("Status is stale — refresh before starting")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", {
+        name: "Run once with these values",
+      }) as HTMLButtonElement).disabled,
+    ).toBe(true);
     expectControlDescription(
       screen.getByRole("button", { name: "Run once with these values" }),
       "Status is stale — refresh before starting",
     );
+  });
+
+  it.each([
+    ["starting", "starting", undefined],
+    ["draining", "succeeded", "2026-06-20T00:00:11.000Z"],
+  ] as const)("explains why a %s run blocks another start", (status, trafficStatus, trafficEndedAt) => {
+    const activeRun = runFixture();
+    if (activeRun?.status !== "active") throw new Error("Expected active run fixture.");
+    const currentRun = {
+      ...activeRun,
+      status,
+      trafficStatus,
+      ...(trafficEndedAt ? { trafficEndedAt } : {}),
+      ...(status === "starting" ? { trafficStartedAt: undefined } : {}),
+    } as DashboardProjection["currentRun"];
+
+    render(<AdminAuthenticatedSurface {...surfaceProps(currentRun)} />);
+
+    const start = screen.getByRole("button", {
+      name: "Run once with these values",
+    }) as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    expectControlDescription(start, `Run is ${status} — wait before starting another`);
+  });
+
+  it("explains unavailable recovery and omits a reason when start is enabled", () => {
+    const props = surfaceProps(null);
+    const { unmount } = render(
+      <AdminAuthenticatedSurface
+        {...props}
+        initialRecovery={{ status: "unavailable", reason: "Recovery unavailable." }}
+      />,
+    );
+    const start = screen.getByRole("button", {
+      name: "Run once with these values",
+    }) as HTMLButtonElement;
+
+    expect(start.disabled).toBe(true);
+    expectControlDescription(start, "Status is unavailable — refresh before starting");
+
+    unmount();
+    render(<AdminAuthenticatedSurface {...props} />);
+    const enabledStart = screen.getByRole("button", { name: "Run once with these values" });
+    expect((enabledStart as HTMLButtonElement).disabled).toBe(false);
+    expect(enabledStart.getAttribute("aria-describedby")).toBeNull();
   });
 
   it("keeps last-known-good state disconnected until a reconnect refresh succeeds", async () => {

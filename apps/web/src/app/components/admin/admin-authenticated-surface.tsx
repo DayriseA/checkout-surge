@@ -121,6 +121,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   const freshness = deriveAdminFreshness(recovery, realtimeStatus, now);
   const hasReadFailure = recovery.status === "unavailable" || recoveryController.hasSyncIssue;
   const startBlocked = isRunStartBlocked(recovery, freshness, hasReadFailure);
+  const startBlockedReason = runStartBlockedReason(recovery, freshness, hasReadFailure);
   const hasPreservedAvailableRetryScheduled =
     recovery.status === "available" &&
     recoveryController.hasSyncIssue &&
@@ -182,11 +183,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
           recovery={recovery}
           runtimePolicy={runtimePolicy}
           startBlocked={startBlocked}
-          startBlockedReason={
-            isFreshnessBlockingStart(freshness, hasReadFailure)
-              ? "Status is stale — refresh before starting"
-              : undefined
-          }
+          startBlockedReason={startBlockedReason}
         />
         <AdminErpDiagnosticsController
           runState={
@@ -1681,6 +1678,20 @@ function isRunStartBlocked(
   if (recovery.status !== "available") return true;
   if (freshness && isFreshnessBlockingStart(freshness, hasReadFailure)) return true;
   return isRunInProgress(recovery.data.currentRun?.status);
+}
+
+function runStartBlockedReason(
+  recovery: BackendRead<DashboardProjection>,
+  freshness: Freshness,
+  hasReadFailure: boolean,
+): string | undefined {
+  if (recovery.status === "loading") return "Status is loading — wait before starting";
+  if (recovery.status === "unavailable") return "Status is unavailable — refresh before starting";
+  if (isFreshnessBlockingStart(freshness, hasReadFailure)) {
+    return "Status is stale — refresh before starting";
+  }
+  const status = recovery.data.currentRun?.status;
+  return isRunInProgress(status) ? `Run is ${status} — wait before starting another` : undefined;
 }
 
 function isRunInProgress(
