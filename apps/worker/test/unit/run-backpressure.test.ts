@@ -15,7 +15,11 @@ const job: OrderProcessJob = {
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
 };
-const delivery: OrderProcessDeliveryMetadata = { attemptNumber: 1, attemptsMade: 0 };
+const delivery: OrderProcessDeliveryMetadata = {
+  attemptNumber: 1,
+  attemptsMade: 0,
+  maxAttempts: 4,
+};
 const runId = "44444444-4444-4444-8444-444444444444";
 
 describe("run-scoped order confirmation backpressure", () => {

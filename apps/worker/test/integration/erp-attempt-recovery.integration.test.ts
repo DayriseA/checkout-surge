@@ -116,7 +116,12 @@ run("PostgreSQL ERP attempt recovery", () => {
     const startedAt = new Date("2026-06-22T00:00:01Z");
     await requirePersistence().recordAttempt({
       job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "original-job" },
+      delivery: {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 2,
+        deliveryId: "original-job",
+      },
       status: "failed",
       terminal: false,
       httpStatus: 503,
@@ -138,6 +143,7 @@ run("PostgreSQL ERP attempt recovery", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
+        maxAttempts: 1,
         deliveryId: "recovery-dddddddd-dddd-4ddd-8ddd-dddddddddddd-1",
       },
       status: "succeeded" as const,
@@ -176,7 +182,12 @@ run("PostgreSQL ERP attempt recovery", () => {
     const startedAt = new Date("2026-06-22T00:00:01Z");
     const base = {
       job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "recovery-contradiction" },
+      delivery: {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+        deliveryId: "recovery-contradiction",
+      },
       status: "succeeded" as const,
       terminal: true,
       httpStatus: 200,

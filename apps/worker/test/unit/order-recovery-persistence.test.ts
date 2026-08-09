@@ -63,7 +63,12 @@ describe("Postgres order recovery persistence", () => {
         quantity: 1,
         queuedAt: "2026-06-22T00:00:00.000Z",
       },
-      delivery: { attemptNumber: 4, attemptsMade: 3, deliveryId: "original-job" },
+      delivery: {
+        attemptNumber: 4,
+        attemptsMade: 3,
+        maxAttempts: 4,
+        deliveryId: "original-job",
+      },
       reason: "failed_queue_job_reconciliation",
       error: new Error("retained source"),
       sourceJobId: "original-job",

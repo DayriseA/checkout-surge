@@ -29,7 +29,7 @@ const runScopedJob: OrderProcessJob = {
   ...job,
   runId: "55555555-5555-4555-8555-555555555555",
 };
-const delivery = { attemptNumber: 3, attemptsMade: 2 };
+const delivery = { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 };
 const processingTransition = {
   changed: true as const,
   status: "processing" as const,
@@ -85,10 +85,9 @@ function createOrderProcessJobHandler(
 }
 
 describe("order-process application workflow", () => {
-  it("proves remaining attempts only when a known maximum exceeds the current attempt", () => {
+  it("proves remaining attempts when the maximum exceeds the current attempt", () => {
     expect(hasRemainingAttempts({ attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 })).toBe(true);
     expect(hasRemainingAttempts({ attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 })).toBe(false);
-    expect(hasRemainingAttempts({ attemptNumber: 1, attemptsMade: 0 })).toBe(false);
   });
 
   it("publishes aggregate dirty work and reuses confirmedAt for notification", async () => {
@@ -319,7 +318,7 @@ describe("order-process application workflow", () => {
 
     await expect(handler.handle(job, delivery)).rejects.toBe(persistenceError);
     await expect(
-      handler.handle(job, { attemptNumber: 4, attemptsMade: 3 }),
+      handler.handle(job, { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 }),
     ).resolves.toBeUndefined();
 
     expect(confirmDownstreamErp).toHaveBeenCalledOnce();
@@ -528,30 +527,6 @@ describe("order-process application workflow", () => {
     ).rejects.toBe(confirmationError);
 
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
-    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
-  });
-
-  it("fails temporary confirmation conservatively when the maximum attempt count is unknown", async () => {
-    const confirmationError = new Error("ERP maximum attempt count unavailable");
-    const unknownMaximumDelivery = { attemptNumber: 1, attemptsMade: 0 };
-    const persistence = createPersistence();
-    const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
-      persistence,
-      logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: () => true,
-    });
-
-    await expect(handler.handle(job, unknownMaximumDelivery)).rejects.toBe(confirmationError);
-
-    expect(persistence.transitionToFailed).toHaveBeenCalledWith(
-      job,
-      {
-        code: "erp_retries_exhausted",
-        message: "ERP maximum attempt count unavailable",
-      },
-      unknownMaximumDelivery,
-    );
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
