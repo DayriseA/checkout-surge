@@ -136,6 +136,30 @@ describe("dashboard projection state", () => {
     expect(state.recovery).toEqual(available(higher));
   });
 
+  it("keeps a newer live terminal projection when an older HTTP refresh completes", () => {
+    const liveTerminal = runProjection({
+      revision: 3,
+      recoveredAt: "2026-06-20T00:00:13.000Z",
+      currentRun: completedRun(),
+    });
+    const staleHttpRead = runProjection({
+      revision: 2,
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+    });
+    let state = createDashboardProjectionState(available(runProjection({ revision: 1 })));
+
+    state = dashboardProjectionStateReducer(state, { type: "refresh-started" });
+    state = receive(state, liveTerminal);
+    state = dashboardProjectionStateReducer(state, {
+      type: "refresh-completed",
+      recovery: available(staleHttpRead),
+      preserveAvailableRecoveryOnFailure: false,
+    });
+
+    expect(state.recovery).toEqual(available(liveTerminal));
+    expect(state.acceptedProjection).toBe(liveTerminal);
+  });
+
   it("caps signal samples, drops the oldest, and resets on a newer run scope", () => {
     let state = createDashboardProjectionState(available(runProjection({ revision: 1 })));
     for (let revision = 2; revision <= 122; revision += 1) {

@@ -55,15 +55,15 @@ afterEach(() => {
 });
 
 describe("useDashboardProjections", () => {
-  it("accepts complete projection frames and ignores malformed data", () => {
+  it("uses the same-origin stream, de-duplicates lifecycle transitions, parses frames, and cleans up", () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();
     const onOpen = vi.fn();
     const onDisconnect = vi.fn();
+    vi.stubGlobal("EventSource", InjectedEventSource);
     const { result, rerender, unmount } = renderHook(
       ({ onProjection }) =>
         useDashboardProjections({
-          eventSourceConstructor: InjectedEventSource,
           onProjection,
           onOpen,
           onDisconnect,
@@ -82,6 +82,8 @@ describe("useDashboardProjections", () => {
     act(() => source?.emit("open", new Event("open")));
     expect(result.current).toBe("connected");
     expect(onOpen).toHaveBeenCalledOnce();
+    act(() => source?.emit("open", new Event("open")));
+    expect(onOpen).toHaveBeenCalledOnce();
 
     const projection = projectionFixture();
     act(() =>
@@ -93,6 +95,12 @@ describe("useDashboardProjections", () => {
     act(() => source?.emit("error", new Event("error")));
     expect(result.current).toBe("disconnected");
     expect(onDisconnect).toHaveBeenCalledOnce();
+    act(() => source?.emit("error", new Event("error")));
+    expect(onDisconnect).toHaveBeenCalledOnce();
+
+    act(() => source?.emit("open", new Event("open")));
+    expect(result.current).toBe("connected");
+    expect(onOpen).toHaveBeenCalledTimes(2);
 
     unmount();
     expect(source?.close).toHaveBeenCalledOnce();
