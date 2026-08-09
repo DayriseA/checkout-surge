@@ -86,7 +86,7 @@ export function GoldSignals({
   });
   if (!terminal && !arrivalEvidence && displayedLiveSamples.length === 0) {
     return (
-      <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+      <section className="col-span-full rounded-lg border border-border bg-surface p-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Sale evidence</p>
         <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
           Arrival → reservation → backlog → confirmation
@@ -177,7 +177,7 @@ export function GoldSignals({
   const markers = terminal ? terminalEventMarkers(terminal, arrivalEvidence) : [];
   const convergence = terminal?.confirmationConvergence;
   return (
-    <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+    <section className="col-span-full rounded-lg border border-border bg-surface p-4">
       <div className="mb-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Sale evidence</p>
         <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">

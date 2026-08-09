@@ -93,7 +93,7 @@ export function RunConclusion({
   const hasCorrectnessFailure = result.maximumClassification === "correctness_failure";
   return (
     <section
-      className={`col-span-12 rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
+      className={`col-span-full rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
       aria-label="Run conclusion"
     >
       {showSentence ? (

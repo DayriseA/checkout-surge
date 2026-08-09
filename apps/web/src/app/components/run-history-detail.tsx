@@ -55,7 +55,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   const cursorPaged = detail.query.cursor !== undefined;
 
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <header className="rounded-lg border border-border bg-surface p-4 min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -886,7 +886,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
     ? publicFailureExplanation(summary.failureCategory)
     : null;
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       <section className="rounded-lg border border-border bg-surface p-4">
         <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
