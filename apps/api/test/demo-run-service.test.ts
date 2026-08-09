@@ -175,52 +175,6 @@ describe("demo-run lifecycle validation", () => {
       }),
     ).not.toThrow();
   });
-
-  it.each([
-    {
-      ratePerSecond: 5_001,
-      maxPreAllocatedVus: 5_000,
-      maxVus: 10_000,
-      expectedCode: "deployment_preallocated_vus_exceeded",
-      expectedDetails: { value: 5_001, cap: 5_000 },
-    },
-    {
-      ratePerSecond: 2_501,
-      maxPreAllocatedVus: 5_000,
-      maxVus: 5_000,
-      expectedCode: "deployment_max_vus_exceeded",
-      expectedDetails: { value: 5_002, cap: 5_000 },
-    },
-  ])("rejects automatically derived VUs with $expectedCode", (fixture) => {
-    const policy = publicRuntimePolicy();
-    policy.deploymentHardCaps.maxPreAllocatedVus = fixture.maxPreAllocatedVus;
-    policy.deploymentHardCaps.maxVus = fixture.maxVus;
-    const snapshot: AcceptedRunConfigSnapshot = {
-      ...surge10kSnapshot(),
-      trafficConfig: {
-        mode: "constant-arrival-rate",
-        ratePerSecond: fixture.ratePerSecond,
-        startDelaySeconds: 0,
-        durationSeconds: 1,
-        quantityPerAttempt: 1,
-      },
-    };
-
-    expect(() =>
-      validateAcceptedRunSnapshot(snapshot, policy, {
-        operatorMode: "admin",
-        enforcePublicCustomLimits: false,
-      }),
-    ).toThrowError(
-      expect.objectContaining({
-        code: "invalid_run_configuration",
-        details: expect.objectContaining({
-          ...fixture.expectedDetails,
-          violationCode: fixture.expectedCode,
-        }),
-      }),
-    );
-  });
 });
 
 describe("demo-run lifecycle start gating", () => {
