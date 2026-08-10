@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -137,6 +138,14 @@ async function rebuildAsEmptyPublicSchema(): Promise<void> {
     await sql.unsafe("DROP SCHEMA IF EXISTS drizzle CASCADE");
     await sql.unsafe("CREATE SCHEMA public");
   });
+}
+
+async function readMigrationCount(folder: string): Promise<number> {
+  const journal = JSON.parse(
+    await readFile(path.join(folder, "meta", "_journal.json"), "utf8"),
+  ) as { entries: unknown[] };
+
+  return journal.entries.length;
 }
 
 async function insertCatalogSaleOffer(
@@ -422,6 +431,7 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("applies the baseline to an empty dedicated test database and reruns as a no-op", async () => {
     const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
     const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+    const expectedMigrationCount = await readMigrationCount(migrationsFolder);
 
     try {
       await rebuildAsEmptyPublicSchema();
@@ -436,7 +446,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
       );
 
-      expect(firstCount?.count).toBe(2);
+      expect(firstCount?.count).toBe(expectedMigrationCount);
       expect(secondCount).toEqual(firstCount);
     } finally {
       await resetTestDatabase();
