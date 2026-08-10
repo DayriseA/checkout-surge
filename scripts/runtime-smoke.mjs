@@ -6,6 +6,8 @@ import { pathToFileURL } from "node:url";
 import {
   adminGeneratedRunTeardownPath,
   adminGeneratedRunTeardownResponseSchema,
+  adminRunHistoryDetailPath,
+  adminRunHistoryDetailResponseSchema,
   dashboardProjectionSchema,
   isoTimestampSchema,
   runHistoryListResponseSchema,
@@ -147,6 +149,7 @@ export async function executeSmokeRun({
   fetchImpl,
   start = startRun,
   waitForTerminal = waitForTerminalSummary,
+  readTerminalSummary = readAdminRunHistorySummary,
   prepareCleanup = prepareExactRunCleanup,
   teardown = teardownWithRetry,
   now = Date.now,
@@ -190,7 +193,7 @@ export async function executeSmokeRun({
       ),
     );
 
-    const terminal = await runStage("load/terminal_history", write, () =>
+    await runStage("load/terminal_history", write, () =>
       waitForTerminal({
         apiBaseUrl,
         runId,
@@ -199,9 +202,20 @@ export async function executeSmokeRun({
         now,
       }),
     );
-    await runStage("evidence/terminal_business_inventory_notification", write, () =>
-      assertTerminalSummary(terminal, smokeScenario),
-    );
+    await runStage("evidence/terminal_business_inventory_notification", write, async () => {
+      const terminal = await readTerminalSummary({
+        apiBaseUrl,
+        token,
+        correlationId,
+        runId,
+        fetchImpl,
+        timeoutMs: Math.min(
+          requestTimeoutMs,
+          remainingDeadlineMs(runDeadlineAt, "terminal Run History detail", now()),
+        ),
+      });
+      assertTerminalSummary(terminal, smokeScenario);
+    });
 
     const terminalProjection = await runStage("sse/terminal_projection", write, () =>
       stream.waitForProjection(
@@ -678,6 +692,31 @@ async function resetDemo(apiBaseUrl, token, correlationId, fetchImpl, timeoutMs)
   );
 }
 
+async function readAdminRunHistorySummary({
+  apiBaseUrl,
+  token,
+  correlationId,
+  runId,
+  fetchImpl,
+  timeoutMs,
+}) {
+  const detail = adminRunHistoryDetailResponseSchema.parse(
+    await requestJson(
+      `${apiBaseUrl}${adminRunHistoryDetailPath(runId)}`,
+      {
+        headers: {
+          accept: "application/json",
+          "x-control-service-token": token,
+          "x-correlation-id": correlationId,
+        },
+      },
+      fetchImpl,
+      timeoutMs,
+    ),
+  );
+  return detail.summary;
+}
+
 export async function waitForTerminalSummary({
   apiBaseUrl,
   runId,
@@ -700,16 +739,19 @@ export async function waitForTerminalSummary({
         ),
       });
       const summary = summaries.find((candidate) => candidate.runId === runId);
-      lastStatus = summary?.status ?? "not_in_history";
-      if (summary?.status === "failed") {
+      lastStatus = summary?.resultOutcome ?? "not_in_history";
+      if (summary?.resultOutcome === "failed") {
+        throw new Error(`Run ${runId} terminalized as failed with resultOutcome=failed.`);
+      }
+      if (summary?.resultOutcome === "completed-successfully") return summary;
+      if (summary?.resultOutcome) {
         throw new Error(
-          `Run ${runId} terminalized as failed: ${summary.failureReason ?? "unknown"}.`,
+          `Run ${runId} terminalized with non-success resultOutcome=${summary.resultOutcome}.`,
         );
       }
-      if (summary?.status === "completed") return summary;
       lastError = undefined;
     } catch (error) {
-      if (message(error).startsWith(`Run ${runId} terminalized as failed`)) throw error;
+      if (message(error).startsWith(`Run ${runId} terminalized`)) throw error;
       lastError = error;
     }
     const remainingMs = deadlineAt - now();
@@ -744,7 +786,19 @@ export async function prepareExactRunCleanup({
     });
     last = describeRunObservation(observation, runId);
     const summary = observation.summaries.find((candidate) => candidate.runId === runId);
-    if (summary && ["completed", "failed"].includes(summary.status)) return;
+    if (
+      summary &&
+      [
+        "failed",
+        "outcome-indeterminate",
+        "completed-with-oversell",
+        "completed-with-order-failures",
+        "completed-with-unsettled-orders",
+        "completed-successfully",
+      ].includes(summary.resultOutcome)
+    ) {
+      return;
+    }
     const current = observation.recovery.currentRun;
     if (!current) return;
     if (current.runId !== runId) {
@@ -940,7 +994,7 @@ function describeRunObservation(observation, runId) {
           status: observation.recovery.currentRun.status,
         }
       : null,
-    history: summary?.status ?? null,
+    history: summary?.resultOutcome ?? null,
   };
 }
 

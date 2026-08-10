@@ -349,7 +349,28 @@ test("completed projection rejects contradictory transport, business, and invent
   }
 });
 
-test("terminal polling surfaces a failed run immediately", async () => {
+test("terminal polling returns a successfully completed run", async () => {
+  const summary = { runId, resultOutcome: "completed-successfully" };
+  assert.equal(
+    await waitForTerminalSummary({
+      apiBaseUrl: "http://api.test",
+      runId,
+      deadlineAt: Date.now() + 10_000,
+      fetchImpl: async () => {
+        throw new Error("unused");
+      },
+      readHistory: async () => [summary],
+    }),
+    summary,
+  );
+});
+
+test("terminal polling surfaces failed and degraded runs immediately", async () => {
+  let pauseCalls = 0;
+  const pause = async () => {
+    pauseCalls += 1;
+  };
+
   await assert.rejects(
     waitForTerminalSummary({
       apiBaseUrl: "http://api.test",
@@ -358,13 +379,44 @@ test("terminal polling surfaces a failed run immediately", async () => {
       fetchImpl: async () => {
         throw new Error("unused");
       },
-      readHistory: async () => [{ runId, status: "failed", failureReason: "worker drain timeout" }],
+      readHistory: async () => [{ runId, resultOutcome: "failed" }],
+      pause,
     }),
-    /terminalized as failed: worker drain timeout/,
+    new RegExp(`Run ${runId} terminalized as failed with resultOutcome=failed`),
   );
+
+  await assert.rejects(
+    waitForTerminalSummary({
+      apiBaseUrl: "http://api.test",
+      runId,
+      deadlineAt: Date.now() + 10_000,
+      fetchImpl: async () => {
+        throw new Error("unused");
+      },
+      readHistory: async () => [{ runId, resultOutcome: "completed-with-oversell" }],
+      pause,
+    }),
+    new RegExp(`Run ${runId} terminalized with non-success resultOutcome=completed-with-oversell`),
+  );
+
+  assert.equal(pauseCalls, 0);
 });
 
-test("exact cleanup resets only the matching current run and refuses a foreign run", async () => {
+test("exact cleanup accepts terminal history, resets a matching run, and refuses a foreign run", async () => {
+  let terminalResetCalls = 0;
+  await prepareExactRunCleanup({
+    runId,
+    deadlineAt: Date.now() + 2_000,
+    readObservation: async () => ({
+      recovery: { currentRun: { runId, status: "active" } },
+      summaries: [{ runId, resultOutcome: "completed-with-order-failures" }],
+    }),
+    resetRun: async () => {
+      terminalResetCalls += 1;
+    },
+  });
+  assert.equal(terminalResetCalls, 0);
+
   const observations = [
     {
       recovery: { currentRun: { runId, status: "active" } },
@@ -613,9 +665,11 @@ test("ambiguous start with no matching SSE identity never cleans a foreign run",
 });
 
 test("lifecycle and terminal evidence consume one shared absolute run deadline", async () => {
-  const nowValues = [1_000, 1_001, 1_002, 1_101, 1_200];
+  const nowValues = [1_000, 1_001, 1_002, 1_099, 1_100];
   const projectionTimeouts = [];
+  const order = [];
   let terminalDeadlineAt;
+  let detailInput;
   await assert.rejects(
     executeSmokeRun({
       apiBaseUrl: "http://api.test",
@@ -633,15 +687,26 @@ test("lifecycle and terminal evidence consume one shared absolute run deadline",
           return activeProjection();
         },
         waitForHeartbeat: async () => undefined,
-        close: async () => undefined,
+        close: async () => {
+          order.push("close");
+        },
       },
       start: async () => ({ run: { runId, saleOfferId } }),
       waitForTerminal: async (input) => {
         terminalDeadlineAt = input.deadlineAt;
         return terminalSummary();
       },
-      prepareCleanup: async () => undefined,
-      teardown: async () => undefined,
+      readTerminalSummary: async (input) => {
+        order.push("detail");
+        detailInput = input;
+        return terminalSummary();
+      },
+      prepareCleanup: async () => {
+        order.push("prepare");
+      },
+      teardown: async () => {
+        order.push("delete");
+      },
       now: () => nowValues.shift(),
     }),
     /Shared run deadline expired before terminal SSE projection/,
@@ -649,6 +714,11 @@ test("lifecycle and terminal evidence consume one shared absolute run deadline",
 
   assert.deepEqual(projectionTimeouts, [98]);
   assert.equal(terminalDeadlineAt, 1_100);
+  assert.equal(detailInput.runId, runId);
+  assert.equal(detailInput.token, "token");
+  assert.equal(detailInput.correlationId, correlationId);
+  assert.equal(detailInput.timeoutMs, 1);
+  assert.deepEqual(order, ["detail", "close", "prepare", "delete"]);
   assert.throws(
     () => remainingDeadlineMs(1_100, "later evidence", 1_100),
     /Shared run deadline expired before later evidence/,
