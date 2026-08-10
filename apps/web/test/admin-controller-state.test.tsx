@@ -812,25 +812,42 @@ describe("admin feature controllers", () => {
     const latency = screen.getByLabelText("Latency ms");
     await user.clear(latency);
     await user.type(latency, "250");
+    const maxTps = screen.getByLabelText("Max TPS");
+    await user.clear(maxTps);
+    await user.type(maxTps, "20");
+    const errorRate = screen.getByLabelText("Error rate");
+    await user.clear(errorRate);
+    await user.type(errorRate, "0.25");
+    await user.click(screen.getByLabelText("Forced outage"));
     rerender(
       <AdminErpDiagnosticsController
         initialErpChaos={available({ ...erpFixture(), latencyMs: 75 })}
       />,
     );
     expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
+    expect((screen.getByLabelText("Max TPS") as HTMLInputElement).value).toBe("20");
+    expect((screen.getByLabelText("Error rate") as HTMLInputElement).value).toBe("0.25");
+    expect((screen.getByLabelText("Forced outage") as HTMLInputElement).checked).toBe(true);
 
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      jsonResponse({ ...erpFixture(), latencyMs: 250 }),
+      jsonResponse({
+        ...erpFixture(),
+        latencyMs: 250,
+        maxTps: 20,
+        errorRate: 0.25,
+        forcedOutage: true,
+      }),
     );
     vi.stubGlobal("fetch", fetchMock);
     await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
     await user.click(confirmationButton("Apply ERP controls"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       latencyMs: 250,
-      maxTps: 100,
-      errorRate: 0,
-      forcedOutage: false,
+      maxTps: 20,
+      errorRate: 0.25,
+      forcedOutage: true,
     });
   });
 

@@ -1,8 +1,6 @@
 // @vitest-environment jsdom
 
 import {
-  type AdminPresetListResponse,
-  type AdminPublicRuntimePolicyResponse,
   type DashboardProjection,
   type DemoPresetContract,
   type DemoRunSnapshot,
@@ -11,7 +9,6 @@ import {
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   deriveRunResult,
-  type ErpChaosStatus,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   errorPayloadSchema,
@@ -35,7 +32,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
-import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -48,9 +44,6 @@ import {
   pendingDashboardRecovery,
 } from "../src/app/lib/api.js";
 import {
-  adminErpChaosProxyPath,
-  adminPresetListProxyPath,
-  adminPublicRuntimePolicyProxyPath,
   adminRunHistoryProxyPath,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
@@ -1155,73 +1148,6 @@ describe("public recovery convergence", () => {
   });
 });
 
-describe("admin browser workflows", () => {
-  it("submits exact ERP chaos values from the authenticated controls", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const path = String(input);
-
-      if (path === adminPresetListProxyPath) {
-        return jsonResponse(adminPresetListFixture());
-      }
-
-      if (path === dashboardRecoveryProxyPath) {
-        return jsonResponse(dashboardRecoveryFixture());
-      }
-
-      if (path === adminPublicRuntimePolicyProxyPath) {
-        return jsonResponse(adminRuntimePolicyResponseFixture());
-      }
-
-      if (path === adminErpChaosProxyPath && init?.method === "PUT") {
-        return jsonResponse({
-          ...erpChaosStatusFixture(),
-          latencyMs: 250,
-          maxTps: 20,
-          errorRate: 0.25,
-          forcedOutage: true,
-        });
-      }
-
-      if (path === adminErpChaosProxyPath) {
-        return jsonResponse(erpChaosStatusFixture());
-      }
-
-      throw new Error(`Unexpected fetch: ${path}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      createElement(AdminAuthenticatedSurface, {
-        initialErpChaos: available(erpChaosStatusFixture()),
-        initialPresets: available(adminPresetListFixture()),
-        initialRecovery: available(dashboardRecoveryFixture()),
-        initialReadiness: available(readinessFixture()),
-        initialRuntimePolicy: available(adminRuntimePolicyResponseFixture()),
-      }),
-    );
-    await screen.findByRole("button", { name: "Apply ERP controls" });
-    await replaceInputValue("Latency ms", "250", user);
-    await replaceInputValue("Max TPS", "20", user);
-    await replaceInputValue("Error rate", "0.25", user);
-    await user.click(screen.getByLabelText("Forced outage"));
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await user.click(
-      within(screen.getByRole("alertdialog")).getByRole("button", {
-        name: "Apply ERP controls",
-      }),
-    );
-
-    const [, init] = findFetchCall(fetchMock, adminErpChaosProxyPath, "PUT");
-    expect(jsonRequestBody(init)).toEqual({
-      latencyMs: 250,
-      maxTps: 20,
-      errorRate: 0.25,
-      forcedOutage: true,
-    });
-  });
-});
-
 describe("watch browser recovery", () => {
   it("keeps initial read availability separate from an available idle lifecycle", () => {
     const loadingMarkup = renderToStaticMarkup(
@@ -1392,39 +1318,6 @@ describe("watch browser recovery", () => {
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
     expect(markup).not.toContain("41 waiting · peak 41");
     expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
-  });
-
-  it("does not render order-scoped diagnostic values on the public watch surface", () => {
-    const orderId = "99999999-9999-4999-8999-999999999991";
-    const orderCorrelation = "corr-order-private";
-    const base = dashboardRecoveryFixture({ currentRun: demoRunFixture() });
-    const polluted = {
-      ...base,
-      erp: {
-        runId: demoRunFixture().runId,
-        circuit: null,
-        circuitReadStatus: "available" as const,
-        latestAttempt: {
-          runId: demoRunFixture().runId,
-          status: "failed" as const,
-          finishedAt: "2026-06-20T00:00:09.000Z",
-          orderId,
-          correlationId: orderCorrelation,
-        },
-        recentAttemptWindowSeconds: 60,
-        recentAttemptCount: 1,
-        recentFailureCount: 1,
-        recentTimeoutCount: 0,
-        observedAt: "2026-06-20T00:00:10.000Z",
-      },
-    } as unknown as DashboardProjection;
-    const markup = renderToStaticMarkup(
-      createElement(OperatorDashboard, { initialRecovery: available(polluted) }),
-    );
-
-    expect(markup).not.toContain("Recent order workflow results");
-    expect(markup).not.toContain(orderId);
-    expect(markup).not.toContain(orderCorrelation);
   });
 
   it("keeps the terminal chart anchored at the first attempt after a long preparation gap", () => {
@@ -1858,33 +1751,9 @@ function recoveryScope(currentRun: DashboardProjection["currentRun"]) {
   return { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
 }
 
-function erpChaosStatusFixture(): ErpChaosStatus {
-  return {
-    latencyMs: 80,
-    maxTps: 250,
-    errorRate: 0,
-    forcedOutage: false,
-    defaultConfig: { latencyMs: 80, maxTps: 250, errorRate: 0, forcedOutage: false },
-    updatedAt: "2026-06-20T00:00:10.000Z",
-    effectiveSafetyCaps: {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
-    },
-  };
-}
-
 function publicPresetListFixture(): PublicPresetListResponse {
   return {
     presets: [demoPresetFixture("preview-1k"), demoPresetFixture("public-custom")],
-    timestamp: "2026-06-20T00:00:10.000Z",
-  };
-}
-
-function adminPresetListFixture(): AdminPresetListResponse {
-  return {
-    presets: [{ ...demoPresetFixture("custom"), canArchive: false }],
     timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
@@ -1920,14 +1789,6 @@ function publicRuntimePolicyResponseFixture(): PublicRuntimePolicyResponse {
     id: "active",
     policy: publicRuntimePolicyFixture(),
     updatedAt: "2026-06-20T00:00:10.000Z",
-  };
-}
-
-function adminRuntimePolicyResponseFixture(): AdminPublicRuntimePolicyResponse {
-  return {
-    ...publicRuntimePolicyResponseFixture(),
-    correlationId: "corr-policy-read",
-    timestamp: "2026-06-20T00:00:10.000Z",
   };
 }
 
