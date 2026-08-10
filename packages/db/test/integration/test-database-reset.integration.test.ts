@@ -26,6 +26,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     );
 
     try {
+      const expectedMigrationCount = await readMigrationCount(temporaryMigrations);
       await resetTestDatabase({
         databaseUrl: requireDatabaseUrl(),
         migrationsFolder: temporaryMigrations,
@@ -51,7 +52,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
         return { counts, inserted };
       });
 
-      expect(state.counts).toEqual({ migrations: 3, probes: 0 });
+      expect(state.counts).toEqual({ migrations: expectedMigrationCount, probes: 0 });
       expect(state.inserted?.id).toBe(1);
     } finally {
       await rm(temporaryMigrations, { force: true, recursive: true });
@@ -158,6 +159,14 @@ async function withDatabase<T>(
   } finally {
     await connection.close();
   }
+}
+
+async function readMigrationCount(folder: string): Promise<number> {
+  const journal = JSON.parse(
+    await readFile(path.join(folder, "meta", "_journal.json"), "utf8"),
+  ) as { entries: unknown[] };
+
+  return journal.entries.length;
 }
 
 async function createTemporaryMigrations(sql: string): Promise<string> {
