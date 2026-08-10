@@ -10,7 +10,12 @@ import {
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { HttpLoadApiClient, MetricBatcher } from "../src/application/api-client.js";
+import {
+  HttpLoadApiClient,
+  isRetryableLoadApiError,
+  LoadApiHttpError,
+  MetricBatcher,
+} from "../src/application/api-client.js";
 import { K6RunAccumulator } from "../src/application/k6-output-parser.js";
 import {
   ExecutionSlotConflictError,
@@ -107,17 +112,51 @@ describe("load-orchestrator API client", () => {
         samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
         observedAt: timestamp,
       });
-      const rejection = expect(request).rejects.toMatchObject({
+      const errorPromise = request.catch((cause: unknown) => cause);
+      await vi.advanceTimersByTimeAsync(5);
+      const error = await errorPromise;
+      expect(error).toMatchObject({
         message: "API load ingestion request failed.",
         cause: expect.objectContaining({ message: expect.stringContaining("timed out") }),
       });
-      await vi.advanceTimersByTimeAsync(5);
-      await rejection;
+      expect(isRetryableLoadApiError(error)).toBe(true);
       expect(signal?.aborted).toBe(true);
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("classifies only transport failures as retryable", async () => {
+    const transportClient = new HttpLoadApiClient({
+      apiBaseUrl: "http://api.test",
+      controlServiceToken: "test-token",
+      fetch: vi.fn(async () => {
+        throw new Error("connection reset");
+      }),
+    });
+    const httpClient = new HttpLoadApiClient({
+      apiBaseUrl: "http://api.test",
+      controlServiceToken: "test-token",
+      fetch: vi.fn(async () => new Response("unauthorized", { status: 401 })),
+    });
+    const request = {
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      samples: [{ metricName: "traffic.latency" as const, value: 1, unit: "ms", timestamp }],
+      observedAt: timestamp,
+    };
+
+    const transportError = await transportClient.sendMetrics(request).catch((error) => error);
+    const httpError = await httpClient.sendMetrics(request).catch((error) => error);
+    const validationError = await httpClient
+      .sendMetrics({ ...request, samples: [] })
+      .catch((error) => error);
+
+    expect(isRetryableLoadApiError(transportError)).toBe(true);
+    expect(httpError).toBeInstanceOf(LoadApiHttpError);
+    expect(isRetryableLoadApiError(httpError)).toBe(false);
+    expect(isRetryableLoadApiError(validationError)).toBe(false);
   });
 
   it("sends metric and completion correlation IDs in internal API headers", async () => {

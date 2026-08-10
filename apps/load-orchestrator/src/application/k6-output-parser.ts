@@ -1,6 +1,7 @@
 import type {
   GeneratorUtilisation,
   HttpTimingBreakdownSummary,
+  LiveMetricLoss,
   LoadExecutionPlan,
   LoadRunDiagnosticsSummary,
   RequestArrivalSummary,
@@ -176,6 +177,7 @@ export class K6RunAccumulator {
     summaryMetrics?: K6SummaryMetrics;
     summaryExportWarning?: SummaryExportWarning;
     requestArrivalSummary?: RequestArrivalSummary;
+    liveMetricLoss?: LiveMetricLoss;
   }): TrafficCompletionReport {
     const attemptsStarted = this.selectCount(
       input.summaryMetrics?.attemptsStarted,
@@ -296,6 +298,7 @@ export class K6RunAccumulator {
         }),
         terminalMetricSources,
         summaryExportWarnings,
+        liveMetricLoss: input.liveMetricLoss ?? { sampleCount: 0, batchCount: 0 },
       } satisfies LoadRunDiagnosticsSummary,
       completedAt: input.completedAt.toISOString(),
       correlationId: this.options.correlationId,

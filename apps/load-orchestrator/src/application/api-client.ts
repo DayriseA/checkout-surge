@@ -10,6 +10,10 @@ import {
   trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
+import { ZodError } from "zod";
+
+const maxMetricBatchSendAttempts = 3;
+const metricBatchRetryDelayMs = 25;
 
 export interface LoadApiClient {
   sendMetrics(request: LoadMetricIngestRequest): Promise<void>;
@@ -95,7 +99,16 @@ export class HttpLoadApiClient implements LoadApiClient {
   }
 }
 
-class LoadApiHttpError extends Error {}
+export class LoadApiHttpError extends Error {}
+
+export function isRetryableLoadApiError(error: unknown): boolean {
+  return !(error instanceof LoadApiHttpError || error instanceof ZodError);
+}
+
+export interface MetricBatchLossTotals {
+  sampleCount: number;
+  batchCount: number;
+}
 
 export class MetricBatcher {
   private readonly samples: MetricSample[] = [];
@@ -103,6 +116,9 @@ export class MetricBatcher {
   private activeFlush: Promise<void> | null = null;
   private forceFlushRequested = false;
   private closed = false;
+  private discarded = false;
+  private lostSampleCount = 0;
+  private lostBatchCount = 0;
 
   constructor(
     private readonly options: {
@@ -129,6 +145,7 @@ export class MetricBatcher {
   async add(sample: MetricSample): Promise<void> {
     if (this.closed) throw new Error("Cannot add a metric sample after MetricBatcher.close().");
     if (this.samples.length >= this.maxBufferedSamples) {
+      this.recordLoss(1);
       this.options.onOverflow?.(sample);
       return;
     }
@@ -158,11 +175,19 @@ export class MetricBatcher {
   /** Stops future delivery and drops buffered samples when cancellation takes ownership. */
   async discard(): Promise<void> {
     this.closed = true;
+    this.discarded = true;
     this.samples.length = 0;
     this.forceFlushRequested = false;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
     await this.activeFlush;
+  }
+
+  lossTotals(): MetricBatchLossTotals {
+    return {
+      sampleCount: this.lostSampleCount,
+      batchCount: this.lostBatchCount,
+    };
   }
 
   private get maxBatchSize(): number {
@@ -192,6 +217,14 @@ export class MetricBatcher {
         : this.maxBatchSize;
       const samples = this.samples.splice(0, sampleCount);
 
+      await this.sendWithRetries(samples);
+      if (force && this.samples.length === 0) this.forceFlushRequested = false;
+    }
+  }
+
+  private async sendWithRetries(samples: MetricSample[]): Promise<void> {
+    for (let attempt = 1; attempt <= maxMetricBatchSendAttempts; attempt += 1) {
+      if (this.discarded) return;
       try {
         await this.options.client.sendMetrics({
           runId: this.options.runId,
@@ -199,10 +232,27 @@ export class MetricBatcher {
           samples,
           observedAt: (this.options.now?.() ?? new Date()).toISOString(),
         });
+        return;
       } catch (error) {
         this.options.onFlushError?.(error);
+        if (
+          this.discarded ||
+          !isRetryableLoadApiError(error) ||
+          attempt === maxMetricBatchSendAttempts
+        ) {
+          if (!this.discarded) this.recordLoss(samples.length);
+          return;
+        }
+        this.samples.unshift(...samples);
+        await new Promise((resolve) => setTimeout(resolve, metricBatchRetryDelayMs));
+        if (this.discarded) return;
+        this.samples.splice(0, samples.length);
       }
-      if (force && this.samples.length === 0) this.forceFlushRequested = false;
     }
+  }
+
+  private recordLoss(sampleCount: number): void {
+    this.lostSampleCount += sampleCount;
+    this.lostBatchCount += 1;
   }
 }

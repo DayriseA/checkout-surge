@@ -1433,6 +1433,45 @@ describe("SpawnK6Runner completion reporting", () => {
     ]);
   });
 
+  it("includes bounded live-metric loss in the terminal diagnostics", async () => {
+    const k6Process = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    const sendMetrics = vi.fn(async () => {
+      throw new Error("metric ingestion unavailable");
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: k6Process.spawnProcess,
+      metricBatchSize: 1,
+      readSummaryFile: async () => "{}",
+      apiClient: {
+        sendMetrics,
+        sendCompletion: async (report) => {
+          reports.push(report);
+        },
+      },
+    });
+
+    await runner.start(startRequest);
+    writeK6JsonLines(k6Process.stdout, [
+      {
+        type: "Point",
+        metric: "checkout_attempts_started",
+        data: { value: 1, time: timestamp },
+      },
+    ]);
+    k6Process.child.emit("close", 0);
+
+    const report = await waitForCompletionReport(reports, 1);
+
+    expect(sendMetrics).toHaveBeenCalledTimes(6);
+    expect(report.loadRunDiagnosticsSummary.liveMetricLoss).toEqual({
+      sampleCount: 2,
+      batchCount: 2,
+    });
+  });
+
   it("cancels preparation before spawn and retains the slot until preparation settles", async () => {
     let releaseDiagnostics: () => void = () => undefined;
     const diagnosticGate = new Promise<string | null>((resolve) => {

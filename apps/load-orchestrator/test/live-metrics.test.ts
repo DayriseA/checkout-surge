@@ -4,7 +4,7 @@ import {
   type MetricSample,
 } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { MetricBatcher } from "../src/application/api-client.js";
+import { LoadApiHttpError, MetricBatcher } from "../src/application/api-client.js";
 import { K6JsonLineFramer } from "../src/application/k6-json-line-framer.js";
 import { K6LiveMetricAggregator } from "../src/application/k6-live-metric-aggregator.js";
 import type { K6Point } from "../src/application/k6-output-parser.js";
@@ -196,6 +196,74 @@ describe("K6JsonLineFramer", () => {
 });
 
 describe("MetricBatcher", () => {
+  it("retries a transient failure without reordering or losing samples", async () => {
+    const sent: number[][] = [];
+    let attempts = 0;
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 2,
+      client: {
+        sendMetrics: async (batch) => {
+          sent.push(batch.samples.map((entry) => entry.value));
+          attempts += 1;
+          if (attempts === 1) throw new Error("transport failure");
+        },
+      },
+    });
+
+    await batcher.add(sample(1));
+    const firstBatch = batcher.add(sample(2));
+    await batcher.add(sample(3));
+    await batcher.add(sample(4));
+    await firstBatch;
+    await batcher.close();
+
+    expect(sent).toEqual([
+      [1, 2],
+      [1, 2],
+      [3, 4],
+    ]);
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 0, batchCount: 0 });
+  });
+
+  it("counts a batch as lost after the retry bound is exhausted", async () => {
+    const sendMetrics = vi.fn(async () => {
+      throw new Error("transport failure");
+    });
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 2,
+      client: { sendMetrics },
+    });
+
+    await batcher.add(sample(1));
+    await batcher.add(sample(2));
+    await batcher.close();
+
+    expect(sendMetrics).toHaveBeenCalledTimes(3);
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 2, batchCount: 1 });
+  });
+
+  it("does not retry non-retryable HTTP failures", async () => {
+    const sendMetrics = vi.fn(async () => {
+      throw new LoadApiHttpError("invalid request");
+    });
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 1,
+      client: { sendMetrics },
+    });
+
+    await batcher.add(sample(1));
+    await batcher.close();
+
+    expect(sendMetrics).toHaveBeenCalledOnce();
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 1, batchCount: 1 });
+  });
+
   it("sends batches single-flight and preserves samples arriving during a pending send", async () => {
     const sent: LoadMetricIngestRequest[] = [];
     const releases: Array<() => void> = [];
@@ -297,6 +365,45 @@ describe("MetricBatcher", () => {
     expect(sent.flatMap((batch) => batch.samples.map((entry) => entry.value))).toEqual([
       1, 2, 3, 4,
     ]);
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 1, batchCount: 1 });
+  });
+
+  it("bounds retries while closing a final partial batch", async () => {
+    const sendMetrics = vi.fn(async () => {
+      throw new Error("transport failure");
+    });
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 2,
+      client: { sendMetrics },
+    });
+
+    await batcher.add(sample(1));
+    await batcher.close();
+
+    expect(sendMetrics).toHaveBeenCalledTimes(3);
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 1, batchCount: 1 });
+  });
+
+  it("abandons pending retries when discarded", async () => {
+    const sendMetrics = vi.fn(async () => {
+      throw new Error("transport failure");
+    });
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 1,
+      client: { sendMetrics },
+    });
+
+    const add = batcher.add(sample(1));
+    await vi.waitFor(() => expect(sendMetrics).toHaveBeenCalledOnce());
+    await batcher.discard();
+    await add;
+
+    expect(sendMetrics).toHaveBeenCalledOnce();
+    expect(batcher.lossTotals()).toEqual({ sampleCount: 0, batchCount: 0 });
   });
 });
 
