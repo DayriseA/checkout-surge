@@ -1,6 +1,5 @@
 "use client";
 
-import { FiTrash2 } from "react-icons/fi";
 import { dangerLinkButtonClassName } from "./control-styles";
 import { useRunHistoryRowAdmin } from "./run-history-admin-context";
 
@@ -10,12 +9,7 @@ export function RunHistoryDeleteAllButton() {
   if (!admin) return null;
 
   return (
-    <button
-      className={dangerLinkButtonClassName}
-      onClick={admin.requestDeleteAll}
-      type="button"
-    >
-      <FiTrash2 aria-hidden="true" className="size-4" />
+    <button className={dangerLinkButtonClassName} onClick={admin.requestDeleteAll} type="button">
       Delete all run summaries
     </button>
   );

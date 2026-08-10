@@ -3,15 +3,10 @@
 import { deleteAllRunHistoryConfirmationToken } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
-import { FiTrash2 } from "react-icons/fi";
 import { formatCount } from "../lib/presentation/format";
 import { AdminNoticeView } from "./admin/admin-notice";
 import { ConfirmationDialog } from "./confirmation-dialog";
-import {
-  buttonClassName,
-  dangerLinkButtonClassName,
-  inputClassName,
-} from "./control-styles";
+import { buttonClassName, dangerLinkButtonClassName, inputClassName } from "./control-styles";
 import { RunHistoryAdminProvider } from "./run-history-admin-context";
 import { type DeleteIntent, useRunHistoryDeletion } from "./use-run-history-deletion";
 
@@ -94,7 +89,6 @@ export function RunHistoryAdminControls({
             }
             type="button"
           >
-            <FiTrash2 aria-hidden="true" className="size-4" />
             Delete selected ({selectedCount})
           </button>
         </div>

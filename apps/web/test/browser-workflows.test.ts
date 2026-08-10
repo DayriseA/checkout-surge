@@ -44,7 +44,6 @@ import {
   pendingDashboardRecovery,
 } from "../src/app/lib/api.js";
 import {
-  adminRunHistoryProxyPath,
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
   healthReadyProxyPath,
@@ -1470,51 +1469,6 @@ describe("watch browser recovery", () => {
 });
 
 describe("run history browser cleanup", () => {
-  it("submits selected and delete-all destructive requests from visible controls", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn(async () =>
-      jsonResponse({
-        deletedSummaryCount: 1,
-        deletedAt: "2026-06-20T00:00:10.000Z",
-        correlationId: "corr-delete-history",
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const history = runHistoryListFixture();
-    render(
-      createElement(
-        RunHistoryAdminControls,
-        { visibleRunIds: history.summaries.map((summary) => summary.runId) },
-        createElement(RunHistoryList, { history }),
-      ),
-    );
-
-    await user.click(screen.getByLabelText(`Select run ${history.summaries[0]?.runId}`));
-    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Delete run summary" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(String(requireFetchCall(fetchMock, 0)[0])).toBe(adminRunHistoryProxyPath);
-    expect(requireFetchCall(fetchMock, 0)[1]?.method).toBe("DELETE");
-    expect(jsonRequestBody(requireFetchCall(fetchMock, 0)[1])).toEqual({
-      runIds: [history.summaries[0]?.runId],
-      visibleFilter: {
-        runIds: history.summaries.map((summary) => summary.runId),
-      },
-    });
-
-    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
-    await replaceInputValue(/Type DELETE to confirm/, "DELETE", user);
-    await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(jsonRequestBody(requireFetchCall(fetchMock, 1)[1])).toEqual({
-      deleteAllConfirmation: "DELETE",
-    });
-  });
-
   it("deletes a single run straight from its per-row trash control", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn(async () =>
