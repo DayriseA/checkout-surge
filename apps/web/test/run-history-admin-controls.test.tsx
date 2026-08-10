@@ -47,6 +47,27 @@ describe("RunHistoryAdminControls", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("submits the exact delete-all payload with the DELETE method", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      successResponse(),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderSurface();
+
+    await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
+    await user.type(screen.getByRole("textbox"), "DELETE");
+    await user.click(screen.getByRole("button", { name: "Delete all summaries" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(adminRunHistoryProxyPath);
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      deleteAllConfirmation: "DELETE",
+    });
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
   it("shows the sticky selection bar only while summaries are selected", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn());
@@ -60,16 +81,20 @@ describe("RunHistoryAdminControls", () => {
     expect(
       screen.getByRole("checkbox", { name: "Select all visible runs" }).closest("label")?.classList,
     ).toContain("min-h-11");
+    const rowDeleteButton = screen.getByRole("button", {
+      name: `Delete run ${summaries[0]?.presetName} (${summaries[0]?.runId})`,
+    });
+    expect(rowDeleteButton.classList).toContain("size-11");
+    expect(rowDeleteButton.getAttribute("title")).toBe(`Delete run ${summaries[0]?.presetName}`);
+    expect(rowDeleteButton.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
     expect(
-      screen.getByRole("button", {
-        name: `Delete run ${summaries[0]?.presetName} (${summaries[0]?.runId})`,
-      }).classList,
-    ).toContain("size-11");
+      screen.getByRole("button", { name: "Delete all run summaries" }).querySelector("svg"),
+    ).toBeNull();
     await user.click(firstCheckbox);
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[1]?.runId}` }));
-    expect(screen.getByRole("button", { name: "Delete selected (2)" }).classList).toContain(
-      "min-h-11",
-    );
+    const deleteSelectedButton = screen.getByRole("button", { name: "Delete selected (2)" });
+    expect(deleteSelectedButton.classList).toContain("min-h-11");
+    expect(deleteSelectedButton.querySelector("svg")).toBeNull();
     expect(screen.getByRole("button", { name: "Clear" }).classList).toContain("min-h-11");
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
@@ -147,6 +172,7 @@ describe("RunHistoryAdminControls", () => {
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(fetchMock.mock.calls[0]?.[0]).toBe(adminRunHistoryProxyPath);
+    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("DELETE");
     expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
       runIds: [summaries[0]?.runId],
       visibleFilter: { runIds: summaries.map((summary) => summary.runId) },

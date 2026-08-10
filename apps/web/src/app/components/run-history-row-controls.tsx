@@ -1,6 +1,5 @@
 "use client";
 
-import { FiTrash2 } from "react-icons/fi";
 import { useRunHistoryRowAdmin } from "./run-history-admin-context";
 
 interface RunHistoryRowControlsProps {
@@ -37,7 +36,23 @@ export function RunHistoryRowControls({
         title={`Delete run ${presetName}`}
         type="button"
       >
-        <FiTrash2 aria-hidden="true" className="size-4" />
+        <svg
+          aria-hidden="true"
+          className="size-4"
+          fill="none"
+          focusable="false"
+          stroke="currentColor"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2"
+          viewBox="0 0 24 24"
+        >
+          <path d="M3 6h18" />
+          <path d="M8 6V4h8v2" />
+          <path d="M19 6l-1 14H6L5 6" />
+          <path d="M10 11v5" />
+          <path d="M14 11v5" />
+        </svg>
       </button>
     </div>
   );
