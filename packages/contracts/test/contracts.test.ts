@@ -2577,9 +2577,7 @@ describe("public runtime policy contract", () => {
       }),
     ).not.toThrow();
     expect(adminRunHistoryDetailResponseSchema.shape.overallDurationMs.parse(null)).toBeNull();
-    expect(() =>
-      adminRunHistoryDetailResponseSchema.shape.overallDurationMs.parse(-1),
-    ).toThrow();
+    expect(() => adminRunHistoryDetailResponseSchema.shape.overallDurationMs.parse(-1)).toThrow();
     const exceptionSummary = {
       maximumClassification: "correctness_failure" as const,
       brokenInvariants: 1,

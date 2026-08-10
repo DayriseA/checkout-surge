@@ -23,6 +23,7 @@ import {
   deriveWatchComposition,
   type WatchComposition,
 } from "../lib/presentation/watch-composition";
+import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-styles";
 import {
   ConsistencyLagPanel,
   InventoryDrainPanel,
@@ -32,10 +33,6 @@ import {
   RunOutcomesPanel,
   SystemStatusPanel,
 } from "./dashboard-panels";
-import {
-  neutralLinkButtonClassName,
-  primaryButtonClassName,
-} from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { GoldSignals } from "./gold-signals";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";

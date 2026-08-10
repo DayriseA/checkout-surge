@@ -25,7 +25,7 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
@@ -116,7 +116,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           and(
             eq(demoRuns.status, "failed"),
             eq(demoRuns.failureReason, "admin_reset"),
-            isNull(demoRunSummaries.id),
+            isNull(demoRuns.adminResetCompletedAt),
           ),
         ),
       );
@@ -124,8 +124,13 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     const projectionRetryRows = await this.options.db
       .select({ runId: demoRuns.id })
       .from(demoRuns)
-      .innerJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
-      .where(and(eq(demoRuns.status, "failed"), eq(demoRuns.failureReason, "admin_reset")));
+      .where(
+        and(
+          eq(demoRuns.status, "failed"),
+          eq(demoRuns.failureReason, "admin_reset"),
+          isNotNull(demoRuns.adminResetCompletedAt),
+        ),
+      );
 
     const fencedRuns: FencedResetRun[] = [];
     for (const candidate of resetCandidates) {
@@ -241,6 +246,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         ),
         finalizedAt: fencedRun.finalizedAt,
         capturedAt: now,
+        adminResetCompletedAt: now,
         transportAttemptCounts: trafficSummary.transportAttemptCounts,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,

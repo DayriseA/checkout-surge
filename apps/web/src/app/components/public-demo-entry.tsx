@@ -38,11 +38,11 @@ import {
   deriveRunPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
+import { inputClassName, primaryButtonClassName } from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
-import { inputClassName, primaryButtonClassName } from "./control-styles";
 
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
@@ -1145,11 +1145,7 @@ function StartGate({
         </p>
       ) : null}
       {!activeRunPresentation && presentation ? (
-        <ErrorNotice
-          context="public-start"
-          onRetry={onRetry}
-          presentation={presentation}
-        />
+        <ErrorNotice context="public-start" onRetry={onRetry} presentation={presentation} />
       ) : !activeRunPresentation && statusMessage ? (
         <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
       ) : null}
@@ -1190,13 +1186,7 @@ function ReadinessNotice({
 }) {
   if (read.status === "available" && read.data.status === "ok") return null;
   if (read.status === "loading")
-    return (
-      <ErrorNotice
-        context="public-start"
-        {...(onRetry ? { onRetry } : {})}
-        read={read}
-      />
-    );
+    return <ErrorNotice context="public-start" {...(onRetry ? { onRetry } : {})} read={read} />;
   return (
     <ErrorNotice
       context={{

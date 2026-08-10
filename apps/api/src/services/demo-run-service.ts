@@ -24,7 +24,6 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunSaleContexts,
-  demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   initializeInventory,
@@ -277,12 +276,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         const [incompleteReset] = await tx
           .select({ runId: demoRuns.id })
           .from(demoRuns)
-          .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
           .where(
             and(
               eq(demoRuns.status, "failed"),
               eq(demoRuns.failureReason, "admin_reset"),
-              isNull(demoRunSummaries.id),
+              isNull(demoRuns.adminResetCompletedAt),
             ),
           )
           .limit(1);

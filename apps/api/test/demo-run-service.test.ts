@@ -41,6 +41,7 @@ import { DemoRunValidationError } from "../src/services/demo-run-validation-erro
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
+import { RunHistoryService } from "../src/services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const publicCookieSecret = "test-public-cookie-secret";
@@ -312,7 +313,8 @@ describe("demo-run lifecycle start gating", () => {
 
       const rejectedStart = expect(startPromise).rejects.toMatchObject({
         code: "run_conflict",
-        details: { runId: existingRunId("active") },
+        message: "The prior demo reset must be repaired before another run can start.",
+        details: { conflictReason: "reset_incomplete", runId: existingRunId("active") },
       });
       releaseAbort();
       await expect(resetPromise).rejects.toMatchObject({
@@ -321,10 +323,22 @@ describe("demo-run lifecycle start gating", () => {
       await rejectedStart;
       expect(start).not.toHaveBeenCalled();
       expect(queueCleanup).not.toHaveBeenCalled();
+      await expect(
+        primary.db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, existingRunId("active"))),
+      ).resolves.toEqual([{ adminResetCompletedAt: null }]);
 
       await expect(resetService.reset("reset-fence-repair")).resolves.toMatchObject({
         failedRunCount: 1,
       });
+      await expect(
+        primary.db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, existingRunId("active"))),
+      ).resolves.toEqual([{ adminResetCompletedAt: expect.any(Date) }]);
       await expect(
         startService.startRun(
           { presetSlug: "preview-1k", operatorMode: "admin" },
@@ -334,6 +348,57 @@ describe("demo-run lifecycle start gating", () => {
       expect(start).toHaveBeenCalledOnce();
     } finally {
       releaseAbort();
+      await resetConnection.close();
+    }
+  });
+
+  it.each([
+    ["selected", { runIds: [existingRunId("active")] }],
+    ["delete-all", { deleteAllConfirmation: "DELETE" as const }],
+  ])("admits a successor after %s Run History deletion removes a completed reset summary", async (_deletionMode, deletionCommand) => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
+    await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
+    const resetService = new AdminDemoResetService({
+      db: resetConnection.db,
+      redis: redisClient,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      queueMaintenance: {
+        cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      clearErpCircuitBreakerState: async () => undefined,
+      trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+      dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(redisClient),
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      logger: createSilentLogger("api"),
+      now: () => new Date("2026-06-20T00:00:20.000Z"),
+    });
+
+    try {
+      await expect(resetService.reset("corr-reset-before-delete")).resolves.toMatchObject({
+        failedRunCount: 1,
+      });
+      const historyService = new RunHistoryService({ db: primary.db });
+      await expect(
+        historyService.delete(deletionCommand, "corr-delete-reset-summary"),
+      ).resolves.toMatchObject({ deletedSummaryCount: 1 });
+      await expect(primary.db.select().from(demoRunSummaries)).resolves.toHaveLength(0);
+      await expect(
+        primary.db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, existingRunId("active"))),
+      ).resolves.toEqual([{ adminResetCompletedAt: new Date("2026-06-20T00:00:20.000Z") }]);
+
+      await expect(
+        createStartService(primary, redisClient).startRun(
+          { presetSlug: "preview-1k", operatorMode: "admin" },
+          `corr-start-after-${_deletionMode}`,
+        ),
+      ).resolves.toMatchObject({ run: { status: "active" } });
+    } finally {
       await resetConnection.close();
     }
   });

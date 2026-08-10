@@ -30,6 +30,7 @@ export interface TerminalDemoRunSummaryInput {
   replayPossible: boolean;
   finalizedAt: Date;
   capturedAt?: Date;
+  adminResetCompletedAt?: Date;
   transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;

@@ -34,8 +34,8 @@ import {
   deriveFreshnessPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
-import { ErrorNotice } from "./error-notice";
 import { buttonClassName } from "./control-styles";
+import { ErrorNotice } from "./error-notice";
 import { StatusPill } from "./status-pill";
 import {
   deriveHarnessPreparation,

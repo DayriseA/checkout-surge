@@ -365,11 +365,7 @@ export function AdminPresetView({
       />
       <div className="grid grid-cols-[minmax(180px,260px)_1fr] gap-4 max-[800px]:grid-cols-1">
         {/* biome-ignore lint/a11y/useSemanticElements: C04 intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
-        <div
-          aria-label="Preset selection"
-          className="grid content-start gap-2"
-          role="group"
-        >
+        <div aria-label="Preset selection" className="grid content-start gap-2" role="group">
           {presets.map((preset) => (
             <button
               aria-describedby={actionPendingReason ? presetListPendingReasonId : undefined}
@@ -532,18 +528,12 @@ export function AdminPresetView({
                   Run once with these values
                 </button>
                 {actionPendingReason ? (
-                  <p
-                    className="m-0 mt-1 max-w-64 text-xs text-muted"
-                    id={startPendingReasonId}
-                  >
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={startPendingReasonId}>
                     {actionPendingReason}
                   </p>
                 ) : null}
                 {startBlockedReason ? (
-                  <p
-                    className="m-0 mt-1 max-w-64 text-xs text-muted"
-                    id={startBlockedReasonId}
-                  >
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={startBlockedReasonId}>
                     {startBlockedReason}
                   </p>
                 ) : null}
@@ -578,10 +568,7 @@ export function AdminPresetView({
                   Copy saved values to custom scenario
                 </button>
                 {actionPendingReason ? (
-                  <p
-                    className="m-0 mt-1 max-w-64 text-xs text-muted"
-                    id={copyPendingReasonId}
-                  >
+                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={copyPendingReasonId}>
                     {actionPendingReason}
                   </p>
                 ) : null}
@@ -629,10 +616,7 @@ export function AdminPresetView({
                 Duplicate saved preset
               </button>
               {duplicateReason ? (
-                <p
-                  className="col-span-full m-0 text-xs text-muted"
-                  id={duplicateReasonId}
-                >
+                <p className="col-span-full m-0 text-xs text-muted" id={duplicateReasonId}>
                   {duplicateReason}
                 </p>
               ) : null}

@@ -414,9 +414,9 @@ describe("admin feature controllers", () => {
     await act(async () => Promise.resolve());
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect((screen.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
+    expect(
+      (screen.getByRole("button", { name: "Refresh status" }) as HTMLButtonElement).disabled,
+    ).toBe(false);
     expect((routineRefresh as HTMLButtonElement).disabled).toBe(false);
   });
 
@@ -568,9 +568,11 @@ describe("admin feature controllers", () => {
     expect(screen.getByText("2026-06-20 00:00:10 UTC · stale")).toBeTruthy();
     expect(screen.getByText("Status is stale — refresh before starting")).toBeTruthy();
     expect(
-      (screen.getByRole("button", {
-        name: "Run once with these values",
-      }) as HTMLButtonElement).disabled,
+      (
+        screen.getByRole("button", {
+          name: "Run once with these values",
+        }) as HTMLButtonElement
+      ).disabled,
     ).toBe(true);
     expectControlDescription(
       screen.getByRole("button", { name: "Run once with these values" }),
@@ -782,7 +784,9 @@ describe("admin feature controllers", () => {
     expect(screen.getByLabelText("Worker concurrency").getAttribute("min")).toBeNull();
     expect(screen.getByLabelText("Worker concurrency").getAttribute("step")).toBeNull();
     expect(
-      screen.getByText(`Allowed range: 1–${orderProcessConcurrencyHardCap.toLocaleString("en-US")}.`),
+      screen.getByText(
+        `Allowed range: 1–${orderProcessConcurrencyHardCap.toLocaleString("en-US")}.`,
+      ),
     ).toBeTruthy();
   });
 
