@@ -14,6 +14,14 @@ const durableExecutionBaseSchema = z.object({
   acceptedAt: z.string().datetime({ offset: true }),
 });
 
+const completionRejectionSchema = z
+  .object({
+    reason: z.string().min(1),
+    httpStatus: z.number().int().min(400).max(499),
+    rejectedAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
 const durableExecutionSchema = z.discriminatedUnion("state", [
   durableExecutionBaseSchema
     .extend({
@@ -39,9 +47,17 @@ const durableExecutionSchema = z.discriminatedUnion("state", [
       completion: materializedTrafficCompletionReportSchema.optional(),
     })
     .strict(),
+  durableExecutionBaseSchema
+    .extend({
+      state: z.literal("completion_rejected"),
+      completion: materializedTrafficCompletionReportSchema,
+      rejection: completionRejectionSchema,
+    })
+    .strict(),
 ]);
 
 export type DurableExecution = z.infer<typeof durableExecutionSchema>;
+export type CompletionRejection = z.infer<typeof completionRejectionSchema>;
 export type CompletionPublishOutcome =
   | "published"
   | "already_published"
@@ -57,6 +73,11 @@ export interface ExecutionStore {
   update(execution: DurableExecution): Promise<void>;
   publishCompletion(completion: TrafficCompletionReport): Promise<CompletionPublishOutcome>;
   acknowledgeCompletion(completion: TrafficCompletionReport): Promise<boolean>;
+  rejectCompletion(
+    completion: TrafficCompletionReport,
+    rejection: CompletionRejection,
+  ): Promise<boolean>;
+  completeCancellation(runId: string): Promise<boolean>;
 }
 
 /** Atomic single-slot journal. The orchestrator deliberately owns at most one execution. */
@@ -89,7 +110,7 @@ export class FileExecutionStore implements ExecutionStore {
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }> {
     const current = await this.read();
-    if (current && current.state !== "completed") {
+    if (current && current.state !== "completed" && current.state !== "completion_rejected") {
       if (current.request.runId === request.runId) return { execution: current, created: false };
       throw new ExecutionConflictError(current.request.runId);
     }
@@ -133,6 +154,44 @@ export class FileExecutionStore implements ExecutionStore {
         current?.state !== "completion_pending" ||
         current.request.runId !== parsedCompletion.runId ||
         !sameCompletion(current.completion, parsedCompletion)
+      ) {
+        return false;
+      }
+      await this.write({ ...current, state: "completed" });
+      return true;
+    });
+  }
+
+  async rejectCompletion(
+    completion: TrafficCompletionReport,
+    rejection: CompletionRejection,
+  ): Promise<boolean> {
+    const parsedCompletion = materializedTrafficCompletionReportSchema.parse(completion);
+    const parsedRejection = completionRejectionSchema.parse(rejection);
+    return this.serializeMutation(async () => {
+      const current = await this.read();
+      if (
+        current?.state !== "completion_pending" ||
+        current.request.runId !== parsedCompletion.runId ||
+        !sameCompletion(current.completion, parsedCompletion)
+      ) {
+        return false;
+      }
+      await this.write({
+        ...current,
+        state: "completion_rejected",
+        rejection: parsedRejection,
+      });
+      return true;
+    });
+  }
+
+  async completeCancellation(runId: string): Promise<boolean> {
+    return this.serializeMutation(async () => {
+      const current = await this.read();
+      if (
+        current?.request.runId !== runId ||
+        (current.state !== "accepted" && current.state !== "executing")
       ) {
         return false;
       }

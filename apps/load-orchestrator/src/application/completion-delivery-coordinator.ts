@@ -1,6 +1,10 @@
 import type { TrafficCompletionReport } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import type { LoadApiClient } from "./api-client.js";
+import {
+  isRetryableCompletionLoadApiError,
+  LoadApiHttpError,
+  type LoadApiClient,
+} from "./api-client.js";
 import type { ExecutionStore } from "./execution-store.js";
 
 export const defaultCompletionDeliveryRetryIntervalMs = 5_000;
@@ -101,16 +105,46 @@ export class CompletionDeliveryCoordinator implements CompletionDelivery {
   }
 
   private async deliverOnce(): Promise<boolean> {
+    let pendingCompletion: TrafficCompletionReport | null = null;
     try {
       const execution = await this.options.executionStore.read();
       if (execution?.state !== "completion_pending") return true;
+      pendingCompletion = execution.completion;
 
-      await this.options.apiClient.sendCompletion(execution.completion);
-      if (!(await this.options.executionStore.acknowledgeCompletion(execution.completion))) {
+      await this.options.apiClient.sendCompletion(pendingCompletion);
+      if (!(await this.options.executionStore.acknowledgeCompletion(pendingCompletion))) {
         throw new Error("The durable completion changed before acknowledgement was recorded.");
       }
       return true;
     } catch (error) {
+      if (
+        !isRetryableCompletionLoadApiError(error) &&
+        error instanceof LoadApiHttpError &&
+        error.status !== undefined &&
+        pendingCompletion
+      ) {
+        const rejection = {
+          reason: error.message,
+          httpStatus: error.status,
+          rejectedAt: new Date().toISOString(),
+        };
+        try {
+          if (!(await this.options.executionStore.rejectCompletion(pendingCompletion, rejection))) {
+            throw new Error("The durable completion changed before rejection was recorded.");
+          }
+          this.options.logger.error(
+            { err: error, rejection },
+            "Traffic completion delivery is permanently abandoned and the report is parked.",
+          );
+          return true;
+        } catch (parkingError) {
+          this.options.logger.warn(
+            { err: parkingError, rejection },
+            "Pending traffic completion remains durable and will be retried.",
+          );
+          return false;
+        }
+      }
       this.options.logger.warn(
         { err: error },
         "Pending traffic completion remains durable and will be retried.",

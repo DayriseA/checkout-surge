@@ -9,7 +9,9 @@ import {
   CompletionDeliveryCoordinator,
   CompletionPersistenceError,
 } from "../src/application/completion-delivery-coordinator.js";
+import { LoadApiHttpError } from "../src/application/api-client.js";
 import {
+  type CompletionRejection,
   type CompletionPublishOutcome,
   type DurableExecution,
   ExecutionConflictError,
@@ -69,7 +71,11 @@ class MemoryExecutionStore implements ExecutionStore {
 
   async accept(input: TrafficExecutionStartRequest, at: Date) {
     return this.mutate(async () => {
-      if (this.execution && this.execution.state !== "completed") {
+      if (
+        this.execution &&
+        this.execution.state !== "completed" &&
+        this.execution.state !== "completion_rejected"
+      ) {
         if (this.execution.request.runId === input.runId) {
           return { execution: this.execution, created: false };
         }
@@ -111,6 +117,35 @@ class MemoryExecutionStore implements ExecutionStore {
       if (
         this.execution?.state !== "completion_pending" ||
         !isDeepStrictEqual(this.execution.completion, report)
+      ) {
+        return false;
+      }
+      this.execution = { ...this.execution, state: "completed" };
+      return true;
+    });
+  }
+
+  async rejectCompletion(
+    report: TrafficCompletionReport,
+    rejection: CompletionRejection,
+  ): Promise<boolean> {
+    return this.mutate(async () => {
+      if (
+        this.execution?.state !== "completion_pending" ||
+        !isDeepStrictEqual(this.execution.completion, report)
+      ) {
+        return false;
+      }
+      this.execution = { ...this.execution, state: "completion_rejected", rejection };
+      return true;
+    });
+  }
+
+  async completeCancellation(runId: string): Promise<boolean> {
+    return this.mutate(async () => {
+      if (
+        this.execution?.request.runId !== runId ||
+        (this.execution.state !== "accepted" && this.execution.state !== "executing")
       ) {
         return false;
       }
@@ -194,7 +229,9 @@ describe("CompletionDeliveryCoordinator", () => {
       apiClient: {
         sendCompletion: async (report) => {
           reports.push(report);
-          if (reports.length === 1) throw new Error("temporary API failure");
+          if (reports.length === 1) {
+            throw new LoadApiHttpError("API load ingestion failed with HTTP 503.", 503);
+          }
         },
       },
     });
@@ -206,6 +243,74 @@ describe("CompletionDeliveryCoordinator", () => {
     expect(reports).toHaveLength(2);
     expect(reports[1]).toEqual(reports[0]);
     await coordinator.close();
+  });
+
+  it.each([408, 429])("keeps retrying completion delivery after HTTP %i", async (status) => {
+    const store = new MemoryExecutionStore();
+    await store.accept(request, acceptedAt);
+    const sendCompletion = vi.fn(async () => {
+      if (sendCompletion.mock.calls.length === 1) {
+        throw new LoadApiHttpError(`API load ingestion failed with HTTP ${status}.`, status);
+      }
+    });
+    const coordinator = new CompletionDeliveryCoordinator({
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      retryIntervalMs: 1,
+      apiClient: { sendCompletion },
+    });
+
+    await coordinator.start();
+    await coordinator.persist(completionReport());
+    await waitForState(store, "completed");
+
+    expect(sendCompletion).toHaveBeenCalledTimes(2);
+    await coordinator.close();
+  });
+
+  it("parks a permanently rejected report, stops retrying, and releases the slot", async () => {
+    const store = new MemoryExecutionStore();
+    await store.accept(request, acceptedAt);
+    const sendCompletion = vi.fn(async () => {
+      throw new LoadApiHttpError("API load ingestion failed with HTTP 409.", 409);
+    });
+    const logger = createSilentLogger("load-orchestrator");
+    const logError = vi.spyOn(logger, "error");
+    const coordinator = new CompletionDeliveryCoordinator({
+      executionStore: store,
+      logger,
+      retryIntervalMs: 1,
+      apiClient: { sendCompletion },
+    });
+
+    await coordinator.start();
+    await coordinator.persist(completionReport());
+    await waitForState(store, "completion_rejected");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(sendCompletion).toHaveBeenCalledOnce();
+    expect(store.execution).toMatchObject({
+      state: "completion_rejected",
+      completion: completionReport(),
+      rejection: {
+        reason: "API load ingestion failed with HTTP 409.",
+        httpStatus: 409,
+        rejectedAt: expect.any(String),
+      },
+    });
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rejection: expect.objectContaining({ httpStatus: 409 }),
+      }),
+      expect.stringContaining("permanently abandoned"),
+    );
+    await expect(coordinator.close()).resolves.toBeUndefined();
+
+    const successor = {
+      ...request,
+      runId: "66666666-6666-4666-8666-666666666666",
+    };
+    await expect(store.accept(successor, new Date())).resolves.toMatchObject({ created: true });
   });
 
   it("does not overwrite successor state when acknowledgement becomes stale", async () => {
@@ -293,10 +398,11 @@ describe("CompletionDeliveryCoordinator", () => {
     });
 
     await coordinator.start();
+    await waitForAttempts(sendCompletion, 2);
     await coordinator.close();
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(sendCompletion).toHaveBeenCalledTimes(1);
+    expect(sendCompletion).toHaveBeenCalledTimes(2);
     expect(store.execution).toMatchObject({ state: "completion_pending" });
   });
 });

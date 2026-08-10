@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HttpLoadApiClient, type LoadApiClient } from "../src/application/api-client.js";
 import { CompletionDeliveryCoordinator } from "../src/application/completion-delivery-coordinator.js";
 import {
+  type CompletionRejection,
   type CompletionPublishOutcome,
   type DurableExecution,
   ExecutionConflictError,
@@ -74,7 +75,11 @@ class InMemoryExecutionStore implements ExecutionStore {
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }> {
     return this.mutate(async () => {
-      if (this.execution && this.execution.state !== "completed") {
+      if (
+        this.execution &&
+        this.execution.state !== "completed" &&
+        this.execution.state !== "completion_rejected"
+      ) {
         if (this.execution.request.runId === request.runId) {
           return { execution: this.execution, created: false };
         }
@@ -116,6 +121,35 @@ class InMemoryExecutionStore implements ExecutionStore {
       if (
         this.execution?.state !== "completion_pending" ||
         JSON.stringify(this.execution.completion) !== JSON.stringify(report)
+      ) {
+        return false;
+      }
+      this.execution = { ...this.execution, state: "completed" };
+      return true;
+    });
+  }
+
+  async rejectCompletion(
+    report: TrafficCompletionReport,
+    rejection: CompletionRejection,
+  ): Promise<boolean> {
+    return this.mutate(async () => {
+      if (
+        this.execution?.state !== "completion_pending" ||
+        JSON.stringify(this.execution.completion) !== JSON.stringify(report)
+      ) {
+        return false;
+      }
+      this.execution = { ...this.execution, state: "completion_rejected", rejection };
+      return true;
+    });
+  }
+
+  async completeCancellation(runId: string): Promise<boolean> {
+    return this.mutate(async () => {
+      if (
+        this.execution?.request.runId !== runId ||
+        (this.execution.state !== "accepted" && this.execution.state !== "executing")
       ) {
         return false;
       }
@@ -385,6 +419,95 @@ describe("durable execution ownership", () => {
       expect(acknowledged).toBe(false);
       expect(await store.read()).toEqual(successor);
     } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("conditionally parks a rejected completion and releases the execution slot", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-rejected-journal-"));
+    const store = new FileExecutionStore(directory);
+    const generated = generateK6Script(startRequest);
+    const report = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(timestamp),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const rejection = {
+      reason: "API load ingestion failed with HTTP 409.",
+      httpStatus: 409,
+      rejectedAt: "2026-06-20T12:00:06.000Z",
+    };
+    const successor = {
+      ...startRequest,
+      runId: "66666666-6666-4666-8666-666666666666",
+    };
+    try {
+      await store.accept(startRequest, new Date(timestamp));
+      await store.publishCompletion(report);
+
+      await expect(
+        store.rejectCompletion({ ...report, status: "failed" }, rejection),
+      ).resolves.toBe(false);
+      await expect(
+        Promise.all([
+          store.completeCancellation(startRequest.runId),
+          store.rejectCompletion(report, rejection),
+        ]),
+      ).resolves.toEqual([false, true]);
+      await expect(store.completeCancellation(startRequest.runId)).resolves.toBe(false);
+      await expect(store.read()).resolves.toMatchObject({
+        state: "completion_rejected",
+        completion: report,
+        rejection,
+      });
+      await expect(store.accept(successor, new Date(completionTimestamp))).resolves.toMatchObject({
+        created: true,
+        execution: { request: successor, state: "accepted" },
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a parked completion through the existing public terminal status", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-rejected-status-"));
+    const store = new FileExecutionStore(directory);
+    const generated = generateK6Script(startRequest);
+    const report = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(timestamp),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const runner = new ProductionSpawnK6Runner({
+      k6Binary: "k6",
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+      completionDelivery: {
+        start: async () => undefined,
+        persist: async () => undefined,
+        close: async () => undefined,
+      },
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+    });
+    try {
+      await store.accept(startRequest, new Date(timestamp));
+      await store.publishCompletion(report);
+      await store.rejectCompletion(report, {
+        reason: "API load ingestion failed with HTTP 409.",
+        httpStatus: 409,
+        rejectedAt: "2026-06-20T12:00:06.000Z",
+      });
+
+      await expect(runner.statusSnapshot(startRequest.runId)).resolves.toEqual({
+        state: "completed",
+        acceptedAt: timestamp,
+      });
+    } finally {
+      await runner.close();
       await rm(directory, { recursive: true, force: true });
     }
   });
@@ -1619,14 +1742,9 @@ describe("SpawnK6Runner completion reporting", () => {
     class FailingCancellationReleaseStore extends FileExecutionStore {
       failCancellationRelease = true;
 
-      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
-        if (
-          this.failCancellationRelease &&
-          execution.state === "completed" &&
-          !execution.completion
-        )
-          throw new Error("cancellation journal unavailable");
-        return super.update(execution);
+      override async completeCancellation(runId: string) {
+        if (this.failCancellationRelease) throw new Error("cancellation journal unavailable");
+        return super.completeCancellation(runId);
       }
     }
     const store = new FailingCancellationReleaseStore(directory);
@@ -1713,12 +1831,10 @@ describe("SpawnK6Runner completion reporting", () => {
     class GatedCancellationReleaseStore extends FileExecutionStore {
       cancellationReleaseCount = 0;
 
-      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
-        if (execution.state === "completed" && !execution.completion) {
-          this.cancellationReleaseCount += 1;
-          await journalGate;
-        }
-        return super.update(execution);
+      override async completeCancellation(runId: string) {
+        this.cancellationReleaseCount += 1;
+        await journalGate;
+        return super.completeCancellation(runId);
       }
     }
     const store = new GatedCancellationReleaseStore(directory);
@@ -2025,6 +2141,7 @@ describe("SpawnK6Runner completion reporting", () => {
       update: vi.fn((value: { state: string }) =>
         value.state === "executing" ? executingUpdate : Promise.resolve(),
       ),
+      completeCancellation: vi.fn(async () => true),
     } as unknown as FileExecutionStore;
     const runner = new SpawnK6Runner({
       k6Binary: "k6",

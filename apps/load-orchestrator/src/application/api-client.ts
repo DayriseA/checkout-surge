@@ -93,16 +93,37 @@ export class HttpLoadApiClient implements LoadApiClient {
       signal,
     });
     if (!response.ok) {
-      throw new LoadApiHttpError(`API load ingestion failed with HTTP ${response.status}.`);
+      throw new LoadApiHttpError(
+        `API load ingestion failed with HTTP ${response.status}.`,
+        response.status,
+      );
     }
     return response.json();
   }
 }
 
-export class LoadApiHttpError extends Error {}
+export class LoadApiHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
 
 export function isRetryableLoadApiError(error: unknown): boolean {
   return !(error instanceof LoadApiHttpError || error instanceof ZodError);
+}
+
+export function isRetryableCompletionLoadApiError(error: unknown): boolean {
+  return !(
+    error instanceof LoadApiHttpError &&
+    error.status !== undefined &&
+    error.status >= 400 &&
+    error.status < 500 &&
+    error.status !== 408 &&
+    error.status !== 429
+  );
 }
 
 export interface MetricBatchLossTotals {

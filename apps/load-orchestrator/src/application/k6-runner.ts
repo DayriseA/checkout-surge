@@ -136,7 +136,10 @@ export class SpawnK6Runner implements K6Runner {
   ): Promise<{ state: DurableExecution["state"] | "unknown"; acceptedAt?: string }> {
     const execution = await this.options.executionStore.read();
     return execution?.request.runId === runId
-      ? { state: execution.state, acceptedAt: execution.acceptedAt }
+      ? {
+          state: execution.state === "completion_rejected" ? "completed" : execution.state,
+          acceptedAt: execution.acceptedAt,
+        }
       : { state: "unknown" };
   }
 
@@ -185,11 +188,7 @@ export class SpawnK6Runner implements K6Runner {
         this.cancellationRequiresJournalRelease = true;
       }
       if (this.cancellationRequiresJournalRelease) {
-        const execution = await this.options.executionStore.read();
-        if (execution?.request.runId === runId) {
-          const { completion: _completion, ...withoutCompletion } = execution;
-          await this.options.executionStore.update({ ...withoutCompletion, state: "completed" });
-        }
+        await this.options.executionStore.completeCancellation(runId);
       }
       this.cancellingRunId = null;
       this.cancellationOperation = null;
@@ -321,7 +320,7 @@ export class SpawnK6Runner implements K6Runner {
         throw error;
       }
       if (this.preparationCancelled(input.runId)) {
-        await this.completeCancelledJournal(accepted);
+        await this.options.executionStore.completeCancellation(input.runId);
         throw new CancellationRequestedError();
       }
       const completionTask = execution.completion.then(async (result) => {
@@ -360,7 +359,7 @@ export class SpawnK6Runner implements K6Runner {
         (error instanceof CancellationRequestedError || error instanceof K6StartCancelledError) &&
         acceptance.created
       ) {
-        await this.completeCancelledJournal(accepted);
+        await this.options.executionStore.completeCancellation(input.runId);
       }
       throw error;
     }
@@ -375,13 +374,6 @@ export class SpawnK6Runner implements K6Runner {
 
   private preparationCancelled(runId: string): boolean {
     return this.currentPreparation?.runId === runId && this.currentPreparation.cancelRequested;
-  }
-
-  private async completeCancelledJournal(execution: DurableExecution): Promise<void> {
-    const current = await this.options.executionStore.read();
-    if (current?.request.runId !== execution.request.runId || current.state === "completed") return;
-    const { completion: _completion, ...withoutCompletion } = current;
-    await this.options.executionStore.update({ ...withoutCompletion, state: "completed" });
   }
 
   private async persistPreparationFailure(

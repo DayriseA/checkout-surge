@@ -154,6 +154,10 @@ describe("load-orchestrator API client", () => {
       .catch((error) => error);
 
     expect(isRetryableLoadApiError(transportError)).toBe(true);
+    expect(httpError).toMatchObject({
+      message: "API load ingestion failed with HTTP 401.",
+      status: 401,
+    });
     expect(httpError).toBeInstanceOf(LoadApiHttpError);
     expect(isRetryableLoadApiError(httpError)).toBe(false);
     expect(isRetryableLoadApiError(validationError)).toBe(false);
