@@ -464,6 +464,18 @@ describe("run lifecycle contracts", () => {
         completedAt: "2026-06-20T11:59:59.000Z",
       }),
     ).toThrow();
+    expect(
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        liveMetricLoss: { sampleCount: 12, batchCount: 2 },
+      }).liveMetricLoss,
+    ).toEqual({ sampleCount: 12, batchCount: 2 });
+    expect(() =>
+      loadRunDiagnosticsSummarySchema.parse({
+        ...runnerDiagnostics(),
+        liveMetricLoss: { sampleCount: -1, batchCount: 1 },
+      }),
+    ).toThrow();
   });
   it("validates populated, partial, unavailable, and invalid generator capacity", () => {
     const populated = {

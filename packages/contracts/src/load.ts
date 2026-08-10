@@ -682,6 +682,14 @@ export const generatorUtilisationSchema = z
   });
 export type GeneratorUtilisation = z.infer<typeof generatorUtilisationSchema>;
 
+export const liveMetricLossSchema = z
+  .object({
+    sampleCount: nonnegativeIntegerSchema,
+    batchCount: nonnegativeIntegerSchema,
+  })
+  .strict();
+export type LiveMetricLoss = z.infer<typeof liveMetricLossSchema>;
+
 export const loadRunDiagnosticsSummarySchema = z
   .object({
     startedAt: isoTimestampSchema,
@@ -781,6 +789,7 @@ export const loadRunDiagnosticsSummarySchema = z
     stderrLineTruncatedCount: nonnegativeIntegerSchema,
     terminalMetricSources: terminalMetricSourcesSchema.optional(),
     summaryExportWarnings: z.array(summaryExportWarningSchema).optional(),
+    liveMetricLoss: liveMetricLossSchema.optional(),
   })
   .strict()
   .superRefine((value, context) => {

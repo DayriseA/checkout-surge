@@ -399,6 +399,7 @@ export class K6ChildProcessSupervisor {
         ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
         ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
         requestArrivalSummary: input.liveMetrics.requestArrivalSummary(),
+        liveMetricLoss: input.batcher.lossTotals(),
       }),
     };
   }
