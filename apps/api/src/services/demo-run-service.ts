@@ -169,6 +169,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         request,
         acceptedConfig.preset,
         acceptedConfig.snapshot,
+        correlationId,
         now,
         reservePublicBudget,
       );
@@ -245,6 +246,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     request: StartDemoRunCommand,
     preset: DemoPresetContract,
     snapshot: AcceptedRunConfigSnapshot,
+    correlationId: string,
     now: Date,
     beforeInsert?: () => Promise<void>,
   ): Promise<{ run: DemoRunSnapshot }> {
@@ -332,6 +334,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
             status: "starting",
             trafficStatus: "starting",
             configSnapshot: snapshot,
+            correlationId,
             saleOfferId,
             startedAt: now,
             createdAt: now,

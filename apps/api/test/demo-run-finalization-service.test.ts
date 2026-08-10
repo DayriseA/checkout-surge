@@ -928,7 +928,102 @@ describe("demo run finalization service", () => {
     }
   });
 
-  it("publishes terminal projection dirtiness after commit and an overlapping stale recovery", async () => {
+  it("publishes the persisted run correlation when the sweep finalizes a run", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const logger = createSilentLogger("api");
+    const debug = vi.spyOn(logger, "debug");
+    const service = createService(connection, redis, { logger });
+    const terminalEvents: Record<string, unknown>[] = [];
+    const handleSubscriberMessage = (channel: string, message: string) => {
+      if (channel === dashboardProjectionDirtyRedisChannel) {
+        terminalEvents.push(JSON.parse(message) as Record<string, unknown>);
+      }
+    };
+    subscriberRedis.on("message", handleSubscriberMessage);
+
+    try {
+      await seedDrainingRun({
+        db,
+        redis: redisClient,
+        trafficDeliveryStatus: "complete",
+        correlationId: "corr-run-root",
+      });
+      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel);
+
+      await expect(service.finalizeReadyRuns()).resolves.toBe(1);
+      await waitForObservedCount(terminalEvents, 1);
+
+      expect(terminalEvents).toEqual([
+        {
+          type: "dashboard.projection.dirty",
+          correlationId: "corr-run-root",
+          scope: { runId: ids.run, saleOfferId: ids.saleOffer },
+        },
+      ]);
+      expect(debug).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: ids.run,
+          correlationId: "corr-run-root",
+          finalizationActor: "sweep",
+        }),
+        "Published terminal projection dirty signal.",
+      );
+    } finally {
+      subscriberRedis.off("message", handleSubscriberMessage);
+      try {
+        await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel);
+      } finally {
+        subscriberRedis.disconnect();
+      }
+    }
+  });
+
+  it("publishes without correlation for a legacy run when the sweep finalizes it", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const service = createService(connection, redis);
+    const terminalEvents: Record<string, unknown>[] = [];
+    const handleSubscriberMessage = (channel: string, message: string) => {
+      if (channel === dashboardProjectionDirtyRedisChannel) {
+        terminalEvents.push(JSON.parse(message) as Record<string, unknown>);
+      }
+    };
+    subscriberRedis.on("message", handleSubscriberMessage);
+
+    try {
+      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel);
+
+      await expect(service.finalizeReadyRuns()).resolves.toBe(1);
+      await waitForObservedCount(terminalEvents, 1);
+
+      expect(terminalEvents).toEqual([
+        {
+          type: "dashboard.projection.dirty",
+          scope: { runId: ids.run, saleOfferId: ids.saleOffer },
+        },
+      ]);
+      expect(terminalEvents[0]).not.toHaveProperty("correlationId");
+    } finally {
+      subscriberRedis.off("message", handleSubscriberMessage);
+      try {
+        await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel);
+      } finally {
+        subscriberRedis.disconnect();
+      }
+    }
+  });
+
+  it("publishes caller correlation over the persisted root after commit", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
@@ -958,7 +1053,12 @@ describe("demo run finalization service", () => {
     let finalizationPromise: Promise<unknown> | null = null;
 
     try {
-      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+      await seedDrainingRun({
+        db,
+        redis: redisClient,
+        trafficDeliveryStatus: "complete",
+        correlationId: "corr-persisted-root",
+      });
       await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel);
       const staleRecovery = await lockConnection.db.transaction(async (tx) => {
         await tx.execute(
@@ -1027,6 +1127,7 @@ describe("demo run finalization service", () => {
       expect(terminalEvents).toHaveLength(1);
       expect(terminalEvents[0]).toMatchObject({
         type: "dashboard.projection.dirty",
+        correlationId: "corr-finalize-overlap",
         scope: { runId: ids.run, saleOfferId: ids.saleOffer },
       });
     } finally {
@@ -1385,6 +1486,7 @@ function createService(
     terminalInventoryReadTimeoutMs?: number;
     now?: () => Date;
     drainTimeoutSeconds?: number;
+    logger?: ConstructorParameters<typeof DemoRunFinalizationService>[0]["logger"];
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
@@ -1415,6 +1517,7 @@ async function seedDrainingRun(input: {
   trafficDeliveryStatus: "complete" | "failed";
   configSnapshot?: AcceptedRunConfigSnapshot;
   trafficEndedAt?: Date;
+  correlationId?: string;
 }): Promise<void> {
   const configSnapshot = input.configSnapshot ?? configSnapshotFixture();
   const trafficEndedAt = input.trafficEndedAt ?? new Date("2026-06-20T00:00:05.000Z");
@@ -1463,6 +1566,7 @@ async function seedDrainingRun(input: {
     status: "draining",
     trafficStatus: "succeeded",
     configSnapshot,
+    correlationId: input.correlationId,
     saleOfferId: ids.saleOffer,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
