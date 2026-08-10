@@ -1525,37 +1525,53 @@ function erpChangeSummary(current: ErpChaosConfig, proposed: ErpChaosConfig) {
 const policyFieldKeys = {
   budget: ["windowSeconds", "perVisitorMaxStarts", "globalMaxStarts"],
   traffic: [
-    "mode", "buyerCount", "duplicateEachBuyerAttempt", "ratePerSecond", "startDelaySeconds",
-    "maxDurationSeconds", "durationSeconds", "quantityPerAttempt",
-    "k6Vus.preAllocatedVus", "k6Vus.maxVus",
+    "mode",
+    "buyerCount",
+    "duplicateEachBuyerAttempt",
+    "ratePerSecond",
+    "startDelaySeconds",
+    "maxDurationSeconds",
+    "durationSeconds",
+    "quantityPerAttempt",
+    "k6Vus.preAllocatedVus",
+    "k6Vus.maxVus",
   ],
   inventory: ["startingStock", "quantityPerCheckout", "reservationHoldMinutes"],
   erp: ["latencyMs", "maxTps", "errorRate", "requestTimeoutMs"],
   backpressure: ["queueName", "physicalQueueName", "orderProcessConcurrency"],
   retry: ["maxAttempts", "initialBackoffMs"],
   backpressureTimeouts: [
-    "drainTimeoutSeconds", "pendingPersistenceRetryAfterSeconds",
-    "circuitBreakerFailureThreshold", "circuitBreakerResetTimeoutMs",
+    "drainTimeoutSeconds",
+    "pendingPersistenceRetryAfterSeconds",
+    "circuitBreakerFailureThreshold",
+    "circuitBreakerResetTimeoutMs",
   ],
   limits: [
-    "maxTotalRequests", "maxBuyers", "maxRequestsPerSecond", "maxTrafficDurationSeconds",
-    "maxTrafficStartDelaySeconds", "maxPreAllocatedVus", "maxVus", "maxStartingStock",
-    "maxErpLatencyMs", "minErpMaxTps", "maxErpMaxTps", "maxErpErrorRate",
+    "maxTotalRequests",
+    "maxBuyers",
+    "maxRequestsPerSecond",
+    "maxTrafficDurationSeconds",
+    "maxTrafficStartDelaySeconds",
+    "maxPreAllocatedVus",
+    "maxVus",
+    "maxStartingStock",
+    "maxErpLatencyMs",
+    "minErpMaxTps",
+    "maxErpMaxTps",
+    "maxErpErrorRate",
   ],
 } as const;
 
-function policyChangeRow(
-  label: string,
-  oldValue: string | number,
-  proposedValue: string | number,
-) {
+function policyChangeRow(label: string, oldValue: string | number, proposedValue: string | number) {
   return { label, oldValue, proposedValue };
 }
 
-function policyChangeRows<
-  const Key extends string,
-  Value extends Record<Key, string | number>,
->(prefix: string, keys: readonly Key[], oldValues: Value, proposedValues: Value) {
+function policyChangeRows<const Key extends string, Value extends Record<Key, string | number>>(
+  prefix: string,
+  keys: readonly Key[],
+  oldValues: Value,
+  proposedValues: Value,
+) {
   return keys.map((key) =>
     policyChangeRow(`${prefix}.${key}`, oldValues[key], proposedValues[key]),
   );
@@ -1592,48 +1608,67 @@ export function policyChangeSummary(
       proposed.isPublicRunBudgetEnforced ? "on" : "off",
     ),
     ...policyChangeRows(
-      "publicRunBudget", policyFieldKeys.budget, current.publicRunBudget, proposed.publicRunBudget,
+      "publicRunBudget",
+      policyFieldKeys.budget,
+      current.publicRunBudget,
+      proposed.publicRunBudget,
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.trafficConfig", policyFieldKeys.traffic,
+      "publicCustomDefaults.trafficConfig",
+      policyFieldKeys.traffic,
       publicTrafficPolicyFields(oldDefaults.trafficConfig),
       publicTrafficPolicyFields(newDefaults.trafficConfig),
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.inventoryConfig", policyFieldKeys.inventory,
-      oldDefaults.inventoryConfig, newDefaults.inventoryConfig,
+      "publicCustomDefaults.inventoryConfig",
+      policyFieldKeys.inventory,
+      oldDefaults.inventoryConfig,
+      newDefaults.inventoryConfig,
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.erpConfig", policyFieldKeys.erp,
-      oldDefaults.erpConfig, newDefaults.erpConfig,
+      "publicCustomDefaults.erpConfig",
+      policyFieldKeys.erp,
+      oldDefaults.erpConfig,
+      newDefaults.erpConfig,
     ),
     policyChangeRow(
       "publicCustomDefaults.erpConfig.forcedOutage",
-      String(oldDefaults.erpConfig.forcedOutage), String(newDefaults.erpConfig.forcedOutage),
+      String(oldDefaults.erpConfig.forcedOutage),
+      String(newDefaults.erpConfig.forcedOutage),
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.backpressureConfig", policyFieldKeys.backpressure,
-      oldDefaults.backpressureConfig, newDefaults.backpressureConfig,
+      "publicCustomDefaults.backpressureConfig",
+      policyFieldKeys.backpressure,
+      oldDefaults.backpressureConfig,
+      newDefaults.backpressureConfig,
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.backpressureConfig.retryPolicy", policyFieldKeys.retry,
-      oldDefaults.backpressureConfig.retryPolicy, newDefaults.backpressureConfig.retryPolicy,
+      "publicCustomDefaults.backpressureConfig.retryPolicy",
+      policyFieldKeys.retry,
+      oldDefaults.backpressureConfig.retryPolicy,
+      newDefaults.backpressureConfig.retryPolicy,
     ),
     ...policyChangeRows(
-      "publicCustomDefaults.backpressureConfig", policyFieldKeys.backpressureTimeouts,
-      oldDefaults.backpressureConfig, newDefaults.backpressureConfig,
+      "publicCustomDefaults.backpressureConfig",
+      policyFieldKeys.backpressureTimeouts,
+      oldDefaults.backpressureConfig,
+      newDefaults.backpressureConfig,
     ),
     ...policyChangeRows(
-      "publicCustomLimits", policyFieldKeys.limits,
-      current.publicCustomLimits, proposed.publicCustomLimits,
+      "publicCustomLimits",
+      policyFieldKeys.limits,
+      current.publicCustomLimits,
+      proposed.publicCustomLimits,
     ),
     policyChangeRow(
       "publicCustomLimits.allowForcedOutage",
-      String(current.publicCustomLimits.allowForcedOutage), String(proposed.publicCustomLimits.allowForcedOutage),
+      String(current.publicCustomLimits.allowForcedOutage),
+      String(proposed.publicCustomLimits.allowForcedOutage),
     ),
     policyChangeRow(
       "publicCustomLimits.allowedTrafficModes",
-      JSON.stringify(current.publicCustomLimits.allowedTrafficModes), JSON.stringify(proposed.publicCustomLimits.allowedTrafficModes),
+      JSON.stringify(current.publicCustomLimits.allowedTrafficModes),
+      JSON.stringify(proposed.publicCustomLimits.allowedTrafficModes),
     ),
   ].filter((change) => change.oldValue !== change.proposedValue);
 }

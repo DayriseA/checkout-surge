@@ -170,9 +170,7 @@ describe("Phase 6 projection dashboard", () => {
       (term) => term.textContent?.toLowerCase() ?? "",
     );
     const labelPositions = expectedLabels.map((label) =>
-      renderedLabels.findIndex((renderedLabel) =>
-        renderedLabel.startsWith(label.toLowerCase()),
-      ),
+      renderedLabels.findIndex((renderedLabel) => renderedLabel.startsWith(label.toLowerCase())),
     );
     expect(labelPositions.every((position) => position >= 0)).toBe(true);
     expect(labelPositions).toEqual([...labelPositions].sort((left, right) => left - right));
@@ -185,10 +183,9 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
     const absentDocument = new DOMParser().parseFromString(absentMarkup, "text/html");
-    const absentGrid = panelSection(
-      absentDocument,
-      "Traffic arrival and responses",
-    ).querySelector("dl.m-0.grid.grid-cols-3");
+    const absentGrid = panelSection(absentDocument, "Traffic arrival and responses").querySelector(
+      "dl.m-0.grid.grid-cols-3",
+    );
     expect(absentGrid?.textContent).toContain("Waiting for inventory evidence");
   });
 

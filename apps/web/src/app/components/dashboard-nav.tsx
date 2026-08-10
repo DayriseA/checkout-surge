@@ -54,11 +54,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
   }, [open]);
 
   return (
-    <nav
-      aria-label="Dashboard routes"
-      className="relative flex justify-end"
-      ref={navigationRef}
-    >
+    <nav aria-label="Dashboard routes" className="relative flex justify-end" ref={navigationRef}>
       <button
         aria-controls="dashboard-navigation-panel"
         aria-expanded={open}

@@ -1075,6 +1075,48 @@ describe("focused demo maintenance workflows", () => {
       expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
     });
 
+    it("stamps reset completion when retry finds an existing summary without a marker", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "failed",
+        trafficStatus: "failed",
+        failureReason: "admin_reset",
+      });
+      await seedTerminalSummary(db, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "failed",
+        failureReason: "admin_reset",
+      });
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        queueMaintenance: {
+          cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+        },
+        logger: createSilentLogger("api"),
+        now: () => new Date("2026-06-20T00:00:20.000Z"),
+      });
+
+      await expect(service.reset("corr-reset-existing-summary")).resolves.toMatchObject({
+        failedRunCount: 0,
+      });
+      await expect(
+        db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, ids.activeRun)),
+      ).resolves.toEqual([{ adminResetCompletedAt: new Date("2026-06-20T00:00:20.000Z") }]);
+      await expect(
+        db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.activeRun)),
+      ).resolves.toHaveLength(1);
+    });
+
     it("leaves a fenced run resumable when admission closure fails", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
@@ -1120,6 +1162,12 @@ describe("focused demo maintenance workflows", () => {
       ]);
       expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
       expect(queueMaintenance.cleanRuns).not.toHaveBeenCalled();
+      await expect(
+        db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, ids.activeRun)),
+      ).resolves.toEqual([{ adminResetCompletedAt: null }]);
 
       resetNow = new Date("2026-06-20T00:00:20.000Z");
       const response = await service.reset("corr-reset-retry");
@@ -1136,6 +1184,12 @@ describe("focused demo maintenance workflows", () => {
         endedAt: new Date("2026-06-20T00:00:10.000Z"),
         capturedAt: new Date("2026-06-20T00:00:20.000Z"),
       });
+      await expect(
+        db
+          .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, ids.activeRun)),
+      ).resolves.toEqual([{ adminResetCompletedAt: new Date("2026-06-20T00:00:20.000Z") }]);
       expect(summary?.loadRunDiagnosticsSummary).not.toHaveProperty("previousStatus");
     });
 

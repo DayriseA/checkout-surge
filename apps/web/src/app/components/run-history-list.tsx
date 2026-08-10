@@ -86,10 +86,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           }
         />
         <div className="flex flex-wrap gap-2 xl:justify-end">
-          <Link
-            className={neutralLinkButtonClassName}
-            href={`/run-history/${summary.runId}`}
-          >
+          <Link className={neutralLinkButtonClassName} href={`/run-history/${summary.runId}`}>
             View report{" "}
             <span className="sr-only">
               {" "}
@@ -123,10 +120,7 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
       <p className="m-0 mt-3 text-sm text-muted">
         {number(history.totalCount)} runs exist. Return to page 1 to view the latest runs.
       </p>
-      <Link
-        className={`${neutralLinkButtonClassName} mt-3`}
-        href="/run-history"
-      >
+      <Link className={`${neutralLinkButtonClassName} mt-3`} href="/run-history">
         View page 1
       </Link>
     </section>
@@ -152,10 +146,7 @@ function PaginationControls({ history }: { history: RunHistoryListResponse }) {
 
 function PaginationLink({ children, page }: { children: string; page: number }) {
   return (
-    <Link
-      className={neutralLinkButtonClassName}
-      href={`/run-history?page=${page}`}
-    >
+    <Link className={neutralLinkButtonClassName} href={`/run-history?page=${page}`}>
       {children}
     </Link>
   );

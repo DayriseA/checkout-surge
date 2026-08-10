@@ -180,6 +180,7 @@ export const demoRuns = pgTable(
     trafficStartedAt: timestamp("traffic_started_at", { withTimezone: true }),
     trafficEndedAt: timestamp("traffic_ended_at", { withTimezone: true }),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
+    adminResetCompletedAt: timestamp("admin_reset_completed_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
