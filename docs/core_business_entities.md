@@ -415,11 +415,13 @@ Logical fields:
 - `status`
 - `trafficStatus`
 - `configSnapshot`
+- `correlationId`
 - `saleOfferId`
 - `startedAt`
 - `trafficStartedAt`
 - `trafficEndedAt`
 - `finalizedAt`
+- `adminResetCompletedAt`
 - `failureReason`
 - `createdAt`
 - `updatedAt`
@@ -432,6 +434,7 @@ Notes:
 - A hand-authored PostgreSQL partial unique index permits at most one `starting`, `active`, or `draining` run even when concurrent callers bypass the API's fast overlap check.
 - Lifecycle changes use expected-status compare-and-set transitions. Traffic-start acknowledgement can move only `starting -> active`; a late acknowledgement reads the authoritative winner and cannot resurrect a draining or terminal run.
 - A `starting` row is a durable traffic intent. The API poller replays its exact ID and immutable snapshot against the load orchestrator's journal after ambiguous start outcomes or API restart.
+- `correlationId` (nullable for runs accepted before it existed) persists the accepted start request's root correlation so the finalization sweep can publish the terminal dashboard projection within the run's correlation lineage even when no caller correlation is available.
 - Boundary snapshots encode the lifecycle as a strict status-discriminated union. `starting` has no traffic timestamps; `active` requires `trafficStartedAt`; `draining` requires both traffic timestamps; and `completed` additionally requires `finalizedAt` while forbidding a failure reason. A failed snapshot always requires `finalizedAt` and `failureReason`, but legally may have no traffic timestamps when startup failed, only `trafficStartedAt` when an active run was reset, or both traffic timestamps after completion evidence. Failed API finalization may retain either succeeded or failed terminal traffic status because business draining can fail after traffic itself succeeded.
 
 ### 12. DemoRunSaleContext

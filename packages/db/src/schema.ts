@@ -175,6 +175,7 @@ export const demoRuns = pgTable(
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),
+    correlationId: text("correlation_id"),
     saleOfferId: uuid("sale_offer_id").references(() => saleOffers.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     trafficStartedAt: timestamp("traffic_started_at", { withTimezone: true }),

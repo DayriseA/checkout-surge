@@ -571,6 +571,12 @@ describe("demo-run lifecycle start gating", () => {
     expect(response.run.status).toBe("active");
     expect(response.run.trafficStatus).toBe("active");
     expect(response.run.saleOfferId).toBe("77777777-7777-4777-8777-777777777778");
+    await expect(
+      requireConnection(connection)
+        .db.select({ correlationId: demoRuns.correlationId })
+        .from(demoRuns)
+        .where(eq(demoRuns.id, response.run.runId)),
+    ).resolves.toEqual([{ correlationId: "corr-start" }]);
   });
 
   it("keeps public custom overrides scoped to the accepted run snapshot", async () => {

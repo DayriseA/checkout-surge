@@ -1,0 +1,1 @@
+ALTER TABLE "demo_runs" ADD COLUMN "correlation_id" text;

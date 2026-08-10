@@ -62,6 +62,7 @@ export interface DemoRunFinalizationController {
 }
 
 type FinalizationDecision = { ready: false; blockers: string[]; timeoutAt: Date } | { ready: true };
+type FinalizationActor = "completion-report" | "sweep";
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
   constructor(
@@ -296,7 +297,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const updatedRun = await this.readRun(runId);
 
     if (wroteSummary) {
-      await this.publishTerminalProjectionDirty(updatedRun, correlationId);
+      await this.publishTerminalProjectionDirty(
+        updatedRun,
+        correlationId ?? row.run.correlationId,
+        correlationId ? "completion-report" : "sweep",
+      );
     }
 
     return updatedRun;
@@ -441,7 +446,8 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
 
   private async publishTerminalProjectionDirty(
     run: DemoRunSnapshot,
-    correlationId: string | undefined,
+    correlationId: string | null,
+    finalizationActor: FinalizationActor,
   ): Promise<void> {
     try {
       await publishDashboardProjectionDirtySignal(this.options.redis, {
@@ -449,9 +455,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         ...(correlationId ? { correlationId } : {}),
         ...(run.saleOfferId ? { scope: { runId: run.runId, saleOfferId: run.saleOfferId } } : {}),
       });
+      this.options.logger.debug(
+        { runId: run.runId, correlationId, finalizationActor },
+        "Published terminal projection dirty signal.",
+      );
     } catch (error) {
       this.options.logger.warn(
-        { err: error, runId: run.runId },
+        { err: error, runId: run.runId, correlationId, finalizationActor },
         "Could not publish terminal projection dirty signal.",
       );
     }
