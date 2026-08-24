@@ -258,10 +258,10 @@ export function buildPolicyFromDraft(
   const contractErrors = policyParse.success
     ? emptyDraftErrors()
     : contractDraftErrors(policyParse.error.issues, rules, policyDraftField);
-  const fieldErrors = {
-    ...dynamicBoundErrors(number, rules),
-    ...contractErrors.fieldErrors,
-  };
+  const fieldErrors = mergeBoundErrors(
+    dynamicBoundErrors(number, rules),
+    contractErrors.fieldErrors,
+  );
   const formErrors: DraftFormError[] = collectPublicRuntimePolicyMutableViolations(policy).map(
     (violation) => ({
       message: policyViolationMessage(violation.code),
@@ -303,10 +303,10 @@ export function buildEffectiveRunConfig(
   const contractErrors = configParse.success
     ? emptyDraftErrors()
     : contractDraftErrors(configParse.error.issues, rules, configDraftField);
-  const fieldErrors = {
-    ...dynamicBoundErrors(parsed.values, rules),
-    ...contractErrors.fieldErrors,
-  };
+  const fieldErrors = mergeBoundErrors(
+    dynamicBoundErrors(parsed.values, rules),
+    contractErrors.fieldErrors,
+  );
   const formErrors: DraftFormError[] =
     draft.mode === "constant-arrival-rate" &&
     values.trafficConfig.mode === "constant-arrival-rate" &&
@@ -395,10 +395,10 @@ export function buildErpChaosFromDraft(
   const contractErrors = chaosParse.success
     ? emptyDraftErrors()
     : contractDraftErrors(chaosParse.error.issues, rules, directDraftField);
-  const fieldErrors = {
-    ...dynamicBoundErrors(parsed.values, rules),
-    ...contractErrors.fieldErrors,
-  };
+  const fieldErrors = mergeBoundErrors(
+    dynamicBoundErrors(parsed.values, rules),
+    contractErrors.fieldErrors,
+  );
   if (Object.keys(fieldErrors).length > 0 || contractErrors.formErrors.length > 0) {
     return { fieldErrors, formErrors: contractErrors.formErrors };
   }
@@ -533,6 +533,24 @@ interface ContractIssue {
 
 type DraftErrors = Pick<DraftValidationResult<unknown>, "fieldErrors" | "formErrors">;
 
+export function presetContractDraftErrors(issues: readonly ContractIssue[]): DraftErrors {
+  const fieldErrors: Record<string, DraftFieldError> = {};
+  let hasUnassignedIssue = false;
+  for (const issue of issues) {
+    if (issue.path.at(-1) === "name" && issue.path.includes("display")) {
+      fieldErrors.displayName = { code: "required", message: "Name is required." };
+    } else {
+      hasUnassignedIssue = true;
+    }
+  }
+  return {
+    fieldErrors,
+    formErrors: hasUnassignedIssue
+      ? [{ message: "Review the preset values and try again.", fields: [] }]
+      : [],
+  };
+}
+
 function emptyDraftErrors(): DraftErrors {
   return { fieldErrors: {}, formErrors: [] };
 }
@@ -602,6 +620,24 @@ function dynamicBoundErrors(
       errors[field] = { code: "below_min", message: `${label} must be at least ${min}.` };
     } else if (max !== undefined && value > max) {
       errors[field] = { code: "above_max", message: `${label} must be at most ${max}.` };
+    }
+  }
+  return errors;
+}
+
+function mergeBoundErrors(
+  dynamicErrors: Record<string, DraftFieldError>,
+  contractErrors: Record<string, DraftFieldError>,
+): Record<string, DraftFieldError> {
+  const errors = { ...contractErrors };
+  for (const [field, dynamicError] of Object.entries(dynamicErrors)) {
+    const contractError = errors[field];
+    if (
+      !contractError ||
+      contractError.code === "below_min" ||
+      contractError.code === "above_max"
+    ) {
+      errors[field] = dynamicError;
     }
   }
   return errors;

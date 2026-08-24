@@ -41,6 +41,7 @@ import {
   draftFromRuntimePolicy,
   isPresetDraftDirty,
   type PresetDraft,
+  presetContractDraftErrors,
   type RuntimePolicyDraft,
 } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
@@ -840,7 +841,12 @@ export function AdminPresetController({
       ...built.values,
     });
     if (!parsed.success) {
-      setNotice(adminValidationMessage());
+      setNotice(null);
+      const errors = presetContractDraftErrors(parsed.error.issues);
+      setFieldErrors(errors.fieldErrors);
+      setFormErrors(errors.formErrors);
+      setShowValidationSummary(true);
+      setValidationSummaryRevision((revision) => revision + 1);
       return;
     }
     setFieldErrors({});

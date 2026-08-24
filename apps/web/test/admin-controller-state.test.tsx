@@ -1182,6 +1182,58 @@ describe("admin feature controllers", () => {
     ]);
   });
 
+  it("shows a blank preset Name error without saving and saves after correction", async () => {
+    const accepted = presetFixture();
+    accepted.display.name = "Valid preset";
+    const { canArchive: _canArchive, ...acceptedContract } = accepted;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === adminPresetSaveProxyPath
+        ? jsonResponse({
+            preset: acceptedContract,
+            timestamp: "2026-06-20T00:00:12.000Z",
+          })
+        : jsonResponse({
+            presets: [accepted],
+            timestamp: "2026-06-20T00:00:12.000Z",
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    const name = screen.getByLabelText("Name") as HTMLInputElement;
+    await user.clear(name);
+    await user.type(name, "   ");
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+
+    expect(name.value).toBe("   ");
+    expect(name.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByRole("link", { name: "Name is required." }).getAttribute("href")).toBe(
+      "#preset-displayName",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.clear(name);
+    await user.type(name, "Valid preset");
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+
+    await waitFor(() => expect(screen.getByText("Preset saved.")).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await user.clear(name);
+    await user.type(name, "   ");
+    await user.click(screen.getByRole("button", { name: "Save preset" }));
+
+    expect(screen.queryByText("Preset saved.")).toBeNull();
+    expect(screen.getByRole("link", { name: "Name is required." })).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("adopts changed same-slug preset props while the draft is clean", async () => {
     const recovery = available(recoveryFixture(null));
     const initialPresets = presetListFixture("Custom");
@@ -2046,11 +2098,7 @@ describe("admin feature controllers", () => {
     await user.clear(screen.getByLabelText("Name"));
     await user.click(screen.getByRole("button", { name: "Save preset" }));
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(
-      await screen.findByText(
-        "Check the values and try again. Use the available fields and limits for this operation.",
-      ),
-    ).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "Name is required." })).toBeTruthy();
   });
 
   it("rejects a duplicate when the visible slug is cleared ahead of React's state commit", async () => {

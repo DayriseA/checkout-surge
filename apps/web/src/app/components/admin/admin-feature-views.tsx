@@ -424,6 +424,7 @@ export function AdminPresetView({
                 label="Name"
                 draft={draft}
                 field="displayName"
+                error={fieldErrors.displayName}
                 onUpdate={onUpdateDraft}
                 onBlur={onBlurField}
                 type="text"

@@ -6,6 +6,7 @@ import {
   runResultOutcomeLabel,
   runResultOutcomeTone,
 } from "../lib/presentation/public-vocabulary";
+import { formatRunCount } from "../lib/presentation/run-history-count";
 import { neutralLinkButtonClassName } from "./control-styles";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
@@ -118,7 +119,8 @@ function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
         Page {history.page} does not exist
       </h2>
       <p className="m-0 mt-3 text-sm text-muted">
-        {number(history.totalCount)} runs exist. Return to page 1 to view the latest runs.
+        {formatRunCount(history.totalCount)} {history.totalCount === 1 ? "exists" : "exist"}. Return
+        to page 1 to view the latest runs.
       </p>
       <Link className={`${neutralLinkButtonClassName} mt-3`} href="/run-history">
         View page 1
@@ -136,7 +138,7 @@ function PaginationControls({ history }: { history: RunHistoryListResponse }) {
       className="ml-auto flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3"
     >
       <p className="m-0 text-sm font-semibold text-muted-strong">
-        Page {history.page} · {number(history.totalCount)} runs
+        Page {history.page} · {formatRunCount(history.totalCount)}
       </p>
       {hasPrevious ? <PaginationLink page={history.page - 1}>Previous</PaginationLink> : null}
       {hasNext ? <PaginationLink page={history.page + 1}>Next</PaginationLink> : null}
