@@ -4,26 +4,45 @@ import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traf
 
 describe("RedisDashboardTrafficMetricStore", () => {
   it("atomically appends a retained batch with a reset fence and bounded history", async () => {
-    const evalCommand = vi.fn(async (..._args: unknown[]) => 1);
+    const evalCommand = vi.fn(async (..._args: unknown[]) => "appended");
     const store = new RedisDashboardTrafficMetricStore({
       eval: evalCommand,
     } as unknown as CheckoutSurgeRedis);
 
-    await expect(store.appendIfLive(batch("retained"))).resolves.toBe(true);
+    await expect(store.appendIfLive(batch("retained"))).resolves.toBe("appended");
 
     expect(evalCommand).toHaveBeenCalledOnce();
     expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.call("LTRIM", KEYS[1], -50, -1)');
     expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.call("HSET", KEYS[3]');
-    expect(evalCommand.mock.calls[0]?.[1]).toBe(3);
-    expect(evalCommand.mock.calls[0]).toHaveLength(105);
+    expect(evalCommand.mock.calls[0]?.[0]).toContain('redis.call("SISMEMBER", KEYS[4], ARGV[1])');
+    expect(evalCommand.mock.calls[0]?.[1]).toBe(4);
+    expect(evalCommand.mock.calls[0]).toHaveLength(107);
   });
 
   it("reports a fenced append without retaining samples", async () => {
     const store = new RedisDashboardTrafficMetricStore({
-      eval: vi.fn(async () => 0),
+      eval: vi.fn(async () => "fenced"),
     } as unknown as CheckoutSurgeRedis);
 
-    await expect(store.appendIfLive(batch("fenced"))).resolves.toBe(false);
+    await expect(store.appendIfLive(batch("fenced"))).resolves.toBe("fenced");
+  });
+
+  it("reports duplicate batches", async () => {
+    const store = new RedisDashboardTrafficMetricStore({
+      eval: vi.fn(async () => "duplicate"),
+    } as unknown as CheckoutSurgeRedis);
+
+    await expect(store.appendIfLive(batch("duplicate"))).resolves.toBe("duplicate");
+  });
+
+  it("rejects malformed append outcomes", async () => {
+    const store = new RedisDashboardTrafficMetricStore({
+      eval: vi.fn(async () => 1),
+    } as unknown as CheckoutSurgeRedis);
+
+    await expect(store.appendIfLive(batch("malformed"))).rejects.toThrow(
+      "Redis returned an invalid traffic metric append outcome.",
+    );
   });
 
   it("propagates retention failures", async () => {
@@ -96,6 +115,7 @@ const observedAt = "2026-07-13T00:00:00.000Z";
 
 function batch(correlationId: string) {
   return {
+    batchId: "77777777-7777-4777-8777-777777777777",
     runId,
     correlationId,
     samples: Array.from({ length: 100 }, (_, value) => ({

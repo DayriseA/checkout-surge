@@ -2182,12 +2182,19 @@ describe("public runtime policy contract", () => {
       timestamp,
     };
     const input = {
+      batchId: "77777777-7777-4777-8777-777777777777",
       runId: "55555555-5555-4555-8555-555555555551",
       correlationId: "metric-bound",
       samples: Array.from({ length: 100 }, () => sample),
       observedAt: timestamp,
     };
     expect(loadMetricIngestRequestSchema.parse(input).samples).toHaveLength(100);
+    expect(loadMetricIngestRequestSchema.safeParse({ ...input, batchId: undefined }).success).toBe(
+      false,
+    );
+    expect(
+      loadMetricIngestRequestSchema.safeParse({ ...input, batchId: "not-a-uuid" }).success,
+    ).toBe(false);
     expect(() =>
       loadMetricIngestRequestSchema.parse({ ...input, samples: [...input.samples, sample] }),
     ).toThrow();

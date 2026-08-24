@@ -196,6 +196,44 @@ describe("K6JsonLineFramer", () => {
 });
 
 describe("MetricBatcher", () => {
+  it("reuses one envelope across three attempts and gives the next batch a new ID", async () => {
+    const sent: LoadMetricIngestRequest[] = [];
+    let nowCall = 0;
+    const batcher = new MetricBatcher({
+      runId: "55555555-5555-4555-8555-555555555555",
+      correlationId: "corr",
+      maxBatchSize: 1,
+      now: () => new Date(Date.UTC(2026, 6, 13, 0, 0, nowCall++)),
+      client: {
+        sendMetrics: async (batch) => {
+          sent.push(batch);
+          if (sent.length < 3) throw new Error("transport failure");
+        },
+      },
+    });
+
+    await batcher.add(sample(1));
+    await batcher.add(sample(2));
+    await batcher.close();
+
+    expect(sent).toHaveLength(4);
+    expect(
+      sent.slice(0, 3).map(({ batchId, observedAt, samples }) => ({
+        batchId,
+        observedAt,
+        samples,
+      })),
+    ).toEqual(
+      Array(3).fill({
+        batchId: sent[0]?.batchId,
+        observedAt: sent[0]?.observedAt,
+        samples: [sample(1)],
+      }),
+    );
+    expect(sent[3]?.batchId).not.toBe(sent[0]?.batchId);
+    expect(sent[3]?.samples).toEqual([sample(2)]);
+  });
+
   it("retries a transient failure without reordering or losing samples", async () => {
     const sent: number[][] = [];
     let attempts = 0;

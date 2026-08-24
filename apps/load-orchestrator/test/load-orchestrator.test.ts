@@ -2491,6 +2491,7 @@ describe("SpawnK6Runner completion reporting", () => {
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
     expect(metricBatches).toEqual([
       {
+        batchId: expect.any(String),
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         samples: [

@@ -68,8 +68,8 @@ export class TrafficMetricIngestionService implements TrafficMetricIngestionCont
         );
       }
 
-      const retained = await this.options.store.appendIfLive(request);
-      if (!retained) {
+      const outcome = await this.options.store.appendIfLive(request);
+      if (outcome === "fenced") {
         throw new DemoRunValidationError(
           "traffic_report_rejected",
           "Demo run traffic metrics have been fenced.",
@@ -77,7 +77,7 @@ export class TrafficMetricIngestionService implements TrafficMetricIngestionCont
         );
       }
 
-      await this.publishProjectionDirtySignal(request);
+      if (outcome === "appended") await this.publishProjectionDirtySignal(request);
     });
   }
 

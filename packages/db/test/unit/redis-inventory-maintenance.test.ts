@@ -32,6 +32,7 @@ describe("generated-run Redis cleanup", () => {
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
       `demo-run:${runId}:traffic-metrics-pinned`,
+      `demo-run:${runId}:traffic-metric-batches`,
       `demo-run:${runId}:traffic-metrics-reset-fence`,
       `demo-run:${runId}:reservation-timing`,
       `demo-run:${runId}:reservation-timing-fence`,
@@ -49,14 +50,14 @@ describe("generated-run Redis cleanup", () => {
       .fn()
       .mockResolvedValueOnce(1)
       .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(4);
+      .mockResolvedValueOnce(5);
 
     await expect(
       deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), {
         runId,
         saleOfferId,
       }),
-    ).resolves.toEqual({ deletedKeyCount: 8 });
+    ).resolves.toEqual({ deletedKeyCount: 9 });
 
     expect(scan).toHaveBeenNthCalledWith(
       2,
@@ -73,6 +74,7 @@ describe("generated-run Redis cleanup", () => {
       `demo-run:${runId}:sale-eligibility`,
       `demo-run:${runId}:traffic-metrics`,
       `demo-run:${runId}:traffic-metrics-pinned`,
+      `demo-run:${runId}:traffic-metric-batches`,
       `demo-run:${runId}:traffic-metrics-reset-fence`,
       `demo-run:${runId}:reservation-timing`,
       `demo-run:${runId}:reservation-timing-fence`,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   controlServiceTokenHeaderName,
   internalLoadMetricIngestPath,
@@ -244,15 +245,17 @@ export class MetricBatcher {
   }
 
   private async sendWithRetries(samples: MetricSample[]): Promise<void> {
+    const request = {
+      batchId: randomUUID(),
+      runId: this.options.runId,
+      correlationId: this.options.correlationId,
+      samples,
+      observedAt: (this.options.now?.() ?? new Date()).toISOString(),
+    };
     for (let attempt = 1; attempt <= maxMetricBatchSendAttempts; attempt += 1) {
       if (this.discarded) return;
       try {
-        await this.options.client.sendMetrics({
-          runId: this.options.runId,
-          correlationId: this.options.correlationId,
-          samples,
-          observedAt: (this.options.now?.() ?? new Date()).toISOString(),
-        });
+        await this.options.client.sendMetrics(request);
         return;
       } catch (error) {
         this.options.onFlushError?.(error);

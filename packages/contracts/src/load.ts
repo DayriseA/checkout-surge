@@ -956,6 +956,7 @@ export const materializedTrafficCompletionReportSchema = trafficCompletionReport
 
 export const loadMetricIngestRequestSchema = z
   .object({
+    batchId: uuidSchema,
     runId: uuidSchema,
     correlationId: correlationIdSchema,
     samples: z.array(metricSampleSchema).min(1).max(100),
