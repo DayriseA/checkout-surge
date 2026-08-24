@@ -78,6 +78,28 @@ describe("admin drafts", () => {
     expect(result.values).toMatchObject({ latencyMs: 0, maxTps: 1, errorRate: 0 });
   });
 
+  it("prefers effective ERP bounds unless the contract requires a whole number", () => {
+    const caps = {
+      maxLatencyMs: 5000,
+      minMaxTps: 1,
+      maxErrorRate: 0.5,
+      allowForcedOutage: true,
+    };
+
+    expect(
+      buildErpChaosFromDraft(
+        { latencyMs: "0", maxTps: "0", errorRate: "0", forcedOutage: false },
+        caps,
+      ).fieldErrors.maxTps,
+    ).toEqual({ code: "below_min", message: "Maximum TPS must be at least 1." });
+    expect(
+      buildErpChaosFromDraft(
+        { latencyMs: "0", maxTps: "0.5", errorRate: "0", forcedOutage: false },
+        caps,
+      ).fieldErrors.maxTps,
+    ).toEqual({ code: "not_an_integer", message: "Maximum TPS must be a whole number." });
+  });
+
   it("maps canonical intrinsic bounds while keeping sourced caps separate", () => {
     const preset = presetFixture("buyer-spike");
     const draft = draftFromPreset(preset);

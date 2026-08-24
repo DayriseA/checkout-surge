@@ -23,7 +23,9 @@ import {
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import { buildRunHistoryTrace } from "../src/app/lib/presentation/run-history-trace.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
+import RunHistoryPage from "../src/app/run-history/page.js";
 
+const getRunHistoryPage = vi.hoisted(() => vi.fn());
 const getRunHistoryDetail = vi.hoisted(() => vi.fn());
 const getAdminRunHistoryDetail = vi.hoisted(() => vi.fn());
 const hasValidAdminPageSession = vi.hoisted(() => vi.fn());
@@ -34,17 +36,50 @@ const notFound = vi.hoisted(() =>
 );
 
 vi.mock("next/navigation", () => ({ notFound, useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("../src/app/lib/api.js", () => ({ getRunHistoryDetail, getAdminRunHistoryDetail }));
+vi.mock("../src/app/lib/api.js", () => ({
+  getRunHistoryPage,
+  getRunHistoryDetail,
+  getAdminRunHistoryDetail,
+}));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
 describe("run history", () => {
   afterEach(cleanup);
 
   beforeEach(() => {
+    getRunHistoryPage.mockReset();
     getRunHistoryDetail.mockReset();
     getAdminRunHistoryDetail.mockReset();
     hasValidAdminPageSession.mockResolvedValue(false);
     notFound.mockClear();
+  });
+
+  it.each([
+    [0, "0 runs"],
+    [1, "1 run"],
+    [11, "11 runs"],
+  ] as const)("renders the run count for totalCount %i", async (totalCount, expected) => {
+    const history = {
+      ...listFixture(),
+      summaries: totalCount === 0 ? [] : listFixture().summaries,
+      totalCount,
+    };
+    getRunHistoryPage.mockResolvedValue({ status: "available", data: history });
+
+    const pageMarkup = renderToStaticMarkup(await RunHistoryPage({}));
+    expect(pageMarkup).toContain(expected);
+
+    if (totalCount === 1) {
+      const listMarkup = renderToStaticMarkup(
+        createElement(RunHistoryList, {
+          history: { ...history, summaries: [], page: 2 },
+        }),
+      );
+      expect(listMarkup).toContain("1 run exists");
+      expect(listMarkup).not.toContain("1 runs");
+    } else if (totalCount > history.pageSize) {
+      expect(renderToStaticMarkup(createElement(RunHistoryList, { history }))).toContain(expected);
+    }
   });
 
   it("renders one compact comparison row without list-only technical evidence", () => {

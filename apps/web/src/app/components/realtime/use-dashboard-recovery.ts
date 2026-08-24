@@ -224,7 +224,7 @@ function recoveryIdentity(recovery: BackendRead<DashboardProjection>): string {
 }
 
 function recoveryPath(projection: DashboardProjection | null): string {
-  if (projection?.scope === null || projection === null) return dashboardRecoveryProxyPath;
+  if (projection === null || projection.scope === null) return dashboardRecoveryProxyPath;
   const query = new URLSearchParams({
     knownRunId: projection.scope.runId,
     knownSaleOfferId: projection.scope.saleOfferId,

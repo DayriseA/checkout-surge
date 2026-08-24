@@ -5,7 +5,7 @@ import { RunHistoryAdminControls } from "../components/run-history-admin-control
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
-import { formatCount } from "../lib/presentation/format";
+import { formatRunCount } from "../lib/presentation/run-history-count";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 
 export const metadata: Metadata = { title: "Run history" };
@@ -26,7 +26,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
   const authenticated = await hasValidAdminPageSession();
   const runCount =
     history.status === "available"
-      ? `${formatCount(history.data.totalCount) ?? "an unknown number of"} runs`
+      ? formatRunCount(history.data.totalCount, "an unknown number of")
       : "unavailable";
 
   return (
