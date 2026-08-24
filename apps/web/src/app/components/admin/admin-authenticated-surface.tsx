@@ -102,16 +102,21 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   const recovery = recoveryController.recovery;
   const firstOpenRef = useRef(true);
   const handleOpen = useCallback(() => {
+    recoveryController.notifyRealtimeReopened();
     if (firstOpenRef.current) {
       firstOpenRef.current = false;
       if (props.initialRecovery.status === "loading") return;
     }
     void recoveryController.refresh();
-  }, [props.initialRecovery.status, recoveryController.refresh]);
+  }, [
+    props.initialRecovery.status,
+    recoveryController.refresh,
+    recoveryController.notifyRealtimeReopened,
+  ]);
   const realtimeStatus = useDashboardProjections({
     onProjection: recoveryController.applyProjection,
     onOpen: handleOpen,
-    onDisconnect: handleOpen,
+    onDisconnect: () => void recoveryController.notifyRealtimeDisconnected(),
   });
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {

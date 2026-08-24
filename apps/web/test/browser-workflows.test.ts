@@ -1148,6 +1148,46 @@ describe("public recovery convergence", () => {
 });
 
 describe("watch browser recovery", () => {
+  it("converges to a terminal projection after realtime disconnects during recovery", async () => {
+    vi.useFakeTimers();
+    const initialRecovery = deferred<Response>();
+    const activeProjection = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active" }),
+    });
+    const terminalProjection = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "completed", trafficStatus: "succeeded" }),
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+      revision: 2,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => initialRecovery.promise)
+      .mockResolvedValueOnce(jsonResponse(terminalProjection));
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(createElement(OperatorDashboard, { initialRecovery: { status: "loading" } }));
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
+    initialRecovery.resolve(jsonResponse(activeProjection));
+    await act(async () => {
+      await initialRecovery.promise;
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
+    );
+    expect(screen.getByRole("region", { name: "Run conclusion" })).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps initial read availability separate from an available idle lifecycle", () => {
     const loadingMarkup = renderToStaticMarkup(
       createElement(OperatorDashboard, { initialRecovery: { status: "loading" } }),

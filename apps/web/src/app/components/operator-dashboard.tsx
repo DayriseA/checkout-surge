@@ -63,22 +63,25 @@ export function OperatorDashboard({
     retainedTerminalRun,
     refresh,
     retryNow,
+    notifyRealtimeDisconnected,
+    notifyRealtimeReopened,
     applyProjection,
   } = useDashboardRecovery(initialRecovery, {
     preserveAvailableRecoveryOnFailure: true,
   });
   const firstOpenRef = useRef(true);
   const handleOpen = useCallback(() => {
+    notifyRealtimeReopened();
     if (firstOpenRef.current) {
       firstOpenRef.current = false;
       if (initialRecovery.status === "loading") return;
     }
     void refresh();
-  }, [initialRecovery.status, refresh]);
+  }, [initialRecovery.status, notifyRealtimeReopened, refresh]);
   const realtimeStatus = useDashboardProjections({
     onProjection: applyProjection,
     onOpen: handleOpen,
-    onDisconnect: handleOpen,
+    onDisconnect: () => void notifyRealtimeDisconnected(),
   });
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
