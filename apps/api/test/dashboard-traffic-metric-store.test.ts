@@ -28,7 +28,9 @@ describe("Redis dashboard traffic metric reset", () => {
       maxRetriesPerRequest: 3,
     });
     const messages: string[] = [];
-    subscriber.on("message", (_channel, message) => messages.push(message));
+    subscriber.on("message", (_channel, message) => {
+      if (message.includes('"correlationId":"metric-30"')) messages.push(message);
+    });
     await subscriber.subscribe(dashboardProjectionDirtyRedisChannel);
 
     await store.fenceRun(runA);
@@ -37,7 +39,11 @@ describe("Redis dashboard traffic metric reset", () => {
 
     expect(await store.readRecent(runA)).toEqual([]);
     expect(await store.readRecent(runB)).toHaveLength(1);
-    await expect(store.appendIfLive(metricBatch(runA, 30))).resolves.toBe(false);
+    const lateBatch = metricBatch(runA, 30);
+    await expect(store.appendIfLive(lateBatch)).resolves.toBe("fenced");
+    expect(
+      await redis.sismember(`demo-run:${runA}:traffic-metric-batches`, lateBatch.batchId),
+    ).toBe(0);
     expect(await store.readRecent(runA)).toEqual([]);
     await new Promise((resolve) => setImmediate(resolve));
     expect(messages).toEqual([]);
@@ -50,9 +56,9 @@ describe("Redis dashboard traffic metric reset", () => {
       store.appendIfLive(metricBatch(runA, 10)),
       store.clearRun(runA),
     ]);
-    expect([true, false]).toContain(results[0]);
+    expect(["appended", "fenced"]).toContain(results[0]);
     expect(await store.readRecent(runA)).toEqual([]);
-    await expect(store.appendIfLive(metricBatch(runA, 40))).resolves.toBe(false);
+    await expect(store.appendIfLive(metricBatch(runA, 40))).resolves.toBe("fenced");
   });
 
   it("suppresses publication when reset wins between retention and publication", async () => {
@@ -61,9 +67,11 @@ describe("Redis dashboard traffic metric reset", () => {
       maxRetriesPerRequest: 3,
     });
     const messages: string[] = [];
-    subscriber.on("message", (_channel, message) => messages.push(message));
+    subscriber.on("message", (_channel, message) => {
+      if (message.includes('"correlationId":"metric-50"')) messages.push(message);
+    });
     await subscriber.subscribe(dashboardProjectionDirtyRedisChannel);
-    await expect(store.appendIfLive(metricBatch(runA, 50))).resolves.toBe(true);
+    await expect(store.appendIfLive(metricBatch(runA, 50))).resolves.toBe("appended");
     await store.clearRun(runA);
     const publicationResult = await store.publishDirtyIfLive(runA, dirtySignal(50));
 
@@ -77,6 +85,7 @@ describe("Redis dashboard traffic metric reset", () => {
 
   it("recovers pinned surge evidence without collapsing recent arrival windows", async () => {
     await store.appendIfLive({
+      batchId: "77777777-7777-4777-8777-777777777101",
       runId: runA,
       correlationId: "surge",
       samples: [
@@ -102,6 +111,7 @@ describe("Redis dashboard traffic metric reset", () => {
       observedAt: "2026-07-13T00:00:00.500Z",
     });
     await store.appendIfLive({
+      batchId: "77777777-7777-4777-8777-777777777102",
       runId: runA,
       correlationId: "slow-completions",
       samples: Array.from({ length: 100 }, (_, index) => ({
@@ -135,6 +145,7 @@ describe("Redis dashboard traffic metric reset", () => {
     ).toEqual([1_000]);
 
     await store.appendIfLive({
+      batchId: "77777777-7777-4777-8777-777777777103",
       runId: runA,
       correlationId: "later-arrivals",
       samples: [20, 25, 30].map((value, index) => ({
@@ -146,6 +157,7 @@ describe("Redis dashboard traffic metric reset", () => {
       observedAt: "2026-07-13T00:02:02.000Z",
     });
     await store.appendIfLive({
+      batchId: "77777777-7777-4777-8777-777777777104",
       runId: runA,
       correlationId: "later-churn",
       samples: Array.from({ length: 15 }, (_, index) => ({
@@ -170,14 +182,32 @@ describe("Redis dashboard traffic metric reset", () => {
     expect(recovered).toHaveLength(21);
 
     await store.clearRun(runA);
-    await expect(store.appendIfLive(metricBatch(runA, 30))).resolves.toBe(false);
+    await expect(store.appendIfLive(metricBatch(runA, 30))).resolves.toBe("fenced");
     expect(await store.readRecent(runA)).toEqual([]);
     expect(await store.hasRunState(runA)).toBe(false);
+  });
+
+  it("stores a retried batch once while accepting identical samples under a new batch ID", async () => {
+    const first = metricBatch(runA, 60);
+    const second = { ...first, batchId: "77777777-7777-4777-8777-777777777061" };
+
+    await expect(store.appendIfLive(first)).resolves.toBe("appended");
+    await expect(store.appendIfLive(first)).resolves.toBe("duplicate");
+    expect(await store.readRecent(runA)).toHaveLength(1);
+    await expect(store.appendIfLive(second)).resolves.toBe("appended");
+    expect(await store.readRecent(runA)).toHaveLength(2);
+    expect(await redis.ttl(`demo-run:${runA}:traffic-metric-batches`)).toBeGreaterThan(0);
+    await redis.del(`demo-run:${runA}:traffic-metrics`, `demo-run:${runA}:traffic-metrics-pinned`);
+    expect(await store.hasRunState(runA)).toBe(true);
+
+    await store.clearRun(runA);
+    expect(await redis.exists(`demo-run:${runA}:traffic-metric-batches`)).toBe(0);
   });
 });
 
 function metricBatch(runId: string, value: number) {
   return {
+    batchId: `77777777-7777-4777-8777-${value.toString().padStart(12, "0")}`,
     runId,
     correlationId: `metric-${value}`,
     samples: [

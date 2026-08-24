@@ -70,6 +70,7 @@ import {
   type CheckoutSurgeRedis,
   createDatabaseConnection,
   createRedisClient,
+  dashboardProjectionDirtyRedisChannel,
   demoPresets,
   demoRunSaleContexts,
   demoRuns,
@@ -100,6 +101,10 @@ import {
 import { Queue, Worker } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  HttpLoadApiClient,
+  MetricBatcher,
+} from "../../load-orchestrator/src/application/api-client.js";
 import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import {
   createBullMqOrderProcessQueueInspector,
@@ -116,7 +121,7 @@ import {
   DashboardProjectionService,
   type DashboardRecoveryContextReader,
 } from "../src/services/dashboard-recovery-service.js";
-import type { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
+import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
@@ -2686,6 +2691,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/internal/load/metrics",
       payload: {
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: fixtureIds.run,
         correlationId: fixtureCorrelationId,
         samples: [
@@ -2704,6 +2710,7 @@ describe("API gateway routes", () => {
       url: "/internal/load/metrics",
       headers: { "x-control-service-token": "test-control-token" },
       payload: {
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: fixtureIds.run,
         correlationId: fixtureCorrelationId,
         samples: [
@@ -2726,6 +2733,120 @@ describe("API gateway routes", () => {
     );
   });
 
+  it("stores one metric batch when the first API acknowledgement exceeds the client timeout", async () => {
+    const runId = randomUUID();
+    const redisUrl = process.env.TEST_REDIS_URL;
+    if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
+    const redis = createRedisClient(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const subscriber = createRedisClient(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    const store = new RedisDashboardTrafficMetricStore(redis);
+    const messages: string[] = [];
+    const sentinel = `metric-settled:${runId}`;
+    let markSentinelReceived = () => undefined;
+    const sentinelReceived = new Promise<void>((resolve) => {
+      markSentinelReceived = resolve;
+    });
+    subscriber.on("message", (_channel, message) => {
+      if (message === sentinel) markSentinelReceived();
+      if (message.includes('"correlationId":"ambiguous-timeout"')) messages.push(message);
+    });
+    await subscriber.subscribe(dashboardProjectionDirtyRedisChannel);
+    const trafficMetricIngestion = new TrafficMetricIngestionService({
+      db: {
+        transaction: async (operation: (tx: unknown) => Promise<unknown>) =>
+          operation({
+            select: () => ({
+              from: () => ({
+                where: () => ({
+                  limit: () => ({
+                    for: async () => [{ status: "active", trafficStatus: "active" }],
+                  }),
+                }),
+              }),
+            }),
+          }),
+      } as never,
+      store,
+      logger: createSilentLogger("api"),
+    });
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      trafficMetricIngestion,
+    });
+    let requestCount = 0;
+    const client = new HttpLoadApiClient({
+      apiBaseUrl: "http://api.test",
+      controlServiceToken: "test-control-token",
+      requestTimeoutMs: 5,
+      fetch: async (url, init) => {
+        const response = await server.inject({
+          method: "POST",
+          url: new URL(String(url)).pathname,
+          headers: Object.fromEntries(new Headers(init?.headers).entries()),
+          payload: String(init?.body),
+        });
+        requestCount += 1;
+        if (requestCount === 1) return new Promise<Response>(() => undefined);
+        return new Response(response.body, {
+          status: response.statusCode,
+          headers: { "content-type": String(response.headers["content-type"]) },
+        });
+      },
+    });
+    const batcher = new MetricBatcher({
+      runId,
+      correlationId: "ambiguous-timeout",
+      maxBatchSize: 2,
+      client,
+    });
+
+    try {
+      await batcher.add({
+        metricName: "traffic.latency",
+        value: 70,
+        unit: "ms",
+        timestamp: "2026-07-13T00:00:00.000Z",
+      });
+      await batcher.add({
+        metricName: "traffic.failure_rate",
+        value: 0.1,
+        unit: "ratio",
+        timestamp: "2026-07-13T00:00:01.000Z",
+      });
+      await batcher.close();
+
+      await redis.publish(dashboardProjectionDirtyRedisChannel, sentinel);
+      await sentinelReceived;
+      expect(messages).toHaveLength(1);
+      expect(requestCount).toBe(2);
+      expect(await store.readRecent(runId)).toEqual([
+        {
+          metricName: "traffic.latency",
+          value: 70,
+          unit: "ms",
+          timestamp: "2026-07-13T00:00:00.000Z",
+        },
+        {
+          metricName: "traffic.failure_rate",
+          value: 0.1,
+          unit: "ratio",
+          timestamp: "2026-07-13T00:00:01.000Z",
+        },
+      ]);
+      expect(batcher.lossTotals()).toEqual({ sampleCount: 0, batchCount: 0 });
+    } finally {
+      await subscriber.unsubscribe(dashboardProjectionDirtyRedisChannel);
+      subscriber.disconnect();
+      redis.disconnect();
+    }
+  });
+
   it.each([
     ["resource_not_found", 404],
     ["traffic_report_rejected", 409],
@@ -2745,6 +2866,7 @@ describe("API gateway routes", () => {
       url: "/internal/load/metrics",
       headers: { [controlServiceTokenHeaderName]: "test-control-token" },
       payload: {
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: fixtureIds.run,
         correlationId: fixtureCorrelationId,
         samples: [
@@ -2772,7 +2894,7 @@ describe("API gateway routes", () => {
     const publicationError = new Error("pubsub unavailable");
     const warn = vi.fn();
     const metricStore = {
-      appendIfLive: async () => true,
+      appendIfLive: async () => "appended" as const,
       publishDirtyIfLive: async () => {
         throw publicationError;
       },
@@ -2810,6 +2932,7 @@ describe("API gateway routes", () => {
       url: "/internal/load/metrics",
       headers: { [controlServiceTokenHeaderName]: "test-control-token" },
       payload: {
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: fixtureIds.run,
         correlationId: fixtureCorrelationId,
         samples: [

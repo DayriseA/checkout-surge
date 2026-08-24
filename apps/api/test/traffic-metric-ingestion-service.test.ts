@@ -6,6 +6,7 @@ import {
 } from "../src/services/traffic-metric-ingestion-service.js";
 
 const metricRequest = {
+  batchId: "77777777-7777-4777-8777-777777777777",
   runId: "55555555-5555-4555-8555-555555555551",
   correlationId: "metric-correlation",
   samples: [
@@ -46,7 +47,7 @@ describe("TrafficMetricIngestionService", () => {
     const service = createService({
       appendIfLive: async () => {
         order.push("append");
-        return true;
+        return "appended" as const;
       },
       publishDirtyIfLive,
       warn,
@@ -63,7 +64,7 @@ describe("TrafficMetricIngestionService", () => {
     const publicationError = new Error("dirty signal publish failed");
     const warn = vi.fn();
     const service = createService({
-      appendIfLive: async () => true,
+      appendIfLive: async () => "appended",
       publishDirtyIfLive: async () => ({
         outcome: "failed",
         error: publicationError,
@@ -89,7 +90,7 @@ describe("TrafficMetricIngestionService", () => {
       throw new Error("logger unavailable");
     });
     const service = createService({
-      appendIfLive: async () => true,
+      appendIfLive: async () => "appended",
       publishDirtyIfLive: async () => ({
         outcome: "failed",
         error: new Error("dirty publish failed"),
@@ -104,7 +105,7 @@ describe("TrafficMetricIngestionService", () => {
   it("accepts retained work when reset fences advisory publication between phases", async () => {
     const warn = vi.fn();
     const service = createService({
-      appendIfLive: async () => true,
+      appendIfLive: async () => "appended",
       publishDirtyIfLive: async () => ({ outcome: "fenced" }),
       warn,
     });
@@ -128,8 +129,20 @@ describe("TrafficMetricIngestionService", () => {
     expect(publishDirtyIfLive).not.toHaveBeenCalled();
   });
 
+  it("accepts duplicate work without publishing another dirty signal", async () => {
+    const publishDirtyIfLive = vi.fn();
+    const service = createService({
+      appendIfLive: async () => "duplicate",
+      publishDirtyIfLive,
+      warn: vi.fn(),
+    });
+
+    await expect(service.ingest(metricRequest)).resolves.toBeUndefined();
+    expect(publishDirtyIfLive).not.toHaveBeenCalled();
+  });
+
   it("rejects missing, wrong-lifecycle, and reset-fenced runs before publication", async () => {
-    const appendIfLive = vi.fn(async () => true);
+    const appendIfLive = vi.fn(async () => "appended" as const);
     const publishDirtyIfLive = vi.fn(async () => ({ outcome: "published" as const }));
     const missing = createService({ appendIfLive, publishDirtyIfLive, warn: vi.fn(), run: null });
     const draining = createService({
@@ -139,7 +152,7 @@ describe("TrafficMetricIngestionService", () => {
       run: { status: "draining", trafficStatus: "succeeded" },
     });
     const fenced = createService({
-      appendIfLive: async () => false,
+      appendIfLive: async () => "fenced",
       publishDirtyIfLive,
       warn: vi.fn(),
     });
@@ -182,7 +195,7 @@ describe("TrafficMetricIngestionService", () => {
         await firstAppendGate;
       }
       activeStoreOperations -= 1;
-      return true;
+      return "appended" as const;
     });
     const publishDirtyIfLive = vi.fn(async () => {
       expect(transactionOpen).toBe(true);

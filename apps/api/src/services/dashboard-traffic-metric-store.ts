@@ -20,12 +20,14 @@ export type TrafficMetricPublishResult =
   | { outcome: "published" }
   | { outcome: "failed"; error: Error };
 
+export type TrafficMetricAppendOutcome = "appended" | "duplicate" | "fenced";
+
 export interface DashboardTrafficMetricReader {
   readRecent(runId: string | null): Promise<MetricSample[]>;
 }
 
 export interface DashboardTrafficMetricStore extends DashboardTrafficMetricReader {
-  appendIfLive(input: LoadMetricIngestRequest): Promise<boolean>;
+  appendIfLive(input: LoadMetricIngestRequest): Promise<TrafficMetricAppendOutcome>;
   publishDirtyIfLive(
     runId: string,
     signal: DashboardProjectionDirtySignal,
@@ -38,30 +40,37 @@ export interface DashboardTrafficMetricStore extends DashboardTrafficMetricReade
 export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricStore {
   constructor(private readonly redis: CheckoutSurgeRedis) {}
 
-  async appendIfLive(input: LoadMetricIngestRequest): Promise<boolean> {
+  async appendIfLive(input: LoadMetricIngestRequest): Promise<TrafficMetricAppendOutcome> {
     const samplePayloads = input.samples.map((sample) => JSON.stringify(sample));
     const result = await this.redis.eval(
       `
-        if redis.call("EXISTS", KEYS[2]) == 1 then return 0 end
-        redis.call("RPUSH", KEYS[1], unpack(ARGV))
+        if redis.call("EXISTS", KEYS[2]) == 1 then return "fenced" end
+        if redis.call("SISMEMBER", KEYS[4], ARGV[1]) == 1 then return "duplicate" end
+        redis.call("SADD", KEYS[4], ARGV[1])
+        redis.call("EXPIRE", KEYS[4], ${metricTtlSeconds})
+        redis.call("RPUSH", KEYS[1], unpack(ARGV, 2))
         redis.call("LTRIM", KEYS[1], -${recentMetricRetentionLimit}, -1)
         redis.call("EXPIRE", KEYS[1], ${metricTtlSeconds})
-        for index, payload in ipairs(ARGV) do
+        for index = 2, #ARGV do
+          local payload = ARGV[index]
           local metricName = cjson.decode(payload).metricName
           if metricName == "${pinnedMetricNames[0]}" or metricName == "${pinnedMetricNames[1]}" then
             redis.call("HSET", KEYS[3], metricName, payload)
           end
         end
         redis.call("EXPIRE", KEYS[3], ${metricTtlSeconds})
-        return 1
+        return "appended"
       `,
-      3,
+      4,
       trafficMetricKey(input.runId),
       trafficMetricFenceKey(input.runId),
       pinnedTrafficMetricKey(input.runId),
+      trafficMetricBatchKey(input.runId),
+      input.batchId,
       ...samplePayloads,
     );
-    return result === 1;
+    if (result === "appended" || result === "duplicate" || result === "fenced") return result;
+    throw new Error("Redis returned an invalid traffic metric append outcome.");
   }
 
   async publishDirtyIfLive(
@@ -96,11 +105,18 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricS
       .set(trafficMetricFenceKey(runId), "reset", "EX", metricTtlSeconds)
       .del(trafficMetricKey(runId))
       .del(pinnedTrafficMetricKey(runId))
+      .del(trafficMetricBatchKey(runId))
       .exec();
   }
 
   async hasRunState(runId: string): Promise<boolean> {
-    return (await this.redis.exists(trafficMetricKey(runId), pinnedTrafficMetricKey(runId))) > 0;
+    return (
+      (await this.redis.exists(
+        trafficMetricKey(runId),
+        pinnedTrafficMetricKey(runId),
+        trafficMetricBatchKey(runId),
+      )) > 0
+    );
   }
 
   async readRecent(runId: string | null): Promise<MetricSample[]> {
@@ -143,6 +159,10 @@ function trafficMetricFenceKey(runId: string): string {
 
 function pinnedTrafficMetricKey(runId: string): string {
   return `demo-run:${runId}:traffic-metrics-pinned`;
+}
+
+function trafficMetricBatchKey(runId: string): string {
+  return `demo-run:${runId}:traffic-metric-batches`;
 }
 
 function parseTrafficMetricSnapshot(value: unknown): [string[], Array<string | null>] {

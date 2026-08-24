@@ -107,6 +107,7 @@ describe("load-orchestrator API client", () => {
     });
     try {
       const request = client.sendMetrics({
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
@@ -141,6 +142,7 @@ describe("load-orchestrator API client", () => {
       fetch: vi.fn(async () => new Response("unauthorized", { status: 401 })),
     });
     const request = {
+      batchId: "77777777-7777-4777-8777-777777777777",
       runId: startRequest.runId,
       correlationId: startRequest.correlationId,
       samples: [{ metricName: "traffic.latency" as const, value: 1, unit: "ms", timestamp }],
@@ -195,6 +197,7 @@ describe("load-orchestrator API client", () => {
 
     try {
       await client.sendMetrics({
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         samples: [
@@ -237,6 +240,7 @@ describe("load-orchestrator API client", () => {
         fetch: vi.fn(async () => new Response("{}", { status: 202 })),
       });
       await success.sendMetrics({
+        batchId: "77777777-7777-4777-8777-777777777777",
         runId: startRequest.runId,
         correlationId: startRequest.correlationId,
         samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
@@ -253,6 +257,7 @@ describe("load-orchestrator API client", () => {
       });
       await expect(
         failure.sendMetrics({
+          batchId: "77777777-7777-4777-8777-777777777777",
           runId: startRequest.runId,
           correlationId: startRequest.correlationId,
           samples: [{ metricName: "traffic.latency", value: 1, unit: "ms", timestamp }],
