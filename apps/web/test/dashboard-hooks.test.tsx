@@ -202,6 +202,106 @@ describe("useDashboardRecovery", () => {
     expect(result.current.recovery).toEqual(available(next));
   });
 
+  it("schedules one trailing reconciliation when disconnect arrives during a request", async () => {
+    vi.useFakeTimers();
+    const request = deferred<Response>();
+    const next = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const terminal = runProjection({
+      revision: 3,
+      recoveredAt: "2026-06-20T00:00:14.000Z",
+      currentRun: terminalRun(),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => request.promise)
+      .mockResolvedValueOnce(jsonResponse(terminal));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(runProjection())));
+
+    let first!: Promise<void>;
+    act(() => {
+      first = result.current.refresh();
+      void result.current.notifyRealtimeDisconnected();
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    request.resolve(jsonResponse(next));
+    await act(async () => first);
+    await act(async () => vi.advanceTimersByTimeAsync(1_999));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps reconciling successful nonterminal recoveries while disconnected", async () => {
+    vi.useFakeTimers();
+    let revision = 1;
+    const fetchMock = vi.fn(() => {
+      revision += 1;
+      return Promise.resolve(
+        jsonResponse(
+          runProjection({
+            revision,
+            recoveredAt: `2026-06-20T00:00:${String(revision).padStart(2, "0")}.000Z`,
+          }),
+        ),
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(runProjection())));
+
+    await act(async () => result.current.notifyRealtimeDisconnected());
+    for (let index = 0; index < 7; index += 1) {
+      await act(async () => vi.advanceTimersByTimeAsync(2_000));
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(8);
+  });
+
+  it("clears disconnected reconciliation after a terminal recovery", async () => {
+    vi.useFakeTimers();
+    const terminal = runProjection({
+      revision: 2,
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+      currentRun: terminalRun(),
+    });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(terminal));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(runProjection())));
+
+    await act(async () => result.current.notifyRealtimeDisconnected());
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("clears disconnected reconciliation when realtime reopens", async () => {
+    vi.useFakeTimers();
+    const next = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(next));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(runProjection())));
+
+    await act(async () => result.current.notifyRealtimeDisconnected());
+    act(() => result.current.notifyRealtimeReopened());
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("clears disconnected reconciliation on unmount", async () => {
+    vi.useFakeTimers();
+    const next = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(next));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, unmount } = renderHook(() => useDashboardRecovery(available(runProjection())));
+
+    await act(async () => result.current.notifyRealtimeDisconnected());
+    unmount();
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("atomically compares a live projection racing an older HTTP response", async () => {
     const request = deferred<Response>();
     const fetchMock = vi.fn().mockImplementationOnce(() => request.promise);

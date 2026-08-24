@@ -31,10 +31,13 @@ export function useDashboardRecovery(
     initialRecovery,
     createDashboardProjectionState,
   );
+  const stateRef = useRef(state);
+  stateRef.current = state;
   const requestRef = useRef<Promise<CompletedBackendRead<DashboardProjection>> | null>(null);
   const acceptedProjectionRef = useRef(state.acceptedProjection);
   acceptedProjectionRef.current = state.acceptedProjection;
   const mountedRef = useRef(true);
+  const realtimeDisconnectedRef = useRef(false);
   const hasLocalRecoveryActivityRef = useRef(false);
   const initialRecoveryIdentity = recoveryIdentity(initialRecovery);
   const initialRecoveryIdentityRef = useRef(initialRecoveryIdentity);
@@ -53,6 +56,14 @@ export function useDashboardRecovery(
       },
     });
   }
+  const reconcileSchedulerRef = useRef<ReturnType<
+    typeof createDashboardRecoveryRetryScheduler
+  > | null>(null);
+  if (reconcileSchedulerRef.current === null) {
+    reconcileSchedulerRef.current = createDashboardRecoveryRetryScheduler({
+      onRetry: () => void refreshRef.current(),
+    });
+  }
 
   const performRecovery = useCallback(
     async function runRecovery(): Promise<void> {
@@ -64,6 +75,7 @@ export function useDashboardRecovery(
 
       hasLocalRecoveryActivityRef.current = true;
       retrySchedulerRef.current?.cancel();
+      reconcileSchedulerRef.current?.cancel();
       dispatch({ type: "refresh-started" });
       let completedRecovery: CompletedBackendRead<DashboardProjection> | null = null;
       const request = readProxyJson(
@@ -87,6 +99,19 @@ export function useDashboardRecovery(
         });
         if (completedRecovery.status === "available") {
           retrySchedulerRef.current?.reset();
+          reconcileSchedulerRef.current?.reset();
+          const acceptedProjection = shouldAcceptDashboardProjection(
+            stateRef.current,
+            completedRecovery.data,
+          )
+            ? completedRecovery.data
+            : stateRef.current.acceptedProjection;
+          if (
+            realtimeDisconnectedRef.current &&
+            requiresDisconnectedReconciliation(acceptedProjection)
+          ) {
+            reconcileSchedulerRef.current?.schedule(2_000);
+          }
         } else if (completedRecovery.status === "unavailable") {
           retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
         }
@@ -116,6 +141,7 @@ export function useDashboardRecovery(
     return () => {
       mountedRef.current = false;
       retrySchedulerRef.current?.reset();
+      reconcileSchedulerRef.current?.reset();
     };
   }, []);
 
@@ -140,6 +166,14 @@ export function useDashboardRecovery(
     retrySchedulerRef.current?.reset();
     await refresh();
   }, [refresh]);
+  const notifyRealtimeDisconnected = useCallback(async (): Promise<void> => {
+    realtimeDisconnectedRef.current = true;
+    await refresh();
+  }, [refresh]);
+  const notifyRealtimeReopened = useCallback((): void => {
+    realtimeDisconnectedRef.current = false;
+    reconcileSchedulerRef.current?.reset();
+  }, []);
   const hasInitialRetryWait =
     !hasLocalRecoveryActivityRef.current &&
     initialRecovery.status === "unavailable" &&
@@ -162,8 +196,15 @@ export function useDashboardRecovery(
     retainedTerminalRun: state.retainedTerminalRun,
     refresh,
     retryNow,
+    notifyRealtimeDisconnected,
+    notifyRealtimeReopened,
     applyProjection,
   };
+}
+
+function requiresDisconnectedReconciliation(projection: DashboardProjection | null): boolean {
+  const status = projection?.currentRun?.status;
+  return status !== undefined && status !== "completed" && status !== "failed";
 }
 
 function withLiveRetryAfter<T extends BackendRead<unknown>>(read: T, retryScheduled: boolean): T {
