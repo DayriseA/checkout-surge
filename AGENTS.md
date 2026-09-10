@@ -51,7 +51,20 @@ Test the happy path plus edge cases that are reachable through the public API. B
 - speculative future requirements. 
 
 Prefer fewer, meaningful tests over exhaustive coverage.  
-Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly asked; they are super slow and require a functioning Docker daemon.
+
+### Validation (formatting / linting / type-checking / tests)
+
+From the repo root:
+
+- Format and fix lint on touched files: `pnpm exec biome check --write <files>`
+- Check formatting and lint without writing: `pnpm exec biome check <files>` (whole workspace: `pnpm format:check`, `pnpm lint`)
+- Check types: `pnpm type-check`
+- Run tests without infrastructure: `pnpm test:unit`
+- Run the full default suite: `pnpm test:infra:up` then `pnpm test` (API and integration tests need the isolated Docker PostgreSQL/Redis)
+- Narrower scopes: `pnpm test:api`, `pnpm test:integration`, or `pnpm --filter <package> test:unit`
+- Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly asked; they are super slow and require a functioning Docker daemon.
+
+Before handing back code changes, format only the files touched by the task, then run the relevant checks. Report pre-existing lint issues rather than silently suppressing them.
 
 ### Miscellaneous
 

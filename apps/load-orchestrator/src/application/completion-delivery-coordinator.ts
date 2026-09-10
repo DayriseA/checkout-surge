@@ -2,8 +2,8 @@ import type { TrafficCompletionReport } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import {
   isRetryableCompletionLoadApiError,
-  LoadApiHttpError,
   type LoadApiClient,
+  LoadApiHttpError,
 } from "./api-client.js";
 import type { ExecutionStore } from "./execution-store.js";
 

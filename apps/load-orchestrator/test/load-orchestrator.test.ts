@@ -16,8 +16,8 @@ import { describe, expect, it, vi } from "vitest";
 import { HttpLoadApiClient, type LoadApiClient } from "../src/application/api-client.js";
 import { CompletionDeliveryCoordinator } from "../src/application/completion-delivery-coordinator.js";
 import {
-  type CompletionRejection,
   type CompletionPublishOutcome,
+  type CompletionRejection,
   type DurableExecution,
   ExecutionConflictError,
   type ExecutionStore,

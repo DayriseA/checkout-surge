@@ -5,14 +5,14 @@ import type {
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { LoadApiHttpError } from "../src/application/api-client.js";
 import {
   CompletionDeliveryCoordinator,
   CompletionPersistenceError,
 } from "../src/application/completion-delivery-coordinator.js";
-import { LoadApiHttpError } from "../src/application/api-client.js";
 import {
-  type CompletionRejection,
   type CompletionPublishOutcome,
+  type CompletionRejection,
   type DurableExecution,
   ExecutionConflictError,
   type ExecutionStore,
