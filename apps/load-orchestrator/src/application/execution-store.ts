@@ -110,6 +110,9 @@ export class FileExecutionStore implements ExecutionStore {
     acceptedAt: Date,
   ): Promise<{ execution: DurableExecution; created: boolean }> {
     const current = await this.read();
+    if (current?.state === "completion_rejected" && current.request.runId === request.runId) {
+      return { execution: current, created: false };
+    }
     if (current && current.state !== "completed" && current.state !== "completion_rejected") {
       if (current.request.runId === request.runId) return { execution: current, created: false };
       throw new ExecutionConflictError(current.request.runId);

@@ -76,6 +76,12 @@ class InMemoryExecutionStore implements ExecutionStore {
   ): Promise<{ execution: DurableExecution; created: boolean }> {
     return this.mutate(async () => {
       if (
+        this.execution?.state === "completion_rejected" &&
+        this.execution.request.runId === request.runId
+      ) {
+        return { execution: this.execution, created: false };
+      }
+      if (
         this.execution &&
         this.execution.state !== "completed" &&
         this.execution.state !== "completion_rejected"
@@ -466,6 +472,46 @@ describe("durable execution ownership", () => {
         created: true,
         execution: { request: successor, state: "accepted" },
       });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves a rejected completion when the same run is accepted after reopening", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-rejected-replay-"));
+    const generated = generateK6Script(startRequest);
+    const report = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(timestamp),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const rejection = {
+      reason: "API load ingestion failed with HTTP 409.",
+      httpStatus: 409,
+      rejectedAt: "2026-06-20T12:00:06.000Z",
+    };
+    try {
+      const firstStore = new FileExecutionStore(directory);
+      await firstStore.accept(startRequest, new Date(timestamp));
+      await expect(firstStore.publishCompletion(report)).resolves.toBe("published");
+      await expect(firstStore.rejectCompletion(report, rejection)).resolves.toBe(true);
+      const rejected = await firstStore.read();
+      expect(rejected).toMatchObject({
+        state: "completion_rejected",
+        completion: report,
+        rejection,
+      });
+
+      const reopenedStore = new FileExecutionStore(directory);
+      await expect(
+        reopenedStore.accept(
+          { ...startRequest, correlationId: "same-run-replay-correlation" },
+          new Date("2026-06-20T12:01:00.000Z"),
+        ),
+      ).resolves.toEqual({ execution: rejected, created: false });
+      await expect(reopenedStore.read()).resolves.toEqual(rejected);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
@@ -1410,6 +1456,58 @@ describe("load-orchestrator k6 mapping", () => {
 });
 
 describe("SpawnK6Runner completion reporting", () => {
+  it("does not restart traffic when the same run replays a rejected completion", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-rejected-runner-replay-"));
+    const store = new FileExecutionStore(directory);
+    const generated = generateK6Script(startRequest);
+    const report = new K6RunAccumulator({
+      runId: startRequest.runId,
+      correlationId: startRequest.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(timestamp),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
+    const persist = vi.fn(async () => undefined);
+    const spawnProcess = vi.fn() as unknown as typeof spawn;
+    const runner = new ProductionSpawnK6Runner({
+      k6Binary: "k6",
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
+      completionDelivery: {
+        start: async () => undefined,
+        persist,
+        close: async () => undefined,
+      },
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      now: () => new Date("2026-06-20T12:01:00.000Z"),
+      spawnProcess,
+    });
+    try {
+      await store.accept(startRequest, new Date(timestamp));
+      await expect(store.publishCompletion(report)).resolves.toBe("published");
+      await expect(
+        store.rejectCompletion(report, {
+          reason: "API load ingestion failed with HTTP 409.",
+          httpStatus: 409,
+          rejectedAt: "2026-06-20T12:00:06.000Z",
+        }),
+      ).resolves.toBe(true);
+      const rejected = await store.read();
+      expect(rejected).toMatchObject({ state: "completion_rejected", completion: report });
+
+      await expect(runner.start(startRequest)).resolves.toEqual({
+        startedAt: new Date(timestamp),
+        plannedRequests: generated.plannedRequests,
+      });
+      expect(spawnProcess).not.toHaveBeenCalled();
+      expect(persist).not.toHaveBeenCalled();
+      await expect(store.read()).resolves.toEqual(rejected);
+    } finally {
+      await runner.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("waits for the authoritative summary, reuses one report across retries, then cleans up", async () => {
     const k6Process = createK6ProcessFixture();
     const reports: TrafficCompletionReport[] = [];

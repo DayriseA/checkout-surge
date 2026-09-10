@@ -72,6 +72,12 @@ class MemoryExecutionStore implements ExecutionStore {
   async accept(input: TrafficExecutionStartRequest, at: Date) {
     return this.mutate(async () => {
       if (
+        this.execution?.state === "completion_rejected" &&
+        this.execution.request.runId === input.runId
+      ) {
+        return { execution: this.execution, created: false };
+      }
+      if (
         this.execution &&
         this.execution.state !== "completed" &&
         this.execution.state !== "completion_rejected"
