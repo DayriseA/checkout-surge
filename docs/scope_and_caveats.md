@@ -4,8 +4,9 @@ This page is the single authority for Checkout-Surge's accepted project boundary
 
 ## Intentional Non-Goals
 
-These five exclusions are not missing deliverables or roadmap commitments:
+These six exclusions are not missing deliverables or roadmap commitments:
 
+- **Native Windows execution of application services and test suites.** Windows is supported as a Docker Desktop host for the Linux reference runtime; host-native development and tests on Windows go through the Dev Container. See [local development modes](local_development.md#runtime-modes).
 - **Production commerce identity and payment-grade security.** Public/admin controls protect the demonstrator without claiming customer identity, tenant authorization, or payment security. See [access-protection non-goals](admin_access_protection.md#non-goals).
 - **Payment authorization, customer cancellation, payment-timeout release, and automatic hold-expiry reconciliation.** The demo retains expired holds for visibility rather than modeling a complete payment lifecycle. See the [inventory ownership boundary](redis_inventory_hot_path.md#inventory-ownership-boundary) and [stale-hold behavior](redis_inventory_hot_path.md#stale-holds-and-operator-visibility).
 - **Separate per-order realtime feeds, recent-activity panels, public order rows, and customer order tracking.** The dashboard uses one complete revisioned projection for aggregate request surge, run-owned durable processing backlog, inventory drain, consistency lag, and run outcomes; shared system status carries physical queue and catalog ERP protection context. The durable `GET /orders/:publicOrderId/status` diagnostic and protected Run History remain; the dashboard is not a storefront. See the [dashboard recovery model](load_generation_metrics_streaming.md#dashboard-recovery-model) and [Order domain](core_business_entities.md#5-order).

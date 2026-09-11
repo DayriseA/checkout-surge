@@ -5,7 +5,7 @@ This guide covers the day-to-day setup for running Checkout-Surge locally. The d
 ## Prerequisites
 
 - Node.js 22 or newer with Corepack/pnpm 10 or newer
-- Docker with Docker Compose
+- Docker with Docker Compose (Linux containers)
 - Caddy only for the host-native single-origin dashboard proxy workflow
 - k6 CLI only for the alternate host-native load-orchestrator workflow
 
@@ -36,10 +36,12 @@ The reference Compose services run with `NODE_ENV=production`; they reject missi
 
 ## Runtime Modes
 
+Application services and test suites run on Linux. Windows contributors run the containerized runtime through Docker Desktop and use the Dev Container for host-native development and tests. The reference runtime can also run inside the Dev Container's Docker-in-Docker environment; the two Docker engines keep separate images, containers, and volumes.
+
 Checkout-Surge supports three local workflows:
 
 - Containerized reference runtime: run the application services and infrastructure through Docker Compose, with the load orchestrator carrying its own k6 binary and the dashboard exposed through the single-origin proxy on port `8080`. Use this for demos, manual end-to-end checks, and dashboard-triggered load runs.
-- Host-native development: run app services with `pnpm dev:*` and shared PostgreSQL/Redis through Docker Compose. Use this for focused code edits. Host-native load runs require `K6_BINARY` to resolve on the host machine.
+- Host-native development: run app services with `pnpm dev:*` and shared PostgreSQL/Redis through Docker Compose, from a Linux environment such as the Dev Container. Use this for focused code edits. Host-native load runs require `K6_BINARY` to resolve in that environment.
 - Isolated automated test infrastructure: run PostgreSQL and Redis from `docker-compose.test.yml` so tests do not depend on normal demo state.
 
 The containerized and host-native reference workflows each support one API process as the sole maintenance authority, one Next.js web process, one load-orchestrator process with one journal, and one worker runtime. Caddy provides one dashboard ingress path and does not count as another web application process or authority. Do not treat ad hoc `docker compose --scale` usage or duplicate host-native processes as a supported topology.
@@ -180,6 +182,8 @@ The repository-scoped Playwright CLI and MCP browser configurations both use iso
 After changes to `.devcontainer` files, rebuild the Dev Container or Codespace to verify editor startup, Docker-in-Docker initialization, forwarded ports, and dependency-volume behavior under the new configuration.
 
 ## Host-Native Startup
+
+This workflow runs on Linux. On Windows, use the [Dev Container](#dev-container-startup).
 
 Install dependencies:
 
@@ -543,7 +547,7 @@ The setup above is shaped by a few deliberate decisions about the local developm
 
 | Decision | Choice | Rationale |
 | :-- | :-- | :-- |
-| Supported development modes | Host-native, local Dev Container, GitHub Codespaces | These are the real workflows the project intends to support; documenting them explicitly avoids assuming one default mode. |
+| Supported development modes | Linux host-native, local Dev Container, GitHub Codespaces; Windows as a Docker Desktop host for the containerized runtime | These are the real workflows the project intends to support. Application services and tests run on Linux, so the Dev Container is the Windows development path. |
 | Dev Container base image | `mcr.microsoft.com/devcontainers/universal:linux` | This image is used by the workspace and is compatible with the team's Codespaces cost and caching constraints. |
 | Future dev-container customization rule | If a custom dev-container `Dockerfile` is introduced later, it must still use `mcr.microsoft.com/devcontainers/universal:linux` as the base image | Prevents toolchain drift between local Dev Containers and Codespaces. |
 | Stateful local infrastructure | PostgreSQL and Redis are the mandatory baseline dependencies | They are required by the architecture and are the shared dependencies every contributor must be able to boot predictably. |
@@ -562,7 +566,7 @@ Because the source tree is shared across host-native, Dev Container, and Codespa
 
 - Dev Container and Codespaces setups mount `node_modules` as Docker named volumes at the relevant workspace paths, and mount pnpm's store as a named volume at `/pnpm-store`.
 - The container sets `pnpm config set store-dir /pnpm-store --location user` during post-create setup.
-- The repository must not commit a project `.npmrc` with `store-dir=.pnpm-store`, because that would also redirect host-native Windows installs.
+- The repository must not commit a project `.npmrc` with `store-dir=.pnpm-store`, because that would also redirect Windows-side installs into the shared workspace.
 - Host-native development stays free to install its own platform-compatible dependencies locally.
 
 ### Why the containerized runtime is the reference

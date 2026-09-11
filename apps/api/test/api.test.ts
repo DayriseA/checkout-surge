@@ -2748,7 +2748,7 @@ describe("API gateway routes", () => {
     const store = new RedisDashboardTrafficMetricStore(redis);
     const messages: string[] = [];
     const sentinel = `metric-settled:${runId}`;
-    let markSentinelReceived = () => undefined;
+    let markSentinelReceived: () => void = () => undefined;
     const sentinelReceived = new Promise<void>((resolve) => {
       markSentinelReceived = resolve;
     });

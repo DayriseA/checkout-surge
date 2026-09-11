@@ -4,6 +4,8 @@ This document defines the delivered local reference runtime topology, the Dev Co
 
 The goal is to make the architecture-realistic topology easy to run locally without turning every development workspace startup into a full demo environment.
 
+The reference runtime uses Linux containers. Windows contributors run it through Docker Desktop or through Docker-in-Docker inside the Dev Container; see the [support boundary](scope_and_caveats.md#intentional-non-goals).
+
 ---
 
 ## Confirmed Decisions

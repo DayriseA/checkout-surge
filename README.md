@@ -77,8 +77,10 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 ## Prerequisites
 
 - Node.js 22 or newer and pnpm 10 or newer (Corepack recommended for the pinned version)
-- Docker with Docker Compose
+- Docker with Docker Compose (Linux containers)
 - k6 CLI only for the alternate host-native load-orchestrator workflow
+
+Application services and test suites run on Linux. On Windows, run the containerized runtime through Docker Desktop and use the Dev Container for host-native development and tests. See [local development modes](docs/local_development.md#runtime-modes).
 
 ## Quick Start
 
@@ -147,7 +149,7 @@ For local ports, environment variables, health endpoints, and command references
 
 ## Testing
 
-Run the automated suite:
+Run the automated suite from a Linux environment such as the Dev Container:
 
 ```bash
 pnpm test

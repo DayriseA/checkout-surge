@@ -2,7 +2,7 @@
 
 This document records the implemented testing foundation for Checkout-Surge. It is a repository-wide working agreement, not a feature of one service.
 
-The checked-in commands support host-native development, local Dev Containers, and GitHub Codespaces. There is no hosted CI workflow in this repository. Tests must never depend on normal development data or leave shared infrastructure in an unknown state.
+The checked-in commands support Linux host-native development, local Dev Containers, and GitHub Codespaces. Tests run on Linux; Windows contributors run them from the Dev Container. There is no hosted CI workflow in this repository. Tests must never depend on normal development data or leave shared infrastructure in an unknown state.
 
 ---
 
