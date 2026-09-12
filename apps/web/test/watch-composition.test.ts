@@ -87,6 +87,33 @@ describe("watch composition", () => {
 
     expect(composition(available(projection(run("starting"))), retained).phase).toBe("starting");
   });
+
+  it("presents incomplete reset recovery and returns to idle after recovery completes", () => {
+    const incomplete = projection(null);
+    incomplete.resetRecovery = "incomplete";
+
+    expect(composition(available(incomplete))).toMatchObject({
+      phase: "reset-recovery",
+      presentation: { state: "reset-recovery-incomplete", label: "recovery incomplete" },
+    });
+    expect(composition(available(projection(null)))).toMatchObject({
+      phase: "idle",
+      presentation: { state: "ready", label: "ready" },
+    });
+  });
+
+  it("keeps a retained terminal recap after reset recovery returns ready", () => {
+    const terminal = projection(run("completed"));
+    terminal.resetRecovery = "incomplete";
+    const retained: RetainedTerminalRun = {
+      runId,
+      configSnapshot: previewRunConfigSnapshotFixture(),
+      terminalRecap: terminal,
+    };
+
+    expect(composition(available(projection(null)), retained).phase).toBe("completed");
+    expect(composition(available(projection(null))).phase).toBe("idle");
+  });
 });
 
 const runId = "11111111-1111-4111-8111-111111111111";

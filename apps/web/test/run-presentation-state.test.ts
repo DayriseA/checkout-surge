@@ -41,6 +41,28 @@ describe("run presentation state", () => {
     expect(deriveRunPresentationState(read).label).toBe(expected);
   });
 
+  it("presents incomplete reset recovery until the idle projection is repaired", () => {
+    const incomplete = projection(null);
+    incomplete.resetRecovery = "incomplete";
+
+    expect(deriveRunPresentationState(available(incomplete))).toMatchObject({
+      state: "reset-recovery-incomplete",
+      label: "recovery incomplete",
+      tone: "warning",
+    });
+    expect(deriveRunPresentationState(available(projection(null)))).toMatchObject({
+      state: "ready",
+      label: "ready",
+    });
+  });
+
+  it("prefers a current run over stale incomplete-reset metadata", () => {
+    const data = projection(run("active"));
+    data.resetRecovery = "incomplete";
+
+    expect(deriveRunPresentationState(available(data)).state).toBe("accepting-checkout-attempts");
+  });
+
   it.each([
     {
       name: "completed success",
@@ -321,6 +343,10 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
   };
+}
+
+function available(data: DashboardProjection) {
+  return { status: "available" as const, data, httpStatus: 200 };
 }
 
 function inventory(allocatedStock: number): NonNullable<DashboardProjection["inventory"]> {

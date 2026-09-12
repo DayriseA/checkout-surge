@@ -33,6 +33,28 @@ describe("watch narrative", () => {
     expect(output).not.toContain("Start a demo");
   });
 
+  it("keeps expanded technical details consistent through reset recovery and retry", () => {
+    const incomplete = projection(null);
+    incomplete.resetRecoveryRunId = "11111111-1111-4111-8111-111111111111";
+    incomplete.resetRecovery = "incomplete";
+
+    const recoveringDetails = technicalDetails(dashboardMarkup(available(incomplete)));
+    expect(recoveringDetails).toContain("Run: recovery incomplete");
+    for (const label of ["Current scenario", "Run", "Load generator"]) {
+      expect(recoveringDetails).toMatch(
+        new RegExp(`${label}</dt><dd[^>]*>Unavailable until operator recovery completes</dd>`),
+      );
+    }
+    expect(recoveringDetails).not.toContain("No run has started");
+
+    const idleDetails = technicalDetails(dashboardMarkup(available(projection(null))));
+    expect(idleDetails).toContain("Run: ready");
+    for (const label of ["Current scenario", "Run", "Load generator"]) {
+      expect(idleDetails).toMatch(new RegExp(`${label}</dt><dd[^>]*>No run has started</dd>`));
+    }
+    expect(idleDetails).not.toContain("recovery incomplete");
+  });
+
   it("renders one idle action state with and without latest history", () => {
     const withoutHistory = markup(available(projection(null)));
     expect(withoutHistory).toContain("Start a demo");
@@ -196,6 +218,17 @@ function markup(
   return renderToStaticMarkup(
     createElement(WatchNarrative, { composition, onRetry: () => undefined }),
   );
+}
+
+function dashboardMarkup(recovery: BackendRead<DashboardProjection>): string {
+  return renderToStaticMarkup(createElement(OperatorDashboard, { initialRecovery: recovery }));
+}
+
+function technicalDetails(output: string): string {
+  const start = output.indexOf("<details");
+  const end = output.lastIndexOf("</details>");
+  if (start === -1 || end === -1) throw new Error("Expected expanded Technical details content.");
+  return output.slice(start, end + "</details>".length);
 }
 
 function retainedTerminal(terminalRecap: DashboardProjection): RetainedTerminalRun {

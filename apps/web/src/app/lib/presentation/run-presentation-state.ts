@@ -31,6 +31,12 @@ const states = {
     "Checking availability.",
   ),
   ready: state("ready", "idle", "ready", "Ready to start a run."),
+  resetRecoveryIncomplete: state(
+    "reset-recovery-incomplete",
+    "warning",
+    "recovery incomplete",
+    "New runs remain unavailable until operator recovery completes.",
+  ),
   starting: state("starting", "progress", "starting", "Preparing checkout traffic."),
   active: state(
     "accepting-checkout-attempts",
@@ -104,7 +110,11 @@ export function deriveRunPresentationState(
   if (read.status === "unavailable") return states.unavailable;
 
   const run = projection?.currentRun ?? null;
-  if (!projection || !run) return states.ready;
+  if (!projection) return states.ready;
+  if (projection.resetRecovery === "incomplete" && !run) {
+    return states.resetRecoveryIncomplete;
+  }
+  if (!run) return states.ready;
   if (run.status === "starting") return states.starting;
   if (run.status === "active") {
     return run.trafficStatus === "starting" ? states.starting : states.active;

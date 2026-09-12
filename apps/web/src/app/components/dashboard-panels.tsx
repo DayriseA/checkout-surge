@@ -246,6 +246,10 @@ export function RecoveryStatusPanel({
 }) {
   const data = recoveryData(recovery);
   const run = data?.currentRun ?? null;
+  const noRunValue =
+    presentation.state === "reset-recovery-incomplete"
+      ? "Unavailable until operator recovery completes"
+      : "No run has started";
   const hasLastKnownGoodSyncIssue = data !== null && hasSyncIssue;
   const retryWaitActive =
     (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0) ||
@@ -298,14 +302,11 @@ export function RecoveryStatusPanel({
         <>
           {freshness ? <FreshnessLine freshness={freshness} /> : null}
           <dl className={stackedFactGridClassName}>
-            <Fact label="Current scenario" value={run ? run.presetName : "No run has started"} />
-            <Fact
-              label="Run"
-              value={run ? runLifecycleStatusLabel(run.status) : "No run has started"}
-            />
+            <Fact label="Current scenario" value={run ? run.presetName : noRunValue} />
+            <Fact label="Run" value={run ? runLifecycleStatusLabel(run.status) : noRunValue} />
             <Fact
               label="Load generator"
-              value={run ? trafficExecutionStatusLabel(run.trafficStatus) : "No run has started"}
+              value={run ? trafficExecutionStatusLabel(run.trafficStatus) : noRunValue}
             />
           </dl>
           <p className="m-0 mt-3 text-xs leading-5 text-muted">Updates {realtimeStatus}</p>
