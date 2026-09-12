@@ -1,5 +1,6 @@
 import {
   type AcceptedRunConfigSnapshot,
+  type DashboardProjection,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
@@ -7,6 +8,7 @@ import {
 import {
   createDatabaseConnection,
   createRedisClient,
+  createRedisDashboardProjectionDirtySubscriber,
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoPresets,
@@ -35,8 +37,12 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createDashboardRecoveryOperationFactory } from "../src/runtime/dashboard-recovery-operation-factory.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
+import { DashboardProjectionPublicationScheduler } from "../src/services/dashboard-projection-publication-scheduler.js";
+import { DashboardProjectionService } from "../src/services/dashboard-recovery-service.js";
+import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import {
   type DemoMaintenanceAuthority,
   ProcessLocalDemoMaintenanceAuthority,
@@ -605,6 +611,178 @@ describe("focused demo maintenance workflows", () => {
   });
 
   describe("admin reset workflow", () => {
+    it("publishes the reset terminal projection to a connected Redis subscriber without recovery", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      const logger = createSilentLogger("api");
+      const now = () => new Date("2026-06-20T00:00:10.000Z");
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "active",
+        trafficStatus: "active",
+        failureReason: null,
+        runInventoryStatus: "accepting",
+      });
+      const config = configSnapshotFixture();
+      await db
+        .update(demoRuns)
+        .set({
+          configSnapshot: {
+            ...config,
+            trafficConfig: { ...config.trafficConfig, startDelaySeconds: 20 },
+          },
+        })
+        .where(eq(demoRuns.id, ids.activeRun));
+      const metrics = new RedisDashboardTrafficMetricStore(redisClient);
+      await metrics.appendIfLive({
+        batchId: "77777777-7777-4777-8777-777777777101",
+        runId: ids.activeRun,
+        correlationId: "corr-pre-dispatch",
+        observedAt: "2026-06-20T00:00:02.000Z",
+        samples: [
+          {
+            metricName: "traffic.attempts_dispatched",
+            value: 0,
+            unit: "requests",
+            timestamp: "2026-06-20T00:00:02.000Z",
+          },
+        ],
+      });
+      const projectionService = new DashboardProjectionService({
+        logger,
+        now,
+        openOperation: createDashboardRecoveryOperationFactory({
+          databaseUrl: requireTestDatabaseUrl(),
+          redisUrl: requireTestRedisUrl(),
+          timeoutMs: 2_000,
+          logger,
+        }),
+      });
+      const active = await projectionService.build({ correlationId: "corr-active" });
+      expect(active.currentRun?.status).toBe("active");
+      expect(active.recentMetrics).toHaveLength(1);
+      let resolveProjection!: (projection: DashboardProjection) => void;
+      const published = new Promise<DashboardProjection>((resolve) => {
+        resolveProjection = resolve;
+      });
+      const scheduler = new DashboardProjectionPublicationScheduler({
+        projectionService,
+        logger,
+        buildTimeoutMs: 2_000,
+        publish: resolveProjection,
+      });
+      const subscriberRedis = redisClient.duplicate();
+      const onDirty = vi.fn((signal) => scheduler.markDirty(signal));
+      const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
+        onDirty,
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await subscriber.start();
+        const service = createResetService({
+          db,
+          redis: redisClient,
+          logger,
+          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+          queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+          dashboardLiveStateReset: metrics,
+          now,
+        });
+        await expect(service.reset("corr-reset-stream")).resolves.toMatchObject({
+          failedRunCount: 1,
+        });
+        const terminal = await Promise.race([
+          published,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error("Reset terminal projection was not published")),
+              3_000,
+            );
+          }),
+        ]);
+        expect(onDirty).toHaveBeenCalledExactlyOnceWith({
+          type: "dashboard.projection.dirty",
+          correlationId: "corr-reset-stream",
+          scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
+        });
+        expect(terminal.scope).toEqual(active.scope);
+        expect(terminal.scopeId).toBe(active.scopeId);
+        expect(terminal.revision).toBeGreaterThan(active.revision);
+        expect(terminal.currentRun).toMatchObject({
+          status: "failed",
+          trafficStatus: "failed",
+          failureCategory: "operator",
+        });
+        expect(terminal.recentMetrics).toEqual([]);
+        expect((await db.select().from(demoRunSummaries))[0]?.transportAttemptCounts).toMatchObject(
+          { startedRequests: 0 },
+        );
+        expect(
+          await db
+            .select({ failureReason: demoRuns.failureReason })
+            .from(demoRuns)
+            .where(eq(demoRuns.id, ids.activeRun)),
+        ).toEqual([{ failureReason: "admin_reset" }]);
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+        expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
+        expect(await metrics.readRecent(ids.activeRun)).toEqual([]);
+      } finally {
+        clearTimeout(timeout);
+        await subscriber.close();
+        subscriberRedis.disconnect();
+        await scheduler.close();
+      }
+    });
+
+    it("keeps reset successful when advisory dirty publication fails", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "active",
+        trafficStatus: "active",
+        failureReason: null,
+        runInventoryStatus: "accepting",
+      });
+      const metrics = new RedisDashboardTrafficMetricStore(redisClient);
+      await redisClient.sadd(`demo-run:${ids.activeRun}:traffic-metric-batches`, "batch");
+      const logger = createSilentLogger("api");
+      const warn = vi.spyOn(logger, "warn");
+      const failure = new Error("publication unavailable");
+      const publish = vi.spyOn(redisClient, "publish").mockRejectedValueOnce(failure);
+      try {
+        const service = createResetService({
+          db,
+          redis: redisClient,
+          logger,
+          dashboardLiveStateReset: metrics,
+          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+          queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        });
+        await expect(service.reset("corr-advisory")).resolves.toMatchObject({
+          failedRunCount: 1,
+          closedSaleOfferCount: 1,
+          cleanedQueueCount: 2,
+          cleanedJobCount: 0,
+          correlationId: "corr-advisory",
+        });
+        expect(publish).toHaveBeenCalledOnce();
+        expect(warn).toHaveBeenCalledWith(
+          { err: failure, runId: ids.activeRun },
+          "Could not publish run projection dirty signal.",
+        );
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+        expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
+        expect(await metrics.readRecent(ids.activeRun)).toEqual([]);
+      } finally {
+        publish.mockRestore();
+      }
+    });
+
     it("fails in-progress runs, closes sale eligibility, and cleans reset-owned queues", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
@@ -1037,10 +1215,20 @@ describe("focused demo maintenance workflows", () => {
         cleanedJobCount: 0,
       }));
       let failClear = true;
+      const metrics = new RedisDashboardTrafficMetricStore(redisClient);
+      await redisClient.sadd(`demo-run:${ids.activeRun}:traffic-metric-batches`, "batch");
+      const publish = vi.spyOn(redisClient, "publish");
+      const cleanupComplete = vi.fn();
+      const clearErp = vi.fn(async () => {
+        if (cleanupComplete.mock.calls.length === 0) expect(publish).not.toHaveBeenCalled();
+        expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
+        cleanupComplete();
+      });
       const logger = createSilentLogger("api");
       const errorLog = vi.spyOn(logger, "error");
       const clearRun = vi.fn(async () => {
         if (failClear) throw new Error("Redis unavailable");
+        await metrics.clearRun(ids.activeRun);
       });
       const service = createResetService({
         db,
@@ -1051,8 +1239,9 @@ describe("focused demo maintenance workflows", () => {
         dashboardLiveStateReset: {
           fenceRun: async () => undefined,
           clearRun,
-          hasRunState: async () => true,
+          hasRunState: (runId) => metrics.hasRunState(runId),
         },
+        clearErpCircuitBreakerState: clearErp,
         logger,
       });
 
@@ -1067,8 +1256,24 @@ describe("focused demo maintenance workflows", () => {
       expect(abortCurrent).toHaveBeenCalledOnce();
       expect(cleanRuns).toHaveBeenCalledOnce();
 
+      expect(publish).not.toHaveBeenCalled();
+      expect(clearErp).not.toHaveBeenCalled();
       failClear = false;
       await expect(service.reset("corr-clear-retry")).resolves.toMatchObject({ failedRunCount: 0 });
+      expect(publish).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(publish.mock.calls[0]?.[1]))).toMatchObject({
+        scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
+      });
+      expect(publish.mock.invocationCallOrder[0]).toBeGreaterThan(
+        cleanupComplete.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(publish.mock.invocationCallOrder[0]).toBeGreaterThan(
+        clearErp.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
+      await service.reset("corr-already-clean");
+      expect(publish).toHaveBeenCalledOnce();
+      publish.mockRestore();
       expect(clearRun).toHaveBeenCalledTimes(2);
       expect(abortCurrent).toHaveBeenCalledOnce();
       expect(cleanRuns).toHaveBeenCalledOnce();

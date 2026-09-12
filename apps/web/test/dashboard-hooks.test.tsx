@@ -3,6 +3,7 @@
 import {
   type DashboardProjection,
   dashboardEventsPath,
+  dashboardProjectionSchema,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
@@ -10,11 +11,14 @@ import {
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { type ReactNode, StrictMode } from "react";
+import { createElement, type ReactNode, StrictMode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { WatchNarrative } from "../src/app/components/operator-dashboard.js";
 import { useDashboardProjections } from "../src/app/components/realtime/use-dashboard-projections.js";
 import { useDashboardRecovery } from "../src/app/components/realtime/use-dashboard-recovery.js";
 import type { BackendRead } from "../src/app/lib/api.js";
+import { deriveWatchComposition } from "../src/app/lib/presentation/watch-composition.js";
 
 type ActiveRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "active" }>;
 type DrainingRun = Extract<NonNullable<DashboardProjection["currentRun"]>, { status: "draining" }>;
@@ -55,6 +59,68 @@ afterEach(() => {
 });
 
 describe("useDashboardProjections", () => {
+  it("automatically presents an operator-stopped run from the connected stream and rejects its old active frame", () => {
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const active = dashboardProjectionSchema.parse(runProjection());
+    const terminal = dashboardProjectionSchema.parse(
+      runProjection({
+        revision: 2,
+        recoveredAt: "2026-06-20T00:00:12.000Z",
+        currentRun: {
+          ...activeRun(),
+          status: "failed",
+          trafficStatus: "failed",
+          trafficEndedAt: "2026-06-20T00:00:12.000Z",
+          finalizedAt: "2026-06-20T00:00:12.000Z",
+          failureCategory: "operator",
+        },
+      }),
+    );
+    const { result } = renderHook(() => {
+      const recovery = useDashboardRecovery(available(active));
+      const transportStatus = useDashboardProjections({
+        onProjection: recovery.applyProjection,
+        onOpen: recovery.notifyRealtimeReopened,
+        onDisconnect: recovery.notifyRealtimeDisconnected,
+      });
+      return {
+        transportStatus,
+        composition: deriveWatchComposition({
+          recovery: recovery.recovery,
+          retainedTerminalRun: null,
+          latestCompletedRun: available(null),
+          signalSamples: [],
+          transportStatus,
+          now: new Date("2026-06-20T00:00:12.000Z"),
+        }),
+      };
+    });
+    const source = InjectedEventSource.instances[0];
+    act(() => source?.emit("open", new Event("open")));
+    expect(result.current.transportStatus).toBe("connected");
+    expect(result.current.composition.phase).toBe("active");
+    act(() =>
+      source?.emit("message", new MessageEvent("message", { data: JSON.stringify(terminal) })),
+    );
+    const composition = result.current.composition;
+    expect(composition.phase).toBe("failed");
+    expect(composition.presentation.state).toBe("failed");
+    if (composition.phase !== "failed") throw new Error("Expected failed Watch composition");
+    expect(composition.result.failureCategory).toBe("operator");
+    const markup = renderToStaticMarkup(
+      createElement(WatchNarrative, { composition, onRetry: () => undefined }),
+    );
+    expect(markup).toContain("stopped by an operator");
+    act(() =>
+      source?.emit("message", new MessageEvent("message", { data: JSON.stringify(active) })),
+    );
+    expect(result.current.composition.phase).toBe("failed");
+    expect(result.current.transportStatus).toBe("connected");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses the same-origin stream, de-duplicates lifecycle transitions, parses frames, and cleans up", () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();

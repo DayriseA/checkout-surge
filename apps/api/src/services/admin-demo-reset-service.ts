@@ -30,6 +30,10 @@ import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
 import {
+  publishDemoRunProjectionDirty,
+  readDemoRunSnapshot,
+} from "./demo-run-snapshot-operations.js";
+import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedState,
 } from "./persisted-demo-run-state.js";
@@ -308,6 +312,21 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       }
     }
     await this.options.clearErpCircuitBreakerState();
+
+    for (const runId of projectionRunIds) {
+      try {
+        const run = await readDemoRunSnapshot(this.options.db, runId);
+        await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+          run,
+          correlationId,
+        });
+      } catch (error) {
+        this.options.logger.warn(
+          { err: error, runId, correlationId },
+          "Could not read run snapshot for admin reset projection publication.",
+        );
+      }
+    }
 
     return adminDemoResetResponseSchema.parse({
       failedRunCount,
