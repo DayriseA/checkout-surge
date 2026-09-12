@@ -44,6 +44,33 @@ vi.mock("../src/app/lib/api.js", () => ({
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
 
 describe("run history", () => {
+  it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
+    const detail = detailFixture("failed");
+    detail.summary.failureCategory = "operator";
+    detail.summary.businessOutcomeSummary.notificationsRecorded = 0;
+    detail.run.finalizedAt = "2026-06-20T00:00:10.000Z";
+    detail.run.adminResetCompletedAt = "2026-06-20T00:00:20.000Z";
+    const output = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+    expect(output).toContain("Operator stop decision");
+    expect(output).toContain("Work cleanup and history completed");
+    expect(output).toContain("Acceptance-to-stop duration");
+    expect(output).toContain("Acceptance-to-work-cleanup completion duration");
+    expect(output).toContain("20 s");
+    expect(renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }))).toBe(output);
+    delete detail.run.adminResetCompletedAt;
+    const legacy = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
+    expect(legacy).toContain("Unknown");
+    expect(legacy).not.toContain("2026-06-20 00:00:20 UTC");
+    const admin = adminDetailFixture();
+    admin.summary.failureCategory = "operator";
+    admin.run.adminResetCompletedAt = "2026-06-20T00:00:20.000Z";
+    const adminOutput = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: admin }),
+    );
+    expect(adminOutput).toContain("Operator stop decision");
+    expect(adminOutput).toContain("Acceptance-to-work-cleanup completion duration");
+  });
+
   afterEach(cleanup);
 
   beforeEach(() => {

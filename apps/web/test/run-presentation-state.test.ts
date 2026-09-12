@@ -302,6 +302,8 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId: "corr-presentation",
     scopeId: dashboardProjectionScopeId(scope),
     scope,

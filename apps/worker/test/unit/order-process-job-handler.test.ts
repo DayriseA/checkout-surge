@@ -180,8 +180,11 @@ describe("order-process application workflow", () => {
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(runScopedJob, "confirmed");
   });
 
-  it("does not fail a confirmed order when notification job publication fails", async () => {
-    const publishError = new Error("queue unavailable");
+  it.each([
+    "queue unavailable",
+    "generated run is terminal after admin_reset",
+  ])("does not fail a confirmed order when notification job publication fails: %s", async (message) => {
+    const publishError = new Error(message);
     const transitionToConfirmed = vi.fn().mockResolvedValue(confirmedTransition);
     const logger = createSilentLogger("worker");
     vi.spyOn(logger, "child").mockReturnValue(logger as never);

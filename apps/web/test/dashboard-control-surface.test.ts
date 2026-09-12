@@ -580,6 +580,8 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),
     revision: 1,
     correlationId: "corr-web-recovery",

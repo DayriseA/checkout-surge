@@ -131,6 +131,7 @@ const demoRunSnapshotBaseShape = {
   presetName: z.string().trim().min(1),
   operatorMode: operatorModeSchema,
   saleOfferId: uuidSchema.optional(),
+  adminResetCompletedAt: isoTimestampSchema.optional(),
   configSnapshot: acceptedRunConfigSnapshotSchema,
   startedAt: isoTimestampSchema,
 };
@@ -591,6 +592,7 @@ export const publicRunHistoryRunSchema = z
     trafficStartedAt: isoTimestampSchema.optional(),
     trafficEndedAt: isoTimestampSchema.optional(),
     finalizedAt: isoTimestampSchema.optional(),
+    adminResetCompletedAt: isoTimestampSchema.optional(),
   })
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;

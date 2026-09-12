@@ -395,6 +395,12 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             }
           />
         </div>
+        {recovery.status === "available" && recovery.data.resetRecovery === "incomplete" ? (
+          <p role="status">
+            The demo is temporarily unavailable while operator recovery completes. Worker work may
+            still settle; new runs are unavailable.
+          </p>
+        ) : null}
         <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
@@ -800,6 +806,7 @@ export function isRunStartBlocked(recovery: BackendRead<DashboardProjection>): b
     return true;
   }
 
+  if (recovery.data.resetRecovery === "incomplete") return true;
   const status = recovery.data.currentRun?.status;
   return status === "starting" || status === "active" || status === "draining";
 }
@@ -1076,13 +1083,15 @@ function StartGate({
   statusMessage: string | null;
   startRetryAfterMs: number | null;
 }) {
+  const resetIncomplete =
+    recovery.status === "available" && recovery.data.resetRecovery === "incomplete";
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
   const activeRunPresentation = runInProgress
     ? mapErrorPresentation(
         {
           status: "unavailable",
           errorCode: "run_conflict",
-          details: { conflictReason: "active_run_exists" },
+          details: { conflictReason: resetIncomplete ? "reset_incomplete" : "active_run_exists" },
         },
         "public-start",
       )
@@ -1103,6 +1112,8 @@ function StartGate({
       <div className="flex flex-wrap justify-end gap-2 max-[700px]:justify-start">
         {recovery.status !== "available" ? (
           <StatusPill status={deriveRunPresentationState(recovery)} />
+        ) : resetIncomplete ? (
+          <StatusPill status={{ label: "Recovery incomplete", tone: "warning" }} />
         ) : runInProgress ? (
           <StatusPill status={deriveRunPresentationState(recovery)} />
         ) : readinessBlocked ? (

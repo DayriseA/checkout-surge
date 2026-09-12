@@ -25,6 +25,9 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
+    ...(run.adminResetCompletedAt
+      ? { adminResetCompletedAt: run.adminResetCompletedAt.toISOString() }
+      : {}),
     ...(run.failureReason
       ? {
           failureCategory: toPublicRunFailureCategory(

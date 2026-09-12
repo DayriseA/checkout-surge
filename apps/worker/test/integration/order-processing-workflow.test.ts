@@ -651,6 +651,76 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     ]);
   });
 
+  it("keeps an active order confirmation durable when reset rejects its notification publication", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    const entered = releaseBarrier();
+    const release = releaseBarrier();
+    const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      attempts: 1,
+      publicationFence: new PostgresGeneratedRunPublicationFence(connection.db),
+    });
+    const notificationQueue = new Queue(notificationRecordBullMqQueueName, {
+      connection: { url: redisUrl },
+    });
+    const logger = createSilentLogger("worker");
+    const rejectedPublication = vi.spyOn(logger, "error");
+    vi.spyOn(logger, "child").mockReturnValue(logger as never);
+    const handler = createOrderProcessJobHandler({
+      confirmation: {
+        confirm: async () => {
+          entered.resolve();
+          await release.promise;
+        },
+      },
+      persistence: new PostgresOrderTransitionPersistence(connection.db),
+      logger,
+      notificationRecordPublisher,
+    });
+    const processing = handler.handle(runScopedJob, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+    });
+    try {
+      const signal = AbortSignal.timeout(5_000);
+      await Promise.race([
+        entered.promise,
+        new Promise<never>((_, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+        ),
+      ]);
+      await new PostgresTerminalDemoRunSummaryWriter(connection.db).claimTerminalRun({
+        runId: ids.run,
+        terminalStatus: "failed",
+        failureReason: "admin_reset",
+        finalizedAt: new Date(),
+        allowedCurrentStatuses: ["draining"],
+        terminalTrafficStatus: "failed",
+      });
+      release.resolve();
+      await processing;
+      expect(
+        (await connection.db.select().from(orders).where(eq(orders.id, ids.order)))[0]?.status,
+      ).toBe("confirmed");
+      expect(await connection.db.select().from(simulatedNotifications)).toHaveLength(0);
+      expect(await notificationQueue.getJobCounts()).toMatchObject({
+        waiting: 0,
+        active: 0,
+        completed: 0,
+      });
+      expect(rejectedPublication).toHaveBeenCalledWith(
+        expect.objectContaining({ orderId: ids.order }),
+        "Order confirmed but notification-recording job publication failed.",
+      );
+    } finally {
+      release.resolve();
+      await processing;
+      await Promise.all([notificationRecordPublisher.close(), notificationQueue.close()]);
+    }
+  });
+
   it("recovers a terminally failed notification job so the run can finalize", async () => {
     await redis.flushdb();
     await resetTestDatabase({ databaseUrl, migrationsFolder });
@@ -1418,4 +1488,12 @@ function sequenceClock(...dates: Date[]): () => Date {
 
     return date;
   };
+}
+
+function releaseBarrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }

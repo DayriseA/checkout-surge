@@ -203,6 +203,8 @@ function recoveryFixture() {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId: "route-correlation",
     scopeId: "idle",
     revision: 1,

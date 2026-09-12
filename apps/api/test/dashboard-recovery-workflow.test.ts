@@ -122,6 +122,8 @@ function recoveryFixture() {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready" as const,
     correlationId: "workflow-correlation",
     scopeId: "idle",
     revision: 1,

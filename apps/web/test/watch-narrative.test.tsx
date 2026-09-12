@@ -16,6 +16,23 @@ import type { RetainedTerminalRun } from "../src/app/lib/dashboard-projection-st
 import { deriveWatchComposition } from "../src/app/lib/presentation/watch-composition.js";
 
 describe("watch narrative", () => {
+  it("shows global operator recovery on fresh idle navigation without substituting previous history", () => {
+    const output = markup(
+      available({
+        ...projection(null),
+        resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+        resetRecovery: "incomplete",
+      }),
+      null,
+      latestRun,
+    );
+    expect(output).toContain("Operator stop recovery");
+    expect(output).toContain("this report is unavailable");
+    expect(output).not.toContain("Ready when you are");
+    expect(output).not.toContain("/run-history/");
+    expect(output).not.toContain("Start a demo");
+  });
+
   it("renders one idle action state with and without latest history", () => {
     const withoutHistory = markup(available(projection(null)));
     expect(withoutHistory).toContain("Start a demo");
@@ -279,6 +296,8 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId: "corr-watch",
     scopeId: dashboardProjectionScopeId(scope),
     scope,

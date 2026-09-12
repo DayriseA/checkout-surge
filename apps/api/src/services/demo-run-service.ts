@@ -32,7 +32,7 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
@@ -46,6 +46,7 @@ import {
   readDemoRunSnapshot,
 } from "./demo-run-snapshot-operations.js";
 import { DemoRunValidationError } from "./demo-run-validation-error.js";
+import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
   PublicRunBudgetReservation,
@@ -278,13 +279,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         const [incompleteReset] = await tx
           .select({ runId: demoRuns.id })
           .from(demoRuns)
-          .where(
-            and(
-              eq(demoRuns.status, "failed"),
-              eq(demoRuns.failureReason, "admin_reset"),
-              isNull(demoRuns.adminResetCompletedAt),
-            ),
-          )
+          .where(incompleteAdminResetPredicate())
           .limit(1);
 
         if (incompleteReset) {

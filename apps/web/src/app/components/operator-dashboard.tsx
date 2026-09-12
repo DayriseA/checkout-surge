@@ -57,7 +57,6 @@ export function OperatorDashboard({
   invalidAcceptedRunContext?: boolean;
   latestCompletedRun?: BackendRead<RunHistoryListItem | null>;
 }) {
-  const accepted = useAcceptedRunResult(acceptedResult);
   const {
     recovery,
     isRefreshing,
@@ -76,6 +75,18 @@ export function OperatorDashboard({
   } = useDashboardRecovery(initialRecovery, {
     preserveAvailableRecoveryOnFailure: true,
   });
+  const incompleteRunId = recovery.status === "available" ? recovery.data.resetRecoveryRunId : null;
+  const [resetRunId, setResetRunId] = useState(incompleteRunId);
+  const currentRunId =
+    recovery.status === "available" ? recovery.data.currentRun?.runId : undefined;
+  useEffect(() => {
+    if (incompleteRunId) setResetRunId(incompleteRunId);
+    else if (currentRunId)
+      setResetRunId((previous) => (previous === currentRunId ? previous : null));
+  }, [incompleteRunId, currentRunId]);
+  const resultContext =
+    acceptedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
+  const accepted = useAcceptedRunResult(resultContext);
   const firstOpenRef = useRef(true);
   const handleOpen = useCallback(() => {
     notifyRealtimeReopened();
@@ -97,7 +108,8 @@ export function OperatorDashboard({
   }, []);
   const composition = deriveWatchComposition({
     recovery,
-    retainedTerminalRun,
+    retainedTerminalRun:
+      resetRunId && retainedTerminalRun?.runId !== resetRunId ? null : retainedTerminalRun,
     latestCompletedRun,
     signalSamples,
     transportStatus: realtimeStatus,
@@ -112,6 +124,7 @@ export function OperatorDashboard({
       {accepted.result ? (
         <AcceptedResultNarrative
           composition={composition}
+          operatorReset={acceptedResult === undefined}
           onRetry={() => void accepted.retryNow()}
           result={accepted.result}
           retriesExhausted={accepted.retriesExhausted}
@@ -119,7 +132,9 @@ export function OperatorDashboard({
       ) : null}
       <WatchNarrative
         composition={composition}
-        hideLatestCompletedRun={acceptedResult !== undefined || invalidAcceptedRunContext}
+        hideLatestCompletedRun={
+          resultContext !== undefined || incompleteRunId !== null || invalidAcceptedRunContext
+        }
         onRetry={() => void retryNow()}
       />
       <TechnicalDetails
@@ -147,6 +162,17 @@ export function WatchNarrative({
   onRetry?: () => void;
 }) {
   switch (composition.phase) {
+    case "reset-recovery":
+      return (
+        <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
+          <h2>Operator stop recovery</h2>
+          <p>
+            The operator stop decision is recorded. Work cleanup and history are incomplete, so this
+            report is unavailable. Worker work may still settle. New runs remain unavailable until
+            recovery completes.
+          </p>
+        </section>
+      );
     case "checking":
     case "unavailable":
       return (
@@ -256,7 +282,9 @@ function AcceptedResultNarrative({
   onRetry,
   result,
   retriesExhausted,
+  operatorReset = false,
 }: {
+  operatorReset?: boolean;
   composition: WatchComposition;
   onRetry: () => void;
   result: AcceptedRunResult;
@@ -266,12 +294,14 @@ function AcceptedResultNarrative({
   const followsDifferentLiveRun = liveRun && liveRun.runId !== result.runId;
   return (
     <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Your accepted run</p>
+      <p className="m-0 text-xs font-bold uppercase text-muted">
+        {operatorReset ? "Operator-stopped run" : "Your accepted run"}
+      </p>
       <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
         {result.status === "available" ? "Result available" : "Result pending"}
       </h2>
       <p className="m-0 mt-2 break-all text-sm text-muted">
-        Accepted run ID: <code>{result.runId}</code>
+        {operatorReset ? "Stopped run ID" : "Accepted run ID"}: <code>{result.runId}</code>
       </p>
       {result.status === "available" ? (
         <Link className={`${secondaryActionClassName} mt-3`} href={`/run-history/${result.runId}`}>
@@ -288,7 +318,7 @@ function AcceptedResultNarrative({
       )}
       {result.status === "unavailable" && retriesExhausted ? (
         <button className={`${secondaryActionClassName} mt-3`} onClick={onRetry} type="button">
-          Check accepted result again
+          {operatorReset ? "Check stopped result again" : "Check accepted result again"}
         </button>
       ) : null}
       {followsDifferentLiveRun ? (

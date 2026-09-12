@@ -26,12 +26,13 @@ import {
   readConsistencyLagSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { runWithResourceCleanup } from "../runtime/api-resource-cleanup.js";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import type { RunErpOutcomeService, SharedErpProtectionService } from "./erp-status-service.js";
+import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
 import {
@@ -42,6 +43,8 @@ import {
 
 export interface DashboardRecoveryContext {
   currentRun: DemoRunSnapshot | null;
+  resetRecovery: DashboardProjection["resetRecovery"];
+  resetRecoveryRunId: string | null;
   saleOfferId: string | null;
 }
 
@@ -123,6 +126,30 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
     if (scope && knownScope) {
       throw new Error("Dashboard context cannot select an exact and fallback scope together.");
     }
+    const [latestTerminal] = await this.db
+      .select({
+        id: demoRuns.id,
+        status: demoRuns.status,
+        failureReason: demoRuns.failureReason,
+        adminResetCompletedAt: demoRuns.adminResetCompletedAt,
+      })
+      .from(demoRuns)
+      .where(inArray(demoRuns.status, ["failed", "completed"]))
+      .orderBy(
+        desc(sql`case when ${incompleteAdminResetPredicate()} then 1 else 0 end`),
+        desc(demoRuns.finalizedAt),
+        desc(demoRuns.createdAt),
+        desc(demoRuns.id),
+      )
+      .limit(1);
+    // Keep the latest reset's result identity after its gate clears: claim and
+    // completion dirty signals may coalesce before the first projection build.
+    const resetRun =
+      latestTerminal?.status === "failed" && latestTerminal.failureReason === "admin_reset"
+        ? latestTerminal
+        : null;
+    const resetRecovery =
+      resetRun && !resetRun.adminResetCompletedAt ? ("incomplete" as const) : ("ready" as const);
     const rows = await this.db
       .select()
       .from(demoRuns)
@@ -164,12 +191,16 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
 
       return {
         currentRun,
+        resetRecovery,
+        resetRecoveryRunId: resetRun?.id ?? null,
         saleOfferId: currentRunRow.saleOfferId,
       };
     }
 
     return {
       currentRun: null,
+      resetRecovery,
+      resetRecoveryRunId: resetRun?.id ?? null,
       saleOfferId: null,
     };
   }
@@ -382,6 +413,8 @@ export class DashboardProjectionService {
       revision,
       scope,
       currentRun: context.currentRun,
+      resetRecovery: context.resetRecovery,
+      resetRecoveryRunId: context.resetRecoveryRunId,
       inventory: inventoryResult.ok ? inventoryResult.value : null,
       recentMetrics: trafficMetricResult.ok ? trafficMetricResult.value : [],
       erp: runErpOutcomeResult.ok ? runErpOutcomeResult.value : null,

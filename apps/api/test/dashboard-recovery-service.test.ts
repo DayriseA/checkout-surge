@@ -1,5 +1,6 @@
 import {
   type ConsistencyLagSummary,
+  type DashboardProjectionScope,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
@@ -26,7 +27,7 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
-import type { SQL } from "drizzle-orm";
+import { eq, type SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -86,7 +87,66 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
 
     await expect(
       new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
-    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
+    ).resolves.toEqual({
+      currentRun: null,
+      saleOfferId: null,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
+    });
+  });
+
+  it("recovers the global null-marker gate without a sale offer across reader recreation and repair", async () => {
+    if (!connection) throw new Error("Test database connection was not initialized.");
+    const id = "99999999-9999-4999-8999-999999999991";
+    await connection.db.insert(demoRuns).values({
+      id,
+      presetId: "33333333-3333-4333-8333-333333333333",
+      presetName: "Startup failure",
+      operatorMode: "admin",
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "admin_reset",
+      finalizedAt: now,
+      configSnapshot: configSnapshot(),
+      startedAt: now,
+    });
+    for (let read = 0; read < 2; read++) {
+      await expect(
+        new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
+      ).resolves.toEqual({
+        currentRun: null,
+        saleOfferId: null,
+        resetRecovery: "incomplete",
+        resetRecoveryRunId: id,
+      });
+    }
+    await connection.db
+      .update(demoRuns)
+      .set({ adminResetCompletedAt: now })
+      .where(eq(demoRuns.id, id));
+    await expect(
+      new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
+    ).resolves.toEqual({
+      currentRun: null,
+      saleOfferId: null,
+      resetRecoveryRunId: id,
+      resetRecovery: "ready",
+    });
+    await connection.db.insert(demoRuns).values({
+      id: "99999999-9999-4999-8999-999999999992",
+      presetId: "33333333-3333-4333-8333-333333333333",
+      presetName: "Later ordinary failure",
+      operatorMode: "admin",
+      status: "failed",
+      trafficStatus: "failed",
+      failureReason: "traffic_failed",
+      configSnapshot: configSnapshot(),
+      startedAt: now,
+      finalizedAt: new Date(now.getTime() + 1),
+    });
+    await expect(
+      new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
+    ).resolves.toMatchObject({ resetRecovery: "ready", resetRecoveryRunId: null });
   });
 
   it("recovers transport accounting and the joined terminal signal timeline", async () => {
@@ -200,8 +260,13 @@ describe("PostgresDashboardRecoveryContextReader", () => {
 
     await expect(
       new PostgresDashboardRecoveryContextReader(database.db).readContext(),
-    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
-    expect(database.select).toHaveBeenCalledTimes(1);
+    ).resolves.toEqual({
+      currentRun: null,
+      saleOfferId: null,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
+    });
+    expect(database.select).toHaveBeenCalledTimes(2);
   });
 
   it("orders current-shape recoverable runs by start with deterministic creation and ID ties", async () => {
@@ -245,7 +310,7 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     );
 
     expect(context.currentRun?.runId).toBe(runId);
-    expect(database.select).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalledTimes(2);
   });
 
   it("prefers a current run when a known hint reuses its run ID with the wrong sale offer", async () => {
@@ -262,7 +327,7 @@ describe("PostgresDashboardRecoveryContextReader", () => {
 
     expect(context.currentRun?.runId).toBe(runId);
     expect(context.saleOfferId).toBe(saleOfferId);
-    expect(database.select).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to only the explicitly known terminal run without promoting other history", async () => {
@@ -290,7 +355,7 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     expect(selectionQuery.sql).toContain('"demo_runs"."sale_offer_id" =');
     expect(selectionQuery.params).toContain(knownRunId);
     expect(selectionQuery.params).toContain(saleOfferId);
-    expect(database.select).toHaveBeenCalledOnce();
+    expect(database.select).toHaveBeenCalledTimes(2);
   });
 
   it("treats a mismatched known terminal run and sale-offer pair as an idle advisory hint", async () => {
@@ -309,8 +374,13 @@ describe("PostgresDashboardRecoveryContextReader", () => {
         runId: knownRunId,
         saleOfferId: "99999999-9999-4999-8999-999999999999",
       }),
-    ).resolves.toEqual({ currentRun: null, saleOfferId: null });
-    expect(database.select).toHaveBeenCalledOnce();
+    ).resolves.toEqual({
+      currentRun: null,
+      saleOfferId: null,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
+    });
+    expect(database.select).toHaveBeenCalledTimes(2);
   });
 
   it.each([
@@ -356,6 +426,8 @@ describe("DashboardProjectionService", () => {
     expect(recovery).toMatchObject({
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId: "corr-no-run",
       scopeId: dashboardProjectionScopeId(null),
       revision: 1,
@@ -704,9 +776,13 @@ describe("DashboardProjectionService", () => {
 function controlledDatabase(rows: unknown[]) {
   const limit = vi.fn(async () => rows);
   const orderBy = vi.fn((..._expressions: SQL[]) => ({ limit }));
-  const where = vi.fn((_expression: SQL) => ({ orderBy }));
+  const where = vi.fn((_expression: SQL) => ({ orderBy, limit: async () => [] }));
   const from = vi.fn(() => ({ where }));
-  const select = vi.fn(() => ({ from }));
+  const select = vi.fn((fields?: unknown) =>
+    fields
+      ? { from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }) }
+      : { from },
+  );
   return { db: { select } as unknown as CheckoutSurgeDatabase, select, where, orderBy };
 }
 
@@ -735,10 +811,17 @@ function projectionDependencies(options: {
   readContext: () => Promise<{
     currentRun: DemoRunSnapshot | null;
     saleOfferId: string | null;
+    resetRecovery?: "ready" | "incomplete";
   }>;
 }) {
   return {
-    contextReader: { readContext: options.readContext },
+    contextReader: {
+      readContext: async () => ({
+        resetRecoveryRunId: null,
+        resetRecovery: "ready" as const,
+        ...(await options.readContext()),
+      }),
+    },
     businessOutcomeReader: { read: async () => businessOutcomeFixture() },
     consistencyLagReader: { read: async () => consistencyLagFixture() },
     inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
@@ -757,9 +840,13 @@ function serviceHarness(
   context: { currentRun: DemoRunSnapshot | null; saleOfferId: string | null } | null,
   contextError?: Error,
   options: {
-    contextReader?: () => Promise<{
+    contextReader?: (
+      scope?: DashboardProjectionScope,
+      knownScope?: DashboardProjectionScope,
+    ) => Promise<{
       currentRun: DemoRunSnapshot | null;
       saleOfferId: string | null;
+      resetRecovery?: "ready" | "incomplete";
     }>;
     lagError?: Error;
     transportAttemptCounts?: TransportAttemptCounts | null;
@@ -807,15 +894,24 @@ function serviceHarness(
     return revision;
   });
   const close = vi.fn(async () => undefined);
+  const readContext = options.contextReader;
   const service = new DashboardProjectionService({
     openOperation: async () => ({
       dependencies: {
         contextReader: {
-          readContext: options.contextReader
-            ? options.contextReader
+          readContext: readContext
+            ? async (scope, knownScope) => ({
+                resetRecoveryRunId: null,
+                resetRecovery: "ready" as const,
+                ...(await readContext(scope, knownScope)),
+              })
             : contextError
               ? async () => Promise.reject(contextError)
-              : async () => context ?? { currentRun: null, saleOfferId: null },
+              : async () => ({
+                  resetRecoveryRunId: null,
+                  resetRecovery: "ready" as const,
+                  ...(context ?? { currentRun: null, saleOfferId: null }),
+                }),
         },
         businessOutcomeReader: { read: business },
         consistencyLagReader: { read: lag },

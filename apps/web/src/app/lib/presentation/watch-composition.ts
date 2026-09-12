@@ -39,7 +39,7 @@ type TerminalWatchComposition<Phase extends "completed" | "failed"> = WatchCompo
 
 export type WatchComposition =
   | (WatchCompositionBase & {
-      phase: "checking" | "unavailable";
+      phase: "checking" | "unavailable" | "reset-recovery";
     })
   | (WatchCompositionBase & {
       phase: "idle";
@@ -60,9 +60,11 @@ export function deriveWatchComposition(input: {
   now: Date;
 }): WatchComposition {
   const recoveredProjection = input.recovery.status === "available" ? input.recovery.data : null;
+  const incompleteReset = recoveredProjection?.resetRecovery === "incomplete";
   const retainedProjection = input.retainedTerminalRun?.terminalRecap ?? null;
-  const projection =
-    recoveredProjection?.currentRun === null
+  const projection = incompleteReset
+    ? recoveredProjection
+    : recoveredProjection?.currentRun === null
       ? retainedProjection
         ? { ...retainedProjection, systemStatus: recoveredProjection.systemStatus }
         : recoveredProjection
@@ -86,6 +88,8 @@ export function deriveWatchComposition(input: {
       presentation,
     };
   }
+
+  if (incompleteReset) return { phase: "reset-recovery", freshness, panelRecovery, presentation };
 
   const run = projection.currentRun;
   if (run === null) {
@@ -124,7 +128,7 @@ export function deriveWatchComposition(input: {
 
 function phaseFromPresentation(
   presentation: PresentationState,
-): Exclude<WatchComposition["phase"], "checking" | "unavailable" | "idle"> {
+): Exclude<WatchComposition["phase"], "checking" | "unavailable" | "idle" | "reset-recovery"> {
   switch (presentation.state) {
     case "starting":
       return "starting";

@@ -44,6 +44,7 @@ export function useDashboardRecovery(
   const initialRecoveryRef = useRef(initialRecovery);
   initialRecoveryRef.current = initialRecovery;
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
+  const recoveredResetIdentityRef = useRef<string | null>(null);
   const [retryState, setRetryState] = useState(noScheduledRetry);
   const retrySchedulerRef = useRef<ReturnType<typeof createDashboardRecoveryRetryScheduler> | null>(
     null,
@@ -130,6 +131,18 @@ export function useDashboardRecovery(
       if (shouldAcceptDashboardProjection(state, projection)) {
         hasLocalRecoveryActivityRef.current = true;
         retrySchedulerRef.current?.reset();
+      } else if (projection.resetRecoveryRunId) {
+        // A foreign terminal cannot establish a live scope. Recover global reset
+        // state/result identity through the ordinary single-flight read instead,
+        // once per reset identity and never ahead of a scheduled retry backoff.
+        const resetIdentity = `${projection.resetRecovery}:${projection.resetRecoveryRunId}`;
+        if (
+          resetIdentity !== recoveredResetIdentityRef.current &&
+          retrySchedulerRef.current?.state().scheduled !== true
+        ) {
+          recoveredResetIdentityRef.current = resetIdentity;
+          void refreshRef.current();
+        }
       }
       dispatch({ type: "live-projection-received", projection });
     },

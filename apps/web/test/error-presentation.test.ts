@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { mapErrorPresentation } from "../src/app/lib/presentation/error-presentation.js";
 
 describe("error presentation", () => {
+  it("distinguishes unsafe settlement timeout from admission-safe projection cleanup", () => {
+    const present = (conflictReason: string) =>
+      mapErrorPresentation(
+        { status: "unavailable", errorCode: "run_cleanup_conflict", details: { conflictReason } },
+        "admin-operation",
+      );
+    expect(present("active_settlement_timeout").explanation).toContain("New runs remain blocked");
+    expect(present("projection_cleanup_incomplete").explanation).toContain(
+      "does not block new runs",
+    );
+    expect(present("projection_cleanup_incomplete").headline).toBe(
+      "Work cleanup and history completed",
+    );
+    expect(present("malformed_claimed_job").headline).toBe("Work cleanup needs operator review");
+  });
+
   it("keeps loading neutral and outside error styling", () => {
     const presentation = mapErrorPresentation({ status: "loading" }, "watch-read");
     expect(presentation.tone).toBe("idle");

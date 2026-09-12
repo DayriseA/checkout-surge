@@ -48,7 +48,13 @@ export interface ErrorPresentationContext {
   surface: ErrorPresentationContextName;
   /** Set only by a server-authorized protected surface that may disclose diagnostics. */
   protected?: boolean;
-  cause?: "active_run_exists" | "reset_incomplete" | "slug_in_use" | "not_archivable";
+  cause?:
+    | "active_run_exists"
+    | "reset_incomplete"
+    | "active_settlement_timeout"
+    | "projection_cleanup_incomplete"
+    | "slug_in_use"
+    | "not_archivable";
   budget?: "visitor" | "global";
   fieldErrors?: ReadonlyArray<{ field: string; message: string }>;
   readiness?: "degraded" | "unavailable";
@@ -261,6 +267,29 @@ function codePresentation(
         tone: "warning",
       };
     case "run_cleanup_conflict":
+      if (context.cause === "active_settlement_timeout")
+        return {
+          headline: "Reset work cleanup is incomplete",
+          explanation:
+            "Worker work may still settle. New runs remain blocked until work cleanup and history complete. Retry Reset.",
+          action: { kind: "contact-operator", label: "Retry Reset" },
+          tone: "warning",
+        };
+      if (context.cause === "projection_cleanup_incomplete")
+        return {
+          headline: "Work cleanup and history completed",
+          explanation:
+            "Remaining dashboard or shared-state cleanup failed. Retry Reset to finish it; the completed reset does not block new runs.",
+          action: { kind: "contact-operator", label: "Retry Reset" },
+          tone: "warning",
+        };
+      return {
+        headline: "Work cleanup needs operator review",
+        explanation: "Review the cleanup conflict before retrying Reset.",
+        action: { kind: "contact-operator", label: "Review operation" },
+        tone: "danger",
+      };
+
     case "traffic_termination_unconfirmed":
     case "load_orchestrator_abort_unconfirmed":
     case "load_orchestrator_run_mismatch":
@@ -376,6 +405,8 @@ function withBoundedCause(
   const boundedCause =
     cause === "active_run_exists" ||
     cause === "reset_incomplete" ||
+    cause === "active_settlement_timeout" ||
+    cause === "projection_cleanup_incomplete" ||
     cause === "slug_in_use" ||
     cause === "not_archivable"
       ? cause

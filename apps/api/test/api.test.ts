@@ -447,6 +447,8 @@ function createTestPendingPersistenceRecovery(input: {
 function staticRecoveryContextReader(saleOfferId: string): DashboardRecoveryContextReader {
   return {
     readContext: async () => ({
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       currentRun: demoRunSnapshotFixture(),
       saleOfferId,
     }),
@@ -1329,6 +1331,8 @@ describe("API gateway routes", () => {
     const projection = dashboardProjectionSchema.parse({
       schema: "checkout-surge.dashboard-projection",
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId: "corr-dashboard-failed",
       scopeId: dashboardProjectionScopeId({
         runId: fixtureIds.run,
@@ -1448,6 +1452,8 @@ describe("API gateway routes", () => {
     const projection: DashboardProjection = {
       schema: "checkout-surge.dashboard-projection",
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId: "corr-dashboard-event",
       scopeId: dashboardProjectionScopeId(failedScope),
       scope: failedScope,

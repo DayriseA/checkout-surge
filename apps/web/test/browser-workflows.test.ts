@@ -358,6 +358,24 @@ describe("public browser starts", () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
+  it("blocks public starts on fresh global recovery without exposing operator controls", () => {
+    const surface = publicDemoSurfaceFixture();
+    surface.recovery = {
+      status: "available",
+      data: dashboardRecoveryFixture({
+        resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+        resetRecovery: "incomplete",
+      }),
+    };
+    render(createElement(PublicDemoEntry, { surface }));
+    expect(
+      (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(screen.getByText(/temporarily unavailable while operator recovery/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Reset/ })).toBeNull();
+    expect(screen.getByText("Recovery incomplete")).toBeTruthy();
+  });
+
   it("reloads to recheck a reset-incomplete conflict while keeping starts blocked", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === demoRunStartProxyPath) {
@@ -1602,7 +1620,11 @@ describe("accepted Watch result handoff", () => {
   const acceptedRunId = "55555555-5555-4555-8555-555555555555";
   const newerRunId = "66666666-6666-4666-8666-666666666666";
 
-  it("never substitutes prior history and resolves the exact accepted result without lifecycle frames", async () => {
+  it.each([
+    "accepted",
+    "operator-reset",
+    "operator-reset-with-old-recap",
+  ])("never substitutes prior history and resolves the exact %s result without lifecycle frames", async (origin) => {
     vi.useFakeTimers();
     const latestRun = runHistoryListFixture().summaries[0];
     if (!latestRun) throw new Error("Expected prior history.");
@@ -1619,8 +1641,30 @@ describe("accepted Watch result handoff", () => {
 
     render(
       createElement(OperatorDashboard, {
-        acceptedResult: { status: "awaiting", runId: acceptedRunId },
-        initialRecovery: available(dashboardRecoveryFixture()),
+        ...(origin === "accepted"
+          ? { acceptedResult: { status: "awaiting" as const, runId: acceptedRunId } }
+          : {}),
+        initialRecovery: available(
+          dashboardRecoveryFixture(
+            origin !== "accepted"
+              ? {
+                  resetRecovery: "incomplete",
+                  resetRecoveryRunId: acceptedRunId,
+                  ...(origin === "operator-reset-with-old-recap"
+                    ? {
+                        currentRun: demoRunFixture({
+                          runId: previousRun.runId,
+                          status: "completed",
+                          trafficStatus: "succeeded",
+                          trafficEndedAt: "2026-06-20T00:00:11.000Z",
+                          finalizedAt: "2026-06-20T00:00:12.000Z",
+                        }),
+                      }
+                    : {}),
+                }
+              : {},
+          ),
+        ),
         latestCompletedRun: available(previousRun),
       }),
     );
@@ -1636,6 +1680,19 @@ describe("accepted Watch result handoff", () => {
       expect.any(Object),
     );
     expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
+    if (origin !== "accepted") {
+      expect(screen.getByText("Operator-stopped run")).toBeTruthy();
+      act(() =>
+        FakeEventSource.instances[0]?.emit(
+          "message",
+          new MessageEvent("message", {
+            data: JSON.stringify(
+              dashboardRecoveryFixture({ revision: 2, recoveredAt: "2026-06-20T00:00:15.000Z" }),
+            ),
+          }),
+        ),
+      );
+    }
     await act(async () => vi.advanceTimersByTimeAsync(2_000));
 
     expect(document.querySelector(`a[href="/run-history/${acceptedRunId}"]`)).toBeTruthy();
@@ -1966,6 +2023,8 @@ function dashboardRecoveryFixture(
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),
     revision: 1,
     correlationId: "corr-web-recovery",

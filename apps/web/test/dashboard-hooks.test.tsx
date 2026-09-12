@@ -397,6 +397,137 @@ describe("useDashboardRecovery", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
+  it("recovers a coalesced reset result for an idle observer without accepting the foreign terminal", async () => {
+    const resetRunId = "11111111-1111-4111-8111-111111111111";
+    const read = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValue(read.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const initial = projectionFixture();
+    const { result } = renderHook(() => useDashboardRecovery(available(initial)));
+    const terminal = runProjection({
+      currentRun: terminalRun(resetRunId),
+      resetRecoveryRunId: resetRunId,
+      revision: 2,
+    });
+    act(() => {
+      result.current.applyProjection(terminal);
+      result.current.applyProjection(terminal);
+    });
+    expect(result.current.recovery).toEqual(available(initial));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    read.resolve(jsonResponse({ ...initial, revision: 2, resetRecoveryRunId: resetRunId }));
+    await act(async () => read.promise);
+    await waitFor(() =>
+      expect(result.current.recovery).toMatchObject({
+        data: { currentRun: null, resetRecovery: "ready", resetRecoveryRunId: resetRunId },
+      }),
+    );
+  });
+
+  it("recovers global incomplete reset state while retaining an older completed scope", async () => {
+    const completedRunId = "11111111-1111-4111-8111-111111111111";
+    const resetRunId = "22222222-2222-4222-8222-222222222222";
+    const completed = runProjection({ currentRun: terminalRun(completedRunId) });
+    const recovered = {
+      ...completed,
+      resetRecoveryRunId: resetRunId,
+      resetRecovery: "incomplete" as const,
+      revision: 2,
+      recoveredAt: "2026-06-20T00:00:14.000Z",
+    };
+    const read = deferred<Response>();
+    const fetchMock = vi.fn().mockReturnValue(read.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(completed)));
+    const foreignReset = runProjection({
+      currentRun: {
+        ...drainingRun(resetRunId),
+        status: "failed",
+        trafficStatus: "failed",
+        finalizedAt: "2026-06-20T00:00:13.000Z",
+        failureCategory: "operator",
+      },
+      resetRecoveryRunId: resetRunId,
+      resetRecovery: "incomplete",
+      revision: 2,
+      recoveredAt: "2026-06-20T00:00:13.000Z",
+    });
+
+    act(() => result.current.applyProjection(foreignReset));
+    expect(result.current.recovery).toEqual(available(completed));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/dashboard/recovery?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=44444444-4444-4444-8444-444444444444",
+      expect.anything(),
+    );
+
+    read.resolve(jsonResponse(recovered));
+    await act(async () => read.promise);
+    await waitFor(() => expect(result.current.recovery).toEqual(available(recovered)));
+    expect(result.current.retainedTerminalRun?.runId).toBe(completedRunId);
+    expect(
+      deriveWatchComposition({
+        recovery: result.current.recovery,
+        retainedTerminalRun: result.current.retainedTerminalRun,
+        latestCompletedRun: available(null),
+        signalSamples: result.current.signalSamples,
+        transportStatus: "connected",
+        now: new Date("2026-06-20T00:00:14.000Z"),
+      }).phase,
+    ).toBe("reset-recovery");
+  });
+
+  it("reads rejected reset frames once per reset identity and never ahead of a scheduled retry", async () => {
+    vi.useFakeTimers();
+    const resetRunId = "22222222-2222-4222-8222-222222222222";
+    const initial = projectionFixture();
+    const incomplete = {
+      ...initial,
+      resetRecovery: "incomplete" as const,
+      resetRecoveryRunId: resetRunId,
+      revision: 2,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse("Recovery limited", 429, "10"))
+      .mockResolvedValueOnce(jsonResponse(incomplete))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...incomplete, resetRecovery: "ready" as const, revision: 3 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useDashboardRecovery(available(initial)));
+    const foreignClaim = runProjection({
+      currentRun: terminalRun(resetRunId),
+      resetRecovery: "incomplete",
+      resetRecoveryRunId: resetRunId,
+      revision: 2,
+    });
+
+    act(() => result.current.applyProjection(foreignClaim));
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.retryDelayMs).toBe(10_000);
+
+    act(() => result.current.applyProjection(foreignClaim));
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery).toEqual(available(incomplete));
+
+    act(() => result.current.applyProjection(foreignClaim));
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    act(() =>
+      result.current.applyProjection({ ...foreignClaim, resetRecovery: "ready", revision: 3 }),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.recovery).toMatchObject({
+      data: { resetRecovery: "ready", resetRecoveryRunId: resetRunId },
+    });
+  });
+
   it("applies terminal projection immediately and remains quiet without polling", async () => {
     vi.useFakeTimers();
     const fetchMock = vi.fn();
@@ -436,6 +567,8 @@ function projectionFixture(overrides: Partial<DashboardProjection> = {}): Dashbo
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: "idle",
     revision: 1,
     correlationId: "corr-web-recovery",

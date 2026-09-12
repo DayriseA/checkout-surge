@@ -26,13 +26,16 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { ApiHttpError } from "../runtime/errors.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
+import { DemoQueueMaintenanceConflict } from "./demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "./demo-run-projections.js";
 import {
   publishDemoRunProjectionDirty,
   readDemoRunSnapshot,
 } from "./demo-run-snapshot-operations.js";
+import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedState,
@@ -50,6 +53,9 @@ import {
 } from "./traffic-delivery-classifier.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 import type { TrafficAbortGateway } from "./traffic-execution-gateway.js";
+
+// Projection/shared-state retries must survive metric deletion and API recreation.
+const pendingResetProjectionKey = "demo-reset:pending-projection-runs";
 
 type FencedResetRun = {
   run: typeof demoRuns.$inferSelect;
@@ -87,6 +93,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       resetWorkflowFence: DemoResetWorkflowFence;
       maintenanceAuthority: DemoMaintenanceAuthority;
       now?: () => Date;
+      elapsedNow?: () => number;
     },
   ) {}
 
@@ -102,6 +109,8 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     correlationId: string,
   ): Promise<AdminDemoResetResponse> {
     const now = this.now();
+    const elapsedNow = this.options.elapsedNow ?? (() => performance.now());
+    const requestStartedAt = elapsedNow();
     const resetCandidates = await this.options.db
       .select({
         run: demoRuns,
@@ -117,11 +126,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
             inArray(demoRuns.status, ["starting", "active", "draining"]),
             isNull(demoRunSummaries.id),
           ),
-          and(
-            eq(demoRuns.status, "failed"),
-            eq(demoRuns.failureReason, "admin_reset"),
-            isNull(demoRuns.adminResetCompletedAt),
-          ),
+          incompleteAdminResetPredicate(),
         ),
       );
 
@@ -136,8 +141,50 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         ),
       );
 
+    const pendingProjectionRunIds = new Set(
+      await this.options.redis.smembers(pendingResetProjectionKey),
+    );
+    if (pendingProjectionRunIds.size > 0) {
+      const existingPendingRows = await this.options.db
+        .select({ runId: demoRuns.id })
+        .from(demoRuns)
+        .where(inArray(demoRuns.id, [...pendingProjectionRunIds]));
+      const existingPendingRunIds = new Set(existingPendingRows.map((row) => row.runId));
+      const orphanedRunIds = [...pendingProjectionRunIds].filter(
+        (runId) => !existingPendingRunIds.has(runId),
+      );
+      if (orphanedRunIds.length > 0) {
+        await this.options.redis.srem(pendingResetProjectionKey, ...orphanedRunIds);
+      }
+    }
+    const projectionRunIds = new Set<string>();
+    for (const row of projectionRetryRows) {
+      try {
+        if (
+          pendingProjectionRunIds.has(row.runId) ||
+          (await this.options.dashboardLiveStateReset.hasRunState(row.runId))
+        ) {
+          projectionRunIds.add(row.runId);
+        }
+      } catch (error) {
+        this.options.logger.error(
+          { err: error, runId: row.runId, correlationId },
+          "Could not inspect dashboard live traffic metrics during admin reset retry.",
+        );
+        throw new ApiHttpError({
+          statusCode: 503,
+          code: "run_cleanup_conflict",
+          message:
+            "Admin reset could not verify dashboard projection cleanup. Retry reset to finish projection cleanup.",
+          details: { conflictReason: "projection_cleanup_incomplete" },
+        });
+      }
+    }
+
     const fencedRuns: FencedResetRun[] = [];
     for (const candidate of resetCandidates) {
+      // Finish a previous marker-backed projection retry before stopping a successor.
+      if (projectionRunIds.size > 0 && candidate.run.status !== "failed") continue;
       if (candidate.run.status === "failed") {
         fencedRuns.push({
           run: candidate.run,
@@ -165,6 +212,8 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         });
       }
     }
+
+    for (const row of fencedRuns) await this.publishRecoveryDirty(row.run.id, correlationId);
 
     let closedSaleOfferCount = 0;
     const closureFailures: unknown[] = [];
@@ -221,7 +270,26 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
 
     const queueCleanup =
       fencedRuns.length > 0
-        ? await this.options.queueMaintenance.cleanRuns(fencedRuns.map(({ run }) => run.id))
+        ? await this.options.queueMaintenance
+            .cleanRuns(
+              fencedRuns.map(({ run }) => run.id),
+              {
+                // Abort permits 20s; runtime-reset allows 30s per response. Caddy and
+                // Fastify configure no shorter response deadline. Allow at most 5s
+                // settlement, stop by request elapsed 25s, reserving 5s for evidence,
+                // history and response. This bounds polling, not all dependency I/O.
+                deadline: Math.min(elapsedNow() + 5_000, requestStartedAt + 25_000),
+              },
+            )
+            .catch((error: unknown) => {
+              if (!(error instanceof DemoQueueMaintenanceConflict)) throw error;
+              throw new ApiHttpError({
+                statusCode: 409,
+                code: "run_cleanup_conflict",
+                message: error.message,
+                details: { conflictReason: error.code },
+              });
+            })
         : { cleanedQueueCount: 0, cleanedJobCount: 0 };
 
     const summaryInputs: TerminalDemoRunSummaryInput[] = [];
@@ -235,7 +303,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       const terminalInventorySnapshot = await this.captureTerminalInventorySnapshot({
         run: latest.run,
         businessOutcome,
-        capturedAt: now,
+        capturedAt: this.now(),
       });
       const trafficSummary = adminResetTrafficSummary(latest.run, latest.finalization);
       summaryInputs.push({
@@ -249,8 +317,6 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           ),
         ),
         finalizedAt: fencedRun.finalizedAt,
-        capturedAt: now,
-        adminResetCompletedAt: now,
         transportAttemptCounts: trafficSummary.transportAttemptCounts,
         httpSummary: trafficSummary.httpSummary,
         trafficDeliverySummary: trafficSummary.trafficDeliverySummary,
@@ -269,27 +335,22 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         runSignalTimelineSummary: null,
         allowedCurrentStatuses: ["failed"],
         terminalTrafficStatus: "failed",
+        capturedAt: this.now(),
       });
     }
-    const failedRunCount =
-      await this.options.terminalRunWriter.writeAfterTerminalClaims(summaryInputs);
-
-    const projectionRunIds = new Set(fencedRuns.map((row) => row.run.id));
-    for (const row of projectionRetryRows) {
-      try {
-        if (await this.options.dashboardLiveStateReset.hasRunState(row.runId)) {
-          projectionRunIds.add(row.runId);
-        }
-      } catch (error) {
-        this.options.logger.error(
-          { err: error, runId: row.runId, correlationId },
-          "Could not inspect dashboard live traffic metrics during admin reset retry.",
-        );
-        throw new Error(
-          "Admin reset could not verify dashboard projection cleanup. Retry reset to finish projection cleanup.",
-        );
-      }
+    if (fencedRuns.length > 0) {
+      await this.options.redis.sadd(
+        pendingResetProjectionKey,
+        ...fencedRuns.map((row) => row.run.id),
+      );
     }
+    const failedRunCount = await this.options.terminalRunWriter.writeAfterTerminalClaims(
+      summaryInputs.map((input) => ({ ...input, adminResetCompletedAt: this.now() })),
+    );
+
+    for (const row of fencedRuns) await this.publishRecoveryDirty(row.run.id, correlationId);
+
+    for (const row of fencedRuns) projectionRunIds.add(row.run.id);
     for (const runId of projectionRunIds) {
       try {
         await this.options.dashboardLiveStateReset.clearRun(runId);
@@ -298,9 +359,13 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           { err: error, runId, correlationId },
           "Could not clear dashboard live traffic metrics after admin reset summary.",
         );
-        throw new Error(
-          "Admin reset terminalized the run but could not clear its dashboard projection. Retry reset to finish projection cleanup.",
-        );
+        throw new ApiHttpError({
+          statusCode: 503,
+          code: "run_cleanup_conflict",
+          message:
+            "Admin reset terminalized the run but could not clear its dashboard projection. Retry reset to finish projection cleanup.",
+          details: { conflictReason: "projection_cleanup_incomplete" },
+        });
       }
       try {
         await this.options.reservationTiming?.clearRun(runId);
@@ -311,21 +376,18 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         );
       }
     }
-    await this.options.clearErpCircuitBreakerState();
+    await this.options.clearErpCircuitBreakerState().catch(() => {
+      throw new ApiHttpError({
+        statusCode: 503,
+        code: "run_cleanup_conflict",
+        message: "Work cleanup and history completed; retry Reset to finish shared-state cleanup.",
+        details: { conflictReason: "projection_cleanup_incomplete" },
+      });
+    });
 
-    for (const runId of projectionRunIds) {
-      try {
-        const run = await readDemoRunSnapshot(this.options.db, runId);
-        await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
-          run,
-          correlationId,
-        });
-      } catch (error) {
-        this.options.logger.warn(
-          { err: error, runId, correlationId },
-          "Could not read run snapshot for admin reset projection publication.",
-        );
-      }
+    for (const runId of projectionRunIds) await this.publishRecoveryDirty(runId, correlationId);
+    if (projectionRunIds.size > 0) {
+      await this.options.redis.srem(pendingResetProjectionKey, ...projectionRunIds);
     }
 
     return adminDemoResetResponseSchema.parse({
@@ -336,6 +398,21 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       resetAt: now.toISOString(),
       correlationId,
     });
+  }
+
+  private async publishRecoveryDirty(runId: string, correlationId: string): Promise<void> {
+    try {
+      const run = await readDemoRunSnapshot(this.options.db, runId);
+      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+        run,
+        correlationId,
+      });
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId, correlationId },
+        "Could not read run snapshot for admin reset projection publication.",
+      );
+    }
   }
 
   private now(): Date {

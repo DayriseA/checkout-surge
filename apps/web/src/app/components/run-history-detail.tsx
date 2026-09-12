@@ -98,10 +98,19 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
-              ["Overall run duration", overallDuration],
+              [
+                summary.failureCategory === "operator"
+                  ? "Acceptance-to-stop duration"
+                  : "Overall run duration",
+                overallDuration,
+              ],
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
-              ["Finalized", formatDate(run.finalizedAt)],
+              [
+                summary.failureCategory === "operator" ? "Operator stop decision" : "Finalized",
+                formatDate(run.finalizedAt),
+              ],
+              ...resetCompletionFacts(run, summary),
               ["Evidence recorded", formatDate(summary.capturedAt)],
               ...(detail.internalFailureReason
                 ? [["Failure code", codeValue(detail.internalFailureReason)] as [string, ReactNode]]
@@ -1079,7 +1088,19 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Run accepted", formatDate(summary.startedAt)],
               ["Checkout traffic started", formatDate(run.trafficStartedAt)],
               ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
-              ["Run ended", formatDate(run.finalizedAt)],
+              [
+                summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended",
+                formatDate(run.finalizedAt),
+              ],
+              ...(summary.failureCategory === "operator"
+                ? [
+                    [
+                      "Acceptance-to-stop duration",
+                      formatDurationMs(detail.overallDurationMs) ?? "Unknown",
+                    ] as [string, ReactNode],
+                  ]
+                : []),
+              ...resetCompletionFacts(run, summary),
             ]}
             title="Lifecycle"
           />
@@ -1217,4 +1238,23 @@ function adminDeliveryLabel(
 
 function codeValue(value: string): ReactNode {
   return <code>{value}</code>;
+}
+
+function resetCompletionFacts(
+  run: { adminResetCompletedAt?: string | undefined },
+  summary: { failureCategory?: string | undefined; startedAt?: string | undefined },
+): Array<[string, ReactNode]> {
+  if (summary.failureCategory !== "operator") return [];
+  const duration =
+    run.adminResetCompletedAt && summary.startedAt
+      ? Date.parse(run.adminResetCompletedAt) - Date.parse(summary.startedAt)
+      : null;
+  return [
+    ["Work cleanup and history completed", formatDate(run.adminResetCompletedAt)],
+    ["Acceptance-to-work-cleanup completion duration", formatDurationMs(duration) ?? "Unknown"],
+    [
+      "Reset context",
+      "Active work may finish after the operator stop decision. Counts show real confirmations and recorded notifications; removed queued work may remain incomplete.",
+    ],
+  ];
 }

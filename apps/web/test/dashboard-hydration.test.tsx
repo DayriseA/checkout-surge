@@ -105,6 +105,8 @@ function dashboardRecoveryFixture(): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: "idle",
     revision: 1,
     correlationId: "corr-web-recovery",

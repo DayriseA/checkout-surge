@@ -206,7 +206,12 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
               : undefined
           }
         />
-        <AdminMaintenancePanel onResetComplete={recoveryController.retryNow} />
+        <AdminMaintenancePanel
+          onResetComplete={recoveryController.retryNow}
+          incomplete={
+            recovery.status === "available" && recovery.data.resetRecovery === "incomplete"
+          }
+        />
         <AdminRuntimePolicyController
           initialRuntimePolicy={runtimePolicy}
           latestRuntimePolicyRead={props.initialRuntimePolicy}
@@ -1217,7 +1222,9 @@ function discardDescription(
 
 export function AdminMaintenancePanel({
   onResetComplete,
+  incomplete = false,
 }: {
+  incomplete?: boolean;
   onResetComplete: () => Promise<void>;
 }) {
   const router = useRouter();
@@ -1293,7 +1300,7 @@ export function AdminMaintenancePanel({
           onClick={() => openIntent("reset")}
           type="button"
         >
-          Reset demo
+          {incomplete ? "Retry Reset" : "Reset demo"}
         </button>
         <button
           className={buttonClassName}
@@ -1304,6 +1311,12 @@ export function AdminMaintenancePanel({
           Cleanup runs
         </button>
       </div>
+      {incomplete ? (
+        <p role="status">
+          Operator stop decision recorded. Work cleanup and history are incomplete; worker work may
+          still settle. Starts are blocked. Retry Reset to complete recovery.
+        </p>
+      ) : null}
       <AdminNoticeView notice={notice} />
       <ConfirmationDialog
         confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
@@ -1729,7 +1742,10 @@ function isRunStartBlocked(
 ): boolean {
   if (recovery.status !== "available") return true;
   if (freshness && isFreshnessBlockingStart(freshness, hasReadFailure)) return true;
-  return isRunInProgress(recovery.data.currentRun?.status);
+  return (
+    recovery.data.resetRecovery === "incomplete" ||
+    isRunInProgress(recovery.data.currentRun?.status)
+  );
 }
 
 function runStartBlockedReason(
@@ -1742,6 +1758,8 @@ function runStartBlockedReason(
   if (isFreshnessBlockingStart(freshness, hasReadFailure)) {
     return "Status is stale — refresh before starting";
   }
+  if (recovery.data.resetRecovery === "incomplete")
+    return "Work cleanup and history are incomplete — retry Reset before starting";
   const status = recovery.data.currentRun?.status;
   return isRunInProgress(status) ? `Run is ${status} — wait before starting another` : undefined;
 }

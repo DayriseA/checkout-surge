@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import {
   notificationRecordBullMqQueueName,
   notificationRecordJobSchema,
@@ -58,11 +59,12 @@ export function createBullMqDemoQueueMaintenance(
 
 export function createDemoQueueMaintenance(
   queues: TargetQueueBoundary[],
+  clock = { now: () => performance.now(), delay: (ms: number) => delay(ms) },
 ): DemoQueueMaintenance & { close(): Promise<void> } {
   let closePromise: Promise<void> | undefined;
   const maintenancePausedQueues = new Set<TargetQueueBoundary>();
   return {
-    async cleanRuns(runIds): Promise<QueueCleanupSummary> {
+    async cleanRuns(runIds, settlement): Promise<QueueCleanupSummary> {
       const targets = new Set(runIds);
       if (targets.size === 0) return { cleanedQueueCount: 0, cleanedJobCount: 0 };
       if (closePromise) {
@@ -84,7 +86,26 @@ export function createDemoQueueMaintenance(
           queuesToResume.add(queue);
           await queue.pause();
         }
-        result = await cleanExactJobs(queues, targets);
+        while (true) {
+          try {
+            result = await cleanExactJobs(queues, targets);
+            break;
+          } catch (error) {
+            if (
+              !settlement ||
+              !(error instanceof DemoQueueMaintenanceConflict) ||
+              error.code !== "active_job"
+            )
+              throw error;
+            const remaining = settlement.deadline - clock.now();
+            if (remaining <= 0)
+              throw new DemoQueueMaintenanceConflict(
+                "active_settlement_timeout",
+                "Reset work cleanup is incomplete. Active worker work may still settle after queue availability is restored. Retry Reset; successor starts remain blocked until work cleanup and history complete.",
+              );
+            await clock.delay(Math.min(100, remaining));
+          }
+        }
       } catch (error) {
         primaryError = error;
       } finally {
@@ -174,6 +195,7 @@ async function cleanExactJobs(
   queues: TargetQueueBoundary[],
   runIds: ReadonlySet<string>,
 ): Promise<QueueCleanupSummary> {
+  let activeConflict: DemoQueueMaintenanceConflict | undefined;
   const jobsToRemove: Array<{ queue: TargetQueueBoundary; job: TargetQueueJob; runId: string }> =
     [];
   for (const queue of queues) {
@@ -182,7 +204,7 @@ async function cleanExactJobs(
       if (attribution.kind === "malformed_target")
         throw malformedJobError(attribution.runId, queue, job);
       if (attribution.kind === "target") {
-        throw new DemoQueueMaintenanceConflict(
+        activeConflict = new DemoQueueMaintenanceConflict(
           "active_job",
           `Run ${attribution.runId} has active work on ${queue.semanticName}; retry after it settles.`,
         );
@@ -198,6 +220,7 @@ async function cleanExactJobs(
     }
   }
 
+  if (activeConflict) throw activeConflict;
   for (const { job } of jobsToRemove) {
     await job.remove();
   }

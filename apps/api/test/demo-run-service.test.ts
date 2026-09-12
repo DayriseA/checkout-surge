@@ -31,6 +31,7 @@ import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
+import { DemoQueueMaintenanceConflict } from "../src/services/demo-queue-maintenance.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
   DemoRunLifecycleService,
@@ -248,7 +249,10 @@ describe("demo-run lifecycle start gating", () => {
     });
   });
 
-  it("holds a successor start during abort, rejects it after failure, and admits it after repair", async () => {
+  it.each([
+    "abort",
+    "settlement",
+  ])("holds a successor start during %s, rejects it after failure, and admits it after repair", async (failureBoundary) => {
     const primary = requireConnection(connection);
     const redisClient = requireRedis(redis);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
@@ -262,7 +266,18 @@ describe("demo-run lifecycle start gating", () => {
       abortEntered = resolve;
     });
     let abortAttempt = 0;
-    const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
+    let cleanupAttempt = 0;
+    const queueCleanup = vi.fn(async () => {
+      if (failureBoundary === "settlement" && ++cleanupAttempt === 1) {
+        abortEntered();
+        await abortRelease;
+        throw new DemoQueueMaintenanceConflict(
+          "active_settlement_timeout",
+          "Retry Reset after active work settles.",
+        );
+      }
+      return { cleanedQueueCount: 0, cleanedJobCount: 0 };
+    });
     const resetService = new AdminDemoResetService({
       db: resetConnection.db,
       redis: redisClient,
@@ -274,7 +289,7 @@ describe("demo-run lifecycle start gating", () => {
       trafficAborter: {
         abortCurrent: async () => {
           abortAttempt += 1;
-          if (abortAttempt === 1) {
+          if (failureBoundary === "abort" && abortAttempt === 1) {
             abortEntered();
             await abortRelease;
             throw new ApiHttpError({
@@ -308,7 +323,14 @@ describe("demo-run lifecycle start gating", () => {
         { presetSlug: "preview-1k", operatorMode: "admin" },
         "successor-start",
       );
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      const waitDeadline = performance.now() + 5_000;
+      while (true) {
+        const waiting =
+          await resetConnection.sql`select 1 from pg_locks where locktype = 'advisory' and not granted limit 1`;
+        if (waiting.length > 0) break;
+        if (performance.now() >= waitDeadline)
+          throw new Error("Successor did not wait on the reset lock");
+      }
       expect(start).not.toHaveBeenCalled();
 
       const rejectedStart = expect(startPromise).rejects.toMatchObject({
@@ -318,11 +340,20 @@ describe("demo-run lifecycle start gating", () => {
       });
       releaseAbort();
       await expect(resetPromise).rejects.toMatchObject({
-        code: "load_orchestrator_abort_unconfirmed",
+        code:
+          failureBoundary === "abort"
+            ? "load_orchestrator_abort_unconfirmed"
+            : "run_cleanup_conflict",
       });
       await rejectedStart;
       expect(start).not.toHaveBeenCalled();
-      expect(queueCleanup).not.toHaveBeenCalled();
+      expect(queueCleanup).toHaveBeenCalledTimes(failureBoundary === "abort" ? 0 : 1);
+      await expect(
+        createStartService(primary, redisClient).startRun(
+          { presetSlug: "preview-1k", operatorMode: "admin" },
+          "recreated-api",
+        ),
+      ).rejects.toMatchObject({ details: { conflictReason: "reset_incomplete" } });
       await expect(
         primary.db
           .select({ adminResetCompletedAt: demoRuns.adminResetCompletedAt })
@@ -398,6 +429,85 @@ describe("demo-run lifecycle start gating", () => {
           `corr-start-after-${_deletionMode}`,
         ),
       ).resolves.toMatchObject({ run: { status: "active" } });
+    } finally {
+      await resetConnection.close();
+    }
+  });
+
+  it.each([
+    "metrics",
+    "breaker",
+  ])("repairs a marker-backed %s failure without aborting an admitted successor or rewriting history", async (failureBoundary) => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
+    const runId = existingRunId("active");
+    await seedExistingRun(primary, { runId, status: "active" });
+    const saleOfferId = "99999999-9999-4999-8999-999999999999";
+    await primary.db.insert(saleOffers).values({
+      id: saleOfferId,
+      productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      name: "Reset retry offer",
+      allocatedStock: 1,
+      purpose: "generated_run",
+      saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
+      saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
+    });
+    await primary.db.update(demoRuns).set({ saleOfferId }).where(eq(demoRuns.id, runId));
+    const metrics = new RedisDashboardTrafficMetricStore(redisClient);
+    await redisClient.sadd(`demo-run:${runId}:traffic-metric-batches`, "pending-projection");
+    let clearFailure = true;
+    const abortCurrent = vi.fn(async () => ({ outcome: "no_current_run" as const }));
+    const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
+    const createResetService = () =>
+      new AdminDemoResetService({
+        db: resetConnection.db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+        queueMaintenance: { cleanRuns },
+        clearErpCircuitBreakerState: async () => {
+          if (clearFailure && failureBoundary === "breaker") throw new Error("breaker unavailable");
+        },
+        trafficAborter: { abortCurrent },
+        dashboardLiveStateReset: {
+          fenceRun: (id) => metrics.fenceRun(id),
+          hasRunState: (id) => metrics.hasRunState(id),
+          clearRun: async (id) => {
+            if (clearFailure && failureBoundary === "metrics")
+              throw new Error("projection unavailable");
+            await metrics.clearRun(id);
+          },
+        },
+        resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+        maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+        logger: createSilentLogger("api"),
+      });
+    try {
+      await expect(createResetService().reset("partial-reset")).rejects.toMatchObject({
+        details: { conflictReason: "projection_cleanup_incomplete" },
+      });
+      const history = await primary.db.select().from(demoRunSummaries);
+      const successor = await createStartService(primary, redisClient).startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "admitted-successor",
+      );
+      if (failureBoundary === "breaker") expect(await metrics.hasRunState(runId)).toBe(false);
+      const publish = vi.spyOn(redisClient, "publish");
+      clearFailure = false;
+      await expect(createResetService().reset("projection-retry")).resolves.toMatchObject({
+        failedRunCount: 0,
+      });
+      expect(publish).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(publish.mock.calls[0]?.[1]))).toMatchObject({ scope: { runId } });
+      publish.mockRestore();
+      expect(abortCurrent).toHaveBeenCalledOnce();
+      expect(cleanRuns).toHaveBeenCalledOnce();
+      expect(await primary.db.select().from(demoRunSummaries)).toEqual(history);
+      expect(
+        (await primary.db.select().from(demoRuns).where(eq(demoRuns.id, successor.run.runId)))[0]
+          ?.status,
+      ).toBe("active");
+      expect(await metrics.hasRunState(runId)).toBe(false);
     } finally {
       await resetConnection.close();
     }

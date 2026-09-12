@@ -125,7 +125,12 @@ function operation(redis: CheckoutSurgeRedis) {
   return {
     dependencies: {
       contextReader: {
-        readContext: async () => ({ currentRun: runSnapshot(), saleOfferId }),
+        readContext: async () => ({
+          currentRun: runSnapshot(),
+          saleOfferId,
+          resetRecoveryRunId: null,
+          resetRecovery: "ready" as const,
+        }),
       },
       businessOutcomeReader: { read: unavailable },
       consistencyLagReader: { read: unavailable },

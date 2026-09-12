@@ -657,6 +657,8 @@ function dashboardFixture(evidence: RunResultEvidence): DashboardProjection {
   return dashboardProjectionSchema.parse({
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId: "corr-presentation",
     scopeId: dashboardProjectionScopeId(scope),
     scope,

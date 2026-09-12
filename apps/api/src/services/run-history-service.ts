@@ -699,6 +699,9 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
     ...(row.trafficStartedAt ? { trafficStartedAt: row.trafficStartedAt.toISOString() } : {}),
     ...(row.trafficEndedAt ? { trafficEndedAt: row.trafficEndedAt.toISOString() } : {}),
     ...(row.finalizedAt ? { finalizedAt: row.finalizedAt.toISOString() } : {}),
+    ...(row.adminResetCompletedAt
+      ? { adminResetCompletedAt: row.adminResetCompletedAt.toISOString() }
+      : {}),
   });
 }
 

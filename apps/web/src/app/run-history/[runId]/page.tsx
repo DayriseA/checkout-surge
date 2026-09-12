@@ -90,6 +90,7 @@ export default async function RunHistoryDetailPage({
                 {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
               </time>
               {" · "}
+              {summary.failureCategory === "operator" ? "Acceptance-to-stop duration: " : ""}
               {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
             </p>
           </div>

@@ -1,3 +1,4 @@
+import { once } from "node:events";
 import {
   notificationRecordBullMqQueueName,
   notificationRecordJobName,
@@ -6,7 +7,7 @@ import {
   orderProcessJobName,
   orderProcessJobSchema,
 } from "@checkout-surge/contracts";
-import { Queue, Worker } from "bullmq";
+import { Queue, QueueEvents, Worker } from "bullmq";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createBullMqDemoQueueMaintenance,
@@ -26,6 +27,100 @@ afterEach(async () => {
 });
 
 describe("BullMQ exact-run maintenance", () => {
+  it.each([
+    [orderProcessBullMqQueueName, orderProcessJobName, orderJob],
+    [notificationRecordBullMqQueueName, notificationRecordJobName, notificationJob],
+  ] as const)("settles only already-active selected work on %s while both queues stay paused", async (queueName, jobName, payload) => {
+    const orders = new Queue(orderProcessBullMqQueueName, { connection });
+    const notifications = new Queue(notificationRecordBullMqQueueName, { connection });
+    await Promise.all([
+      orders.obliterate({ force: true }),
+      notifications.obliterate({ force: true }),
+    ]);
+    const queue = queueName === orderProcessBullMqQueueName ? orders : notifications;
+    const otherQueue = queue === orders ? notifications : orders;
+    await otherQueue.pause();
+    const barrier = releaseBarrier();
+    const started = releaseBarrier();
+    let processedCount = 0;
+    const worker = new Worker(
+      queueName,
+      async () => {
+        processedCount++;
+        started.resolve();
+        await barrier.promise;
+      },
+      { connection },
+    );
+    const maintenance = createBullMqDemoQueueMaintenance(connection);
+    resources.push(maintenance, orders, notifications, worker);
+    try {
+      await queue.add(jobName, payload(runId));
+      await bounded(started.promise);
+      const waiting = await queue.add(jobName, payload(runId));
+      const unrelated = await queue.add(jobName, payload(otherRunId), { delay: 60_000 });
+      const catalog = await queue.add(jobName, payload(undefined), { delay: 60_000 });
+      const events = new QueueEvents(queueName, { connection });
+      resources.push(events);
+      await events.waitUntilReady();
+      const paused = once(events, "paused", { signal: AbortSignal.timeout(5_000) });
+      const cleanup = maintenance.cleanRuns([runId], { deadline: performance.now() + 5_000 });
+      await paused;
+      expect(await otherQueue.isPaused()).toBe(true);
+      expect(await waiting.getState()).toBe("waiting");
+      barrier.resolve();
+      await expect(cleanup).resolves.toMatchObject({ cleanedJobCount: 2 });
+      expect(await waiting.getState()).toBe("unknown");
+      expect(await unrelated.getState()).toBe("delayed");
+      expect(await catalog.getState()).toBe("delayed");
+      expect(processedCount).toBe(1);
+      expect(await queue.isPaused()).toBe(false);
+      expect(await otherQueue.isPaused()).toBe(true);
+    } finally {
+      barrier.resolve();
+    }
+  });
+
+  it("uses one elapsed settlement budget and keeps timeout, malformed attribution and restoration failure distinct", async () => {
+    const first = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
+    const second = new FakeQueue(
+      "notifications:record",
+      (data) => notificationRecordJobSchema.parse(data),
+      true,
+    );
+    const active = first.add("active", orderJob(runId));
+    const waiting = first.add("waiting", orderJob(runId));
+    second.add("active", notificationJob(runId));
+    let now = 0;
+    const maintenance = createDemoQueueMaintenance([first, second], {
+      now: () => now,
+      delay: async (ms) => {
+        now += ms;
+      },
+    });
+    await expect(maintenance.cleanRuns([runId], { deadline: 250 })).rejects.toMatchObject({
+      code: "active_settlement_timeout",
+    });
+    expect(now).toBe(250);
+    expect(active.removed).toBe(false);
+    expect(waiting.removed).toBe(false);
+    expect(first.paused).toBe(false);
+    expect(second.paused).toBe(true);
+    const malformed = second.add("waiting", { runId });
+    await expect(maintenance.cleanRuns([runId], { deadline: now })).rejects.toMatchObject({
+      code: "malformed_claimed_job",
+    });
+    second.remove(malformed);
+    first.resumeError = new Error("restoration failed");
+    await expect(maintenance.cleanRuns([runId], { deadline: now })).rejects.toMatchObject({
+      errors: [
+        expect.objectContaining({ code: "active_settlement_timeout" }),
+        first.resumeError,
+        first.resumeError,
+      ],
+    });
+  });
+
   it("pauses both physical queues and removes only selected run jobs", async () => {
     const orders = new Queue(orderProcessBullMqQueueName, { connection });
     const notifications = new Queue(notificationRecordBullMqQueueName, { connection });
@@ -347,4 +442,22 @@ class FakeQueue implements TargetQueueBoundary {
     this.closeCalls += 1;
     if (this.closeError) throw this.closeError;
   }
+}
+
+async function bounded<T>(promise: Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(5_000);
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+    ),
+  ]);
+}
+
+function releaseBarrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }

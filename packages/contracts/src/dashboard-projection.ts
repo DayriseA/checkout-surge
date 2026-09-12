@@ -20,7 +20,7 @@ import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
-export const dashboardProjectionSchemaVersion = 2 as const;
+export const dashboardProjectionSchemaVersion = 4 as const;
 /** Slowest expected cadence while dashboard work remains in flight. */
 export const dashboardLiveUpdateExpectedIntervalMs = 2_000;
 
@@ -92,6 +92,8 @@ export const dashboardProjectionSchema = z
     revision: positiveIntegerSchema.max(Number.MAX_SAFE_INTEGER),
     recoveredAt: isoTimestampSchema,
     currentRun: demoRunSnapshotSchema.nullable(),
+    resetRecovery: z.enum(["ready", "incomplete"]),
+    resetRecoveryRunId: uuidSchema.nullable(),
     inventory: inventoryStatusSchema.nullable(),
     recentMetrics: z.array(metricSampleSchema).default([]),
     erp: runErpOutcomeSummarySchema.nullable(),
@@ -105,6 +107,14 @@ export const dashboardProjectionSchema = z
   })
   .strict()
   .superRefine((projection, context) => {
+    if (projection.resetRecovery === "incomplete" && projection.resetRecoveryRunId === null) {
+      context.addIssue({
+        code: "custom",
+        path: ["resetRecoveryRunId"],
+        message:
+          "Incomplete recovery must identify its reset run; ready recovery may retain the latest reset result.",
+      });
+    }
     if (projection.scopeId !== dashboardProjectionScopeId(projection.scope)) {
       context.addIssue({
         code: "custom",

@@ -20,6 +20,31 @@ type CompletedRun = Extract<
 >;
 
 describe("dashboard projection state", () => {
+  it("accepts global idle recovery and repair while rejecting stale ready frames", () => {
+    const initial = createDashboardProjectionState(available(idleProjection()));
+    const incomplete = idleProjection({
+      revision: 2,
+      resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+      resetRecovery: "incomplete",
+    });
+    const stopped = dashboardProjectionStateReducer(initial, {
+      type: "live-projection-received",
+      projection: incomplete,
+    });
+    expect(stopped.acceptedProjection?.resetRecovery).toBe("incomplete");
+    expect(
+      dashboardProjectionStateReducer(stopped, {
+        type: "live-projection-received",
+        projection: idleProjection(),
+      }),
+    ).toBe(stopped);
+    const repaired = dashboardProjectionStateReducer(stopped, {
+      type: "live-projection-received",
+      projection: idleProjection({ revision: 3 }),
+    });
+    expect(repaired.acceptedProjection?.resetRecovery).toBe("ready");
+  });
+
   it("projects attempt arrival and terminal peak without falling back to a completion tail", () => {
     const live = projectRequestSurge(
       runProjection({
@@ -410,6 +435,8 @@ function idleProjection(overrides: Partial<DashboardProjection> = {}): Dashboard
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: "idle",
     revision: 1,
     correlationId: "corr-idle",

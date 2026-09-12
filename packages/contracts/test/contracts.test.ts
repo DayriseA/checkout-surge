@@ -1844,6 +1844,8 @@ describe("buy and dashboard contracts", () => {
     const recovery = dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId,
       scopeId: dashboardProjectionScopeId({ runId, saleOfferId }),
       revision: 1,
@@ -1963,6 +1965,8 @@ describe("buy and dashboard contracts", () => {
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId,
       scopeId: dashboardProjectionScopeId(null),
       revision: 1,
@@ -1982,6 +1986,26 @@ describe("buy and dashboard contracts", () => {
     };
 
     expect(dashboardProjectionSchema.parse(idleProjection)).toEqual(idleProjection);
+    expect(
+      dashboardProjectionSchema.parse({
+        ...idleProjection,
+        resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+      }).resetRecovery,
+    ).toBe("ready");
+    expect(
+      dashboardProjectionSchema.parse({
+        ...idleProjection,
+        resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+        resetRecovery: "incomplete",
+      }).resetRecovery,
+    ).toBe("incomplete");
+    expect(dashboardProjectionSchema.safeParse(omit(idleProjection, "resetRecovery")).success).toBe(
+      false,
+    );
+    expect(dashboardProjectionSchema.safeParse({ ...idleProjection, version: 3 }).success).toBe(
+      false,
+    );
+
     expect(
       dashboardProjectionSchema.parse(omit(idleProjection, "httpSummary")).httpSummary,
     ).toBeNull();
@@ -2031,6 +2055,8 @@ describe("buy and dashboard contracts", () => {
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId,
       scopeId: dashboardProjectionScopeId(null),
       revision: 1,
@@ -2111,6 +2137,8 @@ describe("buy and dashboard contracts", () => {
     const baseRecovery = {
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId,
       scopeId: dashboardProjectionScopeId({
         runId: currentRun.runId,
@@ -2156,6 +2184,8 @@ describe("buy and dashboard contracts", () => {
     const parsed = dashboardProjectionSchema.safeParse({
       schema: dashboardProjectionSchemaName,
       version: dashboardProjectionSchemaVersion,
+      resetRecoveryRunId: null,
+      resetRecovery: "ready",
       correlationId,
       scopeId: "run:ambiguous",
       revision: 1,

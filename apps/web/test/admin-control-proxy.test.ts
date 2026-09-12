@@ -930,6 +930,8 @@ function dashboardRecoveryPayload(correlationId = "corr-recovery") {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId,
     scopeId: dashboardProjectionScopeId(null),
     revision: 1,

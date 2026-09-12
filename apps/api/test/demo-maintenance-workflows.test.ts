@@ -1,8 +1,12 @@
+import { once } from "node:events";
 import {
   type AcceptedRunConfigSnapshot,
   type DashboardProjection,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  orderProcessBullMqQueueName,
+  orderProcessJobName,
+  orderProcessJobSchema,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -35,8 +39,16 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { type CheckoutSurgeLogger, createSilentLogger } from "@checkout-surge/logger";
+import { Queue, QueueEvents, Worker } from "bullmq";
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  createDashboardProjectionState,
+  dashboardProjectionStateReducer,
+} from "../../web/src/app/lib/dashboard-projection-state.js";
+import { createOrderProcessJobHandler } from "../../worker/src/application/order-process-job-handler.js";
+import { PostgresOrderTransitionPersistence } from "../../worker/src/persistence/postgres-order-transition-persistence.js";
+import { createBullMqDemoQueueMaintenance } from "../src/queue/bullmq-demo-queue-maintenance.js";
 import { createDashboardRecoveryOperationFactory } from "../src/runtime/dashboard-recovery-operation-factory.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
@@ -55,6 +67,7 @@ import {
   ReserveOrderService,
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
+import { RunHistoryService } from "../src/services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const ids = {
@@ -611,7 +624,176 @@ describe("focused demo maintenance workflows", () => {
   });
 
   describe("admin reset workflow", () => {
-    it("publishes the reset terminal projection to a connected Redis subscriber without recovery", async () => {
+    it("settles a held real order after timeout and captures immutable completion evidence with fresh boundaries", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "draining",
+        trafficStatus: "succeeded",
+        failureReason: null,
+        runInventoryStatus: "accepting",
+      });
+      await seedActiveRunBusinessState(db, redisClient);
+      let observedAt = new Date("2026-06-20T00:00:10.000Z");
+      const queueConnection = { url: requireTestRedisUrl() };
+      const queue = new Queue(orderProcessBullMqQueueName, { connection: queueConnection });
+      const events = new QueueEvents(orderProcessBullMqQueueName, { connection: queueConnection });
+      await events.waitUntilReady();
+      const release = releaseBarrier();
+      const processing = releaseBarrier();
+      const handler = createOrderProcessJobHandler({
+        confirmation: {
+          confirm: async () => {
+            processing.resolve();
+            await release.promise;
+            observedAt = new Date("2026-06-20T00:00:11.000Z");
+          },
+        },
+        persistence: new PostgresOrderTransitionPersistence(db, () => observedAt),
+        publishBusinessOutcomeUpdate: async () => undefined,
+        notificationRecordPublisher: {
+          publishForConfirmedOrder: async () => {
+            throw new Error("Run publication fenced after operator stop");
+          },
+        },
+        recovery: { handoff: async () => undefined, resolve: async () => undefined },
+        logger: createSilentLogger("worker"),
+      });
+      const worker = new Worker(
+        orderProcessBullMqQueueName,
+        async (job) => {
+          await handler.handle(orderProcessJobSchema.parse(job.data), {
+            attemptNumber: 1,
+            attemptsMade: 0,
+            maxAttempts: 1,
+            ...(job.id ? { deliveryId: job.id } : {}),
+          });
+          observedAt = new Date("2026-06-20T00:00:12.000Z");
+        },
+        { connection: queueConnection },
+      );
+      const maintenance = createBullMqDemoQueueMaintenance(queueConnection);
+      const incompleteObserved = releaseBarrier();
+      const logger = createSilentLogger("api");
+      const projectionService = new DashboardProjectionService({
+        logger,
+        openOperation: createDashboardRecoveryOperationFactory({
+          databaseUrl: requireTestDatabaseUrl(),
+          redisUrl: requireTestRedisUrl(),
+          timeoutMs: 2_000,
+          logger,
+        }),
+      });
+      const scheduler = new DashboardProjectionPublicationScheduler({
+        projectionService,
+        logger,
+        buildTimeoutMs: 2_000,
+        publish: (projection) => {
+          if (projection.resetRecovery === "incomplete") incompleteObserved.resolve();
+        },
+      });
+      const subscriberRedis = redisClient.duplicate();
+      const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
+        onDirty: (signal) => scheduler.markDirty(signal),
+      });
+      await subscriber.start();
+      let timeout = true;
+      const abortCurrent = vi.fn(async () => ({ outcome: "no_current_run" as const }));
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        logger: createSilentLogger("api"),
+        now: () => observedAt,
+        trafficAborter: { abortCurrent },
+        queueMaintenance: {
+          cleanRuns: (ids, settlement) =>
+            maintenance.cleanRuns(ids, timeout ? { deadline: performance.now() - 1 } : settlement),
+        },
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+      });
+      try {
+        await queue.add(orderProcessJobName, {
+          orderId: ids.activeOrder,
+          publicOrderId: "active-order",
+          reservationId: ids.activeReservation,
+          saleOfferId: ids.activeOffer,
+          runId: ids.activeRun,
+          correlationId: "corr-active-business",
+          quantity: 1,
+          queuedAt: "2026-06-20T00:00:03.000Z",
+        });
+        await boundedResetBarrier(processing.promise);
+        await expect(service.reset("held-timeout")).rejects.toMatchObject({
+          code: "run_cleanup_conflict",
+          details: { conflictReason: "active_settlement_timeout" },
+        });
+        expect(await queue.isPaused()).toBe(false);
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+        expect(
+          (await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun)))[0]
+            ?.adminResetCompletedAt,
+        ).toBeNull();
+        await boundedResetBarrier(incompleteObserved.promise);
+        expect(
+          (await projectionService.build({ correlationId: "fresh-timeout-read" })).resetRecovery,
+        ).toBe("incomplete");
+        timeout = false;
+        const paused = once(events, "paused", { signal: AbortSignal.timeout(5_000) });
+        const repair = service.reset("held-repair");
+        await paused;
+        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
+        release.resolve();
+        await expect(repair).resolves.toMatchObject({ failedRunCount: 1 });
+        const summaries = await db.select().from(demoRunSummaries);
+        expect(summaries).toHaveLength(1);
+        expect(summaries[0]).toMatchObject({
+          status: "failed",
+          failureReason: "admin_reset",
+          endedAt: new Date("2026-06-20T00:00:10.000Z"),
+          capturedAt: observedAt,
+          businessOutcomeSummary: { confirmedOrders: 1, notificationsRecorded: 0 },
+        });
+        const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun));
+        expect(run?.adminResetCompletedAt).toEqual(observedAt);
+        expect((await db.select().from(orders))[0]?.confirmedAt).toEqual(
+          new Date("2026-06-20T00:00:11.000Z"),
+        );
+        const historyService = new RunHistoryService({ db, now: () => observedAt });
+        const history = await historyService.detail(ids.activeRun);
+        expect(history?.run.adminResetCompletedAt).toBe(observedAt.toISOString());
+        expect(history?.summary.businessOutcomeSummary).toMatchObject({
+          confirmedOrders: 1,
+          notificationsRecorded: 0,
+        });
+        expect(history?.result.reconciliations).toContainEqual(
+          expect.objectContaining({ code: "notifications_below_confirmations" }),
+        );
+        expect(await historyService.detail(ids.activeRun)).toEqual(history);
+        expect(
+          (await projectionService.build({ correlationId: "fresh-repaired-read" })).resetRecovery,
+        ).toBe("ready");
+        await service.reset("held-repeated");
+        expect(await db.select().from(demoRunSummaries)).toEqual(summaries);
+        expect(abortCurrent).toHaveBeenCalledTimes(2);
+      } finally {
+        release.resolve();
+        await worker.close();
+        await subscriber.close();
+        await scheduler.flush();
+        await scheduler.flush();
+        await scheduler.close();
+        subscriberRedis.disconnect();
+        await Promise.all([maintenance.close(), queue.close(), events.close()]);
+      }
+    });
+
+    it.each([
+      "immediate",
+      "coalesced",
+    ])("publishes every %s reset frame in an order that converges the real client reducer", async (delivery) => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       const logger = createSilentLogger("api");
@@ -663,22 +845,44 @@ describe("focused demo maintenance workflows", () => {
       const active = await projectionService.build({ correlationId: "corr-active" });
       expect(active.currentRun?.status).toBe("active");
       expect(active.recentMetrics).toHaveLength(1);
-      let resolveProjection!: (projection: DashboardProjection) => void;
-      const published = new Promise<DashboardProjection>((resolve) => {
-        resolveProjection = resolve;
-      });
+      const buildRelease = releaseBarrier();
+      if (delivery === "immediate") buildRelease.resolve();
+      const frames: DashboardProjection[] = [];
+      const finalFrame = releaseBarrier();
+      let observer = createDashboardProjectionState({ status: "available", data: active });
+      let idleObserver = createDashboardProjectionState({ status: "loading" });
       const scheduler = new DashboardProjectionPublicationScheduler({
-        projectionService,
+        projectionService: {
+          build: async (input) => {
+            await buildRelease.promise;
+            return projectionService.build(input);
+          },
+        },
         logger,
-        buildTimeoutMs: 2_000,
-        publish: resolveProjection,
+        buildTimeoutMs: 5_000,
+        publish: (projection) => {
+          frames.push(projection);
+          if (projection.resetRecovery === "ready" && projection.recentMetrics.length === 0)
+            finalFrame.resolve();
+          observer = dashboardProjectionStateReducer(observer, {
+            type: "live-projection-received",
+            projection,
+          });
+          idleObserver = dashboardProjectionStateReducer(idleObserver, {
+            type: "live-projection-received",
+            projection,
+          });
+        },
       });
+      const allSignals = releaseBarrier();
       const subscriberRedis = redisClient.duplicate();
-      const onDirty = vi.fn((signal) => scheduler.markDirty(signal));
+      const onDirty = vi.fn((signal) => {
+        scheduler.markDirty(signal);
+        if (onDirty.mock.calls.length === 3) allSignals.resolve();
+      });
       const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
         onDirty,
       });
-      let timeout: ReturnType<typeof setTimeout> | undefined;
       try {
         await subscriber.start();
         const service = createResetService({
@@ -693,20 +897,38 @@ describe("focused demo maintenance workflows", () => {
         await expect(service.reset("corr-reset-stream")).resolves.toMatchObject({
           failedRunCount: 1,
         });
-        const terminal = await Promise.race([
-          published,
-          new Promise<never>((_, reject) => {
-            timeout = setTimeout(
-              () => reject(new Error("Reset terminal projection was not published")),
-              3_000,
-            );
-          }),
-        ]);
-        expect(onDirty).toHaveBeenCalledExactlyOnceWith({
-          type: "dashboard.projection.dirty",
-          correlationId: "corr-reset-stream",
-          scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
+        await boundedResetBarrier(allSignals.promise);
+        buildRelease.resolve();
+        await scheduler.flush();
+        await boundedResetBarrier(finalFrame.promise);
+        await scheduler.flush();
+        expect(onDirty.mock.calls).toEqual(
+          Array.from({ length: 3 }, () => [
+            {
+              type: "dashboard.projection.dirty",
+              correlationId: "corr-reset-stream",
+              scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
+            },
+          ]),
+        );
+        expect(frames.length).toBeGreaterThan(0);
+        expect(frames.every((frame) => frame.scopeId === active.scopeId)).toBe(true);
+        const terminal = frames.at(-1);
+        if (!terminal) throw new Error("Reset projection was not published");
+        expect(observer.acceptedProjection).toEqual(terminal);
+        expect(observer.retainedTerminalRun?.runId).toBe(ids.activeRun);
+        expect(terminal.resetRecovery).toBe("ready");
+        expect(terminal.resetRecoveryRunId).toBe(ids.activeRun);
+        // An idle observer still rejects foreign terminals, then recovers the
+        // durable result identity even if it never saw the incomplete marker.
+        expect(idleObserver.acceptedProjection).toBeNull();
+        const recovered = await projectionService.build({ correlationId: "idle-observer-read" });
+        idleObserver = dashboardProjectionStateReducer(idleObserver, {
+          type: "refresh-completed",
+          recovery: { status: "available", data: recovered },
+          preserveAvailableRecoveryOnFailure: false,
         });
+        expect(idleObserver.acceptedProjection?.resetRecoveryRunId).toBe(ids.activeRun);
         expect(terminal.scope).toEqual(active.scope);
         expect(terminal.scopeId).toBe(active.scopeId);
         expect(terminal.revision).toBeGreaterThan(active.revision);
@@ -729,7 +951,7 @@ describe("focused demo maintenance workflows", () => {
         expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
         expect(await metrics.readRecent(ids.activeRun)).toEqual([]);
       } finally {
-        clearTimeout(timeout);
+        buildRelease.resolve();
         await subscriber.close();
         subscriberRedis.disconnect();
         await scheduler.close();
@@ -770,7 +992,7 @@ describe("focused demo maintenance workflows", () => {
           cleanedJobCount: 0,
           correlationId: "corr-advisory",
         });
-        expect(publish).toHaveBeenCalledOnce();
+        expect(publish).toHaveBeenCalledTimes(3);
         expect(warn).toHaveBeenCalledWith(
           { err: failure, runId: ids.activeRun },
           "Could not publish run projection dirty signal.",
@@ -1220,7 +1442,7 @@ describe("focused demo maintenance workflows", () => {
       const publish = vi.spyOn(redisClient, "publish");
       const cleanupComplete = vi.fn();
       const clearErp = vi.fn(async () => {
-        if (cleanupComplete.mock.calls.length === 0) expect(publish).not.toHaveBeenCalled();
+        if (cleanupComplete.mock.calls.length === 0) expect(publish).toHaveBeenCalledTimes(2);
         expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
         cleanupComplete();
       });
@@ -1256,28 +1478,47 @@ describe("focused demo maintenance workflows", () => {
       expect(abortCurrent).toHaveBeenCalledOnce();
       expect(cleanRuns).toHaveBeenCalledOnce();
 
-      expect(publish).not.toHaveBeenCalled();
+      expect(publish).toHaveBeenCalledTimes(2);
       expect(clearErp).not.toHaveBeenCalled();
       failClear = false;
       await expect(service.reset("corr-clear-retry")).resolves.toMatchObject({ failedRunCount: 0 });
-      expect(publish).toHaveBeenCalledOnce();
-      expect(JSON.parse(String(publish.mock.calls[0]?.[1]))).toMatchObject({
+      expect(publish).toHaveBeenCalledTimes(3);
+      expect(JSON.parse(String(publish.mock.calls[2]?.[1]))).toMatchObject({
         scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
       });
-      expect(publish.mock.invocationCallOrder[0]).toBeGreaterThan(
+      expect(publish.mock.invocationCallOrder[2]).toBeGreaterThan(
         cleanupComplete.mock.invocationCallOrder[0] ?? 0,
       );
-      expect(publish.mock.invocationCallOrder[0]).toBeGreaterThan(
+      expect(publish.mock.invocationCallOrder[2]).toBeGreaterThan(
         clearErp.mock.invocationCallOrder[0] ?? 0,
       );
       expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
       await service.reset("corr-already-clean");
-      expect(publish).toHaveBeenCalledOnce();
+      expect(publish).toHaveBeenCalledTimes(3);
       publish.mockRestore();
       expect(clearRun).toHaveBeenCalledTimes(2);
       expect(abortCurrent).toHaveBeenCalledOnce();
       expect(cleanRuns).toHaveBeenCalledOnce();
       expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+    });
+
+    it("prunes orphaned pending projection retries", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      const pendingKey = "demo-reset:pending-projection-runs";
+      await redisClient.sadd(pendingKey, ids.completedRun);
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+      });
+
+      await service.reset("corr-prune-orphan");
+      expect(await redisClient.smembers(pendingKey)).toEqual([]);
+      await service.reset("corr-prune-orphan-again");
+      expect(await redisClient.smembers(pendingKey)).toEqual([]);
     });
 
     it("stamps reset completion when retry finds an existing summary without a marker", async () => {
@@ -2812,4 +3053,22 @@ function requireRedis(
   }
 
   return redis;
+}
+
+async function boundedResetBarrier<T>(promise: Promise<T>): Promise<T> {
+  const signal = AbortSignal.timeout(5_000);
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+    ),
+  ]);
+}
+
+function releaseBarrier() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }

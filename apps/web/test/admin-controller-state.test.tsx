@@ -1032,6 +1032,63 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("50");
   });
 
+  it("keeps fresh incomplete recovery blocked after timeout and reenables starts after Reset repair", async () => {
+    let repaired = false;
+    let attempts = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === adminDemoResetProxyPath) {
+          if (++attempts === 1)
+            return canonicalErrorResponse("Settlement expired", 409, "run_cleanup_conflict", {
+              conflictReason: "active_settlement_timeout",
+            });
+          repaired = true;
+          return jsonResponse({
+            failedRunCount: 1,
+            closedSaleOfferCount: 0,
+            cleanedQueueCount: 2,
+            cleanedJobCount: 1,
+            correlationId: "repair",
+            resetAt: "2026-06-20T00:00:12.000Z",
+          });
+        }
+        return jsonResponse({
+          ...recoveryFixture(null),
+          resetRecoveryRunId: repaired ? null : "11111111-1111-4111-8111-111111111111",
+          resetRecovery: repaired ? "ready" : "incomplete",
+          revision: repaired ? 3 : 2,
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    const props = {
+      ...surfaceProps(null),
+      initialRecovery: available({
+        ...recoveryFixture(null),
+        resetRecoveryRunId: "11111111-1111-4111-8111-111111111111",
+        resetRecovery: "incomplete" as const,
+      }),
+    };
+    const mounted = render(<AdminAuthenticatedSurface {...props} />);
+    const start = () =>
+      screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
+    expect(start().disabled).toBe(true);
+    mounted.unmount();
+    render(<AdminAuthenticatedSurface {...props} />);
+    expect(start().disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Retry Reset" }));
+    await user.click(confirmationButton("Reset demo"));
+    await waitFor(() =>
+      expect(within(screen.getByRole("alertdialog")).getByRole("alert").textContent).toContain(
+        "Worker work may still settle",
+      ),
+    );
+    expect(start().disabled).toBe(true);
+    await user.click(confirmationButton("Reset demo"));
+    await waitFor(() => expect(start().disabled).toBe(false));
+  });
+
   it("reconciles reset recovery into current-run and preset start gating", async () => {
     const knownRecoveryPath = `${dashboardRecoveryProxyPath}?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=33333333-3333-4333-8333-333333333333`;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -3119,6 +3176,8 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),
     revision: 1,
     correlationId: "corr-web-recovery",

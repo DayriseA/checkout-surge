@@ -4,12 +4,18 @@ export interface QueueCleanupSummary {
 }
 
 export interface ExactRunQueueMaintenance {
-  cleanRuns(runIds: readonly string[]): Promise<QueueCleanupSummary>;
+  cleanRuns(
+    runIds: readonly string[],
+    settlement?: { deadline: number },
+  ): Promise<QueueCleanupSummary>;
 }
 
 export type DemoQueueMaintenance = ExactRunQueueMaintenance;
 
-export type DemoQueueMaintenanceConflictCode = "active_job" | "malformed_claimed_job";
+export type DemoQueueMaintenanceConflictCode =
+  | "active_job"
+  | "active_settlement_timeout"
+  | "malformed_claimed_job";
 
 export class DemoQueueMaintenanceConflict extends Error {
   constructor(

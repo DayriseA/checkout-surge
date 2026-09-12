@@ -1012,6 +1012,8 @@ function projectionFixture(): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId({ runId, saleOfferId }),
     revision: 4,
     correlationId: "corr-web-recovery",

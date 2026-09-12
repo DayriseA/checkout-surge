@@ -276,6 +276,8 @@ function projection(correlationId: string, scopedRunId?: string): DashboardProje
   return {
     schema: "checkout-surge.dashboard-projection",
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId,
     scopeId: scopedRunId ? `run/${scopedRunId}/sale-offer/${saleOfferId}` : "idle",
     revision: 1,

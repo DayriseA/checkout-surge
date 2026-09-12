@@ -452,6 +452,8 @@ function projection(revision: number): DashboardProjection {
   return {
     schema: "checkout-surge.dashboard-projection",
     version: dashboardProjectionSchemaVersion,
+    resetRecoveryRunId: null,
+    resetRecovery: "ready",
     correlationId: `projection-${revision}`,
     scopeId: "idle",
     revision,
