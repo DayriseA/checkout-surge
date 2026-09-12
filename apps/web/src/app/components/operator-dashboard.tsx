@@ -8,6 +8,7 @@ import {
 import Link from "next/link";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
+import type { AcceptedRunResult } from "../lib/presentation/accepted-run-result";
 import { formatInstantUtc } from "../lib/presentation/format";
 import { publicFailureExplanation } from "../lib/presentation/public-vocabulary";
 import {
@@ -35,6 +36,7 @@ import {
 } from "./dashboard-panels";
 import { ErrorNotice } from "./error-notice";
 import { GoldSignals } from "./gold-signals";
+import { useAcceptedRunResult } from "./realtime/use-accepted-run-result";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { RunConclusion } from "./run-conclusion";
@@ -45,12 +47,17 @@ const actionClassName = `inline-flex items-center ${primaryButtonClassName}`;
 const secondaryActionClassName = `${neutralLinkButtonClassName} text-base`;
 
 export function OperatorDashboard({
+  acceptedResult,
   initialRecovery,
+  invalidAcceptedRunContext = false,
   latestCompletedRun = { status: "available", data: null },
 }: {
+  acceptedResult?: AcceptedRunResult;
   initialRecovery: BackendRead<DashboardProjection>;
+  invalidAcceptedRunContext?: boolean;
   latestCompletedRun?: BackendRead<RunHistoryListItem | null>;
 }) {
+  const accepted = useAcceptedRunResult(acceptedResult);
   const {
     recovery,
     isRefreshing,
@@ -101,7 +108,20 @@ export function OperatorDashboard({
       <div className="col-span-12 flex justify-end">
         <StatusPill status={deriveFreshnessPresentationState(composition.freshness)} />
       </div>
-      <WatchNarrative composition={composition} onRetry={() => void retryNow()} />
+      {invalidAcceptedRunContext ? <InvalidAcceptedRunContext /> : null}
+      {accepted.result ? (
+        <AcceptedResultNarrative
+          composition={composition}
+          onRetry={() => void accepted.retryNow()}
+          result={accepted.result}
+          retriesExhausted={accepted.retriesExhausted}
+        />
+      ) : null}
+      <WatchNarrative
+        composition={composition}
+        hideLatestCompletedRun={acceptedResult !== undefined || invalidAcceptedRunContext}
+        onRetry={() => void retryNow()}
+      />
       <TechnicalDetails
         composition={composition}
         hasSyncIssue={hasSyncIssue}
@@ -119,9 +139,11 @@ export function OperatorDashboard({
 
 export function WatchNarrative({
   composition,
+  hideLatestCompletedRun = false,
   onRetry,
 }: {
   composition: WatchComposition;
+  hideLatestCompletedRun?: boolean;
   onRetry?: () => void;
 }) {
   switch (composition.phase) {
@@ -137,7 +159,12 @@ export function WatchNarrative({
         </section>
       );
     case "idle":
-      return <IdleNarrative latestCompletedRun={composition.latestCompletedRun} />;
+      return (
+        <IdleNarrative
+          latestCompletedRun={composition.latestCompletedRun}
+          showLatestCompletedRun={!hideLatestCompletedRun}
+        />
+      );
     case "starting":
       return (
         <>
@@ -212,10 +239,73 @@ export function WatchNarrative({
   }
 }
 
+function InvalidAcceptedRunContext() {
+  return (
+    <section className="col-span-12 rounded-lg border border-warning bg-warning-soft p-4">
+      <p className="m-0 text-xs font-bold uppercase text-muted">Accepted run result</p>
+      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">Invalid run context</h2>
+      <p className="m-0 mt-2 leading-6 text-muted-strong">
+        This Watch link does not contain a valid accepted run ID. No result has been selected.
+      </p>
+    </section>
+  );
+}
+
+function AcceptedResultNarrative({
+  composition,
+  onRetry,
+  result,
+  retriesExhausted,
+}: {
+  composition: WatchComposition;
+  onRetry: () => void;
+  result: AcceptedRunResult;
+  retriesExhausted: boolean;
+}) {
+  const liveRun = "run" in composition ? composition.run : null;
+  const followsDifferentLiveRun = liveRun && liveRun.runId !== result.runId;
+  return (
+    <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+      <p className="m-0 text-xs font-bold uppercase text-muted">Your accepted run</p>
+      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+        {result.status === "available" ? "Result available" : "Result pending"}
+      </h2>
+      <p className="m-0 mt-2 break-all text-sm text-muted">
+        Accepted run ID: <code>{result.runId}</code>
+      </p>
+      {result.status === "available" ? (
+        <Link className={`${secondaryActionClassName} mt-3`} href={`/run-history/${result.runId}`}>
+          {durableResultLinkName(result.presetName, result.endedAt)}
+        </Link>
+      ) : (
+        <p className="m-0 mt-3 leading-6 text-muted-strong">
+          {result.status === "awaiting"
+            ? "The exact result is not available yet. Watch will check again for a limited time."
+            : retriesExhausted
+              ? "The exact result is still unavailable after the automatic checks."
+              : "The exact result is temporarily unavailable. Watch will check again for a limited time."}
+        </p>
+      )}
+      {result.status === "unavailable" && retriesExhausted ? (
+        <button className={`${secondaryActionClassName} mt-3`} onClick={onRetry} type="button">
+          Check accepted result again
+        </button>
+      ) : null}
+      {followsDifferentLiveRun ? (
+        <p className="m-0 mt-3 break-all text-sm text-muted">
+          Live panels are following shared run <code>{liveRun.runId}</code>.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
 function IdleNarrative({
   latestCompletedRun,
+  showLatestCompletedRun,
 }: {
   latestCompletedRun: BackendRead<RunHistoryListItem | null>;
+  showLatestCompletedRun: boolean;
 }) {
   const latest = latestCompletedRun.status === "available" ? latestCompletedRun.data : null;
   return (
@@ -230,13 +320,13 @@ function IdleNarrative({
         <Link className={actionClassName} href="/">
           Start a demo
         </Link>
-        {latest ? (
+        {showLatestCompletedRun && latest ? (
           <Link className={secondaryActionClassName} href={`/run-history/${latest.runId}`}>
             {durableResultLinkName(latest.presetName, latest.occurredAt)}
           </Link>
         ) : null}
       </div>
-      {!latest ? (
+      {showLatestCompletedRun && !latest ? (
         <p className="m-0 mt-4 text-sm text-muted">
           {latestCompletedRun.status === "available"
             ? "No completed runs yet"

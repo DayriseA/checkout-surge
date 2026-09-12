@@ -322,7 +322,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
       if (result.status === "available") {
         setStatusMessage("Run accepted.");
-        navigateToWatch();
+        navigateToWatch(result.data.run.runId);
         return;
       }
 
@@ -921,9 +921,9 @@ function formatPolicyWindow(seconds: number): string {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
-function navigateToWatch() {
+function navigateToWatch(acceptedRunId: string) {
   if (typeof window !== "undefined") {
-    window.location.assign("/watch");
+    window.location.assign(`/watch?${new URLSearchParams({ acceptedRunId })}`);
   }
 }
 

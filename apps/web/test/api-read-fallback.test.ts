@@ -6,7 +6,9 @@ import {
   errorPayloadSchema,
   evaluateFastReservationTarget,
 } from "@checkout-surge/contracts";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GET as getPublicRunHistoryDetail } from "../src/app/api/demo/runs/history/[runId]/route.js";
 import {
   getPublicDemoSurface,
   getRunHistoryDetail,
@@ -61,6 +63,34 @@ describe("dashboard backend API reads", () => {
       "http://api.internal/demo/runs/history?page=1&pageSize=1",
       expect.objectContaining({ cache: "no-store" }),
     );
+  });
+
+  it("server-loads only the exact accepted Watch result and keeps a missing result pending", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        errorPayloadSchema.parse({
+          code: "resource_not_found",
+          message: "Run history detail was not found.",
+          correlationId: "watch-result-missing",
+          timestamp: "2026-06-20T00:00:10.000Z",
+        }),
+        404,
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const output = renderToStaticMarkup(
+      await WatchPage({ searchParams: Promise.resolve({ acceptedRunId: runId }) }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://api.internal/demo/runs/history/${runId}`,
+      expect.objectContaining({ cache: "no-store" }),
+    );
+    expect(output).toContain(`Accepted run ID: <code>${runId}</code>`);
+    expect(output).toContain("The exact result is not available yet");
   });
 
   it("reads paginated run history through the shared API contract", async () => {
@@ -227,6 +257,89 @@ describe("dashboard backend API reads", () => {
     }
     expect(detail.data.summary.runId).toBe(runId);
     expect(detail.data.result.outcome).toBe("outcome-indeterminate");
+  });
+
+  it("proxies an exact public history detail path through its public schema", async () => {
+    const runId = "55555555-5555-4555-8555-555555555555";
+    const fetchMock = vi.fn(async () => jsonResponse(runHistoryDetailFixture()));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await getPublicRunHistoryDetail(
+      new Request(`http://dashboard.local/api/demo/runs/history/${runId}`),
+      { params: Promise.resolve({ runId }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://api.internal/demo/runs/history/${runId}`,
+      expect.objectContaining({ method: "GET", cache: "no-store" }),
+    );
+    expect((await response.json()).summary.runId).toBe(runId);
+  });
+
+  it("rejects an invalid public history detail parameter before forwarding", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await getPublicRunHistoryDetail(
+      new Request("http://dashboard.local/api/demo/runs/history/not-a-uuid"),
+      { params: Promise.resolve({ runId: "not-a-uuid" }) },
+    );
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).code).toBe("invalid_request");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects an upstream success outside the public detail schema", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ privateOrders: [] })),
+    );
+
+    const response = await getPublicRunHistoryDetail(
+      new Request(
+        "http://dashboard.local/api/demo/runs/history/55555555-5555-4555-8555-555555555555",
+      ),
+      {
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      },
+    );
+
+    expect(response.status).toBe(502);
+    expect((await response.json()).code).toBe("invalid_backend_response");
+  });
+
+  it.each([
+    [404, "resource_not_found"],
+    [503, "backend_unavailable"],
+  ] as const)("preserves a canonical upstream %s result read failure", async (status, code) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          errorPayloadSchema.parse({
+            code,
+            message: "Exact result read failed.",
+            correlationId: `result-${status}`,
+            timestamp: "2026-06-20T00:00:10.000Z",
+          }),
+          status,
+        ),
+      ),
+    );
+
+    const response = await getPublicRunHistoryDetail(
+      new Request(
+        "http://dashboard.local/api/demo/runs/history/55555555-5555-4555-8555-555555555555",
+      ),
+      {
+        params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
+      },
+    );
+
+    expect(response.status).toBe(status);
+    expect((await response.json()).code).toBe(code);
   });
 });
 

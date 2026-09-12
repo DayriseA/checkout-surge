@@ -25,7 +25,16 @@ import {
   type ServerReservationTimingSummary,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -34,6 +43,7 @@ import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
+import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api";
@@ -47,7 +57,9 @@ import {
   dashboardRecoveryProxyPath,
   demoRunStartProxyPath,
   healthReadyProxyPath,
+  publicRunHistoryDetailProxyPath,
 } from "../src/app/lib/control-paths.js";
+import { acceptedRunResultFromRead } from "../src/app/lib/presentation/accepted-run-result.js";
 import DemoDashboardPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
@@ -293,7 +305,37 @@ describe("public browser starts", () => {
 
     await user.click(screen.getByRole("button", { name: "Start Preview 1k" }));
 
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/watch"));
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/watch?acceptedRunId=55555555-5555-4555-8555-555555555555",
+      ),
+    );
+  });
+
+  it("navigates an accepted custom start with the response run ID", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === demoRunStartProxyPath) {
+        return jsonResponse(startDemoRunResponseFixture(), 202);
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/watch?acceptedRunId=55555555-5555-4555-8555-555555555555",
+      ),
+    );
   });
 
   it.each([
@@ -355,6 +397,7 @@ describe("public browser starts", () => {
 
   it("removes an expired start rate-limit wait before enabling starts", async () => {
     vi.useFakeTimers();
+    const assign = vi.fn();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === demoRunStartProxyPath) {
         return new Response(
@@ -377,6 +420,9 @@ describe("public browser starts", () => {
       throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
 
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
     const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
@@ -397,6 +443,7 @@ describe("public browser starts", () => {
     expect(screen.queryByText("The shared demo has reached its start limit")).toBeNull();
     expect(screen.queryByText("Wait 10 seconds before trying again.")).toBeNull();
     expect(screen.queryByText("Wait before retrying")).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("submits curated start requests from the public surface", async () => {
@@ -752,6 +799,7 @@ describe("public browser starts", () => {
 
   it("presents authoritative backend custom rejection without leaking its message", async () => {
     const user = userEvent.setup();
+    const assign = vi.fn();
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
       return new Response(
@@ -768,6 +816,9 @@ describe("public browser starts", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
     await user.click(screen.getByText("Build your own run"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
@@ -782,6 +833,7 @@ describe("public browser starts", () => {
     expect(screen.queryByText("Check the values and try again")).toBeNull();
     expect(screen.queryByText("Private contract violation detail.")).toBeNull();
     expect(document.body.textContent).not.toContain("private-custom-rejection");
+    expect(assign).not.toHaveBeenCalled();
 
     await replaceInputValue("Buyer count (buyers)", "999", user);
     expect(screen.queryByRole("alert", { name: "Fix these settings" })).toBeNull();
@@ -1546,6 +1598,167 @@ describe("run history browser cleanup", () => {
   });
 });
 
+describe("accepted Watch result handoff", () => {
+  const acceptedRunId = "55555555-5555-4555-8555-555555555555";
+  const newerRunId = "66666666-6666-4666-8666-666666666666";
+
+  it("never substitutes prior history and resolves the exact accepted result without lifecycle frames", async () => {
+    vi.useFakeTimers();
+    const latestRun = runHistoryListFixture().summaries[0];
+    if (!latestRun) throw new Error("Expected prior history.");
+    const previousRun = {
+      ...latestRun,
+      runId: "11111111-1111-4111-8111-111111111111",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resourceNotFoundResponse(acceptedRunId))
+      .mockResolvedValueOnce(jsonResponse(runHistoryDetailFixtureFor(acceptedRunId)));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", FakeEventSource);
+
+    render(
+      createElement(OperatorDashboard, {
+        acceptedResult: { status: "awaiting", runId: acceptedRunId },
+        initialRecovery: available(dashboardRecoveryFixture()),
+        latestCompletedRun: available(previousRun),
+      }),
+    );
+
+    expect(
+      screen.getByText("The exact result is not available yet.", { exact: false }),
+    ).toBeTruthy();
+    expect(screen.queryByText("No completed runs yet")).toBeNull();
+    expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(fetchMock).toHaveBeenCalledWith(
+      publicRunHistoryDetailProxyPath(acceptedRunId),
+      expect.any(Object),
+    );
+    expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(document.querySelector(`a[href="/run-history/${acceptedRunId}"]`)).toBeTruthy();
+    expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
+    expect(screen.queryByText("No completed runs yet")).toBeNull();
+  });
+
+  it("retries a transient exact-result failure and then succeeds", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(errorResponse("Temporarily unavailable", 503))
+      .mockResolvedValueOnce(jsonResponse(runHistoryDetailFixtureFor(acceptedRunId)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() =>
+      useAcceptedRunResult({ status: "unavailable", runId: acceptedRunId }),
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.result?.status).toBe("unavailable");
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    expect(result.current.result).toMatchObject({ status: "available", runId: acceptedRunId });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("honors initial server retry guidance before the first client read", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(runHistoryDetailFixtureFor(acceptedRunId)));
+    vi.stubGlobal("fetch", fetchMock);
+    const initialResult = acceptedRunResultFromRead(acceptedRunId, {
+      status: "unavailable",
+      httpStatus: 503,
+      retryAfterMs: 10_000,
+    });
+    const { result } = renderHook(() => useAcceptedRunResult(initialResult));
+
+    await act(async () => vi.advanceTimersByTimeAsync(9_999));
+    expect(fetchMock).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.result).toMatchObject({ status: "available", runId: acceptedRunId });
+  });
+
+  it("exhausts missing-result retries and offers a manual retry", async () => {
+    vi.useFakeTimers();
+    const finalRequest = deferred<Response>();
+    const fetchMock = vi.fn(() =>
+      fetchMock.mock.calls.length === 6
+        ? finalRequest.promise
+        : Promise.resolve(resourceNotFoundResponse(acceptedRunId)),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", FakeEventSource);
+    render(
+      createElement(OperatorDashboard, {
+        acceptedResult: { status: "awaiting", runId: acceptedRunId },
+        initialRecovery: available(dashboardRecoveryFixture()),
+      }),
+    );
+
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+    }
+
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(screen.queryByRole("button", { name: "Check accepted result again" })).toBeNull();
+
+    finalRequest.resolve(resourceNotFoundResponse(acceptedRunId));
+    await act(async () => finalRequest.promise);
+    const retry = screen.getByRole("button", { name: "Check accepted result again" });
+    fireEvent.click(retry);
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it("ignores a late result after the accepted context changes", async () => {
+    vi.useFakeTimers();
+    const oldRequest = deferred<Response>();
+    const fetchMock = vi.fn((input: string | URL | Request) =>
+      String(input) === publicRunHistoryDetailProxyPath(acceptedRunId)
+        ? oldRequest.promise
+        : Promise.resolve(jsonResponse(runHistoryDetailFixtureFor(newerRunId))),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { result, rerender } = renderHook(
+      ({ runId }) => useAcceptedRunResult({ status: "awaiting", runId }),
+      { initialProps: { runId: acceptedRunId } },
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    rerender({ runId: newerRunId });
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(result.current.result).toMatchObject({ status: "available", runId: newerRunId });
+
+    oldRequest.resolve(jsonResponse(runHistoryDetailFixtureFor(acceptedRunId)));
+    await act(async () => oldRequest.promise);
+    expect(result.current.result).toMatchObject({ status: "available", runId: newerRunId });
+  });
+
+  it("keeps a newer shared live run separate from the accepted result", () => {
+    const currentRun = demoRunFixture({ status: "active", runId: newerRunId });
+    const output = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        acceptedResult: {
+          status: "available",
+          runId: acceptedRunId,
+          presetName: "Accepted B",
+          endedAt: "2026-06-20T00:00:10.000Z",
+        },
+        initialRecovery: available(dashboardRecoveryFixture({ currentRun })),
+      }),
+    );
+
+    expect(output).toContain(`href="/run-history/${acceptedRunId}"`);
+    expect(output).toContain(`Live panels are following shared run <code>${newerRunId}</code>`);
+    expect(output).toContain("The surge is under way");
+  });
+});
+
 describe("web page smoke coverage", () => {
   it("renders the routed page surfaces with stubbed data reads", async () => {
     vi.stubGlobal("EventSource", undefined);
@@ -1590,6 +1803,17 @@ describe("web page smoke coverage", () => {
     expect(aboutMarkup.match(/k6/g)).toHaveLength(1);
     render(createElement(AboutPage));
     expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+  });
+
+  it("rejects a malformed accepted run query at the Watch page boundary", async () => {
+    const output = renderToStaticMarkup(
+      await WatchPage({ searchParams: Promise.resolve({ acceptedRunId: "not-a-uuid" }) }),
+    );
+
+    expect(output).toContain("Invalid run context");
+    expect(output).toContain("No result has been selected");
+    expect(getRunHistoryDetail).not.toHaveBeenCalled();
+    expect(getRunHistoryPage).not.toHaveBeenCalled();
   });
 });
 
@@ -1647,6 +1871,31 @@ function jsonResponse(payload: unknown, status = 200): Response {
     status,
     headers: { "content-type": "application/json" },
   });
+}
+
+function errorResponse(message: string, status: number): Response {
+  return jsonResponse(
+    errorPayloadSchema.parse({
+      code: "backend_unavailable",
+      message,
+      correlationId: "accepted-result-error",
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    status,
+  );
+}
+
+function resourceNotFoundResponse(runId: string): Response {
+  return jsonResponse(
+    errorPayloadSchema.parse({
+      code: "resource_not_found",
+      message: "Run history detail was not found.",
+      details: { runId },
+      correlationId: "accepted-result-missing",
+      timestamp: "2026-06-20T00:00:10.000Z",
+    }),
+    404,
+  );
 }
 
 function runConflictResponse(conflictReason: "active_run_exists" | "reset_incomplete"): Response {
@@ -2023,5 +2272,14 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
     },
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function runHistoryDetailFixtureFor(runId: string): PublicRunHistoryDetailResponse {
+  const detail = runHistoryDetailFixture();
+  return {
+    ...detail,
+    summary: { ...detail.summary, runId },
+    run: { ...detail.run, runId },
   };
 }
