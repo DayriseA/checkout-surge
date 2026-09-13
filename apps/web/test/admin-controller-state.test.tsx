@@ -87,6 +87,108 @@ afterEach(() => {
 });
 
 describe("admin feature controllers", () => {
+  describe.each([
+    ["preset save", "Save preset", null, adminPresetSaveProxyPath, "Buyer count", "1234"],
+    [
+      "policy save",
+      "Save public policy",
+      "Save public policy",
+      adminPublicRuntimePolicyProxyPath,
+      "Budget window seconds",
+      "301",
+    ],
+    [
+      "ERP apply",
+      "Apply ERP controls",
+      "Apply ERP controls",
+      adminErpChaosProxyPath,
+      "Latency ms",
+      "123",
+    ],
+    ["preset archive", "Archive preset", "Archive preset", adminPresetListProxyPath, null, null],
+    [
+      "admin start",
+      "Run once with these values",
+      "Start run",
+      adminDemoRunStartProxyPath,
+      null,
+      null,
+    ],
+    [
+      "cleanup",
+      "Cleanup runs",
+      "Cleanup generated runs",
+      adminMaintenanceCleanupRunsProxyPath,
+      null,
+      null,
+    ],
+  ] as const)("QA transport: %s", (kind, action, confirmation, path, field, value) => {
+    it.each([
+      "lost",
+      "malformed",
+    ] as const)("releases pending after a %s response without claiming success or retrying", async (failure) => {
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === path) {
+          if (failure === "lost") throw new Error("QA response lost");
+          return new Response("not-json", { status: 200 });
+        }
+        if (String(input) === dashboardRecoveryProxyPath) {
+          return jsonResponse({ ...recoveryFixture(null), revision: 2 });
+        }
+        throw new Error(`Unexpected QA request: ${String(input)}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      if (kind === "policy save") {
+        render(
+          <AdminRuntimePolicyController
+            initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+          />,
+        );
+      } else if (kind === "ERP apply") {
+        render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+      } else if (kind === "cleanup") {
+        render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+      } else {
+        render(
+          <AdminPresetController
+            initialPresets={
+              kind === "preset archive"
+                ? available<AdminPresetListResponse>({
+                    presets: [archivablePresetFixture("qa-transport", "QA Transport")],
+                    timestamp: "2026-06-20T00:00:10.000Z",
+                  })
+                : presetListFixture("Custom")
+            }
+            recovery={available(recoveryFixture(null))}
+          />,
+        );
+      }
+      if (field && value) {
+        await user.clear(screen.getByLabelText(field));
+        await user.type(screen.getByLabelText(field), value);
+      }
+      await user.click(screen.getByRole("button", { name: action }));
+      if (confirmation) await user.click(confirmationButton(confirmation));
+      expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
+      await waitFor(() => {
+        const retry = confirmation
+          ? confirmationButton(confirmation)
+          : screen.getByRole("button", { name: action });
+        expect((retry as HTMLButtonElement).disabled).toBe(false);
+      });
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === path)).toHaveLength(1);
+      expect(
+        screen.queryByText(
+          /Preset saved\.|Admin run accepted\.|Global ERP fault injection updated\.|Cleanup complete:/,
+        ),
+      ).toBeNull();
+      if (field) expect((screen.getByLabelText(field) as HTMLInputElement).value).toBe(value);
+      if (kind === "preset save") expect(screen.getByText("Unsaved")).toBeTruthy();
+      if (kind === "preset archive") expect(screen.getByRole("alertdialog")).toBeTruthy();
+    });
+  });
+
   it("confirms generated-run cleanup before sending its exact request", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
       String(input) === adminMaintenanceCleanupRunsProxyPath
@@ -1176,10 +1278,16 @@ describe("admin feature controllers", () => {
     expect(screen.queryByText("Reset failed.")).toBeNull();
   });
 
-  it("reconciles recovery even when the reset response is unavailable", async () => {
+  it.each([
+    "unavailable",
+    "lost",
+    "malformed",
+  ] as const)("reconciles recovery even when the reset response is %s", async (failure) => {
     const knownRecoveryPath = `${dashboardRecoveryProxyPath}?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=33333333-3333-4333-8333-333333333333`;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       if (String(input) === adminDemoResetProxyPath) {
+        if (failure === "lost") throw new Error("QA reset response lost");
+        if (failure === "malformed") return new Response("not-json", { status: 200 });
         return canonicalErrorResponse("Reset outcome is uncertain.", 503);
       }
       if (String(input) === knownRecoveryPath) {
@@ -1203,7 +1311,9 @@ describe("admin feature controllers", () => {
           .disabled,
       ).toBe(false),
     );
-    expect(await screen.findByText("Something didn't work on our side")).toBeTruthy();
+    expect(
+      (await screen.findAllByText("Something didn't work on our side")).length,
+    ).toBeGreaterThan(0);
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoResetProxyPath,
       knownRecoveryPath,

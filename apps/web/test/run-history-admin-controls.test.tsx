@@ -188,11 +188,12 @@ describe("RunHistoryAdminControls", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("keeps network and HTTP failures open and retryable", async () => {
+  it("keeps network, malformed-success and HTTP failures open and retryable", async () => {
     const user = userEvent.setup();
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new Error("Network disconnected"))
+      .mockResolvedValueOnce(new Response("not-json", { status: 200 }))
       .mockResolvedValueOnce(Response.json({ message: "Deletion refused" }, { status: 503 }))
       .mockResolvedValueOnce(successResponse());
     vi.stubGlobal("fetch", fetchMock);
@@ -211,8 +212,13 @@ describe("RunHistoryAdminControls", () => {
     );
     expect(screen.getByText("Technical details")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Delete run summary" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Something didn't work on our side",
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Delete run summary" }));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(refresh).toHaveBeenCalledOnce();
   });
 

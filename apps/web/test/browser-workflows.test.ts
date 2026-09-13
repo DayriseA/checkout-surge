@@ -134,6 +134,47 @@ afterEach(() => {
 });
 
 describe("public browser starts", () => {
+  it.each([
+    ["curated", "lost"],
+    ["curated", "malformed"],
+    ["custom", "lost"],
+    ["custom", "malformed"],
+  ] as const)("releases %s pending state after a %s start response without claiming acceptance", async (entry, failure) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === demoRunStartProxyPath) {
+        if (failure === "lost") throw new Error("QA response lost");
+        return new Response("not-json", { status: 202 });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    if (entry === "custom") await user.click(screen.getByText("Build your own run"));
+    const start = screen.getByRole("button", {
+      name: entry === "custom" ? "Start custom run" : "Start Preview 1k",
+    }) as HTMLButtonElement;
+    await user.click(start);
+    await waitFor(() => expect(start.disabled).toBe(false));
+    expect(screen.queryByText("Run accepted.")).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+    if (entry === "custom") {
+      const summary = await screen.findByRole("alert", { name: "Operation failure" });
+      expect(document.activeElement).toBe(summary);
+    } else {
+      expect(await screen.findByRole("alert")).toBeTruthy();
+      expect(screen.queryByRole("alert", { name: "Operation failure" })).toBeNull();
+    }
+  });
+
   it("blocks repeated starts while an active-run conflict converges to Watch", async () => {
     const recovery = deferred<Response>();
     const fetchMock = vi.fn((input: string | URL | Request) => {

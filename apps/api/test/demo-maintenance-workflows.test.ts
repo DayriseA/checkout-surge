@@ -1944,6 +1944,46 @@ describe("focused demo maintenance workflows", () => {
   });
 
   describe("old generated-run retention workflow", () => {
+    it("preserves a terminal run exactly at the retention cutoff and deletes one millisecond older", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      for (const [runId, saleOfferId, createdAt] of [
+        [ids.completedRun, ids.completedOffer, "2026-06-23T23:59:59.999Z"],
+        [ids.failedRun, ids.failedOffer, "2026-06-24T00:00:00.000Z"],
+        [ids.activeRun, ids.activeOffer, "2026-06-24T12:00:00.000Z"],
+      ] as const) {
+        await seedRun(db, redisClient, {
+          runId,
+          saleOfferId,
+          createdAt: new Date(createdAt),
+          status: "completed",
+          trafficStatus: "succeeded",
+          failureReason: null,
+          runInventoryStatus: "closed",
+        });
+      }
+      const service = createIntegratedRetentionService({
+        db,
+        redis: redisClient,
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+        now: () => new Date("2026-06-25T00:00:00.000Z"),
+      });
+      const result = await service.cleanupOldRuns({
+        keepLatest: 1,
+        olderThanDays: 1,
+        correlationId: "qa-exact-retention-cutoff",
+      });
+      expect(result.deletedRunCount).toBe(1);
+      expect(result.cutoffBefore).toBe("2026-06-24T00:00:00.000Z");
+      expect((await db.select().from(demoRuns)).map((run) => run.id).sort()).toEqual(
+        [ids.failedRun, ids.activeRun].sort(),
+      );
+      expect(await redisClient.exists(inventoryKeys(ids.failedOffer).state)).toBe(1);
+      expect(await redisClient.exists(inventoryKeys(ids.completedOffer).state)).toBe(0);
+    });
+
     it("cleans eligible terminal generated-run sale offers through sale contexts", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
