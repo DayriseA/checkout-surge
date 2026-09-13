@@ -26,7 +26,7 @@ const toneMarkers: Record<PresentationTone, string> = {
 export function StatusPill({ status }: StatusPillProps) {
   return (
     <span
-      className={`inline-flex min-h-7 items-center gap-1 whitespace-nowrap rounded-full px-2 text-xs font-bold ${toneClassNames[status.tone]}`}
+      className={`inline-flex min-h-7 items-center gap-1 rounded-full px-2 py-1 text-xs font-bold ${toneClassNames[status.tone]}`}
     >
       <span aria-hidden="true">{toneMarkers[status.tone]}</span>
       {status.label}

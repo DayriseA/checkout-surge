@@ -264,6 +264,12 @@ describe("run history", () => {
     expect(markup).toContain("Physical queue");
     expect(markup).toContain("orders-process");
     expect(markup).toContain("Traffic delivery: All planned attempts dispatched");
+    const document = new DOMParser().parseFromString(markup, "text/html");
+    const deliveryPill = [...document.querySelectorAll("span")].find((element) =>
+      element.textContent?.includes("Traffic delivery: All planned attempts dispatched"),
+    );
+    expect(deliveryPill).toBeDefined();
+    expect([...(deliveryPill?.classList ?? [])]).not.toContain("whitespace-nowrap");
     expect(markup).toContain("Lifecycle and final inventory");
     expect(markup).toContain("Run ended");
     expect(markup).toContain("Technical details");
