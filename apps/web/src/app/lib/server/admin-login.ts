@@ -1,5 +1,4 @@
 import { correlationIdHeaderName } from "@checkout-surge/logger";
-import { adminPassphraseHeaderName } from "../control-paths";
 import type { AdminLoginLimiter, LoginAdmission } from "./admin-login-limiter";
 import { requireAdminOrigin } from "./admin-origin";
 import { createAdminSessionToken, verifyAdminPassphrase } from "./admin-session";
@@ -31,7 +30,7 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
     const originFailure = dependencies.requireOrigin(ctx);
     if (originFailure) return originFailure;
 
-    const candidate = request.headers.get(adminPassphraseHeaderName);
+    const candidate = await readPassphraseFromJsonBody(request);
     if (candidate === null) return invalidCredential(ctx);
 
     const now = dependencies.now();
@@ -89,6 +88,17 @@ export const defaultAdminLoginDependencies = { requireOrigin: requireAdminOrigin
 
 function invalidCredential(ctx: ProxyRequestContext): Response {
   return jsonError(ctx, 401, "admin_passphrase_required", "A valid admin passphrase is required.");
+}
+
+async function readPassphraseFromJsonBody(request: Request): Promise<string | null> {
+  try {
+    const body: unknown = await request.json();
+    if (typeof body !== "object" || body === null) return null;
+    const passphrase = (body as Record<string, unknown>).passphrase;
+    return typeof passphrase === "string" ? passphrase : null;
+  } catch {
+    return null;
+  }
 }
 
 function limiterUnavailable(ctx: ProxyRequestContext): Response {

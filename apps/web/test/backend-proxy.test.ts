@@ -564,7 +564,8 @@ describe("backend proxy request context", () => {
     const response = await handler(
       new Request("http://dashboard.local/api/admin/session", {
         method: "POST",
-        headers: { origin: "http://dashboard.local", [adminPassphraseHeaderName]: "admin-pass" },
+        headers: { origin: "http://dashboard.local" },
+        body: JSON.stringify({ passphrase: "admin-pass" }),
       }),
     );
 

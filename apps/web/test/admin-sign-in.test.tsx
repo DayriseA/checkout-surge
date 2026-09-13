@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminSignIn, parseLoginRetryAfterMs } from "../src/app/components/admin/admin-sign-in.js";
 import { AdminSignOut } from "../src/app/components/admin-nav.js";
-import { adminPassphraseHeaderName, adminSessionProxyPath } from "../src/app/lib/control-paths.js";
+import { adminSessionProxyPath } from "../src/app/lib/control-paths.js";
 
 const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
 
@@ -26,7 +26,7 @@ describe("AdminSignIn", () => {
     expect(parseLoginRetryAfterMs("600")).toBe(600_000);
   });
 
-  it("posts the exact passphrase header, clears the secret, and refreshes after success", async () => {
+  it("posts the passphrase as a JSON body, clears the secret, and refreshes after success", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       jsonResponse({ authenticated: true }),
     );
@@ -34,7 +34,7 @@ describe("AdminSignIn", () => {
     const user = userEvent.setup();
     render(<AdminSignIn />);
 
-    await user.type(screen.getByLabelText("Admin passphrase"), "admin-pass");
+    await user.type(screen.getByLabelText("Admin passphrase"), "测试");
     await user.keyboard("{Enter}");
 
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
@@ -44,9 +44,34 @@ describe("AdminSignIn", () => {
     expect(init).toMatchObject({
       method: "POST",
       cache: "no-store",
-      headers: { [adminPassphraseHeaderName]: "admin-pass" },
+      headers: { "content-type": "application/json" },
     });
+    expect(JSON.parse(String(init?.body))).toEqual({ passphrase: "测试" });
     expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows the failure alert when the sign-in request itself throws", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Cannot convert argument to a ByteString");
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AdminSignIn />);
+
+    await user.type(screen.getByLabelText("Admin passphrase"), "测试");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+
+    expect(await screen.findByText("Admin sign-in failed.")).toBeTruthy();
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).not.toContain("测试");
+    const button = screen.getByRole("button", { name: "Sign in" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    const field = screen.getByLabelText("Admin passphrase") as HTMLInputElement;
+    expect(field.disabled).toBe(false);
+    expect(field.value).toBe("测试");
+    expect(navigation.refresh).not.toHaveBeenCalled();
   });
 
   it("shows a clear pending state while sign-in is in progress", async () => {

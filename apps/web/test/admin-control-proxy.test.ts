@@ -406,10 +406,8 @@ describe("dashboard control proxy routes", () => {
     const response = await createAdminSession(
       new Request("http://dashboard.local/api/admin/session", {
         method: "POST",
-        headers: {
-          origin: "http://dashboard.local",
-          [adminPassphraseHeaderName]: "admin-pass",
-        },
+        headers: { origin: "http://dashboard.local" },
+        body: JSON.stringify({ passphrase: "admin-pass" }),
       }),
     );
     const payload = await response.json();
@@ -1071,10 +1069,8 @@ async function adminSessionCookie(): Promise<string> {
   const response = await createAdminSession(
     new Request("http://dashboard.local/api/admin/session", {
       method: "POST",
-      headers: {
-        origin: "http://dashboard.local",
-        [adminPassphraseHeaderName]: "admin-pass",
-      },
+      headers: { origin: "http://dashboard.local" },
+      body: JSON.stringify({ passphrase: "admin-pass" }),
     }),
   );
   const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";

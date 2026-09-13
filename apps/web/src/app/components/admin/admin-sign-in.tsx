@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { adminPassphraseHeaderName, adminSessionProxyPath } from "../../lib/control-paths";
+import { adminSessionProxyPath } from "../../lib/control-paths";
 import { inputClassName, primaryButtonClassName } from "../control-styles";
 
 const maximumTimeoutMs = 2_147_483_647;
@@ -39,7 +39,8 @@ export function AdminSignIn() {
       const response = await fetch(adminSessionProxyPath, {
         method: "POST",
         cache: "no-store",
-        headers: { [adminPassphraseHeaderName]: passphrase },
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase }),
       });
       await response.json().catch(() => null);
       if (!response.ok) {
@@ -54,6 +55,8 @@ export function AdminSignIn() {
       }
       setPassphrase("");
       router.refresh();
+    } catch {
+      setError("Admin sign-in failed.");
     } finally {
       setIsPending(false);
     }

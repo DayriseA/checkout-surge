@@ -237,10 +237,8 @@ describe("admin login workflow", () => {
       const denied = await handler(
         new Request("https://dashboard.local/api/admin/session", {
           method: "POST",
-          headers: {
-            ...(origin === undefined ? {} : { origin }),
-            "x-admin-passphrase": "secret",
-          },
+          headers: origin === undefined ? {} : { origin },
+          body: JSON.stringify({ passphrase: "secret" }),
         }),
       );
       expect(denied.status).toBe(403);
@@ -249,7 +247,8 @@ describe("admin login workflow", () => {
     const accepted = await handler(
       new Request("https://dashboard.local/api/admin/session", {
         method: "POST",
-        headers: { origin: "https://dashboard.local", "x-admin-passphrase": "secret" },
+        headers: { origin: "https://dashboard.local" },
+        body: JSON.stringify({ passphrase: "secret" }),
       }),
     );
     expect(accepted.status).toBe(200);
@@ -266,9 +265,12 @@ describe("admin login workflow", () => {
       sessionMaxAgeSeconds: 60,
       secureCookie: false,
     }));
-    const request = new Request("http://dashboard.local", {
-      headers: { "x-admin-passphrase": "candidate-secret" },
-    });
+    const request = () =>
+      new Request("http://dashboard.local", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "candidate-secret" }),
+      });
     const limited = createAdminLoginHandler({
       limiter: () => ({
         admit: vi.fn().mockResolvedValue({ outcome: "limited", retryAfterSeconds: 7 }),
@@ -278,7 +280,7 @@ describe("admin login workflow", () => {
       now: () => new Date(0),
       requireOrigin: () => null,
     });
-    const limitedResponse = await limited(request);
+    const limitedResponse = await limited(request());
     expect(limitedResponse.status).toBe(429);
     expect(limitedResponse.headers.get("retry-after")).toBe("7");
     const limitedPayload = await limitedResponse.json();
@@ -293,7 +295,7 @@ describe("admin login workflow", () => {
       now: () => new Date(0),
       requireOrigin: () => null,
     });
-    const unavailableResponse = await unavailable(request);
+    const unavailableResponse = await unavailable(request());
     expect(unavailableResponse.status).toBe(503);
     await expect(unavailableResponse.json()).resolves.toMatchObject({
       code: "service_unavailable",
@@ -318,7 +320,9 @@ describe("admin login workflow", () => {
     const absentResponse = await handler(new Request("http://dashboard.local"));
     const response = await handler(
       new Request("http://dashboard.local", {
-        headers: { "x-admin-passphrase": "candidate-secret" },
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "candidate-secret" }),
       }),
     );
     expect(absentResponse.status).toBe(401);
@@ -361,7 +365,9 @@ describe("admin login workflow", () => {
     });
     const response = await handler(
       new Request("http://dashboard.local", {
-        headers: { "x-admin-passphrase": "candidate" },
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "candidate" }),
       }),
     );
     expect(response.status).toBe(503);
@@ -394,7 +400,9 @@ describe("admin login workflow", () => {
     });
     const response = await handler(
       new Request(origin, {
-        headers: { "x-admin-passphrase": "candidate" },
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "candidate" }),
       }),
     );
     expect(response.headers.get("set-cookie")?.includes("; Secure")).toBe(secure);
@@ -414,10 +422,73 @@ describe("admin login workflow", () => {
       requireOrigin: () => null,
     });
     const response = await handler(
-      new Request("http://dashboard.local", { headers: { "x-admin-passphrase": "candidate" } }),
+      new Request("http://dashboard.local", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "candidate" }),
+      }),
     );
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({ code: "service_misconfigured" });
+  });
+
+  it("rejects non-JSON and non-string credential bodies before limiter admission", async () => {
+    const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
+    const handler = createAdminLoginHandler({
+      limiter: () => ({ admit }),
+      resolveClient: () => "unknown",
+      config: () => ({
+        passphrase: "expected-secret",
+        sessionSecret: "signing-secret",
+        sessionMaxAgeSeconds: 60,
+        secureCookie: false,
+      }),
+      now: () => new Date(0),
+      requireOrigin: () => null,
+    });
+    const notJson = await handler(
+      new Request("http://dashboard.local", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "not-json",
+      }),
+    );
+    const nonString = await handler(
+      new Request("http://dashboard.local", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: 123 }),
+      }),
+    );
+    expect(notJson.status).toBe(401);
+    expect(nonString.status).toBe(401);
+    await expect(notJson.json()).resolves.toMatchObject({ code: "admin_passphrase_required" });
+    await expect(nonString.json()).resolves.toMatchObject({ code: "admin_passphrase_required" });
+    expect(admit).not.toHaveBeenCalled();
+  });
+
+  it("signs in with a non-ASCII configured passphrase sent as a JSON body", async () => {
+    const handler = createAdminLoginHandler({
+      limiter: () => ({ admit: vi.fn().mockResolvedValue({ outcome: "admitted" as const }) }),
+      resolveClient: () => "unknown",
+      config: () => ({
+        passphrase: "密码🔒",
+        sessionSecret: "signing-secret",
+        sessionMaxAgeSeconds: 60,
+        secureCookie: false,
+      }),
+      now: () => new Date(0),
+      requireOrigin: () => null,
+    });
+    const response = await handler(
+      new Request("http://dashboard.local/api/admin/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ passphrase: "密码🔒" }),
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toContain("checkout_surge_admin_session=");
   });
 });
 
