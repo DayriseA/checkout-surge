@@ -63,6 +63,10 @@ describe("DashboardNav", () => {
     const panel = document.getElementById(panelId as string);
     expect(panel).not.toBeNull();
     expect(panel?.id).toBe(panelId);
+    expect(panel?.classList).toContain("max-[900px]:max-h-[calc(100dvh-5rem)]");
+    expect(panel?.classList).toContain("max-[900px]:overflow-y-auto");
+    expect(panel?.classList).toContain("max-[900px]:flex-nowrap");
+    expect(panel?.classList).toContain("max-[900px]:justify-start");
     const links = within(panel as HTMLElement).getAllByRole("link");
     for (const link of links) {
       expect(link.classList).toContain("min-h-11");

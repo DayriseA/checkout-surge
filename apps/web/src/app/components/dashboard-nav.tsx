@@ -66,7 +66,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
         Menu
       </button>
       <div
-        className={`flex flex-wrap justify-end gap-1 max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-20 max-[900px]:mt-2 max-[900px]:min-w-52 max-[900px]:flex-col max-[900px]:items-stretch max-[900px]:rounded-lg max-[900px]:border max-[900px]:border-border max-[900px]:bg-surface max-[900px]:p-2 max-[900px]:shadow-lg ${
+        className={`flex flex-wrap justify-end gap-1 max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-20 max-[900px]:mt-2 max-[900px]:min-w-52 max-[900px]:flex-col max-[900px]:flex-nowrap max-[900px]:items-stretch max-[900px]:justify-start max-[900px]:max-h-[calc(100dvh-5rem)] max-[900px]:overflow-y-auto max-[900px]:rounded-lg max-[900px]:border max-[900px]:border-border max-[900px]:bg-surface max-[900px]:p-2 max-[900px]:shadow-lg ${
           open ? "max-[900px]:flex" : "max-[900px]:hidden"
         }`}
         id="dashboard-navigation-panel"
