@@ -96,6 +96,15 @@ describe("RunHistoryAdminControls", () => {
     expect(deleteSelectedButton.classList).toContain("min-h-11");
     expect(deleteSelectedButton.querySelector("svg")).toBeNull();
     expect(screen.getByRole("button", { name: "Clear" }).classList).toContain("min-h-11");
+    const toolbar = screen.getByRole("button", { name: "Clear" }).parentElement;
+    expect(toolbar).toBeTruthy();
+    expect(toolbar?.classList).toContain("sticky");
+    expect(toolbar?.classList).not.toContain("fixed");
+    const deleteAllButton = screen.getByRole("button", { name: "Delete all run summaries" });
+    expect(
+      deleteAllButton.compareDocumentPosition(toolbar as Element) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();
