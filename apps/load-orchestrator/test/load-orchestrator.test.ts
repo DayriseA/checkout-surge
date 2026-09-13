@@ -1456,6 +1456,178 @@ describe("load-orchestrator k6 mapping", () => {
 });
 
 describe("SpawnK6Runner completion reporting", () => {
+  it("persists a failed report and delivers it when shutdown interrupts an executing run", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-shutdown-report-"));
+    const store = new FileExecutionStore(directory);
+    const fixture = createK6ProcessFixture();
+    const sendCompletion = vi.fn(async () => undefined);
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion },
+    });
+    try {
+      await runner.start(startRequest);
+      const closing = runner.close();
+      await waitForCondition(
+        () => vi.mocked(fixture.child.kill).mock.calls.length === 1,
+        "shutdown signal",
+      );
+      fixture.child.emit("close", null, "SIGTERM");
+      await closing;
+
+      expect(sendCompletion).toHaveBeenCalledTimes(1);
+      expect(sendCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: startRequest.runId,
+          status: "failed",
+          errorMessage: "load_orchestrator_shutdown_before_k6_completion",
+        }),
+      );
+      expect(await store.read()).toMatchObject({
+        state: "completed",
+        completion: { status: "failed" },
+      });
+      expect(runner.currentRunId()).toBeNull();
+      expect(fixture.child.kill).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the shutdown interruption report for startup delivery when the API is unreachable", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-shutdown-recovery-"));
+    const store = new FileExecutionStore(directory);
+    const fixture = createK6ProcessFixture();
+    const failedDelivery = vi.fn(async () => {
+      throw new Error("API unavailable");
+    });
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      completionDeliveryRetryIntervalMs: 60_000,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion: failedDelivery },
+    });
+    try {
+      await runner.start(startRequest);
+      const closing = runner.close();
+      await waitForCondition(
+        () => vi.mocked(fixture.child.kill).mock.calls.length === 1,
+        "shutdown signal",
+      );
+      fixture.child.emit("close", null, "SIGTERM");
+      await closing;
+
+      expect(failedDelivery).toHaveBeenCalledTimes(1);
+      expect(await store.read()).toMatchObject({
+        state: "completion_pending",
+        completion: {
+          errorMessage: "load_orchestrator_shutdown_before_k6_completion",
+        },
+      });
+
+      const delivered: TrafficCompletionReport[] = [];
+      const restarted = new SpawnK6Runner({
+        k6Binary: "k6",
+        executionStore: store,
+        logger: createSilentLogger("load-orchestrator"),
+        apiClient: {
+          sendMetrics: async () => undefined,
+          sendCompletion: async (report) => {
+            delivered.push(report);
+          },
+        },
+      });
+      await restarted.initialize();
+      await waitForCondition(
+        async () => (await store.read())?.state === "completed",
+        "shutdown report startup delivery",
+      );
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]).toMatchObject({
+        runId: startRequest.runId,
+        status: "failed",
+        errorMessage: "load_orchestrator_shutdown_before_k6_completion",
+      });
+      expect(delivered).not.toContainEqual(
+        expect.objectContaining({
+          errorMessage: "load_orchestrator_restarted_before_k6_completion",
+        }),
+      );
+      await restarted.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for executing-state publication before persisting a shutdown interruption", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-shutdown-publish-race-"));
+    let releaseUpdate: () => void = () => undefined;
+    const updateGate = new Promise<void>((resolve) => {
+      releaseUpdate = resolve;
+    });
+    class GatedExecutingUpdateStore extends FileExecutionStore {
+      updateStarted = false;
+
+      override async update(execution: Parameters<FileExecutionStore["update"]>[0]) {
+        if (execution.state === "executing") {
+          this.updateStarted = true;
+          await updateGate;
+        }
+        return super.update(execution);
+      }
+    }
+    const store = new GatedExecutingUpdateStore(directory);
+    const fixture = createK6ProcessFixture();
+    const sendCompletion = vi.fn(async () => undefined);
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      executionStore: store,
+      logger: createSilentLogger("load-orchestrator"),
+      spawnProcess: fixture.spawnProcess,
+      apiClient: { sendMetrics: async () => undefined, sendCompletion },
+    });
+    try {
+      const start = runner.start(startRequest);
+      await waitForCondition(() => store.updateStarted, "executing-state publication");
+      const closing = runner.close();
+      await waitForCondition(
+        () => vi.mocked(fixture.child.kill).mock.calls.length === 1,
+        "shutdown signal",
+      );
+      fixture.child.emit("close", null, "SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(sendCompletion).not.toHaveBeenCalled();
+      expect((await store.read())?.state).toBe("accepted");
+      releaseUpdate();
+      await expect(start).rejects.toThrow("cancelled during preparation");
+      await closing;
+
+      expect(sendCompletion).toHaveBeenCalledTimes(1);
+      expect(sendCompletion).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: startRequest.runId,
+          status: "failed",
+          errorMessage: "load_orchestrator_shutdown_before_k6_completion",
+        }),
+      );
+      expect(await store.read()).toMatchObject({
+        state: "completed",
+        completion: {
+          status: "failed",
+          errorMessage: "load_orchestrator_shutdown_before_k6_completion",
+        },
+      });
+    } finally {
+      releaseUpdate();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("does not restart traffic when the same run replays a rejected completion", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-rejected-runner-replay-"));
     const store = new FileExecutionStore(directory);

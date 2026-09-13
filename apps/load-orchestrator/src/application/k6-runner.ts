@@ -62,6 +62,7 @@ export class SpawnK6Runner implements K6Runner {
   } | null = null;
   private closing = false;
   private cancellingRunId: string | null = null;
+  private shutdownInterruptionRunId: string | null = null;
   private cancellationRequiresJournalRelease = false;
   private cancellationOperation: Promise<"aborted" | "natural_completion"> | null = null;
   private readonly completionTasks = new Set<Promise<void>>();
@@ -112,20 +113,11 @@ export class SpawnK6Runner implements K6Runner {
   private async performInitialization(): Promise<void> {
     const execution = await this.options.executionStore.read();
     if (execution?.state === "accepted" || execution?.state === "executing") {
-      const generated = generateK6Script(execution.request);
-      const accumulator = new K6RunAccumulator({
-        runId: execution.request.runId,
-        correlationId: execution.request.correlationId,
-        plannedRequests: generated.plannedRequests,
-        startedAt: new Date(execution.acceptedAt),
-        executionPlan: generated.executionPlan,
-      });
       await this.options.completionDelivery.persist(
-        accumulator.completionReport({
-          status: "failed",
-          errorMessage: "load_orchestrator_restarted_before_k6_completion",
-          completedAt: this.now(),
-        }),
+        this.buildInterruptedExecutionReport(
+          execution,
+          "load_orchestrator_restarted_before_k6_completion",
+        ),
       );
     }
     await this.options.completionDelivery.start();
@@ -223,8 +215,19 @@ export class SpawnK6Runner implements K6Runner {
       this.cancellingRunId ?? this.supervisor.currentRunId() ?? this.currentPreparation?.runId;
     let outcome: "aborted" | "natural_completion" | null = null;
     if (runId) {
-      const cancellation = this.cancellationOperation ?? this.performCancellation(runId);
-      if (!this.cancellationOperation) this.cancellationOperation = cancellation;
+      let cancellation = this.cancellationOperation;
+      if (!cancellation) {
+        if (this.shutdownInterruptionRunId === runId) {
+          cancellation = this.interruptExecutionForShutdown(runId, preparation);
+        } else if (this.cancellingRunId || this.supervisor.currentRunId() !== runId) {
+          cancellation = this.performCancellation(runId);
+        } else {
+          this.cancellingRunId = runId;
+          this.shutdownInterruptionRunId = runId;
+          cancellation = this.interruptExecutionForShutdown(runId, preparation);
+        }
+        this.cancellationOperation = cancellation;
+      }
       outcome = await cancellation;
     }
     await this.supervisor.close();
@@ -234,6 +237,42 @@ export class SpawnK6Runner implements K6Runner {
     await Promise.allSettled([...this.completionTasks]);
     await this.options.completionDelivery.close();
     if (this.completionFailure) throw this.completionFailure;
+  }
+
+  private async interruptExecutionForShutdown(
+    runId: string,
+    preparation: Promise<K6ExecutionStart> | undefined,
+  ): Promise<"aborted" | "natural_completion"> {
+    try {
+      const cancellation = this.supervisor.cancel(runId);
+      if (this.supervisor.cancellationAccepted(runId)) this.markPreparationCancelled(runId);
+      const outcome = await cancellation;
+      if (outcome === "aborted") {
+        if (preparation) await Promise.allSettled([preparation]);
+        const execution = await this.options.executionStore.read();
+        if (execution?.state === "executing" && execution.request.runId === runId) {
+          try {
+            await this.options.completionDelivery.persist(
+              this.buildInterruptedExecutionReport(
+                execution,
+                "load_orchestrator_shutdown_before_k6_completion",
+              ),
+            );
+          } catch (error) {
+            this.completionFailure = error;
+          }
+        } else {
+          await this.options.executionStore.completeCancellation(runId);
+        }
+      }
+      this.cancellingRunId = null;
+      this.shutdownInterruptionRunId = null;
+      this.cancellationOperation = null;
+      return outcome;
+    } catch (error) {
+      this.cancellationOperation = null;
+      throw error;
+    }
   }
 
   async start(input: TrafficExecutionStartRequest): Promise<K6ExecutionStart> {
@@ -320,7 +359,9 @@ export class SpawnK6Runner implements K6Runner {
         throw error;
       }
       if (this.preparationCancelled(input.runId)) {
-        await this.options.executionStore.completeCancellation(input.runId);
+        if (this.shutdownInterruptionRunId !== input.runId) {
+          await this.options.executionStore.completeCancellation(input.runId);
+        }
         throw new CancellationRequestedError();
       }
       const completionTask = execution.completion.then(async (result) => {
@@ -357,7 +398,8 @@ export class SpawnK6Runner implements K6Runner {
       }
       if (
         (error instanceof CancellationRequestedError || error instanceof K6StartCancelledError) &&
-        acceptance.created
+        acceptance.created &&
+        this.shutdownInterruptionRunId !== input.runId
       ) {
         await this.options.executionStore.completeCancellation(input.runId);
       }
@@ -374,6 +416,20 @@ export class SpawnK6Runner implements K6Runner {
 
   private preparationCancelled(runId: string): boolean {
     return this.currentPreparation?.runId === runId && this.currentPreparation.cancelRequested;
+  }
+
+  private buildInterruptedExecutionReport(
+    execution: Pick<DurableExecution, "request" | "acceptedAt">,
+    errorMessage: string,
+  ) {
+    const generated = generateK6Script(execution.request);
+    return new K6RunAccumulator({
+      runId: execution.request.runId,
+      correlationId: execution.request.correlationId,
+      plannedRequests: generated.plannedRequests,
+      startedAt: new Date(execution.acceptedAt),
+      executionPlan: generated.executionPlan,
+    }).completionReport({ status: "failed", errorMessage, completedAt: this.now() });
   }
 
   private async persistPreparationFailure(
