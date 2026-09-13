@@ -406,6 +406,103 @@ describe("dashboard projection state", () => {
     expect(state.recovery).toEqual(available(current));
   });
 
+  it("accepts a newer foreign terminal projection from an accepted idle projection", () => {
+    const idle = idleProjection({ revision: 8, recoveredAt: "2026-06-20T00:00:30.000Z" });
+    const successor = runProjection({
+      revision: 1,
+      recoveredAt: "2026-06-20T00:00:31.000Z",
+      currentRun: completedRun({
+        runId: "22222222-2222-4222-8222-222222222222",
+        saleOfferId: "33333333-3333-4333-8333-333333333333",
+        startedAt: "2026-06-20T00:00:20.000Z",
+        trafficStartedAt: "2026-06-20T00:00:20.000Z",
+        trafficEndedAt: "2026-06-20T00:00:25.000Z",
+        finalizedAt: "2026-06-20T00:00:26.000Z",
+      }),
+    });
+
+    let state = receive(createDashboardProjectionState(available(idle)), successor);
+    expect(state.recovery).toEqual(available(successor));
+    expect(state.retainedTerminalRun).toMatchObject({
+      runId: "22222222-2222-4222-8222-222222222222",
+    });
+
+    const authoritativeIdle = idleProjection({
+      revision: 9,
+      recoveredAt: "2026-06-20T00:00:32.000Z",
+    });
+    state = receive(state, authoritativeIdle);
+    expect(state.recovery).toEqual(available(authoritativeIdle));
+    expect(state.retainedTerminalRun?.runId).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("rejects a foreign terminal from idle whose run started no later than the last accepted run", () => {
+    const successorStartedAt = "2026-06-20T00:00:20.000Z";
+    let state = receive(
+      createDashboardProjectionState(available(idleProjection())),
+      runProjection({
+        revision: 1,
+        recoveredAt: "2026-06-20T00:00:31.000Z",
+        currentRun: completedRun({
+          runId: "22222222-2222-4222-8222-222222222222",
+          saleOfferId: "33333333-3333-4333-8333-333333333333",
+          startedAt: successorStartedAt,
+          trafficStartedAt: successorStartedAt,
+          trafficEndedAt: "2026-06-20T00:00:25.000Z",
+          finalizedAt: "2026-06-20T00:00:26.000Z",
+        }),
+      }),
+    );
+    const authoritativeIdle = idleProjection({
+      revision: 9,
+      recoveredAt: "2026-06-20T00:00:32.000Z",
+    });
+    state = receive(state, authoritativeIdle);
+
+    const staleTerminal = (startedAt: string) =>
+      runProjection({
+        revision: 1,
+        recoveredAt: "2026-06-20T00:00:33.000Z",
+        currentRun: completedRun({
+          runId: "44444444-4444-4444-8444-444444444444",
+          saleOfferId: "55555555-5555-4555-8555-555555555555",
+          startedAt,
+          trafficStartedAt: startedAt,
+          trafficEndedAt: "2026-06-20T00:00:35.000Z",
+          finalizedAt: "2026-06-20T00:00:36.000Z",
+        }),
+      });
+    state = receive(state, staleTerminal(successorStartedAt));
+    state = receive(state, staleTerminal("2026-06-20T00:00:10.000Z"));
+
+    expect(state.recovery).toEqual(available(authoritativeIdle));
+    expect(state.retainedTerminalRun?.runId).toBe("22222222-2222-4222-8222-222222222222");
+  });
+
+  it("does not let an admin-reset terminal frame establish scope from an accepted idle projection", () => {
+    const idle = idleProjection({ revision: 8, recoveredAt: "2026-06-20T00:00:30.000Z" });
+    const resetRunId = "22222222-2222-4222-8222-222222222222";
+
+    const state = receive(
+      createDashboardProjectionState(available(idle)),
+      runProjection({
+        revision: 1,
+        recoveredAt: "2026-06-20T00:00:31.000Z",
+        currentRun: completedRun({
+          runId: resetRunId,
+          saleOfferId: "33333333-3333-4333-8333-333333333333",
+          startedAt: "2026-06-20T00:00:20.000Z",
+          trafficStartedAt: "2026-06-20T00:00:20.000Z",
+          trafficEndedAt: "2026-06-20T00:00:25.000Z",
+          finalizedAt: "2026-06-20T00:00:26.000Z",
+        }),
+        resetRecoveryRunId: resetRunId,
+      }),
+    );
+
+    expect(state.recovery).toEqual(available(idle));
+  });
+
   it("does not let a terminal stream frame establish scope while initial recovery is unavailable", () => {
     const unavailable = createDashboardProjectionState({ status: "loading" });
 

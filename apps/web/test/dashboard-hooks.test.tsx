@@ -121,6 +121,64 @@ describe("useDashboardProjections", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("presents a newer foreign terminal successor to an idle observer from the stream without a recovery read", () => {
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const idle = dashboardProjectionSchema.parse(projectionFixture());
+    const successorRunId = "22222222-2222-4222-8222-222222222222";
+    const terminal = dashboardProjectionSchema.parse(
+      runProjection({
+        revision: 1,
+        recoveredAt: "2026-06-20T00:00:12.000Z",
+        currentRun: {
+          ...terminalRun(successorRunId),
+          saleOfferId: "55555555-5555-4555-8555-555555555555",
+          startedAt: "2026-06-20T00:00:11.000Z",
+          trafficStartedAt: "2026-06-20T00:00:11.000Z",
+          trafficEndedAt: "2026-06-20T00:00:12.000Z",
+        },
+      }),
+    );
+    const settledIdle = dashboardProjectionSchema.parse(
+      projectionFixture({ revision: 2, recoveredAt: "2026-06-20T00:00:13.000Z" }),
+    );
+    const { result } = renderHook(() => {
+      const recovery = useDashboardRecovery(available(idle));
+      const transportStatus = useDashboardProjections({
+        onProjection: recovery.applyProjection,
+        onOpen: recovery.notifyRealtimeReopened,
+        onDisconnect: recovery.notifyRealtimeDisconnected,
+      });
+      return {
+        transportStatus,
+        composition: deriveWatchComposition({
+          recovery: recovery.recovery,
+          retainedTerminalRun: recovery.retainedTerminalRun,
+          latestCompletedRun: available(null),
+          signalSamples: [],
+          transportStatus,
+          now: new Date("2026-06-20T00:00:13.000Z"),
+        }),
+      };
+    });
+    const source = InjectedEventSource.instances[0];
+    act(() => source?.emit("open", new Event("open")));
+    expect(result.current.composition.phase).toBe("idle");
+    act(() =>
+      source?.emit("message", new MessageEvent("message", { data: JSON.stringify(terminal) })),
+    );
+    expect(result.current.composition.phase).toBe("completed");
+    act(() =>
+      source?.emit("message", new MessageEvent("message", { data: JSON.stringify(settledIdle) })),
+    );
+    const composition = result.current.composition;
+    expect(composition.phase).toBe("completed");
+    if (composition.phase !== "completed") throw new Error("Expected completed Watch composition");
+    expect(composition.run.runId).toBe(successorRunId);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("uses the same-origin stream, de-duplicates lifecycle transitions, parses frames, and cleans up", () => {
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();

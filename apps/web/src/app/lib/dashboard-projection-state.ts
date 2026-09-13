@@ -168,11 +168,13 @@ export function shouldAcceptDashboardProjection(
     return Date.parse(candidate.recoveredAt) > Date.parse(current.recoveredAt);
   }
 
-  if (isTerminal(candidate.currentRun.status)) {
-    return false;
-  }
-
   if (current.currentRun === null) {
+    if (
+      isTerminal(candidate.currentRun.status) &&
+      candidate.resetRecoveryRunId === candidate.currentRun.runId
+    ) {
+      return false;
+    }
     if (
       state.latestRunStartedAt !== null &&
       Date.parse(candidate.currentRun.startedAt) <= Date.parse(state.latestRunStartedAt)
@@ -180,6 +182,10 @@ export function shouldAcceptDashboardProjection(
       return false;
     }
     return Date.parse(candidate.recoveredAt) > Date.parse(current.recoveredAt);
+  }
+
+  if (isTerminal(candidate.currentRun.status)) {
+    return false;
   }
 
   const latestRunStartedAt = state.latestRunStartedAt ?? current.currentRun.startedAt;
