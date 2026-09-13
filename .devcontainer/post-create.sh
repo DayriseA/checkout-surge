@@ -146,6 +146,7 @@ install_apt_packages
 
 npm i -g @openai/codex
 npm i -g @anthropic-ai/claude-code
+npm i -g @kilocode/cli
 bash .devcontainer/install-browser-tools.sh
 
 corepack enable
