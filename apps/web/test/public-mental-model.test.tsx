@@ -159,4 +159,25 @@ describe("public visitor mental model", () => {
     );
     expect(publicNarrative.watchOrientation).toContain("durable outcomes");
   });
+
+  it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
+    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const layoutMarkup = renderToStaticMarkup(
+      await RootLayout({ children: createElement("p", null, "content") }),
+    );
+    const anchoredSectionIds = [
+      "failure-story",
+      "redis-fast-path",
+      "queue-protection",
+      "real-and-simulated",
+      "gold-signals",
+      "success",
+      "limits-and-source",
+    ];
+
+    expect(layoutMarkup).toMatch(/<html[^>]*class="[^"]*\bscroll-pt-20\b/);
+    for (const sectionId of anchoredSectionIds) {
+      expect(aboutMarkup).toContain(`id="${sectionId}"`);
+    }
+  });
 });

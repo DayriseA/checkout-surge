@@ -18,7 +18,7 @@ export const dynamic = "force-dynamic";
 export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   const authenticated = await hasValidAdminPageSession();
   return (
-    <html lang="en">
+    <html className="scroll-pt-20" lang="en">
       <body className="min-h-screen bg-page font-sans text-foreground">
         <a
           className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-20 focus:rounded-lg focus:bg-surface focus:px-3 focus:py-2 focus:font-semibold focus:text-ink"
