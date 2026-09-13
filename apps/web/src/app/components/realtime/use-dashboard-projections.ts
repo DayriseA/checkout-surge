@@ -7,6 +7,14 @@ import {
 } from "@checkout-surge/contracts";
 import { useEffect, useRef, useState } from "react";
 import type { RealtimeConnectionStatus } from "../dashboard-panels";
+import { createDashboardRecoveryRetryScheduler } from "./dashboard-recovery-retry";
+
+const sseReplacementRetryPolicy = {
+  initialDelayMs: 1_000,
+  multiplier: 2,
+  maximumDelayMs: 16_000,
+  maximumAttempts: 5,
+} as const;
 
 export interface UseDashboardProjectionsOptions {
   onProjection: (projection: DashboardProjection) => void;
@@ -14,12 +22,18 @@ export interface UseDashboardProjectionsOptions {
   onDisconnect: () => void;
 }
 
+export interface DashboardTransportState {
+  status: RealtimeConnectionStatus;
+  reconnectExhausted: boolean;
+}
+
 export function useDashboardProjections({
   onProjection,
   onOpen,
   onDisconnect,
-}: UseDashboardProjectionsOptions): RealtimeConnectionStatus {
+}: UseDashboardProjectionsOptions): DashboardTransportState {
   const [status, setStatus] = useState<RealtimeConnectionStatus>("connecting");
+  const [reconnectExhausted, setReconnectExhausted] = useState(false);
   const projectionCallbackRef = useRef(onProjection);
   const openCallbackRef = useRef(onOpen);
   const disconnectCallbackRef = useRef(onDisconnect);
@@ -33,20 +47,65 @@ export function useDashboardProjections({
       return;
     }
 
-    const source = new globalThis.EventSource(dashboardEventsPath);
+    let currentSource: EventSource | null = null;
     let connectionState: RealtimeConnectionStatus = "connecting";
+    let notifiedThisOutage = false;
+    let disposed = false;
+    const replacementScheduler = createDashboardRecoveryRetryScheduler({
+      onRetry: () => {
+        if (!disposed) connect();
+      },
+      policy: sseReplacementRetryPolicy,
+    });
+
+    const detach = (source: EventSource) => {
+      source.removeEventListener("open", handleOpen);
+      source.removeEventListener("error", handleError);
+      source.removeEventListener("message", handleMessage);
+    };
+
+    const connect = () => {
+      if (disposed) return;
+      const source = new globalThis.EventSource(dashboardEventsPath);
+      currentSource = source;
+      connectionState = "connecting";
+      source.addEventListener("open", handleOpen);
+      source.addEventListener("error", handleError);
+      source.addEventListener("message", handleMessage);
+    };
+
     const handleOpen: EventListener = () => {
       if (connectionState === "connected") return;
       connectionState = "connected";
+      notifiedThisOutage = false;
       setStatus("connected");
+      setReconnectExhausted(false);
+      replacementScheduler.reset();
       openCallbackRef.current();
     };
-    const handleError: EventListener = () => {
-      if (connectionState === "disconnected") return;
+
+    const handleDisconnect = () => {
+      if (notifiedThisOutage) return;
+      notifiedThisOutage = true;
       connectionState = "disconnected";
       setStatus("disconnected");
       disconnectCallbackRef.current();
     };
+
+    const handleError: EventListener = () => {
+      const source = currentSource;
+      if (!source) return;
+      if (source.readyState !== globalThis.EventSource.CLOSED) {
+        handleDisconnect();
+        return;
+      }
+      detach(source);
+      source.close();
+      currentSource = null;
+      handleDisconnect();
+      setReconnectExhausted(!replacementScheduler.schedule().scheduled);
+    };
+
     const handleMessage: EventListener = (rawEvent) => {
       const message = rawEvent as MessageEvent<unknown>;
       if (typeof message.data !== "string") return;
@@ -60,16 +119,19 @@ export function useDashboardProjections({
       if (parsed.success) projectionCallbackRef.current(parsed.data);
     };
 
-    source.addEventListener("open", handleOpen);
-    source.addEventListener("error", handleError);
-    source.addEventListener("message", handleMessage);
+    connect();
+
     return () => {
-      source.removeEventListener("open", handleOpen);
-      source.removeEventListener("error", handleError);
-      source.removeEventListener("message", handleMessage);
-      source.close();
+      disposed = true;
+      replacementScheduler.cancel();
+      const source = currentSource;
+      if (source) {
+        detach(source);
+        source.close();
+        currentSource = null;
+      }
     };
   }, []);
 
-  return status;
+  return { status, reconnectExhausted };
 }

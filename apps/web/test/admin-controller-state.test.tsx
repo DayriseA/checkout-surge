@@ -50,8 +50,13 @@ const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
 
 class InjectedEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
   static instances: InjectedEventSource[] = [];
   listeners = new Map<string, Set<EventListener>>();
+  close = vi.fn();
+  readyState = InjectedEventSource.CONNECTING;
 
   constructor(readonly url: string) {
     InjectedEventSource.instances.push(this);
@@ -66,8 +71,6 @@ class InjectedEventSource {
   removeEventListener(type: string, listener: EventListener) {
     this.listeners.get(type)?.delete(listener);
   }
-
-  close() {}
 
   emit(type: string, event: Event) {
     for (const listener of this.listeners.get(type) ?? []) listener(event);
@@ -3228,6 +3231,91 @@ describe("admin feature controllers", () => {
         timestamp: "2026-06-20T00:00:12.000Z",
       }),
     );
+  });
+});
+
+describe("admin realtime stream recovery", () => {
+  const replacementDelaysMs = [1_000, 2_000, 4_000, 8_000, 16_000];
+  const interruptedNotice = "Live updates interrupted. Trying to reconnect...";
+  const exhaustedNotice =
+    "Unable to restore live updates. Reload the page. If the problem persists, try again later.";
+
+  function failClosed(index: number) {
+    const source = InjectedEventSource.instances[index];
+    if (!source) throw new Error(`Expected EventSource instance ${index}.`);
+    act(() => {
+      source.readyState = InjectedEventSource.CLOSED;
+      source.emit("error", new Event("error"));
+    });
+  }
+
+  function exhaustStream() {
+    failClosed(0);
+    for (const delayMs of replacementDelaysMs) {
+      act(() => vi.advanceTimersByTime(delayMs));
+      failClosed(InjectedEventSource.instances.length - 1);
+    }
+  }
+
+  it("announces automatic reconnection without a reload action while a replacement is in flight", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...recoveryFixture(null), revision: 2 })),
+    );
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    failClosed(0);
+    expect(screen.getByText(interruptedNotice)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
+
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(InjectedEventSource.instances).toHaveLength(2);
+    expect(screen.getByText(interruptedNotice)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
+  });
+
+  it("offers a full-page reload after exhaustion and keeps HTTP refresh from restarting attempts", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => jsonResponse({ ...recoveryFixture(null), revision: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const reload = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { reload } });
+    vi.stubGlobal("window", navigationWindow);
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    exhaustStream();
+    await act(async () => Promise.resolve());
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    expect(screen.getByText(exhaustedNotice)).toBeTruthy();
+    screen.getByRole("button", { name: "Reload page" }).click();
+    expect(reload).toHaveBeenCalledOnce();
+
+    const recoveryReadsBeforeRefresh = fetchMock.mock.calls.length;
+    screen.getByRole("button", { name: "Refresh status" }).click();
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(recoveryReadsBeforeRefresh + 1);
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    expect(screen.getByText(exhaustedNotice)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reload page" })).toBeTruthy();
+  });
+
+  it("clears the recovery notice when a replacement opens", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ ...recoveryFixture(null), revision: 2 })),
+    );
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+
+    failClosed(0);
+    expect(screen.getByText(interruptedNotice)).toBeTruthy();
+    act(() => vi.advanceTimersByTime(1_000));
+    act(() => InjectedEventSource.instances[1]?.emit("open", new Event("open")));
+    expect(screen.queryByText(interruptedNotice)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
   });
 });
 

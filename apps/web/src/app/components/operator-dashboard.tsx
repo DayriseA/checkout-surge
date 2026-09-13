@@ -28,6 +28,7 @@ import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-st
 import {
   ConsistencyLagPanel,
   InventoryDrainPanel,
+  RealtimeRecoveryNotice,
   RecoveryStatusPanel,
   RequestSurgePanel,
   RunErpOutcomesPanel,
@@ -96,7 +97,7 @@ export function OperatorDashboard({
     }
     void refresh();
   }, [initialRecovery.status, notifyRealtimeReopened, refresh]);
-  const realtimeStatus = useDashboardProjections({
+  const { status: realtimeStatus, reconnectExhausted } = useDashboardProjections({
     onProjection: applyProjection,
     onOpen: handleOpen,
     onDisconnect: () => void notifyRealtimeDisconnected(),
@@ -136,6 +137,11 @@ export function OperatorDashboard({
           resultContext !== undefined || incompleteRunId !== null || invalidAcceptedRunContext
         }
         onRetry={() => void retryNow()}
+      />
+      <RealtimeRecoveryNotice
+        className="col-span-12"
+        realtimeStatus={realtimeStatus}
+        reconnectExhausted={reconnectExhausted}
       />
       <TechnicalDetails
         composition={composition}

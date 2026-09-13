@@ -28,9 +28,13 @@ type CompletedRun = Extract<
 >;
 
 class InjectedEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
   static instances: InjectedEventSource[] = [];
   listeners = new Map<string, Set<EventListener>>();
   close = vi.fn();
+  readyState = InjectedEventSource.CONNECTING;
 
   constructor(readonly url: string) {
     InjectedEventSource.instances.push(this);
@@ -92,14 +96,14 @@ describe("useDashboardProjections", () => {
           retainedTerminalRun: null,
           latestCompletedRun: available(null),
           signalSamples: [],
-          transportStatus,
+          transportStatus: transportStatus.status,
           now: new Date("2026-06-20T00:00:12.000Z"),
         }),
       };
     });
     const source = InjectedEventSource.instances[0];
     act(() => source?.emit("open", new Event("open")));
-    expect(result.current.transportStatus).toBe("connected");
+    expect(result.current.transportStatus.status).toBe("connected");
     expect(result.current.composition.phase).toBe("active");
     act(() =>
       source?.emit("message", new MessageEvent("message", { data: JSON.stringify(terminal) })),
@@ -117,7 +121,7 @@ describe("useDashboardProjections", () => {
       source?.emit("message", new MessageEvent("message", { data: JSON.stringify(active) })),
     );
     expect(result.current.composition.phase).toBe("failed");
-    expect(result.current.transportStatus).toBe("connected");
+    expect(result.current.transportStatus.status).toBe("connected");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -157,7 +161,7 @@ describe("useDashboardProjections", () => {
           retainedTerminalRun: recovery.retainedTerminalRun,
           latestCompletedRun: available(null),
           signalSamples: [],
-          transportStatus,
+          transportStatus: transportStatus.status,
           now: new Date("2026-06-20T00:00:13.000Z"),
         }),
       };
@@ -180,6 +184,7 @@ describe("useDashboardProjections", () => {
   });
 
   it("uses the same-origin stream, de-duplicates lifecycle transitions, parses frames, and cleans up", () => {
+    vi.useFakeTimers();
     const firstCallback = vi.fn();
     const secondCallback = vi.fn();
     const onOpen = vi.fn();
@@ -196,7 +201,7 @@ describe("useDashboardProjections", () => {
     );
     const source = InjectedEventSource.instances[0];
     expect(source?.url).toBe(dashboardEventsPath);
-    expect(result.current).toBe("connecting");
+    expect(result.current.status).toBe("connecting");
 
     act(() => source?.emit("message", new MessageEvent("message", { data: "{" })));
     expect(firstCallback).not.toHaveBeenCalled();
@@ -204,7 +209,7 @@ describe("useDashboardProjections", () => {
     rerender({ onProjection: secondCallback });
     expect(InjectedEventSource.instances).toHaveLength(1);
     act(() => source?.emit("open", new Event("open")));
-    expect(result.current).toBe("connected");
+    expect(result.current.status).toBe("connected");
     expect(onOpen).toHaveBeenCalledOnce();
     act(() => source?.emit("open", new Event("open")));
     expect(onOpen).toHaveBeenCalledOnce();
@@ -217,13 +222,17 @@ describe("useDashboardProjections", () => {
     expect(secondCallback).toHaveBeenCalledWith(projection);
 
     act(() => source?.emit("error", new Event("error")));
-    expect(result.current).toBe("disconnected");
+    expect(result.current.status).toBe("disconnected");
     expect(onDisconnect).toHaveBeenCalledOnce();
     act(() => source?.emit("error", new Event("error")));
     expect(onDisconnect).toHaveBeenCalledOnce();
 
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(InjectedEventSource.instances).toHaveLength(1);
+    expect(source?.close).not.toHaveBeenCalled();
+
     act(() => source?.emit("open", new Event("open")));
-    expect(result.current).toBe("connected");
+    expect(result.current.status).toBe("connected");
     expect(onOpen).toHaveBeenCalledTimes(2);
 
     unmount();
@@ -232,7 +241,140 @@ describe("useDashboardProjections", () => {
       true,
     );
   });
+
+  it("replaces a closed source with backoff and resets the budget after a successful open", () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const onDisconnect = vi.fn();
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const { result } = renderHook(() =>
+      useDashboardProjections({ onProjection: vi.fn(), onOpen, onDisconnect }),
+    );
+
+    failClosed(0);
+    expect(result.current.status).toBe("disconnected");
+    expect(result.current.reconnectExhausted).toBe(false);
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    expect(InjectedEventSource.instances[0]?.close).toHaveBeenCalledOnce();
+    expectDetached(0);
+    expect(InjectedEventSource.instances).toHaveLength(1);
+
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(InjectedEventSource.instances).toHaveLength(2);
+    expect(InjectedEventSource.instances[1]?.url).toBe(dashboardEventsPath);
+
+    failClosed(1);
+    expectDetached(1);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(InjectedEventSource.instances).toHaveLength(2);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(InjectedEventSource.instances).toHaveLength(3);
+
+    act(() => InjectedEventSource.instances[2]?.emit("open", new Event("open")));
+    expect(result.current.status).toBe("connected");
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+    expect(result.current.reconnectExhausted).toBe(false);
+
+    failClosed(2);
+    expect(onDisconnect).toHaveBeenCalledTimes(2);
+    act(() => vi.advanceTimersByTime(999));
+    expect(InjectedEventSource.instances).toHaveLength(3);
+    act(() => vi.advanceTimersByTime(1));
+    expect(InjectedEventSource.instances).toHaveLength(4);
+  });
+
+  it("exhausts after the fifth failed replacement and stops application-managed attempts", () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const onDisconnect = vi.fn();
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const { result } = renderHook(() =>
+      useDashboardProjections({ onProjection: vi.fn(), onOpen, onDisconnect }),
+    );
+
+    failClosed(0);
+    for (const [index, delayMs] of replacementDelaysMs.entries()) {
+      act(() => vi.advanceTimersByTime(delayMs));
+      expect(InjectedEventSource.instances).toHaveLength(index + 2);
+      expect(result.current.reconnectExhausted).toBe(false);
+      failClosed(InjectedEventSource.instances.length - 1);
+    }
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    expect(result.current.reconnectExhausted).toBe(true);
+    expect(result.current.status).toBe("disconnected");
+    expect(onDisconnect).toHaveBeenCalledOnce();
+
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    expect(result.current.reconnectExhausted).toBe(true);
+    expect(onDisconnect).toHaveBeenCalledOnce();
+  });
+
+  it("connects and resets the budget when the fifth replacement succeeds", () => {
+    vi.useFakeTimers();
+    const onOpen = vi.fn();
+    const onDisconnect = vi.fn();
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const { result } = renderHook(() =>
+      useDashboardProjections({ onProjection: vi.fn(), onOpen, onDisconnect }),
+    );
+
+    failClosed(0);
+    for (const [index, delayMs] of replacementDelaysMs.entries()) {
+      act(() => vi.advanceTimersByTime(delayMs));
+      if (index < replacementDelaysMs.length - 1) {
+        failClosed(InjectedEventSource.instances.length - 1);
+      }
+    }
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    expect(result.current.reconnectExhausted).toBe(false);
+
+    act(() => InjectedEventSource.instances[5]?.emit("open", new Event("open")));
+    expect(result.current.status).toBe("connected");
+    expect(result.current.reconnectExhausted).toBe(false);
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+
+    failClosed(5);
+    expect(onDisconnect).toHaveBeenCalledTimes(2);
+    act(() => vi.advanceTimersByTime(1_000));
+    expect(InjectedEventSource.instances).toHaveLength(7);
+  });
+
+  it("cancels the pending replacement timer and closes the source on unmount", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("EventSource", InjectedEventSource);
+    const onDisconnect = vi.fn();
+    const { unmount } = renderHook(() =>
+      useDashboardProjections({ onProjection: vi.fn(), onOpen: vi.fn(), onDisconnect }),
+    );
+
+    failClosed(0);
+    unmount();
+    act(() => vi.advanceTimersByTime(60_000));
+    expect(InjectedEventSource.instances).toHaveLength(1);
+    expect(InjectedEventSource.instances[0]?.close).toHaveBeenCalledOnce();
+    expect(onDisconnect).toHaveBeenCalledOnce();
+  });
 });
+
+const replacementDelaysMs = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+function failClosed(index: number) {
+  const source = InjectedEventSource.instances[index];
+  if (!source) throw new Error(`Expected EventSource instance ${index}.`);
+  act(() => {
+    source.readyState = InjectedEventSource.CLOSED;
+    source.emit("error", new Event("error"));
+  });
+}
+
+function expectDetached(index: number) {
+  const source = InjectedEventSource.instances[index];
+  if (!source) throw new Error(`Expected EventSource instance ${index}.`);
+  expect([...source.listeners.values()].every((listeners) => listeners.size === 0)).toBe(true);
+}
 
 describe("useDashboardRecovery", () => {
   it("keeps initial loading fail-closed and performs one initial read without retry UI", async () => {

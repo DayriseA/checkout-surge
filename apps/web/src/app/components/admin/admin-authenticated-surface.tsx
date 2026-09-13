@@ -71,6 +71,7 @@ import {
 import { deriveFreshnessPresentationState } from "../../lib/presentation/run-presentation-state";
 import { ConfirmationDialog } from "../confirmation-dialog";
 import { buttonClassName } from "../control-styles";
+import { RealtimeRecoveryNotice } from "../dashboard-panels";
 import { ErrorNotice } from "../error-notice";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
@@ -114,7 +115,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
     recoveryController.refresh,
     recoveryController.notifyRealtimeReopened,
   ]);
-  const realtimeStatus = useDashboardProjections({
+  const { status: realtimeStatus, reconnectExhausted } = useDashboardProjections({
     onProjection: recoveryController.applyProjection,
     onOpen: handleOpen,
     onDisconnect: () => void recoveryController.notifyRealtimeDisconnected(),
@@ -162,6 +163,11 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
         ))}
       </nav>
       <div className="grid items-start gap-4 lg:grid-cols-2">
+        <RealtimeRecoveryNotice
+          className="lg:col-span-2"
+          realtimeStatus={realtimeStatus}
+          reconnectExhausted={reconnectExhausted}
+        />
         <AdminCurrentRunPanel
           isPending={recoveryController.isRefreshing}
           isRefreshDisabled={isRefreshDisabled}

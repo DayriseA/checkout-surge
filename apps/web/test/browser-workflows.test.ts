@@ -95,6 +95,9 @@ type FetchMock = {
 };
 
 class FakeEventSource {
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
   static instances: FakeEventSource[] = [];
 
   onerror: ((event: Event) => void) | null = null;
@@ -102,6 +105,7 @@ class FakeEventSource {
   onopen: ((event: Event) => void) | null = null;
   readonly close = vi.fn();
   readonly listeners = new Map<string, Set<EventListener>>();
+  readyState = FakeEventSource.CONNECTING;
   readonly url: string;
 
   constructor(url: string | URL) {

@@ -318,6 +318,49 @@ export function RecoveryStatusPanel({
   );
 }
 
+/**
+ * Realtime transport recovery guidance shared by Watch and authenticated Admin. The transport
+ * status stays `disconnected` while a replacement is scheduled or in flight, so the interrupted
+ * copy must not claim the stream is restored, and the reload action appears only after every
+ * application-managed replacement attempt has failed.
+ */
+export function RealtimeRecoveryNotice({
+  className = "",
+  realtimeStatus,
+  reconnectExhausted,
+}: {
+  className?: string;
+  realtimeStatus: RealtimeConnectionStatus;
+  reconnectExhausted: boolean;
+}) {
+  if (realtimeStatus !== "disconnected") return null;
+  return (
+    <section className={`${className} rounded-lg border border-border bg-surface p-4`}>
+      {reconnectExhausted ? (
+        <>
+          <p className="m-0 leading-6 text-muted-strong">
+            Unable to restore live updates. Reload the page. If the problem persists, try again
+            later.
+          </p>
+          <button className={`${buttonClassName} mt-3`} onClick={reloadPage} type="button">
+            Reload page
+          </button>
+        </>
+      ) : (
+        <p className="m-0 leading-6 text-muted-strong">
+          Live updates interrupted. Trying to reconnect...
+        </p>
+      )}
+    </section>
+  );
+}
+
+function reloadPage() {
+  if (typeof window !== "undefined") {
+    window.location.reload();
+  }
+}
+
 export function RequestSurgePanel({
   recovery,
   freshness,
