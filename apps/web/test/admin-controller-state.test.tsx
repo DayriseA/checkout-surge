@@ -1418,6 +1418,31 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it("presents a failed preset read as unavailable and recovers via props", () => {
+    const recovery = available(recoveryFixture(null));
+    const { rerender } = render(
+      <AdminPresetController
+        initialPresets={{ status: "unavailable", reason: "Preset read failed" }}
+        recovery={recovery}
+      />,
+    );
+    const presetsSection = within(document.querySelector("#presets") as HTMLElement);
+
+    expect(presetsSection.getByText("unavailable")).toBeTruthy();
+    expect(presetsSection.queryByText("0 loaded")).toBeNull();
+    expect(presetsSection.queryByText("No admin presets are available.")).toBeNull();
+    expect(presetsSection.getByRole("alert")).toBeTruthy();
+    expect(screen.getByText("Preset read failed")).toBeTruthy();
+
+    rerender(
+      <AdminPresetController initialPresets={presetListFixture("Custom")} recovery={recovery} />,
+    );
+
+    expect(screen.getByRole("button", { name: "Custom" })).toBeTruthy();
+    expect(presetsSection.getByText("1 loaded")).toBeTruthy();
+    expect(presetsSection.queryByRole("alert")).toBeNull();
+  });
+
   it.each([
     ["public", readOnlyPresetFixture("public", "Public preset")],
     ["system", readOnlyPresetFixture("admin", "System preset")],

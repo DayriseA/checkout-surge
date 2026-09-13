@@ -361,7 +361,15 @@ export function AdminPresetView({
       <PanelHeading
         eyebrow="Presets"
         title="Inspection and starts"
-        status={<StatusPill status={{ label: `${presets.length} loaded`, tone: "ok" }} />}
+        status={
+          <StatusPill
+            status={
+              presetsRead.status === "unavailable"
+                ? { label: "unavailable", tone: "warning" }
+                : { label: `${presets.length} loaded`, tone: "ok" }
+            }
+          />
+        }
       />
       <div className="grid grid-cols-[minmax(180px,260px)_1fr] gap-4 max-[800px]:grid-cols-1">
         {/* biome-ignore lint/a11y/useSemanticElements: C04 intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
@@ -623,9 +631,9 @@ export function AdminPresetView({
               ) : null}
             </form>
           </div>
-        ) : (
+        ) : presetsRead.status === "available" ? (
           <p className="m-0 text-muted">No admin presets are available.</p>
-        )}
+        ) : null}
       </div>
       <AdminNoticeView notice={notice} />
       {notice === "Admin run accepted." ? (
