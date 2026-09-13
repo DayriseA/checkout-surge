@@ -429,9 +429,16 @@ export function RequestSurgePanel({
               )}
             />
             <Fact
+              label="Startup overhead beyond configured delay"
+              value={formatDurationSeconds(
+                preparation?.startupOverheadSeconds,
+                timingEvidenceAbsence,
+              )}
+            />
+            <Fact
               label="Time until checkout attempts begin"
               value={formatDurationSeconds(
-                preparation?.remainingPreparationSeconds,
+                preparation?.totalPreparationSeconds,
                 timingEvidenceAbsence,
               )}
             />

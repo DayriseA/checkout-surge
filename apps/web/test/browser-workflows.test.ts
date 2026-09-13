@@ -1565,10 +1565,9 @@ describe("watch browser recovery", () => {
       }),
     );
 
-    expect(markup).toContain("Configured start delay</dt><dd");
-    expect(markup).toContain(">15 s</dd>");
-    expect(markup).toContain("Time until checkout attempts begin</dt><dd");
-    expect(markup).toContain(">45 s</dd>");
+    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>15 s<\/dd>/);
+    expect(markup).toMatch(/Startup overhead beyond configured delay<\/dt><dd[^>]*>45 s<\/dd>/);
+    expect(markup).toMatch(/Time until checkout attempts begin<\/dt><dd[^>]*>60 s<\/dd>/);
     expect(markup).toContain("depleted in 200 ms");
     expect(markup).toContain(
       "Shared axis: 0s first checkout attempt · 0.6s final timeline boundary",

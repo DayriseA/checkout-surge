@@ -13,6 +13,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
+  deriveHarnessPreparation,
   deriveTransportObservation,
   TransportObservationPanelBlock,
   TransportObservationSection,
@@ -184,7 +185,7 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("the true p95 is higher");
   });
 
-  it("separates configured delay from the remaining time before checkout attempts begin", () => {
+  it("shows configured delay, startup overhead beyond it, and the total time until checkout attempts begin", () => {
     const markup = renderToStaticMarkup(
       createElement(TransportObservationSection, {
         arrivalSummary: {
@@ -200,10 +201,32 @@ describe("transport observation section", () => {
       }),
     );
 
-    expect(markup).toContain("Configured start delay");
-    expect(markup).toContain(">3 s<");
-    expect(markup).toContain("Time until checkout attempts begin");
-    expect(markup).toContain(">7 s<");
+    expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3 s<\/dd>/);
+    expect(markup).toMatch(/Startup overhead beyond configured delay<\/dt><dd[^>]*>7 s<\/dd>/);
+    expect(markup).toMatch(/Time until checkout attempts begin<\/dt><dd[^>]*>10 s<\/dd>/);
+  });
+
+  it("splits the QA fixture into a 10 s delay, 45 ms of overhead, and a 10 s total", () => {
+    const preparation = deriveHarnessPreparation(
+      { ...emptyRequestArrivalSummary, firstAttemptStartedAt: "2026-06-20T12:00:10.045Z" },
+      "2026-06-20T12:00:00.000Z",
+      10,
+    );
+
+    expect(preparation?.configuredDelaySeconds).toBe(10);
+    expect(preparation?.startupOverheadSeconds).toBeCloseTo(0.045);
+    expect(preparation?.totalPreparationSeconds).toBeCloseTo(10.045);
+  });
+
+  it("equals the total to the startup overhead when no start delay is configured", () => {
+    const preparation = deriveHarnessPreparation(
+      { ...emptyRequestArrivalSummary, firstAttemptStartedAt: "2026-06-20T12:00:10.045Z" },
+      "2026-06-20T12:00:00.000Z",
+      undefined,
+    );
+
+    expect(preparation?.configuredDelaySeconds).toBe(0);
+    expect(preparation?.startupOverheadSeconds).toBe(preparation?.totalPreparationSeconds);
   });
 
   it("does not expose arrival-series retention bookkeeping", () => {

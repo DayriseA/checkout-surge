@@ -157,8 +157,12 @@ export function TransportObservationSection({
               value={formatDuration(preparation.configuredDelaySeconds)}
             />
             <ObservationRow
+              label="Startup overhead beyond configured delay"
+              value={formatDuration(preparation.startupOverheadSeconds)}
+            />
+            <ObservationRow
               label="Time until checkout attempts begin"
-              value={formatDuration(preparation.remainingPreparationSeconds)}
+              value={formatDuration(preparation.totalPreparationSeconds)}
             />
           </>
         ) : null}
@@ -233,16 +237,21 @@ export function deriveHarnessPreparation(
   arrivalSummary: RequestArrivalSummary,
   trafficStartedAt: string | undefined,
   startDelaySeconds: number | undefined,
-): { configuredDelaySeconds: number; remainingPreparationSeconds: number } | null {
+): {
+  configuredDelaySeconds: number;
+  startupOverheadSeconds: number;
+  totalPreparationSeconds: number;
+} | null {
   if (!arrivalSummary.firstAttemptStartedAt || !trafficStartedAt) return null;
-  const totalSeconds = Math.max(
+  const totalPreparationSeconds = Math.max(
     0,
     (Date.parse(arrivalSummary.firstAttemptStartedAt) - Date.parse(trafficStartedAt)) / 1_000,
   );
-  const configuredDelaySeconds = Math.min(totalSeconds, startDelaySeconds ?? 0);
+  const configuredDelaySeconds = Math.min(totalPreparationSeconds, startDelaySeconds ?? 0);
   return {
     configuredDelaySeconds,
-    remainingPreparationSeconds: Math.max(0, totalSeconds - configuredDelaySeconds),
+    startupOverheadSeconds: Math.max(0, totalPreparationSeconds - configuredDelaySeconds),
+    totalPreparationSeconds,
   };
 }
 

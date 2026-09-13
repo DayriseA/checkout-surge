@@ -136,7 +136,8 @@ describe("Phase 6 projection dashboard", () => {
     );
 
     expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>3 s<\/dd>/);
-    expect(markup).toMatch(/Time until checkout attempts begin<\/dt><dd[^>]*>7 s<\/dd>/);
+    expect(markup).toMatch(/Startup overhead beyond configured delay<\/dt><dd[^>]*>7 s<\/dd>/);
+    expect(markup).toMatch(/Time until checkout attempts begin<\/dt><dd[^>]*>10 s<\/dd>/);
     expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
   });
 
@@ -157,6 +158,7 @@ describe("Phase 6 projection dashboard", () => {
       "Dispatch duration",
       "Response completion rate",
       "Configured start delay",
+      "Startup overhead beyond configured delay",
       "Time until checkout attempts begin",
       "Response latency",
       "HTTP failure rate",
