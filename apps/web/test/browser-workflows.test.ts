@@ -144,13 +144,17 @@ describe("public browser starts", () => {
     ["custom", "lost"],
     ["custom", "malformed"],
   ] as const)("releases %s pending state after a %s start response without claiming acceptance", async (entry, failure) => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
-      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
-      if (String(input) === demoRunStartProxyPath) {
-        if (failure === "lost") throw new Error("QA response lost");
-        return new Response("not-json", { status: 202 });
+    const recovery = deferred<Response>();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) {
+        return Promise.resolve(jsonResponse(readinessFixture()));
       }
-      throw new Error(`Unexpected fetch: ${String(input)}`);
+      if (String(input) === demoRunStartProxyPath) {
+        if (failure === "lost") return Promise.reject(new Error("QA response lost"));
+        return Promise.resolve(new Response("not-json", { status: 202 }));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) return recovery.promise;
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
     });
     vi.stubGlobal("fetch", fetchMock);
     const assign = vi.fn();
@@ -164,7 +168,16 @@ describe("public browser starts", () => {
       name: entry === "custom" ? "Start custom run" : "Start Preview 1k",
     }) as HTMLButtonElement;
     await user.click(start);
-    await waitFor(() => expect(start.disabled).toBe(false));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(dashboardRecoveryProxyPath),
+        expect.anything(),
+      ),
+    );
+    expect(start.disabled).toBe(true);
+    expect(screen.queryByText("ready")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Checking run status")).toBeTruthy());
     expect(screen.queryByText("Run accepted.")).toBeNull();
     expect(assign).not.toHaveBeenCalled();
     expect(
@@ -177,6 +190,257 @@ describe("public browser starts", () => {
       expect(await screen.findByRole("alert")).toBeTruthy();
       expect(screen.queryByRole("alert", { name: "Operation failure" })).toBeNull();
     }
+
+    recovery.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+          revision: 2,
+        }),
+      ),
+    );
+    expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(start.disabled).toBe(true);
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+    if (entry === "curated") {
+      expect(screen.queryByText("We couldn't confirm whether your run started")).toBeNull();
+    }
+    expect(screen.queryByText("Run accepted.")).toBeNull();
+    expect(assign).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+  });
+
+  it("keeps checking run status past start retry expiry until recovery completes", async () => {
+    vi.useFakeTimers();
+    const recovery = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Start response unavailable.",
+              correlationId: "uncertain-start",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+          ),
+          { status: 503, headers: { "content-type": "application/json", "retry-after": "1" } },
+        );
+      }
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) return recovery.promise;
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
+
+    await act(async () => {
+      fireEvent.click(start);
+    });
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+    expect(readinessFetchCount(fetchMock)).toBe(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1_100));
+    expect(screen.getByText("Checking run status")).toBeTruthy();
+    expect(screen.queryByText("ready")).toBeNull();
+    expect(start.disabled).toBe(true);
+
+    await act(async () => {
+      recovery.resolve(jsonResponse(dashboardRecoveryFixture({ revision: 2 })));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(screen.queryByText("Checking run status")).toBeNull();
+    expect(screen.getByText("ready")).toBeTruthy();
+    expect(start.disabled).toBe(false);
+  });
+
+  it("re-enables starts with the uncertain notice when reconciliation finds no current run", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) {
+        return Promise.resolve(jsonResponse(readinessFixture()));
+      }
+      if (String(input) === demoRunStartProxyPath) {
+        return Promise.reject(new Error("QA response lost"));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(jsonResponse(dashboardRecoveryFixture()));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
+    await user.click(start);
+
+    expect(await screen.findByText("We couldn't confirm whether your run started")).toBeTruthy();
+    await waitFor(() => expect(start.disabled).toBe(false));
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
+    expect(screen.getByText("ready")).toBeTruthy();
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+    expect(readinessFetchCount(fetchMock)).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(recoveryFetchCount(fetchMock)).toBe(2));
+    await waitFor(() => expect(readinessFetchCount(fetchMock)).toBe(2));
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+    expect(start.disabled).toBe(false);
+  });
+
+  it("waits for a fresh recovery read when one was already in flight at click time", async () => {
+    vi.useFakeTimers();
+    const reads = [deferred<Response>(), deferred<Response>()];
+    let readIndex = 0;
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) {
+        return Promise.resolve(jsonResponse(readinessFixture()));
+      }
+      if (String(input) === demoRunStartProxyPath) {
+        return Promise.reject(new Error("QA response lost"));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        const read = reads[readIndex];
+        readIndex += 1;
+        if (!read) return Promise.resolve(jsonResponse(dashboardRecoveryFixture()));
+        return read.promise;
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+
+    await act(async () => {
+      fireEvent.click(start);
+      for (let index = 0; index < 10; index += 1) await Promise.resolve();
+    });
+    expect(start.disabled).toBe(true);
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+
+    reads[0]?.resolve(jsonResponse(dashboardRecoveryFixture()));
+    await act(async () => {
+      await reads[0]?.promise;
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    });
+    expect(recoveryFetchCount(fetchMock)).toBe(2);
+    expect(start.disabled).toBe(true);
+    expect(screen.queryByText("ready")).toBeNull();
+    expect(screen.getByText("Checking run status")).toBeTruthy();
+
+    reads[1]?.resolve(
+      jsonResponse(
+        dashboardRecoveryFixture({
+          currentRun: demoRunFixture({ status: "active" }),
+          recoveredAt: "2026-06-20T00:00:11.000Z",
+          revision: 2,
+        }),
+      ),
+    );
+    await act(async () => {
+      await reads[1]?.promise;
+      for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    });
+    expect(screen.getByText("A demo run is already in progress")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(start.disabled).toBe(true);
+  });
+
+  it("holds the checking gate until readiness completes after an uncertain start", async () => {
+    const readiness = deferred<Response>();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return readiness.promise;
+      if (String(input) === demoRunStartProxyPath) {
+        return Promise.reject(new Error("QA response lost"));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(jsonResponse(dashboardRecoveryFixture()));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
+    await user.click(start);
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining(dashboardRecoveryProxyPath),
+        expect.anything(),
+      ),
+    );
+    await waitFor(() => expect(screen.getByText("Checking run status")).toBeTruthy());
+    expect(screen.queryByText("ready")).toBeNull();
+    expect(start.disabled).toBe(true);
+
+    readiness.resolve(jsonResponse(readinessFixture()));
+    await waitFor(() => expect(start.disabled).toBe(false));
+    expect(screen.getByText("ready")).toBeTruthy();
+    expect(screen.getByText("We couldn't confirm whether your run started")).toBeTruthy();
+  });
+
+  it("keeps starts disabled when post-start recovery fails while readiness is healthy", async () => {
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) {
+        return Promise.resolve(jsonResponse(readinessFixture()));
+      }
+      if (String(input) === demoRunStartProxyPath) {
+        return Promise.reject(new Error("QA response lost"));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(
+          jsonResponse(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Private recovery failure.",
+              correlationId: "post-start-recovery-failure",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+            503,
+          ),
+        );
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
+    await user.click(start);
+
+    await waitFor(() => expect(recoveryFetchCount(fetchMock)).toBe(1));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Starting Preview 1k" })).toBeNull(),
+    );
+    expect(start.disabled).toBe(true);
+    expect(screen.queryByText("ready")).toBeNull();
+    expect(
+      screen.getAllByText("We couldn't confirm whether your run started").length,
+    ).toBeGreaterThan(0);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+    expect(assign).not.toHaveBeenCalled();
   });
 
   it("blocks repeated starts while an active-run conflict converges to Watch", async () => {
@@ -244,15 +508,15 @@ describe("public browser starts", () => {
       if (String(input).startsWith(dashboardRecoveryProxyPath)) {
         recoveryRevision += 1;
         const currentRun =
-          recoveryRevision === 2
+          recoveryRevision === 3
             ? demoRunFixture({ status: "active" })
-            : recoveryRevision === 3
+            : recoveryRevision === 4
               ? demoRunFixture({ status: "completed", trafficStatus: "succeeded" })
               : null;
         return jsonResponse(
           dashboardRecoveryFixture({
             currentRun,
-            recoveredAt: "2026-06-20T00:00:11.000Z",
+            recoveredAt: `2026-06-20T00:00:${String(recoveryRevision).padStart(2, "0")}.000Z`,
             revision: recoveryRevision,
           }),
         );
@@ -266,9 +530,8 @@ describe("public browser starts", () => {
       fireEvent.click(screen.getByRole("button", { name: "Start Preview 1k" }));
       for (let index = 0; index < 10; index += 1) await Promise.resolve();
     });
-    expect(
-      screen.getByText("The demo backend isn't ready yet — try again in a moment"),
-    ).toBeTruthy();
+    expect(screen.getByText("We couldn't confirm whether your run started")).toBeTruthy();
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15_000);
@@ -277,6 +540,7 @@ describe("public browser starts", () => {
     expect(screen.getByText("accepting checkout attempts")).toBeTruthy();
     expect(screen.getByText("A demo run is already in progress")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(screen.queryByText("We couldn't confirm whether your run started")).toBeNull();
     expect(
       screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
     ).toBeNull();
@@ -480,6 +744,9 @@ describe("public browser starts", () => {
         );
       }
       if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === dashboardRecoveryProxyPath) {
+        return jsonResponse(dashboardRecoveryFixture({ revision: 2 }));
+      }
       throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -514,6 +781,9 @@ describe("public browser starts", () => {
     const startRequest = deferred<Response>();
     const fetchMock = vi.fn(async (input: string | URL | Request, _init?: RequestInit) => {
       if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return jsonResponse(dashboardRecoveryFixture());
+      }
       return startRequest.promise;
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -547,10 +817,8 @@ describe("public browser starts", () => {
     expect(init?.method).toBe("POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "preview-1k" });
     startRequest.resolve(jsonResponse({ message: "start blocked" }, 409));
-    expect(
-      await screen.findByText("The demo backend isn't ready yet — try again in a moment"),
-    ).toBeTruthy();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(await screen.findByText("We couldn't confirm whether your run started")).toBeTruthy();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
   });
 
@@ -740,7 +1008,7 @@ describe("public browser starts", () => {
 
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(jsonRequestBody(init)).toMatchObject({
       configOverride: { erpConfig: { errorRate: ratio } },
@@ -828,7 +1096,7 @@ describe("public browser starts", () => {
     await replaceInputValue("Failure rate (percent)", "0.2", user);
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     const requestBody = jsonRequestBody(init);
     expect(requestBody).toEqual({
@@ -953,7 +1221,9 @@ describe("public browser starts", () => {
       if (String(input) === healthReadyProxyPath) {
         return startRequestCount === 1 ? jsonResponse(readinessFixture()) : unavailableResponse();
       }
-      if (String(input) === dashboardRecoveryProxyPath) return unavailableResponse();
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return jsonResponse(dashboardRecoveryFixture());
+      }
       startRequestCount += 1;
       return startRequestCount === 1
         ? new Response(
@@ -998,7 +1268,7 @@ describe("public browser starts", () => {
     await waitFor(() =>
       expect(
         screen.getAllByText("The demo backend isn't ready yet — try again in a moment"),
-      ).toHaveLength(4),
+      ).toHaveLength(3),
     );
   });
 });

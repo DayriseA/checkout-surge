@@ -7,6 +7,7 @@ import { readProxyJson } from "../../lib/client/proxy-json";
 import { dashboardRecoveryProxyPath } from "../../lib/control-paths";
 import {
   createDashboardProjectionState,
+  type DashboardProjectionStateAction,
   dashboardProjectionStateReducer,
   shouldAcceptDashboardProjection,
 } from "../../lib/dashboard-projection-state";
@@ -26,7 +27,7 @@ export function useDashboardRecovery(
   initialRecovery: BackendRead<DashboardProjection>,
   options: { preserveAvailableRecoveryOnFailure?: boolean } = {},
 ) {
-  const [state, dispatch] = useReducer(
+  const [state, dispatchState] = useReducer(
     dashboardProjectionStateReducer,
     initialRecovery,
     createDashboardProjectionState,
@@ -34,8 +35,9 @@ export function useDashboardRecovery(
   const stateRef = useRef(state);
   stateRef.current = state;
   const requestRef = useRef<Promise<CompletedBackendRead<DashboardProjection>> | null>(null);
-  const acceptedProjectionRef = useRef(state.acceptedProjection);
-  acceptedProjectionRef.current = state.acceptedProjection;
+  const cancellationRef = useRef<Promise<true> | null>(null);
+  const settleRequestRef = useRef<(() => void) | null>(null);
+  const followUpRef = useRef<Promise<void> | null>(null);
   const mountedRef = useRef(true);
   const realtimeDisconnectedRef = useRef(false);
   const hasLocalRecoveryActivityRef = useRef(false);
@@ -45,6 +47,12 @@ export function useDashboardRecovery(
   initialRecoveryRef.current = initialRecovery;
   const refreshRef = useRef<() => Promise<void>>(async () => undefined);
   const recoveredResetIdentityRef = useRef<string | null>(null);
+  // Reduce eagerly into the ref so a coalesced follow-up read starts from the
+  // projection the previous read just accepted, even before React commits the render.
+  const dispatch = useCallback((action: DashboardProjectionStateAction) => {
+    stateRef.current = dashboardProjectionStateReducer(stateRef.current, action);
+    dispatchState(action);
+  }, []);
   const [retryState, setRetryState] = useState(noScheduledRetry);
   const retrySchedulerRef = useRef<ReturnType<typeof createDashboardRecoveryRetryScheduler> | null>(
     null,
@@ -66,61 +74,84 @@ export function useDashboardRecovery(
     });
   }
 
+  const startRecoveryRequest = useCallback(async (): Promise<void> => {
+    if (!mountedRef.current) return;
+    hasLocalRecoveryActivityRef.current = true;
+    retrySchedulerRef.current?.cancel();
+    reconcileSchedulerRef.current?.cancel();
+    dispatch({ type: "refresh-started" });
+    let completedRecovery: CompletedBackendRead<DashboardProjection> | null = null;
+    const request = readProxyJson(
+      recoveryPath(stateRef.current.acceptedProjection),
+      dashboardProjectionSchema,
+    ).catch(
+      (error: unknown): CompletedBackendRead<DashboardProjection> => ({
+        status: "unavailable",
+        reason: error instanceof Error ? error.message : "Dashboard recovery request failed.",
+      }),
+    );
+    requestRef.current = request;
+
+    try {
+      completedRecovery = await request;
+      if (!mountedRef.current) return;
+      dispatch({
+        type: "refresh-completed",
+        recovery: completedRecovery,
+        preserveAvailableRecoveryOnFailure: options.preserveAvailableRecoveryOnFailure === true,
+      });
+      if (completedRecovery.status === "available") {
+        retrySchedulerRef.current?.reset();
+        reconcileSchedulerRef.current?.reset();
+        const acceptedProjection = shouldAcceptDashboardProjection(
+          stateRef.current,
+          completedRecovery.data,
+        )
+          ? completedRecovery.data
+          : stateRef.current.acceptedProjection;
+        if (
+          realtimeDisconnectedRef.current &&
+          requiresDisconnectedReconciliation(acceptedProjection)
+        ) {
+          reconcileSchedulerRef.current?.schedule(2_000);
+        }
+      } else if (completedRecovery.status === "unavailable") {
+        retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
+      }
+    } finally {
+      requestRef.current = null;
+    }
+  }, [options.preserveAvailableRecoveryOnFailure, dispatch]);
+
+  // Global freshness contract: while mounted, every caller awaits a recovery attempt
+  // started after that call; an already-running read cannot satisfy it. At most one
+  // request is in flight plus one pending batch — callers arriving during a request
+  // share the single queued follow-up, which starts one fresh request once the
+  // in-flight read settles. Callers arriving during the follow-up require a later
+  // request. A queued caller resolves after its qualifying attempt even if that
+  // attempt fails; further automatic retries stay with the existing schedulers.
   const performRecovery = useCallback(
     async function runRecovery(): Promise<void> {
       if (!mountedRef.current) return;
-      if (requestRef.current) {
-        await requestRef.current;
+      const cancelled = cancellationRef.current;
+      if (requestRef.current === null) {
+        await Promise.race([startRecoveryRequest(), cancelled]);
         return;
       }
-
-      hasLocalRecoveryActivityRef.current = true;
-      retrySchedulerRef.current?.cancel();
-      reconcileSchedulerRef.current?.cancel();
-      dispatch({ type: "refresh-started" });
-      let completedRecovery: CompletedBackendRead<DashboardProjection> | null = null;
-      const request = readProxyJson(
-        recoveryPath(acceptedProjectionRef.current),
-        dashboardProjectionSchema,
-      ).catch(
-        (error: unknown): CompletedBackendRead<DashboardProjection> => ({
-          status: "unavailable",
-          reason: error instanceof Error ? error.message : "Dashboard recovery request failed.",
-        }),
-      );
-      requestRef.current = request;
-
-      try {
-        completedRecovery = await request;
-        if (!mountedRef.current) return;
-        dispatch({
-          type: "refresh-completed",
-          recovery: completedRecovery,
-          preserveAvailableRecoveryOnFailure: options.preserveAvailableRecoveryOnFailure === true,
-        });
-        if (completedRecovery.status === "available") {
-          retrySchedulerRef.current?.reset();
-          reconcileSchedulerRef.current?.reset();
-          const acceptedProjection = shouldAcceptDashboardProjection(
-            stateRef.current,
-            completedRecovery.data,
-          )
-            ? completedRecovery.data
-            : stateRef.current.acceptedProjection;
-          if (
-            realtimeDisconnectedRef.current &&
-            requiresDisconnectedReconciliation(acceptedProjection)
-          ) {
-            reconcileSchedulerRef.current?.schedule(2_000);
+      if (followUpRef.current === null) {
+        followUpRef.current = (async () => {
+          while (requestRef.current !== null) {
+            if ((await Promise.race([requestRef.current, cancelled])) === true) return;
+            if (cancellationRef.current !== cancelled) return;
           }
-        } else if (completedRecovery.status === "unavailable") {
-          retrySchedulerRef.current?.schedule(completedRecovery.retryAfterMs);
-        }
-      } finally {
-        requestRef.current = null;
+          followUpRef.current = null;
+          if (!mountedRef.current) return;
+          await Promise.race([startRecoveryRequest(), cancelled]);
+        })();
       }
+      await followUpRef.current;
     },
-    [options.preserveAvailableRecoveryOnFailure],
+    [startRecoveryRequest],
   );
 
   const refresh = useCallback(() => performRecovery(), [performRecovery]);
@@ -146,13 +177,20 @@ export function useDashboardRecovery(
       }
       dispatch({ type: "live-projection-received", projection });
     },
-    [state],
+    [state, dispatch],
   );
 
   useEffect(() => {
     mountedRef.current = true;
+    // Cancel callers, not the read: effect replay must still accept its response.
+    cancellationRef.current = new Promise<true>((resolve) => {
+      settleRequestRef.current = () => resolve(true);
+    });
     return () => {
       mountedRef.current = false;
+      settleRequestRef.current?.();
+      settleRequestRef.current = null;
+      followUpRef.current = null;
       retrySchedulerRef.current?.reset();
       reconcileSchedulerRef.current?.reset();
     };
@@ -173,7 +211,7 @@ export function useDashboardRecovery(
         retrySchedulerRef.current?.reset();
       }
     }
-  }, [initialRecoveryIdentity]);
+  }, [initialRecoveryIdentity, dispatch]);
 
   const retryNow = useCallback(async (): Promise<void> => {
     retrySchedulerRef.current?.reset();

@@ -445,57 +445,217 @@ describe("useDashboardRecovery", () => {
   });
 
   it("coalesces concurrent repairs and sends the paired known-scope hint", async () => {
-    const request = deferred<Response>();
-    const fetchMock = vi.fn().mockImplementationOnce(() => request.promise);
+    const inFlight = deferred<Response>();
+    const followUp = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => inFlight.promise)
+      .mockImplementationOnce(() => followUp.promise);
     vi.stubGlobal("fetch", fetchMock);
     const initial = runProjection();
     const next = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const newer = runProjection({ revision: 3, recoveredAt: "2026-06-20T00:00:13.000Z" });
     const { result } = renderHook(() => useDashboardRecovery(available(initial)));
 
-    let first!: Promise<void>;
+    let queued!: Promise<void>;
+    let alsoQueued!: Promise<void>;
     act(() => {
-      first = result.current.refresh();
       void result.current.refresh();
-      void result.current.refresh();
+      queued = result.current.refresh();
+      alsoQueued = result.current.refresh();
     });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       "/api/dashboard/recovery?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=44444444-4444-4444-8444-444444444444",
     );
 
-    request.resolve(jsonResponse(next));
-    await act(async () => first);
+    let queuedCallerSettled = false;
+    let alsoQueuedCallerSettled = false;
+    void alsoQueued.then(() => {
+      alsoQueuedCallerSettled = true;
+    });
+    void queued.then(() => {
+      queuedCallerSettled = true;
+    });
+    inFlight.resolve(jsonResponse(next));
+    await act(async () => inFlight.promise);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "/api/dashboard/recovery?knownRunId=11111111-1111-4111-8111-111111111111&knownSaleOfferId=44444444-4444-4444-8444-444444444444",
+    );
+    expect(queuedCallerSettled).toBe(false);
+    expect(alsoQueuedCallerSettled).toBe(false);
     expect(result.current.recovery).toEqual(available(next));
+
+    followUp.resolve(jsonResponse(newer));
+    await act(async () => {
+      await Promise.all([queued, alsoQueued]);
+    });
+    expect(queuedCallerSettled).toBe(true);
+    expect(alsoQueuedCallerSettled).toBe(true);
+    expect(result.current.recovery).toEqual(available(newer));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("schedules one trailing reconciliation when disconnect arrives during a request", async () => {
+  it("requires a third read from a caller arriving during the shared follow-up", async () => {
+    const requests = [deferred<Response>(), deferred<Response>(), deferred<Response>()];
+    let requestIndex = 0;
+    const fetchMock = vi.fn(() => {
+      const request = requests[requestIndex];
+      requestIndex += 1;
+      if (!request) throw new Error(`Unexpected fetch ${requestIndex}.`);
+      return request.promise;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const initial = runProjection();
+    const second = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const third = runProjection({ revision: 3, recoveredAt: "2026-06-20T00:00:13.000Z" });
+    const fourth = runProjection({ revision: 4, recoveredAt: "2026-06-20T00:00:14.000Z" });
+    const { result } = renderHook(() => useDashboardRecovery(available(initial)));
+
+    let sharedFollowUp!: Promise<void>;
+    act(() => {
+      void result.current.refresh();
+      sharedFollowUp = result.current.refresh();
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+
+    let sharedCallerSettled = false;
+    void sharedFollowUp.then(() => {
+      sharedCallerSettled = true;
+    });
+    requests[0]?.resolve(jsonResponse(second));
+    await act(async () => requests[0]?.promise);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(sharedCallerSettled).toBe(false);
+
+    let lateCaller!: Promise<void>;
+    act(() => {
+      lateCaller = result.current.refresh();
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    requests[1]?.resolve(jsonResponse(third));
+    await act(async () => sharedFollowUp);
+    expect(sharedCallerSettled).toBe(true);
+    expect(result.current.recovery).toEqual(available(third));
+
+    let lateCallerSettled = false;
+    void lateCaller.then(() => {
+      lateCallerSettled = true;
+    });
+    await act(async () => Promise.resolve());
+    expect(lateCallerSettled).toBe(false);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    requests[2]?.resolve(jsonResponse(fourth));
+    await act(async () => lateCaller);
+    expect(lateCallerSettled).toBe(true);
+    expect(result.current.recovery).toEqual(available(fourth));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("requires a fresh disconnect read after an in-flight request and keeps the reconciliation policy", async () => {
     vi.useFakeTimers();
-    const request = deferred<Response>();
+    const first = deferred<Response>();
     const next = runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" });
+    const stillActive = runProjection({ revision: 3, recoveredAt: "2026-06-20T00:00:13.000Z" });
     const terminal = runProjection({
-      revision: 3,
+      revision: 4,
       recoveredAt: "2026-06-20T00:00:14.000Z",
       currentRun: terminalRun(),
     });
     const fetchMock = vi
       .fn()
-      .mockImplementationOnce(() => request.promise)
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(jsonResponse(stillActive))
       .mockResolvedValueOnce(jsonResponse(terminal));
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useDashboardRecovery(available(runProjection())));
 
-    let first!: Promise<void>;
+    let firstCaller!: Promise<void>;
     act(() => {
-      first = result.current.refresh();
+      firstCaller = result.current.refresh();
       void result.current.notifyRealtimeDisconnected();
     });
     expect(fetchMock).toHaveBeenCalledOnce();
-    request.resolve(jsonResponse(next));
-    await act(async () => first);
-    await act(async () => vi.advanceTimersByTimeAsync(1_999));
-    expect(fetchMock).toHaveBeenCalledOnce();
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+
+    first.resolve(jsonResponse(next));
+    await act(async () => firstCaller);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("settles callers of a failed follow-up and leaves retries to the existing backoff", async () => {
+    vi.useFakeTimers();
+    const first = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => first.promise)
+      .mockResolvedValueOnce(errorResponse("Recovery unavailable", 503))
+      .mockResolvedValueOnce(
+        jsonResponse(runProjection({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" })),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const initial = runProjection();
+    const { result } = renderHook(() => useDashboardRecovery(available(initial)));
+
+    let queued!: Promise<void>;
+    act(() => {
+      void result.current.refresh();
+      queued = result.current.refresh();
+    });
+    first.resolve(errorResponse("Recovery unavailable", 503));
+    await act(async () => first.promise);
+    await act(async () => queued);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.recovery.status).toBe("unavailable");
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_999));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.recovery.status).toBe("available");
+
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("settles queued callers without starting the follow-up on unmount", async () => {
+    const first = deferred<Response>();
+    const fetchMock = vi.fn().mockImplementationOnce(() => first.promise);
+    vi.stubGlobal("fetch", fetchMock);
+    const initial = available(projectionFixture());
+    const { result, unmount } = renderHook(() => useDashboardRecovery(initial));
+
+    let inFlight!: Promise<void>;
+    let queued!: Promise<void>;
+    act(() => {
+      inFlight = result.current.refresh();
+      queued = result.current.refresh();
+    });
+    unmount();
+    // Leave fetch pending: cleanup must settle callers independently of the network.
+    await act(async () => {
+      await Promise.all([inFlight, queued]);
+    });
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.recovery).toEqual(initial);
+
+    await act(async () => {
+      first.resolve(
+        jsonResponse(projectionFixture({ revision: 2, recoveredAt: "2026-06-20T00:00:12.000Z" })),
+      );
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(result.current.recovery).toEqual(initial);
   });
 
   it("keeps reconciling successful nonterminal recoveries while disconnected", async () => {

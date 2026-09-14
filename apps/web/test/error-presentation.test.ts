@@ -127,14 +127,68 @@ describe("error presentation", () => {
         httpStatus: 502,
         correlationId: "corr-private",
       },
-      "public-start",
+      { surface: "public-start", startRequestOutcome: true },
     );
-    expect(publicStartPresentation.headline).toBe(
-      "The demo backend isn't ready yet — try again in a moment",
-    );
+    expect(publicStartPresentation.headline).toBe("We couldn't confirm whether your run started");
     expect(publicStartPresentation.action.kind).toBe("check");
     expect(JSON.stringify(publicStartPresentation)).not.toContain("raw backend probe failure");
     expect(JSON.stringify(publicStartPresentation)).not.toContain("corr-private");
+  });
+
+  it.each([
+    [
+      "network failure without an HTTP status",
+      { status: "unavailable" as const, reason: "fetch failed" },
+    ],
+    [
+      "malformed success body",
+      { status: "unavailable" as const, httpStatus: 202, reason: "response did not match" },
+    ],
+    [
+      "BFF backend_unavailable",
+      {
+        status: "unavailable" as const,
+        errorCode: "backend_unavailable" as const,
+        httpStatus: 502,
+      },
+    ],
+    [
+      "BFF invalid_backend_response",
+      {
+        status: "unavailable" as const,
+        errorCode: "invalid_backend_response" as const,
+        httpStatus: 502,
+      },
+    ],
+  ])("maps the uncertain start outcome from %s to the uncertain presentation", (_name, read) => {
+    const presentation = mapErrorPresentation(read, {
+      surface: "public-start",
+      startRequestOutcome: true,
+    });
+    expect(presentation.headline).toBe("We couldn't confirm whether your run started");
+    expect(presentation.explanation).toBe(
+      "Check whether a run is already in progress before starting another one.",
+    );
+    expect(presentation.action).toMatchObject({ kind: "check", label: "Check again" });
+    expect(presentation.tone).toBe("warning");
+  });
+
+  it("keeps codeless public-start reads on the backend-unavailable presentation", () => {
+    const presentation = mapErrorPresentation(
+      { status: "unavailable", reason: "fetch failed" },
+      "public-start",
+    );
+    expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
+    expect(presentation.action).toMatchObject({ kind: "check", label: "Check again" });
+  });
+
+  it("keeps verdict codes on the existing public-start failure copy", () => {
+    const presentation = mapErrorPresentation(
+      { status: "unavailable", errorCode: "internal_error", httpStatus: 500 },
+      "public-start",
+    );
+    expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
+    expect(presentation.action).toMatchObject({ kind: "check", label: "Check again" });
   });
 
   it.each([

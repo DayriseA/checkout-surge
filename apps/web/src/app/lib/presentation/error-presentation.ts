@@ -48,6 +48,8 @@ export interface ErrorPresentationContext {
   surface: ErrorPresentationContextName;
   /** Set only by a server-authorized protected surface that may disclose diagnostics. */
   protected?: boolean;
+  /** Set only when presenting the outcome of a submitted public start request. */
+  startRequestOutcome?: true;
   cause?:
     | "active_run_exists"
     | "reset_incomplete"
@@ -74,6 +76,13 @@ const publicStartActionCodes = new Set<ErrorPayloadCode>([
   "public_run_budget_exceeded",
   "invalid_request",
   "invalid_run_configuration",
+]);
+
+// When returned from the start path, these mean the BFF never saw a valid API verdict,
+// so a start may already have been accepted; they are uncertain outcomes, not verdicts.
+const publicStartUncertainCodes = new Set<ErrorPayloadCode>([
+  "backend_unavailable",
+  "invalid_backend_response",
 ]);
 
 /**
@@ -133,20 +142,27 @@ export function mapErrorPresentation(
 
   const retryAfterMs =
     read.retryAfterMs !== undefined && read.retryAfterMs > 0 ? read.retryAfterMs : undefined;
-  const mapped =
-    read.errorCode &&
-    (resolved.surface !== "public-start" || publicStartActionCodes.has(read.errorCode))
+  const isStartRequestOutcome =
+    resolved.surface === "public-start" && resolved.startRequestOutcome === true;
+  const mapped = read.errorCode
+    ? resolved.surface !== "public-start" || publicStartActionCodes.has(read.errorCode)
       ? codePresentation(read.errorCode, retryAfterMs, resolved)
-      : resolved.surface === "public-start"
-        ? publicBackendRetryPresentation(retryAfterMs)
-        : null;
+      : isStartRequestOutcome && publicStartUncertainCodes.has(read.errorCode)
+        ? publicStartUncertainRetryPresentation(retryAfterMs)
+        : publicBackendRetryPresentation(retryAfterMs)
+    : resolved.surface === "public-start" && !isStartRequestOutcome
+      ? publicBackendRetryPresentation(retryAfterMs)
+      : null;
   if (mapped) return { ...mapped, technicalDetails };
 
   // An absent code includes network failures and malformed envelopes. Fail closed: the
-  // transport reason is retained only for authenticated technical details.
+  // transport reason is retained only for authenticated technical details. For a submitted
+  // public start request the browser never saw the API verdict, so the outcome is uncertain.
   if (resolved.surface === "public-start") {
     return {
-      ...publicBackendUnavailablePresentation(),
+      ...(isStartRequestOutcome
+        ? publicStartUncertainPresentation()
+        : publicBackendUnavailablePresentation()),
       technicalDetails,
     };
   }
@@ -171,6 +187,15 @@ function publicBackendUnavailablePresentation(
     explanation: "Check again before starting a run.",
     action: { kind: "check", label: "Check again" },
     tone: status === "degraded" ? "warning" : "danger",
+  };
+}
+
+function publicStartUncertainPresentation(): Omit<ErrorPresentation, "technicalDetails"> {
+  return {
+    headline: "We couldn't confirm whether your run started",
+    explanation: "Check whether a run is already in progress before starting another one.",
+    action: { kind: "check", label: "Check again" },
+    tone: "warning",
   };
 }
 
@@ -240,7 +265,6 @@ function codePresentation(
         tone: "danger",
       };
     case "service_unavailable":
-    case "backend_unavailable":
     case "dashboard_recovery_unavailable":
     case "inventory_unavailable":
     case "queue_status_unavailable":
@@ -248,7 +272,17 @@ function codePresentation(
       return context.surface === "public-start"
         ? publicBackendRetryPresentation(retryAfterMs)
         : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+    case "backend_unavailable":
+      if (context.surface !== "public-start")
+        return retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+      return context.startRequestOutcome === true
+        ? publicStartUncertainRetryPresentation(retryAfterMs)
+        : publicBackendRetryPresentation(retryAfterMs);
     case "invalid_backend_response":
+      if (context.surface !== "public-start") return genericPresentation;
+      return context.startRequestOutcome === true
+        ? publicStartUncertainRetryPresentation(retryAfterMs)
+        : publicBackendRetryPresentation(retryAfterMs);
     case "internal_error":
     case "service_misconfigured":
       return context.surface === "public-start"
@@ -430,6 +464,14 @@ function retryPresentation(
         tone: "danger",
       }
     : waitPresentation(headline, retryAfterMs);
+}
+
+function publicStartUncertainRetryPresentation(
+  retryAfterMs: number | undefined,
+): Omit<ErrorPresentation, "technicalDetails"> {
+  return retryAfterMs === undefined
+    ? publicStartUncertainPresentation()
+    : waitPresentation(publicStartUncertainPresentation().headline, retryAfterMs);
 }
 
 function publicBackendRetryPresentation(

@@ -192,7 +192,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   }, [readiness]);
 
   useEffect(() => {
-    if (startRetryUntil === null) return;
+    if (startRetryUntil === null || startingSlug !== null) return;
     const remainingMs = Math.max(0, startRetryUntil - Date.now());
     const timer = setTimeout(() => {
       setStartRetryUntil(null);
@@ -210,7 +210,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       );
     }, remainingMs);
     return () => clearTimeout(timer);
-  }, [startConflictBlock, startRetryUntil]);
+  }, [startConflictBlock, startRetryUntil, startingSlug]);
 
   useEffect(() => {
     if (
@@ -275,6 +275,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     surface.presets.status !== "available" ||
     recovery.status !== "available";
   const customStartDisabled = startDisabled;
+  // Derived post-start reconciliation window: a start is pending its post-failure
+  // reconciliation while the failed-start presentation is up and the starting slug has
+  // not been released (it is only released once both required reads complete).
+  const postStartReconciliationPending = startingSlug !== null && startPresentation !== null;
 
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
     setCustomDraft(update);
@@ -337,7 +341,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         return;
       }
 
-      const presentation = mapErrorPresentation(result, "public-start");
+      const presentation = mapErrorPresentation(result, {
+        surface: "public-start",
+        startRequestOutcome: true,
+      });
       setStartPresentation(presentation);
       if (isCustom) {
         setCustomSubmissionFailure({ kind: "operation", presentation });
@@ -353,12 +360,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       if (result.status === "unavailable" && result.retryAfterMs && result.retryAfterMs > 0) {
         setStartRetryUntil(Date.now() + result.retryAfterMs);
       }
-      if (conflictReason) {
-        await Promise.all([refresh(), refreshReadiness()]);
-        if (conflictReason === "active_run_exists") setActiveConflictRefreshComplete(true);
-      } else {
-        await refreshReadiness();
-      }
+      // Every operational failure reaching this branch is an uncertain start outcome
+      // until reconciled: refresh the current-run recovery (started after the failed
+      // response, guaranteed by the recovery hook contract) and readiness together.
+      await Promise.all([refresh(), refreshReadiness()]);
+      if (conflictReason === "active_run_exists") setActiveConflictRefreshComplete(true);
     } finally {
       setStartingSlug(null);
     }
@@ -383,6 +389,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     void Promise.all([retryNow(), refreshReadiness()]);
                   }
             }
+            postStartReconciliationPending={postStartReconciliationPending}
             readiness={readiness}
             recovery={recovery}
             retriesExhausted={retriesExhausted}
@@ -1063,6 +1070,7 @@ function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: 
 function StartGate({
   isRetryScheduled,
   onRetry,
+  postStartReconciliationPending,
   readiness,
   recovery,
   retriesExhausted,
@@ -1074,6 +1082,7 @@ function StartGate({
 }: {
   isRetryScheduled: boolean;
   onRetry: () => void;
+  postStartReconciliationPending: boolean;
   readiness: BackendRead<HealthResponse>;
   recovery: BackendRead<DashboardProjection>;
   retriesExhausted: boolean;
@@ -1118,6 +1127,8 @@ function StartGate({
           <StatusPill status={deriveRunPresentationState(recovery)} />
         ) : readinessBlocked ? (
           <StatusPill status={readinessPresentation(readiness)} />
+        ) : postStartReconciliationPending ? (
+          <StatusPill status={{ label: "Checking run status", tone: "idle" }} />
         ) : (
           <StatusPill status={{ label: "ready", tone: "idle" }} />
         )}
