@@ -191,6 +191,64 @@ describe("AdminSignOut", () => {
       { method: "DELETE", cache: "no-store" },
     ]);
   });
+
+  it("shows the generic failure alert when the sign-out request rejects", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const user = userEvent.setup();
+    render(<AdminSignOut />);
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe("Admin sign-out failed.");
+    expect(alert.textContent).not.toContain("Failed to fetch");
+    expect((screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(navigation.refresh).not.toHaveBeenCalled();
+  });
+
+  it("shows the generic failure alert on a non-success response and clears it on a pending retry", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("Service Unavailable", {
+          status: 503,
+          headers: { "content-type": "text/plain" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminSignOut />);
+
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toBe("Admin sign-out failed.");
+    expect((screen.getByRole("button", { name: "Sign out" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    expect(navigation.refresh).not.toHaveBeenCalled();
+
+    let resolveRequest: ((response: Response) => void) | undefined;
+    const deferred = new Promise<Response>((resolve) => {
+      resolveRequest = resolve;
+    });
+    fetchMock.mockImplementation(() => deferred);
+    await user.click(screen.getByRole("button", { name: "Sign out" }));
+
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(
+      (screen.getByRole("button", { name: "Signing out…" }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    resolveRequest?.(jsonResponse({ authenticated: false }));
+    await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
+  });
 });
 
 function jsonResponse(payload: unknown, status = 200): Response {
