@@ -193,12 +193,7 @@ describe("error presentation", () => {
 
   it.each([
     ["active_run_exists", "A demo run is already in progress", "watch", "/watch"],
-    [
-      "reset_incomplete",
-      "The demo backend isn't ready yet — try again in a moment",
-      "check",
-      undefined,
-    ],
+    ["reset_incomplete", "The previous run is still recovering", "check", undefined],
   ] as const)("maps the bounded conflict cause %s", (cause, headline, kind, href) => {
     const presentation = mapErrorPresentation(
       {

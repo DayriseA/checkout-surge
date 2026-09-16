@@ -364,7 +364,17 @@ function conflictPresentation(
           },
           tone: "warning",
         }
-      : publicBackendRetryPresentation(retryAfterMs);
+      : {
+          headline: "The previous run is still recovering",
+          explanation:
+            "Worker work may still settle. New runs remain unavailable until recovery completes.",
+          action: {
+            kind: "check",
+            label: "Check again",
+            ...(retryAfterMs ? { retryAfterMs } : {}),
+          },
+          tone: "warning",
+        };
   }
   return context.surface === "public-start"
     ? publicBackendUnavailablePresentation()

@@ -33,26 +33,25 @@ afterEach(() => {
 });
 
 describe("public visitor mental model", () => {
-  it("places the concise causal story and one caveat directly before the start controls", async () => {
+  it("leads with the chooser and keeps the detailed causal story mounted in Advanced", async () => {
     const markup = renderToStaticMarkup(await DemoDashboardPage());
     const capsuleIndex = markup.indexOf('id="demo-mental-model"');
     const controlsIndex = markup.indexOf('id="public-start-controls"');
 
     expect(capsuleIndex).toBeGreaterThan(-1);
-    expect(controlsIndex).toBeGreaterThan(capsuleIndex);
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "Simulated buyers compete for limited stock",
+    expect(controlsIndex).toBeLessThan(capsuleIndex);
+    expect(markup).toContain(
+      "Choose a simulation, start it, and watch a simulated flash sale unfold.",
     );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
+    const advancedStory = markup.slice(markup.lastIndexOf("data-advanced-only"));
+    expect(advancedStory).toContain('hidden=""');
+    expect(advancedStory).toContain("Simulated buyers compete for limited stock");
+    expect(advancedStory).toContain(
       "Redis atomically reserves units immediately without overselling",
     );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "every unique reservation reaches a durable outcome",
-    );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "not universal production evidence",
-    );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain('href="/about"');
+    expect(advancedStory).toContain("every unique reservation reaches a durable outcome");
+    expect(advancedStory).toContain("not universal production evidence");
+    expect(advancedStory).toContain('href="/about"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
