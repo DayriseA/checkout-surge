@@ -42,6 +42,9 @@ vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail,
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
+vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
+  readPageViewMode: vi.fn(async () => "basic" as const),
+}));
 
 describe("run history", () => {
   it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {

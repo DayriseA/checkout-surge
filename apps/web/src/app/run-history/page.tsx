@@ -1,12 +1,14 @@
 import type { RunHistoryListResponse } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import { ErrorNotice } from "../components/error-notice";
+import { PageView } from "../components/page-view";
 import { RunHistoryAdminControls } from "../components/run-history-admin-controls";
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
+import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Run history" };
 export const dynamic = "force-dynamic";
@@ -28,8 +30,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
     history.status === "available"
       ? formatRunCount(history.data.totalCount, "an unknown number of")
       : "unavailable";
-
-  return (
+  const content = (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
@@ -62,6 +63,16 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         </section>
       )}
     </>
+  );
+
+  if (authenticated) {
+    return content;
+  }
+
+  return (
+    <PageView initialMode={await readPageViewMode("history")} page="history">
+      {content}
+    </PageView>
   );
 }
 

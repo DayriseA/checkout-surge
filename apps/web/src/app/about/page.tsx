@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
+import { PageView } from "../components/page-view";
 import { publicNarrative, publicVocabulary } from "../lib/presentation/public-vocabulary";
+import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "About" };
+export const dynamic = "force-dynamic";
 
 const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
 const termLinkClassName = "font-semibold text-accent underline";
 
-export default function AboutPage() {
+export default async function AboutPage() {
+  const viewMode = await readPageViewMode("about");
+
   return (
-    <>
+    <PageView initialMode={viewMode} page="about">
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">About</h1>
@@ -137,7 +142,7 @@ export default function AboutPage() {
       </section>
 
       <PublicGlossary />
-    </>
+    </PageView>
   );
 }
 

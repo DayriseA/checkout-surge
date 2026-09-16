@@ -8,6 +8,9 @@ const sessionMock = vi.hoisted(() => vi.fn(async () => false));
 vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(async () => publicSurface),
 }));
+vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
+  readPageViewMode: vi.fn(async () => "basic" as const),
+}));
 vi.mock("../src/app/components/public-demo-entry.js", () => ({
   PublicDemoEntry: () =>
     createElement("section", { id: "public-start-controls" }, "Preset and start controls"),
@@ -53,8 +56,8 @@ describe("public visitor mental model", () => {
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
-  it("keeps the about narrative in causal order and distinguishes real from simulated", () => {
-    const markup = renderToStaticMarkup(createElement(AboutPage));
+  it("keeps the about narrative in causal order and distinguishes real from simulated", async () => {
+    const markup = renderToStaticMarkup(await AboutPage());
     const orderedSectionIds = [
       "failure-story",
       "redis-fast-path",
@@ -79,8 +82,8 @@ describe("public visitor mental model", () => {
     );
   });
 
-  it("renders four causal signals, an accessible seven-node diagram, and stable glossary anchors", () => {
-    const markup = renderToStaticMarkup(createElement(AboutPage));
+  it("renders four causal signals, an accessible seven-node diagram, and stable glossary anchors", async () => {
+    const markup = renderToStaticMarkup(await AboutPage());
     const signalSection = markup.slice(
       markup.indexOf('id="gold-signals"'),
       markup.indexOf('id="success"'),
@@ -144,7 +147,7 @@ describe("public visitor mental model", () => {
   });
 
   it("links the repository safely from about and global navigation and supplies B05 copy", async () => {
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );
@@ -161,7 +164,7 @@ describe("public visitor mental model", () => {
   });
 
   it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );

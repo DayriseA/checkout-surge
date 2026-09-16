@@ -20,6 +20,10 @@ import {
 } from "../src/app/lib/server/config.js";
 import WatchPage from "../src/app/watch/page.js";
 
+vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
+  readPageViewMode: vi.fn(async () => "basic" as const),
+}));
+
 const originalEnv = { ...process.env };
 const validWebEnv = {
   CONTROL_SERVICE_TOKEN: "control-token",

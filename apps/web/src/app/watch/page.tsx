@@ -1,6 +1,7 @@
 import { type RunHistoryListItem, runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import { OperatorDashboard } from "../components/operator-dashboard";
+import { PageView } from "../components/page-view";
 import {
   type BackendRead,
   getRunHistoryDetail,
@@ -11,6 +12,7 @@ import {
   type AcceptedRunResult,
   acceptedRunResultFromRead,
 } from "../lib/presentation/accepted-run-result";
+import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Live watch" };
 export const dynamic = "force-dynamic";
@@ -43,8 +45,10 @@ export default async function WatchPage({
         : history;
   }
 
+  const viewMode = await readPageViewMode("watch");
+
   return (
-    <>
+    <PageView initialMode={viewMode} page="watch">
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Live watch</h1>
@@ -60,6 +64,6 @@ export default async function WatchPage({
         invalidAcceptedRunContext={invalidAcceptedRunContext}
         latestCompletedRun={latestCompletedRun}
       />
-    </>
+    </PageView>
   );
 }

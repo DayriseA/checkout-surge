@@ -7,6 +7,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { neutralLinkButtonClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
+import { PageView } from "../../components/page-view";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
 import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
@@ -19,6 +20,7 @@ import {
 } from "../../lib/presentation/public-vocabulary";
 import { runConclusionSentence } from "../../lib/presentation/run-result-presentation";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
+import { readPageViewMode } from "../../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Run report" };
 export const dynamic = "force-dynamic";
@@ -45,6 +47,7 @@ export default async function RunHistoryDetailPage({
   if (!parsedParams.success) notFound();
 
   const isAdmin = await hasValidAdminPageSession();
+  const viewMode = isAdmin ? "basic" : await readPageViewMode("report");
   const parsedAdminQuery = isAdmin
     ? adminRunHistoryDetailHttpQuerySchema.safeParse((await searchParams) ?? {})
     : null;
@@ -67,7 +70,7 @@ export default async function RunHistoryDetailPage({
   if (publicDetail?.status === "available") {
     const { summary, result, overallDurationMs } = publicDetail.data;
     return (
-      <>
+      <PageView initialMode={viewMode} page="report">
         <header className="mb-4">
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
@@ -96,7 +99,7 @@ export default async function RunHistoryDetailPage({
           </div>
         </header>
         <PublicRunHistoryDetail detail={publicDetail.data} />
-      </>
+      </PageView>
     );
   }
 
@@ -142,7 +145,7 @@ export default async function RunHistoryDetailPage({
       reason: "No finished result exists for this run.",
     };
 
-  return (
+  const body = (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
@@ -169,5 +172,15 @@ export default async function RunHistoryDetailPage({
         />
       </section>
     </>
+  );
+
+  if (isAdmin) {
+    return body;
+  }
+
+  return (
+    <PageView initialMode={viewMode} page="report">
+      {body}
+    </PageView>
   );
 }

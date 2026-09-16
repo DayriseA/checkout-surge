@@ -77,6 +77,9 @@ vi.mock("../src/app/lib/api.js", () => ({
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: vi.fn(async () => false),
 }));
+vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
+  readPageViewMode: vi.fn(async () => "basic" as const),
+}));
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: vi.fn(),
   readAdminPresets: vi.fn(),
@@ -2170,9 +2173,9 @@ describe("web page smoke coverage", () => {
     expect(screen.getByRole("heading", { name: "Preview 1k" })).toBeTruthy();
     cleanup();
 
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     expect(aboutMarkup.match(/k6/g)).toHaveLength(1);
-    render(createElement(AboutPage));
+    render(await AboutPage());
     expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   });
 
