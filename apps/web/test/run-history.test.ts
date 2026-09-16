@@ -58,6 +58,17 @@ function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
   );
 }
 
+function historyInMode(initialMode: "basic" | "advanced", history = listFixture()) {
+  const props = { initialMode, page: "history" } as unknown as ComponentProps<
+    typeof PageViewComponents.PageView
+  >;
+  return createElement(
+    PageViewComponents.PageView,
+    props,
+    createElement(RunHistoryList, { history }),
+  );
+}
+
 describe("run history", () => {
   it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
     const detail = detailFixture("failed");
@@ -124,29 +135,94 @@ describe("run history", () => {
     }
   });
 
-  it("renders one compact comparison row without list-only technical evidence", () => {
-    const markup = renderToStaticMarkup(createElement(RunHistoryList, { history: listFixture() }));
+  it("renders compact Basic rows and reveals the existing comparisons in Advanced", () => {
+    const history = listFixture();
+    const first = history.summaries[0];
+    if (!first) throw new Error("Expected a run summary fixture.");
+    history.summaries.push(
+      {
+        ...first,
+        runId: "66666666-6666-4666-8666-666666666666",
+        presetName: "Order failure warning scenario",
+        resultOutcome: "completed-with-order-failures",
+        plannedAttempts: 1_200,
+        startingStock: 100,
+        uniqueReservations: 100,
+        soldOutRejections: 1_100,
+        confirmedOrders: 98,
+        failedOrders: 2,
+        overallDurationMs: 12_000,
+        convergenceDurationSeconds: 4,
+      },
+      {
+        ...first,
+        runId: "77777777-7777-4777-8777-777777777777",
+        presetName: "Result awaiting enough evidence to be verified",
+        resultOutcome: "outcome-indeterminate",
+      },
+    );
+    const { container } = render(historyInMode("basic", history));
 
-    expect(markup).toContain("Preview 1k");
-    expect(markup).toContain("2026-06-20 00:00:00 UTC");
-    expect(markup).toContain(
-      '<time class="mt-1 block text-sm text-muted" dateTime="2026-06-20T00:00:00.000Z">',
+    const completedRow = screen.getByRole("heading", { name: "Preview 1k" }).closest("article");
+    const warningRow = screen
+      .getByRole("heading", { name: "Order failure warning scenario" })
+      .closest("article");
+    if (!completedRow || !warningRow) throw new Error("Expected Basic history rows.");
+    const expectVisibleFact = (row: HTMLElement, label: string, value: string) => {
+      const labelElement = within(row).getByText(label, { selector: "p" });
+      expect(labelElement.closest("[hidden]")).toBeNull();
+      expect(labelElement.nextElementSibling?.textContent).toBe(value);
+    };
+
+    expect(within(completedRow).getByText("20 attempts · 10 units")).toBeTruthy();
+    expect(within(completedRow).getByText("Completed")).toBeTruthy();
+    expectVisibleFact(completedRow, "Confirmed orders", "10");
+    expectVisibleFact(completedRow, "Failed orders", "0");
+    expectVisibleFact(completedRow, "Overall duration", "10 s");
+
+    expect(within(warningRow).getByText("1,200 attempts · 100 units")).toBeTruthy();
+    expect(within(warningRow).getByText("Completed with order failures").classList).toContain(
+      "text-warning",
     );
-    expect(markup).not.toContain("ago");
-    expect(markup).toContain("Completed");
-    expect(markup).toContain("Planned demand / starting stock");
-    expect(markup).toContain("Unique reservations secured / sold-out rejections");
-    expect(markup).toContain("Confirmed / failed orders");
-    expect(markup).toContain("Convergence");
-    expect(markup).toContain("xl:grid-cols-");
-    expect(markup).not.toContain("lg:grid-cols-");
-    expect(markup).not.toContain("55555555-5555-4555-8555-555555555555</");
-    expect(markup).not.toContain("Traffic delivery");
-    expect(markup).not.toContain("Final inventory");
-    expect(markup).not.toContain("Page 1 ·");
-    expect(markup).toContain(
-      '<span class="sr-only"> for Preview 1k run from 2026-06-20 00:00:00 UTC</span>',
+    expectVisibleFact(warningRow, "Confirmed orders", "98");
+    expectVisibleFact(warningRow, "Failed orders", "2");
+    expectVisibleFact(warningRow, "Overall duration", "12 s");
+
+    expect(screen.getByText("Result not fully verified").classList).toContain("text-muted-strong");
+    const occurredAt = completedRow.querySelector("time");
+    expect(occurredAt?.dateTime).toBe("2026-06-20T00:00:00.000Z");
+    expect(occurredAt?.textContent).toContain("2026-06-20 00:00:00 UTC");
+    const reportLink = within(completedRow).getByRole("link", {
+      name: "View report for Preview 1k run from 2026-06-20 00:00:00 UTC",
+    });
+    expect(reportLink.getAttribute("href")).toBe(
+      "/run-history/55555555-5555-4555-8555-555555555555",
     );
+    for (const row of container.querySelectorAll("article")) {
+      expect(within(row as HTMLElement).getAllByRole("link")).toHaveLength(1);
+    }
+    expect(container.querySelectorAll('[data-advanced-only="true"]')).toHaveLength(4);
+    for (const advanced of container.querySelectorAll('[data-advanced-only="true"]')) {
+      expect(advanced.hasAttribute("hidden")).toBe(true);
+    }
+    expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(3);
+    expect(screen.getAllByText("Sold-out rejections")).toHaveLength(3);
+    expect(screen.getAllByText("Convergence duration")).toHaveLength(3);
+    expect(screen.getByText(/Convergence measures from the end of traffic dispatch/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    for (const advanced of container.querySelectorAll('[data-advanced-only="true"]')) {
+      expect(advanced.hasAttribute("hidden")).toBe(false);
+    }
+    expectVisibleFact(completedRow, "Unique reservations secured", "10");
+    expectVisibleFact(completedRow, "Sold-out rejections", "10");
+    expectVisibleFact(completedRow, "Convergence duration", "2 s");
+    expectVisibleFact(warningRow, "Unique reservations secured", "100");
+    expectVisibleFact(warningRow, "Sold-out rejections", "1,100");
+    expectVisibleFact(warningRow, "Convergence duration", "4 s");
+    expect(container.textContent).not.toContain("Traffic delivery");
+    expect(container.textContent).not.toContain("Final inventory");
+    expect(container.textContent).not.toContain("55555555-5555-4555-8555-555555555555");
   });
 
   it("names detail links and keeps destructive controls outside named pagination", () => {
@@ -167,6 +243,10 @@ describe("run history", () => {
         createElement(RunHistoryList, { history }),
       ),
     );
+
+    expect(screen.queryByRole("group", { name: "View" })).toBeNull();
+    expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(2);
+    expect(screen.getAllByText("Convergence duration")).toHaveLength(2);
 
     expect(
       screen.getByRole("link", {
@@ -196,13 +276,11 @@ describe("run history", () => {
   });
 
   it("handles empty, multiple-page, and out-of-range run states", () => {
-    expect(
-      renderToStaticMarkup(
-        createElement(RunHistoryList, {
-          history: { ...listFixture(), summaries: [], totalCount: 0 },
-        }),
-      ),
-    ).toContain("No runs yet");
+    const empty = renderToStaticMarkup(
+      historyInMode("basic", { ...listFixture(), summaries: [], totalCount: 0 }),
+    );
+    expect(empty).toContain("No runs yet");
+    expect(empty).toMatch(/href="\/"[^>]*>Start a simulation<\/a>/);
 
     expect(
       renderToStaticMarkup(
@@ -1217,7 +1295,7 @@ describe("run-history cross-route time and duration presentation", () => {
       container.innerHTML = markup;
       expect(container.textContent).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
-    expect(markups[0]).toMatch(/Duration<\/p><p[^>]*>10 s<\/p>/);
+    expect(markups[0]).toMatch(/Overall duration<\/p><p[^>]*>10 s<\/p>/);
     expect(markups[1]).toMatch(
       /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · Overall duration: 10 s<\/p>/,
     );
@@ -1251,7 +1329,7 @@ describe("run-history cross-route time and duration presentation", () => {
       createElement(AdminRunHistoryDetail, { detail: adminDetail }),
     );
 
-    expect(listMarkup).toMatch(/Duration<\/p><p[^>]*>not recorded<\/p>/);
+    expect(listMarkup).toMatch(/Overall duration<\/p><p[^>]*>not recorded<\/p>/);
     expect(publicMarkup).toContain("duration not recorded");
     expect(adminMarkup).toMatch(/Overall run duration<\/dt><dd[^>]*>— no recorded start<\/dd>/);
     expect(adminMarkup).not.toMatch(/Overall run duration<\/dt><dd[^>]*>0 ms<\/dd>/);

@@ -8,6 +8,7 @@ import {
 } from "../lib/presentation/public-vocabulary";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import { neutralLinkButtonClassName } from "./control-styles";
+import { AdvancedOnly } from "./page-view";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
@@ -24,6 +25,9 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
           Finished runs appear here after their final evidence is recorded.
         </p>
+        <Link className={`${neutralLinkButtonClassName} mt-3`} href="/">
+          Start a simulation
+        </Link>
       </section>
     );
   }
@@ -31,6 +35,12 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
   const hasMultiplePages = history.totalCount > history.pageSize;
   return (
     <div className="grid gap-3">
+      <AdvancedOnly className="rounded-lg border border-border bg-surface p-4">
+        <p className="m-0 text-sm leading-6 text-muted">
+          Convergence measures from the end of traffic dispatch until every reserved order reached a
+          confirmed or failed outcome. Overall duration covers the entire run.
+        </p>
+      </AdvancedOnly>
       {history.summaries.map((summary) => (
         <RunHistoryRow key={summary.runId} summary={summary} />
       ))}
@@ -45,19 +55,20 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
 function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
   return (
     <article className="rounded-lg border border-border bg-surface p-4">
-      <div className="grid gap-4 xl:grid-cols-[minmax(12rem,1.6fr)_repeat(6,minmax(7rem,1fr))_auto] xl:items-center">
-        <div className="min-w-0">
-          <h2 className="m-0 text-lg font-bold leading-tight text-ink">{summary.presetName}</h2>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 basis-full flex-1 sm:basis-auto">
+          <h2 className="m-0 break-words text-lg font-bold leading-tight text-ink">
+            {summary.presetName}
+          </h2>
+          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
+            {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
+          </p>
           <time className="mt-1 block text-sm text-muted" dateTime={summary.occurredAt}>
             {formatInstantUtc(summary.occurredAt)}
             <RelativeTime instant={summary.occurredAt} />
           </time>
         </div>
-        <Fact
-          label="Duration"
-          value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
-        />
-        <div>
+        <div className="min-w-0 break-words">
           <p className="m-0 text-xs font-bold uppercase text-muted">Result</p>
           <StatusPill
             status={{
@@ -66,27 +77,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
             }}
           />
         </div>
-        <Fact
-          label="Planned demand / starting stock"
-          value={`${number(summary.plannedAttempts)} / ${number(summary.startingStock)}`}
-        />
-        <Fact
-          label={`${publicVocabulary.uniqueReservationsSecured} / sold-out rejections`}
-          value={`${number(summary.uniqueReservations)} / ${number(summary.soldOutRejections)}`}
-        />
-        <Fact
-          label="Confirmed / failed orders"
-          value={`${number(summary.confirmedOrders)} / ${number(summary.failedOrders)}`}
-        />
-        <Fact
-          label="Convergence"
-          value={
-            summary.convergenceDurationSeconds === null
-              ? "not recorded"
-              : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
-          }
-        />
-        <div className="flex flex-wrap gap-2 xl:justify-end">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Link className={neutralLinkButtonClassName} href={`/run-history/${summary.runId}`}>
             View report{" "}
             <span className="sr-only">
@@ -98,6 +89,29 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
         </div>
       </div>
+      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+        <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
+        <Fact label="Failed orders" value={number(summary.failedOrders)} />
+        <Fact
+          label="Overall duration"
+          value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
+        />
+      </div>
+      <AdvancedOnly className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
+        <Fact
+          label={publicVocabulary.uniqueReservationsSecured}
+          value={number(summary.uniqueReservations)}
+        />
+        <Fact label="Sold-out rejections" value={number(summary.soldOutRejections)} />
+        <Fact
+          label="Convergence duration"
+          value={
+            summary.convergenceDurationSeconds === null
+              ? "not recorded"
+              : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
+          }
+        />
+      </AdvancedOnly>
     </article>
   );
 }
