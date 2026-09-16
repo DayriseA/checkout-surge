@@ -28,41 +28,41 @@ describe("watch narrative", () => {
     );
     expect(output).toContain("Operator stop recovery");
     expect(output).toContain("this report is unavailable");
-    expect(output).not.toContain("Ready when you are");
+    expect(output).not.toContain("Choose a simulation");
     expect(output).not.toContain("/run-history/");
-    expect(output).not.toContain("Start a demo");
+    expect(output).not.toContain("Start");
   });
 
-  it("keeps expanded technical details consistent through reset recovery and retry", () => {
+  it("keeps run availability and update facts consistent through reset recovery and idle", () => {
     const incomplete = projection(null);
     incomplete.resetRecoveryRunId = "11111111-1111-4111-8111-111111111111";
     incomplete.resetRecovery = "incomplete";
 
-    const recoveringDetails = technicalDetails(dashboardMarkup(available(incomplete)));
-    expect(recoveringDetails).toContain("Run: recovery incomplete");
+    const recovering = dashboardMarkup(available(incomplete));
+    expect(recovering).toContain("Run: recovery incomplete");
     for (const label of ["Current scenario", "Run", "Load generator"]) {
-      expect(recoveringDetails).toMatch(
+      expect(recovering).toMatch(
         new RegExp(`${label}</dt><dd[^>]*>Unavailable until operator recovery completes</dd>`),
       );
     }
-    expect(recoveringDetails).not.toContain("No run has started");
+    expect(recovering).not.toContain("No run has started");
 
-    const idleDetails = technicalDetails(dashboardMarkup(available(projection(null))));
-    expect(idleDetails).toContain("Run: ready");
+    const idle = dashboardMarkup(available(projection(null)));
+    expect(idle).toContain("Run: ready");
     for (const label of ["Current scenario", "Run", "Load generator"]) {
-      expect(idleDetails).toMatch(new RegExp(`${label}</dt><dd[^>]*>No run has started</dd>`));
+      expect(idle).toMatch(new RegExp(`${label}</dt><dd[^>]*>No run has started</dd>`));
     }
-    expect(idleDetails).not.toContain("recovery incomplete");
+    expect(idle).not.toContain("recovery incomplete");
   });
 
   it("renders one idle action state with and without latest history", () => {
     const withoutHistory = markup(available(projection(null)));
-    expect(withoutHistory).toContain("Start a demo");
+    expect(withoutHistory).toContain("Choose a simulation");
     expect(withoutHistory).toContain("No completed runs yet");
-    expect(withoutHistory).not.toContain("Sale evidence");
+    expect(withoutHistory).not.toContain("data-watch-signals");
 
     const withHistory = markup(available(projection(null)), null, latestRun);
-    expect(withHistory).toContain("View the full result for Preview 1k (2026-07-30 12:00:02 UTC)");
+    expect(withHistory).toContain("Latest saved report: Preview 1k (2026-07-30 12:00:02 UTC)");
     expect(withHistory).toContain('href="/run-history/11111111-1111-4111-8111-111111111111"');
     expect(withHistory).not.toContain("No completed runs yet");
   });
@@ -71,7 +71,7 @@ describe("watch narrative", () => {
     const output = markup({ status: "loading" });
 
     expect(output).toContain("Checking availability");
-    expect(output).not.toContain("Start a demo");
+    expect(output).not.toContain("Choose a simulation");
   });
 
   it("leads with the watch-read error and retry action when data is unavailable", () => {
@@ -82,81 +82,196 @@ describe("watch narrative", () => {
 
     expect(output).toContain("The latest information is temporarily unavailable");
     expect(output).toContain("Check again");
-    expect(output).not.toContain("Start a demo");
+    expect(output).not.toContain("Choose a simulation");
   });
 
-  it("renders starting with frozen scenario facts and no fake signals", () => {
+  it("renders starting with an identity line and truthful unavailable readings", () => {
     const output = markup(available(projection(run("starting"))));
 
-    expect(output).toContain("Setting up the flash sale");
+    expect(output).toContain("Preparing the flash sale");
+    expect(output).toContain("Preview 1k · 1,000 buyers · 250 units");
+    expect(output).toContain('aria-label="Run phase"');
+    expect(output).toContain("Preparing");
+    // Preparation and missing readings are unavailable, never zero-valued activity.
+    for (const label of [
+      "Units left",
+      "Orders confirmed",
+      "Awaiting confirmation",
+      "Orders failed",
+    ]) {
+      expect(output).toContain(label);
+    }
+    expect(output).not.toContain("<polyline");
+    // The strip keeps lifecycle-aware absence captions instead of inventing evidence.
+    expect(output.match(/Not yet available/g)?.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("keeps the frozen configuration reachable in the Advanced Scenario group while starting", () => {
+    const output = dashboardMarkup(available(projection(run("starting"))));
+
+    expect(output).toContain("Scenario settings");
     expect(output).toContain("Buyers / planned attempts");
     expect(output).toContain("1,000 / 1,000");
     expect(output).toContain("80 ms");
     expect(output).toContain("250 orders/s");
     expect(output).toContain("5 workers; excess work waits in the queue");
-    expect(output).not.toContain("Sale evidence");
+    expect(output).toContain('id="watch-advanced-scenario"');
   });
 
-  it("renders active interpretation before signals and ERP/consistency evidence", () => {
+  it("renders active with the identity, verdict, counts, and signal strip in order", () => {
     const output = markup(available(projection(run("active"))));
 
     expect(output).toContain("The surge is under way");
-    expect(output).toContain("Sale evidence");
-    expect(output.indexOf("Frozen scenario")).toBeLessThan(output.indexOf("What is happening now"));
-    expect(output.indexOf("What is happening now")).toBeLessThan(output.indexOf("Sale evidence"));
-    expect(output.indexOf("Sale evidence")).toBeLessThan(output.indexOf("Simulated ERP outcomes"));
-    expect(output).toContain("Fast reservation vs final confirmation");
+    expect(output).toContain("Checkout attempts are being accepted.");
+    const identity = output.indexOf('aria-label="Run phase"');
+    const verdict = output.indexOf("The surge is under way");
+    const counts = output.indexOf("Units left");
+    const strip = output.indexOf('data-watch-signals=""');
+    expect(identity).toBeGreaterThan(-1);
+    expect(verdict).toBeGreaterThan(identity);
+    expect(counts).toBeGreaterThan(verdict);
+    expect(strip).toBeGreaterThan(counts);
   });
 
-  it("places draining signals before promoted outcome and protection panels", () => {
-    const output = markup(available(projection(run("draining"))));
+  it("shows a progress bar against unique reservations only after traffic ends", () => {
+    const activeProjection = projection(run("active"));
+    activeProjection.businessOutcome = partialOutcome();
+    const active = markup(available(activeProjection));
+    expect(active).not.toContain("of 250 orders confirmed");
 
-    expect(output).toContain("Following the drain");
-    expect(output).toContain("Reservation and confirmation summary");
-    expect(output).toContain("Simulated ERP outcomes");
-    expect(output).toContain("Fast reservation vs final confirmation");
-    expect(output.indexOf("Sale evidence")).toBeLessThan(
-      output.indexOf("Reservation and confirmation summary"),
-    );
+    const drainingProjection = projection(run("draining"));
+    drainingProjection.businessOutcome = partialOutcome();
+    const draining = markup(available(drainingProjection));
+    expect(draining).toContain('aria-label="120 of 250 orders confirmed"');
+    expect(draining).toContain("Confirming remaining orders");
   });
 
-  it.each([
-    "active",
-    "draining",
-    "completed",
-    "failed",
-  ] as const)("keeps the %s run story ahead of promoted panels and technical details", (status) => {
-    const currentProjection =
-      status === "completed" || status === "failed"
-        ? terminalProjection(status)
-        : projection(run(status));
-    const output = renderToStaticMarkup(
-      createElement(OperatorDashboard, {
-        initialRecovery: available(currentProjection),
-      }),
-    );
-    const strip = output.indexOf("Frozen scenario");
-    const grid = output.indexOf('data-signal-headlines=""');
-    const technical = output.indexOf("Technical details");
+  it("omits the progress bar when the confirmed count contradicts the reservation total", () => {
+    const contradictoryProjection = projection(run("draining"));
+    contradictoryProjection.businessOutcome = {
+      ...partialOutcome(),
+      confirmedOrders: 300,
+    };
+    const output = markup(available(contradictoryProjection));
 
-    expect(strip).toBeGreaterThan(-1);
-    expect(grid).toBeGreaterThan(strip);
-    expect(technical).toBeGreaterThan(grid);
-    if (status === "active" || status === "draining") {
-      const phaseLine = output.indexOf(
-        status === "active" ? "What is happening now" : "Traffic finished",
+    expect(output).not.toContain("of 250 orders confirmed");
+    // The contradictory counts still render; only the bar is dropped.
+    expect(output).toContain("Orders confirmed");
+  });
+
+  it("keeps units and reservations distinct when each checkout reserves two units", () => {
+    const drainingProjection = projection(run("draining"));
+    const currentRun = drainingProjection.currentRun;
+    if (!currentRun) throw new Error("Expected a run.");
+    currentRun.configSnapshot = {
+      ...currentRun.configSnapshot,
+      inventoryConfig: { ...currentRun.configSnapshot.inventoryConfig, quantityPerCheckout: 2 },
+    };
+    drainingProjection.inventory = {
+      ...inventoryFixture,
+      allocatedStock: 250,
+      remainingStock: 20,
+      reservedStock: 230,
+    };
+    drainingProjection.businessOutcome = {
+      acceptedReservations: 115,
+      reservedUnits: 230,
+      soldOutRejections: 375,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: 115,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: 115,
+    };
+    const output = markup(available(drainingProjection));
+
+    // Units and orders are different populations: the tile pair reads units (20 left of which
+    // 230 are reserved), while the meter denominator uses unique reservations (115), not units.
+    expect(output).toContain(">20</p>");
+    expect(output).toContain("230 reserved");
+    expect(output).toContain('aria-label="115 of 115 orders confirmed"');
+    expect(output).not.toContain("of 230 orders confirmed");
+  });
+
+  it("renders zero starting stock without a meter or zero-as-success wording", () => {
+    const completedProjection = projection(run("completed"));
+    completedProjection.inventory = {
+      ...inventoryFixture,
+      allocatedStock: 0,
+      remainingStock: 0,
+      reservedStock: 0,
+      reservationThroughput: {
+        ...inventoryFixture.reservationThroughput,
+        successfulReservationCount: 0,
+        peakRatePerSecond: 0,
+      },
+      soldOutPressure: {
+        ...inventoryFixture.soldOutPressure,
+        rejectionCount: 0,
+      },
+    };
+    completedProjection.businessOutcome = {
+      acceptedReservations: 0,
+      reservedUnits: 0,
+      soldOutRejections: 0,
+      queuedOrders: 0,
+      processingOrders: 0,
+      retryingOrders: 0,
+      confirmedOrders: 0,
+      failedOrders: 0,
+      pendingPersistenceCount: 0,
+      notificationsRecorded: 0,
+    };
+    const output = markup(available(completedProjection));
+
+    expect(output).toContain("The sale started with no stock available to reserve.");
+    expect(output).not.toContain("All 0 available units");
+    expect(output).not.toContain("<meter");
+  });
+
+  it("keeps the run story bands ahead of the grouped Advanced sections", () => {
+    for (const status of ["active", "draining", "completed", "failed"] as const) {
+      const currentProjection =
+        status === "completed" || status === "failed"
+          ? terminalProjection(status)
+          : projection(run(status));
+      const output = renderToStaticMarkup(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(currentProjection),
+        }),
       );
-      expect(phaseLine).toBeGreaterThan(strip);
-      expect(grid).toBeGreaterThan(phaseLine);
-      expect(output.indexOf("Simulated ERP outcomes")).toBeGreaterThan(grid);
-      expect(output.indexOf("Fast reservation vs final confirmation")).toBeGreaterThan(grid);
-    }
-    if (status === "draining") {
-      expect(output.indexOf("Reservation and confirmation summary")).toBeGreaterThan(grid);
+      const identity = output.indexOf('aria-label="Run phase"');
+      const strip = output.indexOf('data-watch-signals=""');
+      const scenario = output.indexOf('id="watch-advanced-scenario"');
+      const signals = output.indexOf('id="watch-advanced-signals"');
+      const processing = output.indexOf('id="watch-advanced-processing"');
+      const consistency = output.indexOf('id="watch-advanced-consistency"');
+      const connection = output.indexOf('id="watch-advanced-connection"');
+
+      expect(identity).toBeGreaterThan(-1);
+      expect(strip).toBeGreaterThan(identity);
+      expect(scenario).toBeGreaterThan(strip);
+      expect(signals).toBeGreaterThan(scenario);
+      expect(processing).toBeGreaterThan(signals);
+      expect(consistency).toBeGreaterThan(processing);
+      expect(connection).toBeGreaterThan(consistency);
+      if (status === "active" || status === "draining") {
+        const verdict = output.indexOf(
+          status === "active" ? "The surge is under way" : "Confirming remaining orders",
+        );
+        expect(verdict).toBeGreaterThan(identity);
+        expect(output.indexOf("Choose another scenario")).toBeGreaterThan(strip);
+        expect(output).not.toContain("View run report");
+      }
+      if (status === "completed" || status === "failed") {
+        expect(output.indexOf("View run report")).toBeGreaterThan(strip);
+      }
     }
   });
 
-  it("renders completed before and after projection clearing with an exact durable handoff", () => {
+  it("renders completed before and after projection clearing with one report handoff", () => {
     const terminal = terminalProjection("completed");
     const beforeClear = markup(available(terminal));
     const retained = retainedTerminal(terminal);
@@ -164,23 +279,51 @@ describe("watch narrative", () => {
 
     for (const output of [beforeClear, afterClear]) {
       expect(output).toContain("Final result");
-      expect(output).toContain("Frozen scenario");
-      expect(output).toContain("Sale evidence");
-      expect(output).toContain("View the full result for Preview 1k (2026-07-30 12:00:02 UTC)");
+      expect(output.split("Final result")).toHaveLength(2);
+      expect(output).toContain("All 250 available units were reserved without overselling.");
+      expect(output).toContain("250 reserved");
+      expect(output).toContain('data-watch-signals=""');
+      expect(output).toContain("View run report");
+      expect(output).toContain('href="/run-history/11111111-1111-4111-8111-111111111111"');
+      expect(output).toContain("Choose another scenario");
       expect(output.replace(/<[^>]+>/g, "")).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
   });
 
-  it("keeps the failure headline, scenario, conclusion, and result handoff", () => {
+  it("keeps the failure headline, explanation, action, and report handoff together", () => {
     const terminal = terminalProjection("failed");
     const output = markup(available(projection(null)), retainedTerminal(terminal));
 
-    expect(output).toContain("The run could not complete");
+    expect(output).toContain(">Failed</h2>");
+    expect(output).toContain("The run failed due to a traffic failure with 250 failed orders.");
     expect(output).toContain("load generator could not deliver");
-    expect(output).toContain("Frozen scenario");
-    expect(output).toContain("The run failed due to a traffic failure");
-    expect(output).toContain("View the full result for Preview 1k");
-    expect(output).not.toContain("Ready when you are");
+    expect(output).toContain("Start a new run to try again");
+    expect(output).toContain("View run report");
+    expect(output).not.toContain("Choose a simulation");
+  });
+
+  it("explains paused order confirmation in Basic while a run is active", () => {
+    const activeProjection = projection(run("active"));
+    activeProjection.erp = pausedErp();
+    const output = markup(available(activeProjection));
+
+    expect(output).toContain("Calls paused to protect the simulated ERP");
+    expect(output).toContain("Calls can be retried from 2026-07-30 12:00:19 UTC");
+  });
+
+  it("explains an invalid accepted link without exposing identifiers", () => {
+    const output = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(projection(null)),
+        invalidAcceptedRunContext: true,
+      }),
+    );
+
+    expect(output).toContain("Invalid run context");
+    expect(output).toContain("No result has been selected");
+    expect(output).toContain('href="/run-history"');
+    expect(output).toContain("Open run history");
+    expect(output).not.toContain("11111111-1111-4111-8111-111111111111</code>");
   });
 });
 
@@ -224,19 +367,78 @@ function dashboardMarkup(recovery: BackendRead<DashboardProjection>): string {
   return renderToStaticMarkup(createElement(OperatorDashboard, { initialRecovery: recovery }));
 }
 
-function technicalDetails(output: string): string {
-  const start = output.indexOf("<details");
-  const end = output.lastIndexOf("</details>");
-  if (start === -1 || end === -1) throw new Error("Expected expanded Technical details content.");
-  return output.slice(start, end + "</details>".length);
-}
-
 function retainedTerminal(terminalRecap: DashboardProjection): RetainedTerminalRun {
   if (!terminalRecap.currentRun) throw new Error("Expected terminal run.");
   return {
     runId: terminalRecap.currentRun.runId,
     configSnapshot: terminalRecap.currentRun.configSnapshot,
     terminalRecap,
+  };
+}
+
+function partialOutcome(): NonNullable<DashboardProjection["businessOutcome"]> {
+  return {
+    acceptedReservations: 250,
+    reservedUnits: 250,
+    soldOutRejections: 500,
+    queuedOrders: 80,
+    processingOrders: 0,
+    retryingOrders: 0,
+    confirmedOrders: 120,
+    failedOrders: 0,
+    pendingPersistenceCount: 0,
+    notificationsRecorded: 120,
+  };
+}
+
+const inventoryFixture: NonNullable<DashboardProjection["inventory"]> = {
+  saleOfferId,
+  allocatedStock: 250,
+  remainingStock: 0,
+  reservedStock: 250,
+  pendingPersistenceCount: 0,
+  expiredReservationCount: 0,
+  oldestPendingPersistenceAgeSeconds: 0,
+  reservationThroughput: {
+    windowSeconds: 60,
+    successfulReservationCount: 250,
+    peakRatePerSecond: 250,
+    peakWindowSeconds: 1,
+    unit: "reservations_per_second",
+    measuredAt: "2026-07-30T12:00:01.000Z",
+  },
+  soldOutPressure: {
+    rejectionCount: 750,
+    latestObservedAt: "2026-07-30T12:00:01.000Z",
+  },
+  observedAt: "2026-07-30T12:00:01.000Z",
+  lastUpdatedAt: "2026-07-30T12:00:01.000Z",
+};
+
+function pausedErp(): NonNullable<DashboardProjection["erp"]> {
+  return {
+    runId,
+    observedAt: "2026-07-30T12:00:03.000Z",
+    recentAttemptWindowSeconds: 60,
+    recentAttemptCount: 12,
+    recentFailureCount: 5,
+    recentTimeoutCount: 0,
+    latestAttempt: {
+      runId,
+      status: "failed",
+      finishedAt: "2026-07-30T12:00:03.000Z",
+    },
+    circuitReadStatus: "available",
+    circuit: {
+      state: "open",
+      consecutiveFailureCount: 5,
+      failureThreshold: 5,
+      resetTimeoutMs: 10_000,
+      openedAt: "2026-07-30T12:00:02.000Z",
+      nextAttemptAt: "2026-07-30T12:00:19.000Z",
+      halfOpenProbeInFlight: false,
+      lastChangedAt: "2026-07-30T12:00:02.000Z",
+    },
   };
 }
 

@@ -124,9 +124,6 @@ describe("watch realtime recovery notice", () => {
 
     exhaustStream();
     await act(async () => Promise.resolve());
-    const technicalDetails = document.querySelector("details");
-    if (!technicalDetails) throw new Error("Expected Technical details.");
-    technicalDetails.open = true;
     const recoveryReadsBeforeRefresh = fetchMock.mock.calls.length;
     screen.getByRole("button", { name: "Refresh" }).click();
     await act(async () => Promise.resolve());

@@ -21,8 +21,10 @@ const noScheduledRetry: DashboardRecoveryRetryState = {
 };
 
 export function useAcceptedRunResult(initialResult?: AcceptedRunResult) {
+  // Identity is only the lookup target, not the retained payload: re-rendering with the same
+  // run's detail must not re-apply the initial result or restart scheduled retries.
   const initialIdentity = initialResult
-    ? `${initialResult.status}:${initialResult.runId}:${initialResult.status === "available" ? `${initialResult.presetName}:${initialResult.endedAt}` : initialResult.status === "unavailable" ? (initialResult.retryAfterMs ?? "") : ""}`
+    ? `${initialResult.status}:${initialResult.runId}:${initialResult.status === "available" ? initialResult.endedAt : ""}`
     : "none";
   const [result, setResult] = useState(initialResult);
   const [retryState, setRetryState] = useState(noScheduledRetry);

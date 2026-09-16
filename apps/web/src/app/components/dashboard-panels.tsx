@@ -186,7 +186,11 @@ function ErpStoryLead({ story, caption }: { story: ErpStory; caption?: string })
   );
 }
 
-function FreshnessLine({ freshness }: { freshness: Freshness }) {
+/**
+ * The one-line observation age and delivery state, shared by every data panel and by the Basic
+ * Watch last-known warning: retained readings must never appear without their reading time.
+ */
+export function FreshnessLine({ freshness }: { freshness: Freshness }) {
   // Retained and stale states can show an observation from an earlier calendar day, so this
   // line always carries the full dated UTC form rather than a bare clock reading. Like both
   // history routes, it keeps the exact ISO value in `<time dateTime>`; the reading and the

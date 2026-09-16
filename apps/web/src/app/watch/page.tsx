@@ -53,8 +53,8 @@ export default async function WatchPage({
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Live watch</h1>
           <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Follow the current flash-sale run: buyer traffic, inventory, order processing, and final
-            outcomes.
+            Follow a flash sale while it runs: what is happening now, how it finished, and what to
+            do next. Technical evidence stays available in the Advanced view.
           </p>
         </div>
       </header>

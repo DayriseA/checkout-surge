@@ -29,17 +29,6 @@ export function useViewMode(): { mode: ViewMode; setMode: (mode: ViewMode) => vo
   return { mode: context.mode, setMode: context.setMode };
 }
 
-function usePageViewHelpers(): {
-  revealAdvanced: (targetId: string) => void;
-  controlRef: RefObject<HTMLFieldSetElement | null>;
-} {
-  const context = useContext(PageViewContext);
-  if (!context) {
-    throw new Error("Page view helpers must be used inside PageView.");
-  }
-  return { revealAdvanced: context.revealAdvanced, controlRef: context.controlRef };
-}
-
 const selectedLabelClassName =
   "inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-accent bg-accent-soft px-3.5 py-2.5 text-sm font-semibold text-accent ring-accent has-[:focus-visible]:ring-2";
 const unselectedLabelClassName =
@@ -169,6 +158,30 @@ export function AdvancedOnly({
   );
 }
 
+/** Basic content stays mounted across view switches and remains visible outside PageView. */
+export function BasicOnly({
+  id,
+  className,
+  children,
+}: {
+  id?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const context = useContext(PageViewContext);
+  return (
+    <div
+      className={className}
+      data-basic-only="true"
+      hidden={context?.mode === "advanced"}
+      id={id}
+      tabIndex={-1}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function RevealAdvancedLink({
   targetId,
   className,
@@ -178,11 +191,16 @@ export function RevealAdvancedLink({
   className?: string;
   children: ReactNode;
 }) {
-  const { revealAdvanced } = usePageViewHelpers();
+  const context = useContext(PageViewContext);
+  if (!context) {
+    // Without a public view control there is no Advanced level to reveal; like `AdvancedOnly`,
+    // the link degrades to plain content instead of throwing or hiding anything.
+    return <span className={className}>{children}</span>;
+  }
   return (
     <button
       className={className ?? neutralLinkButtonClassName}
-      onClick={() => revealAdvanced(targetId)}
+      onClick={() => context.revealAdvanced(targetId)}
       type="button"
     >
       {children}

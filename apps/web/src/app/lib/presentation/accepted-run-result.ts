@@ -1,8 +1,35 @@
-import type { PublicRunHistoryDetailResponse } from "@checkout-surge/contracts";
+import type {
+  FastReservationTargetEvaluation,
+  PublicRunHistoryDetailResponse,
+  RunResult,
+  TrafficDeliveryStatus,
+  TransportAttemptCounts,
+} from "@checkout-surge/contracts";
 import type { CompletedBackendRead } from "../api";
 
+/**
+ * The small public summary/qualification subset retained from the visitor's own already-read
+ * public run detail. `DashboardProjection` never carries the delivery summary or the
+ * reservation-target evaluation, so this retained detail is the only source of the saved-report
+ * delivery/speed qualifications on Watch. The transport counts stay raw inputs; callers derive
+ * the observation with `deriveTransportObservation`.
+ */
+export interface AcceptedRunReportEvidence {
+  result: RunResult;
+  trafficDeliveryStatus: TrafficDeliveryStatus;
+  fastReservationTargetEvaluation: FastReservationTargetEvaluation;
+  transportAttemptCounts: TransportAttemptCounts;
+  transportFailures: number;
+}
+
 export type AcceptedRunResult =
-  | { status: "available"; runId: string; presetName: string; endedAt: string }
+  | {
+      status: "available";
+      runId: string;
+      presetName: string;
+      endedAt: string;
+      reportEvidence?: AcceptedRunReportEvidence;
+    }
   | { status: "awaiting"; runId: string }
   | { status: "unavailable"; runId: string; retryAfterMs?: number };
 
@@ -17,6 +44,13 @@ export function acceptedRunResultFromRead(
           runId,
           presetName: read.data.summary.presetName,
           endedAt: read.data.summary.endedAt,
+          reportEvidence: {
+            result: read.data.result,
+            trafficDeliveryStatus: read.data.summary.trafficDeliverySummary.trafficDeliveryStatus,
+            fastReservationTargetEvaluation: read.data.summary.fastReservationTargetEvaluation,
+            transportAttemptCounts: read.data.summary.transportAttemptCounts,
+            transportFailures: read.data.summary.httpSummary.transportFailures,
+          },
         }
       : { status: "unavailable", runId };
   }

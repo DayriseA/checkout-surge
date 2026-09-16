@@ -6,6 +6,7 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   derivePublicRunSummary,
+  type PublicRunCaveat,
   type PublicRunSummary,
 } from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
@@ -148,7 +149,17 @@ export function PublicRunConclusion({
       <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
       <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">{summary.title}</p>
       <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
-      {summary.caveats.map((caveat) => (
+      <PublicRunCaveatList caveats={summary.caveats} />
+      <PublicRunConclusionProof result={result} />
+    </section>
+  );
+}
+
+/** Every material qualification, outside the Advanced boundary. */
+export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] }) {
+  return (
+    <>
+      {caveats.map((caveat) => (
         <p
           className={`m-0 mt-3 rounded border px-3 py-2 text-sm font-semibold ${
             caveat.tone === "danger"
@@ -161,12 +172,23 @@ export function PublicRunConclusion({
           {caveat.message}
         </p>
       ))}
-      <AdvancedOnly className="mt-4">
-        <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
-        <ReconciliationStatus result={result} />
-        <ConclusionEvidence result={result} showCanonicalCodes={false} />
-      </AdvancedOnly>
-    </section>
+    </>
+  );
+}
+
+/**
+ * The Advanced-only proof of the same canonical result: the full narration, reconciliation
+ * status, invariant expressions with actual/expected values and the reconciliation proof. It is
+ * the Advanced content of `PublicRunConclusion`, shared with the Watch composition so both
+ * surfaces present exactly the same evidence.
+ */
+export function PublicRunConclusionProof({ result }: { result: RunResult }) {
+  return (
+    <AdvancedOnly className="mt-4">
+      <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
+      <ReconciliationStatus result={result} />
+      <ConclusionEvidence result={result} showCanonicalCodes={false} />
+    </AdvancedOnly>
   );
 }
 

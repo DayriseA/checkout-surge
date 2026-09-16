@@ -7,6 +7,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdvancedOnly,
+  BasicOnly,
   PageView,
   RevealAdvancedLink,
   useViewMode,
@@ -28,6 +29,9 @@ function WatchView({ initialMode }: { initialMode: ViewMode }) {
   return (
     <PageView initialMode={initialMode} page="watch">
       <p>Shared summary</p>
+      <BasicOnly id="basic-section">
+        <p>Basic guidance</p>
+      </BasicOnly>
       <AdvancedOnly id="technical-section">
         <p>Technical measurements</p>
       </AdvancedOnly>
@@ -58,6 +62,7 @@ describe("PageView", () => {
     ) as HTMLInputElement;
     const basicSection = basicDocument.getElementById("technical-section");
     expect(basicChecked.checked).toBe(true);
+    expect(basicDocument.getElementById("basic-section")?.hasAttribute("hidden")).toBe(false);
     expect(basicSection?.hasAttribute("hidden")).toBe(true);
     expect(basicSection?.textContent).toContain("Technical measurements");
 
@@ -72,6 +77,7 @@ describe("PageView", () => {
     expect(advancedDocument.getElementById("technical-section")?.hasAttribute("hidden")).toBe(
       false,
     );
+    expect(advancedDocument.getElementById("basic-section")?.hasAttribute("hidden")).toBe(true);
   });
 
   it.each<ViewMode>([
@@ -126,12 +132,14 @@ describe("PageView", () => {
       true,
     );
     expect(container.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector("#basic-section")?.hasAttribute("hidden")).toBe(true);
     expect(container.textContent).toContain("Shared summary");
 
     fireEvent.click(screen.getByRole("radio", { name: "Basic" }));
 
     expect(document.cookie).toContain("checkout-surge.view.watch=basic");
     expect(container.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(true);
+    expect(container.querySelector("#basic-section")?.hasAttribute("hidden")).toBe(false);
   });
 
   it("reveal link switches to advanced and moves focus to the target section", () => {

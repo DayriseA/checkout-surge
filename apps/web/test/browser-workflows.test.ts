@@ -13,6 +13,7 @@ import {
   emptyRequestArrivalSummary,
   errorPayloadSchema,
   evaluateFastReservationTarget,
+  type FastReservationTargetEvaluation,
   type HealthResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
@@ -36,12 +37,14 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createElement } from "react";
+import type * as React from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
+import { PageView } from "../src/app/components/page-view.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -1598,18 +1601,18 @@ describe("watch browser recovery", () => {
     expect(loadingMarkup).toContain("Run: checking availability");
     expect(loadingMarkup).toContain("Checking availability.");
     expect(loadingMarkup).not.toContain("No run has started");
-    expect(loadingMarkup).not.toContain("Sale evidence");
+    expect(loadingMarkup).not.toContain("data-watch-signals");
 
     expect(unavailableMarkup).toContain("Run: updates unavailable");
     expect(unavailableMarkup).toContain("Something didn");
     expect(unavailableMarkup).not.toContain("No run has started");
     expect(unavailableMarkup.toLowerCase()).not.toContain("not yet");
-    expect(unavailableMarkup).not.toContain("Sale evidence");
+    expect(unavailableMarkup).not.toContain("data-watch-signals");
 
     expect(idleMarkup).toContain("No run has started");
-    expect(idleMarkup).toContain("Start a demo");
+    expect(idleMarkup).toContain("Choose a simulation");
     expect(idleMarkup).toContain("No completed runs yet");
-    expect(idleMarkup).toContain("Technical details");
+    expect(idleMarkup).toContain("Run availability and updates");
     expect(idleMarkup.toLowerCase()).not.toContain("not yet");
     expect(idleMarkup).not.toContain("Live panels");
     expect(idleMarkup).not.toContain("in progress");
@@ -1739,7 +1742,8 @@ describe("watch browser recovery", () => {
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("7 waiting · peak 7");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
-    expect(markup).not.toContain("Reservation and confirmation summary");
+    // Run-owned outcome totals stay reachable in the grouped Advanced Processing section.
+    expect(markup).toContain("Reservation and confirmation summary");
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
@@ -1877,10 +1881,18 @@ describe("watch browser recovery", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
-      createElement(OperatorDashboard, {
-        initialRecovery: pendingDashboardRecovery(),
-      }),
+    const pageViewProps = {
+      initialMode: "basic",
+      page: "watch",
+    } as unknown as React.ComponentProps<typeof PageView>;
+    const { container } = render(
+      createElement(
+        PageView,
+        pageViewProps,
+        createElement(OperatorDashboard, {
+          initialRecovery: pendingDashboardRecovery(),
+        }),
+      ),
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
@@ -1888,7 +1900,26 @@ describe("watch browser recovery", () => {
     act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
 
     await screen.findByText("The latest information is temporarily unavailable");
-    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
+    expect(
+      screen.getAllByText("Last-known-good data").filter((element) => !element.closest("[hidden]")),
+    ).toHaveLength(1);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh", hidden: true })
+        .filter((element) => !element.closest("[hidden]")),
+    ).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+
+    expect(
+      screen.getAllByText("Last-known-good data").filter((element) => !element.closest("[hidden]")),
+    ).toHaveLength(1);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh", hidden: true })
+        .filter((element) => !element.closest("[hidden]")),
+    ).toHaveLength(1);
+    expect(container.querySelector('[data-basic-only="true"]')?.hasAttribute("hidden")).toBe(true);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
     expect(screen.queryAllByText("Correlation watch-refresh-failed")).toHaveLength(0);
@@ -1987,7 +2018,7 @@ describe("accepted Watch result handoff", () => {
     );
 
     expect(
-      screen.getByText("The exact result is not available yet.", { exact: false }),
+      screen.getByText("The saved result for this run is being checked", { exact: false }),
     ).toBeTruthy();
     expect(screen.queryByText("No completed runs yet")).toBeNull();
     expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
@@ -2127,9 +2158,491 @@ describe("accepted Watch result handoff", () => {
       }),
     );
 
+    // The accepted run keeps its own section and its exact report link.
+    expect(output).toContain("Your result");
     expect(output).toContain(`href="/run-history/${acceptedRunId}"`);
-    expect(output).toContain(`Live panels are following shared run <code>${newerRunId}</code>`);
+    // The shared run is labeled as the shared demo, and its identity stays out of Basic.
+    expect(output).toContain("Now running in the shared demo");
     expect(output).toContain("The surge is under way");
+    expect(output).not.toContain(`Live panels are following shared run`);
+  });
+});
+
+describe("watch basic composition", () => {
+  const acceptedRunId = "55555555-5555-4555-8555-555555555555";
+  const sharedRunId = "77777777-7777-4777-8777-777777777777";
+
+  function innermostByText(container: HTMLElement, needle: string): HTMLElement | null {
+    const match = [...container.querySelectorAll("*")].find(
+      (element) =>
+        element.textContent?.includes(needle) &&
+        ![...element.children].some((child) => child.textContent?.includes(needle)),
+    );
+    return (match as HTMLElement) ?? null;
+  }
+
+  function expectVisible(container: HTMLElement, needle: string): void {
+    const element = innermostByText(container, needle);
+    expect(element).not.toBeNull();
+    expect(element?.closest("[hidden]")).toBeNull();
+  }
+
+  function expectHidden(container: HTMLElement, needle: string): void {
+    const element = innermostByText(container, needle);
+    expect(element).not.toBeNull();
+    expect(element?.closest("[hidden]")).not.toBeNull();
+  }
+
+  function inBasicView(ui: ReactElement) {
+    // createElement in a `.ts` file: the props object alone cannot carry the required `children`,
+    // so it is widened to PageView's props and the child is passed as the third argument.
+    const props = { initialMode: "basic", page: "watch" } as unknown as React.ComponentProps<
+      typeof PageView
+    >;
+    return createElement(PageView, props, ui);
+  }
+
+  function activeProjectionFixture(): DashboardProjection {
+    return dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      recentMetrics: [
+        {
+          metricName: "traffic.request_arrival_rate",
+          value: 8,
+          unit: "requests_per_second",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+      ],
+    });
+  }
+
+  function runInventoryFixture(): NonNullable<DashboardProjection["inventory"]> {
+    return {
+      saleOfferId: "22222222-2222-4222-8222-222222222222",
+      allocatedStock: 100,
+      remainingStock: 12,
+      reservedStock: 88,
+      pendingPersistenceCount: 0,
+      expiredReservationCount: 0,
+      oldestPendingPersistenceAgeSeconds: 0,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 88,
+        peakRatePerSecond: 88,
+        peakWindowSeconds: 1,
+        unit: "reservations_per_second",
+        measuredAt: "2026-06-20T00:00:11.000Z",
+      },
+      soldOutPressure: {
+        rejectionCount: 500,
+        latestObservedAt: "2026-06-20T00:00:11.000Z",
+      },
+      observedAt: "2026-06-20T00:00:11.000Z",
+      lastUpdatedAt: "2026-06-20T00:00:11.000Z",
+    };
+  }
+
+  function terminalProjectionFixture(runId: string): DashboardProjection {
+    return dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ runId, status: "completed", trafficStatus: "succeeded" }),
+      inventory: {
+        saleOfferId: "22222222-2222-4222-8222-222222222222",
+        allocatedStock: 250,
+        remainingStock: 0,
+        reservedStock: 250,
+        pendingPersistenceCount: 0,
+        expiredReservationCount: 0,
+        oldestPendingPersistenceAgeSeconds: 0,
+        reservationThroughput: {
+          windowSeconds: 60,
+          successfulReservationCount: 250,
+          peakRatePerSecond: 250,
+          peakWindowSeconds: 1,
+          unit: "reservations_per_second",
+          measuredAt: "2026-06-20T00:00:11.000Z",
+        },
+        soldOutPressure: {
+          rejectionCount: 750,
+          latestObservedAt: "2026-06-20T00:00:11.000Z",
+        },
+        observedAt: "2026-06-20T00:00:11.000Z",
+        lastUpdatedAt: "2026-06-20T00:00:11.000Z",
+      },
+      businessOutcome: {
+        acceptedReservations: 250,
+        reservedUnits: 250,
+        soldOutRejections: 750,
+        queuedOrders: 0,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 250,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 250,
+      },
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+      revision: 2,
+    });
+  }
+
+  function failingTargetEvaluation(): FastReservationTargetEvaluation {
+    const evaluation = evaluateFastReservationTarget(
+      {
+        redisAtomicReservation: { sampleCount: 10, averageMs: 2.4, p95Ms: 2.5 },
+        reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
+      },
+      10,
+    );
+    return { ...evaluation, observedP95Ms: 2.5, verdict: "fail" };
+  }
+
+  function qualifiedDetailFor(runId: string): PublicRunHistoryDetailResponse {
+    const detail = runHistoryDetailFixtureFor(runId);
+    return {
+      ...detail,
+      summary: {
+        ...detail.summary,
+        trafficDeliverySummary: {
+          ...detail.summary.trafficDeliverySummary,
+          trafficDeliveryStatus: "degraded",
+        },
+        fastReservationTargetEvaluation: failingTargetEvaluation(),
+      },
+    };
+  }
+
+  it("keeps one verdict while the same-run saved report is preparing, then links and qualifies", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resourceNotFoundResponse(sharedRunId))
+      .mockResolvedValueOnce(jsonResponse(qualifiedDetailFor(sharedRunId)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: sharedRunId },
+          initialRecovery: available(terminalProjectionFixture(sharedRunId)),
+        }),
+      ),
+    );
+
+    // The known terminal result stays visible while only the saved report is pending.
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+    expectVisible(container, "All 250 available units were reserved without overselling.");
+    expectVisible(container, "Preparing saved report");
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeNull();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    // Availability confirms the link, and the visitor's own exact-run evidence qualifies it.
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeTruthy();
+    expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
+    expectVisible(container, "The run missed its fast-reservation speed target");
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+  });
+
+  it("keeps the manual Check again retry for an exhausted same-run lookup", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(resourceNotFoundResponse(sharedRunId));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      createElement(OperatorDashboard, {
+        acceptedResult: { status: "unavailable", runId: sharedRunId },
+        initialRecovery: available(terminalProjectionFixture(sharedRunId)),
+      }),
+    );
+
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+  });
+
+  it("separates an ID-only accepted run from the shared demo run without UUIDs in Basic", () => {
+    const idOnlyAcceptedRunId = "88888888-8888-4888-8888-888888888888";
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: idOnlyAcceptedRunId },
+          initialRecovery: available(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+            }),
+          ),
+        }),
+      ),
+    );
+
+    expectVisible(container, "Your result");
+    expectVisible(container, "The saved result for this run is being checked");
+    expectHidden(container, idOnlyAcceptedRunId);
+    // A's card carries neither fabricated metadata nor B's counts.
+    const acceptedCard = container.querySelector('[data-accepted-result=""]');
+    expect(acceptedCard?.textContent).not.toContain("Preview 1k");
+    expect(acceptedCard?.textContent).not.toContain("Units left");
+    expectVisible(container, "Now running in the shared demo");
+    expectVisible(container, "The surge is under way");
+  });
+
+  it("opens Advanced focused on a signal's full chart from its sparkline", () => {
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(activeProjectionFixture()),
+        }),
+      ),
+    );
+
+    const arrivalsTile = screen.getByText("Arrivals").closest("button");
+    if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
+    fireEvent.click(arrivalsTile);
+
+    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(document.activeElement?.id).toBe("watch-signal-arrival");
+    expect(container.querySelector("#watch-signal-arrival")?.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("keeps the stream, samples, and report retries intact across repeated mode switches", async () => {
+    vi.useFakeTimers();
+    const activeFixture = activeProjectionFixture();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === publicRunHistoryDetailProxyPath(acceptedRunId)) {
+        return Promise.resolve(resourceNotFoundResponse(acceptedRunId));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(jsonResponse(activeFixture));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", FakeEventSource);
+    render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: acceptedRunId },
+          initialRecovery: available(activeFixture),
+        }),
+      ),
+    );
+    await act(async () => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const arrivalLineBefore =
+      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+    expect(arrivalLineBefore).not.toBe("");
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(1);
+
+    for (const mode of ["Advanced", "Basic", "Advanced"] as const) {
+      fireEvent.click(screen.getByRole("radio", { name: mode }));
+    }
+
+    // One stream, one start-free page, preserved samples, and the live scope still on screen.
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(0);
+    const arrivalLineAfter =
+      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+    expect(arrivalLineAfter).toBe(arrivalLineBefore);
+    expect(screen.getByText("The surge is under way")).toBeTruthy();
+
+    // The scheduled report retry continues on its original backoff instead of restarting.
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("warns about a failed authoritative read in Basic while last-known counts stay visible", async () => {
+    const activeFixture = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      inventory: runInventoryFixture(),
+      businessOutcome: {
+        acceptedReservations: 60,
+        reservedUnits: 88,
+        soldOutRejections: 500,
+        queuedOrders: 40,
+        processingOrders: 20,
+        retryingOrders: 0,
+        confirmedOrders: 0,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+    });
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const failedRead = () =>
+      new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "backend_unavailable",
+            message: "Recovery temporarily unavailable.",
+            correlationId: "watch-basic-sync-failure",
+            timestamp: "2026-06-20T00:00:11.000Z",
+          }),
+        ),
+        { status: 503, headers: { "content-type": "application/json" } },
+      );
+    const pendingRefresh = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(failedRead()).mockReturnValueOnce(pendingRefresh.promise),
+    );
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(activeFixture),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    // The stream stays connected; only the authoritative read fails.
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const advancedRefresh = container.querySelector<HTMLButtonElement>(
+      "#watch-advanced-connection button",
+    );
+    if (!advancedRefresh) throw new Error("Expected the Advanced refresh control.");
+    fireEvent.click(advancedRefresh);
+
+    await screen.findAllByText("Last-known-good data");
+    expectVisible(container, "Last-known-good data");
+    expectVisible(container, "Retry scheduled in 1 s (attempt 1).");
+    expectVisible(container, "Updated");
+    // The last-known counts stay visible beside the warning.
+    expectVisible(container, "Units left");
+    expectVisible(container, "Awaiting confirmation");
+    // The connected stream means no reconnect announcement is duplicated here.
+    expect(screen.queryByText("Live updates interrupted")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const refreshing = screen.getByRole("button", { name: "Refreshing" }) as HTMLButtonElement;
+    expect(refreshing.disabled).toBe(true);
+    expectVisible(container, "Refreshing the latest run data now.");
+    pendingRefresh.resolve(failedRead());
+    await act(async () => pendingRefresh.promise);
+    expectVisible(container, "Retry scheduled in 1 s (attempt 1).");
+  });
+
+  it("shows a failed authoritative read in Basic after an idle snapshot", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Recovery temporarily unavailable.",
+              correlationId: "watch-idle-sync-failure",
+              timestamp: "2026-06-20T00:00:11.000Z",
+            }),
+          ),
+          { status: 503, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(dashboardRecoveryFixture()),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const advancedRefresh = container.querySelector<HTMLButtonElement>(
+      "#watch-advanced-connection button",
+    );
+    if (!advancedRefresh) throw new Error("Expected the Advanced refresh control.");
+    fireEvent.click(advancedRefresh);
+
+    await screen.findAllByText("Last-known-good data");
+    expectVisible(container, "Last-known-good data");
+    expectVisible(container, "Choose a simulation");
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(container.querySelector('[data-sync-warning=""] time')).toBeNull();
+  });
+
+  it("keeps the reading age visible in Basic when a connected run's readings go stale", async () => {
+    const staleFixture = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      inventory: runInventoryFixture(),
+      businessOutcome: {
+        acceptedReservations: 60,
+        reservedUnits: 88,
+        soldOutRejections: 500,
+        queuedOrders: 40,
+        processingOrders: 20,
+        retryingOrders: 0,
+        confirmedOrders: 0,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+    });
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(staleFixture)));
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(staleFixture),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+
+    await screen.findAllByText("stale, showing last known values", { exact: false });
+    expect(container.querySelectorAll('[data-sync-warning=""]')).toHaveLength(1);
+    expectVisible(container, "stale, showing last known values");
+    expectVisible(container, "Units left");
+    // Stale readings alone are not a sync failure: no last-known-good block appears.
+    expect(screen.queryByText("Last-known-good data")).toBeNull();
+  });
+
+  it("targets the Signals group from a sparkline when no chart evidence exists yet", () => {
+    const { container } = render(
+      inBasicView(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "starting", runId: sharedRunId }),
+            }),
+          ),
+        }),
+      ),
+    );
+
+    const arrivalsTile = screen.getByText("Arrivals").closest("button");
+    if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
+    fireEvent.click(arrivalsTile);
+
+    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(document.activeElement?.id).toBe("watch-advanced-signals");
+    expect(container.querySelector("#watch-advanced-signals")?.hasAttribute("hidden")).toBe(false);
   });
 });
 
@@ -2186,6 +2699,10 @@ describe("web page smoke coverage", () => {
 
     expect(output).toContain("Invalid run context");
     expect(output).toContain("No result has been selected");
+    // Concise history and demo navigation, without exposing identifiers.
+    expect(output).toContain('href="/run-history"');
+    expect(output).toContain("Open run history");
+    expect(output).toContain("Choose a simulation");
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
     expect(getRunHistoryPage).not.toHaveBeenCalled();
   });

@@ -203,9 +203,12 @@ function stockSentence(result: RunResult): string {
     result.remainingStock === null ||
     result.reservedUnits === null
     ? "Stock evidence is unavailable."
-    : result.remainingStock === 0
-      ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
-      : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain.`;
+    : // Zero starting stock is a real reading, never a vacuous success ("All 0 units…").
+      result.startingStock === 0
+      ? "The sale started with no stock available to reserve."
+      : result.remainingStock === 0
+        ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
+        : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain.`;
 }
 
 function soldOutSentence(result: RunResult): string {
