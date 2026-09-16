@@ -65,12 +65,15 @@ export interface PublicRunSummary {
    * delivery and speed-target caveats.
    */
   caveats: PublicRunCaveat[];
+  /** Whether at least one caveat is explained by the detailed delivery/measurement evidence. */
+  hasMeasurementCaveat: boolean;
   /** Public-safe failure explanation and next action for a failed run. */
   failure: { explanation: string; action: string } | null;
 }
 
 export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunSummary {
   const { result } = input;
+  const caveatSummary = publicRunCaveats(result, input);
   return {
     outcome: result.outcome,
     title: runResultOutcomeLabel(result.outcome),
@@ -86,12 +89,15 @@ export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunS
       pendingOrders: result.pendingOrders,
       oversoldUnits: result.oversoldUnits,
     },
-    caveats: publicRunCaveats(result, input),
+    ...caveatSummary,
     failure: result.failureCategory ? publicFailureExplanation(result.failureCategory) : null,
   };
 }
 
-function publicRunCaveats(result: RunResult, input: PublicRunSummaryInput): PublicRunCaveat[] {
+function publicRunCaveats(
+  result: RunResult,
+  input: PublicRunSummaryInput,
+): Pick<PublicRunSummary, "caveats" | "hasMeasurementCaveat"> {
   const caveats: PublicRunCaveat[] = [];
   const classifications = new Set(result.reconciliations.map((item) => item.classification));
   // Broken and not-evaluable invariants carry the same material meanings as their reconciliation
@@ -131,10 +137,15 @@ function publicRunCaveats(result: RunResult, input: PublicRunSummaryInput): Publ
     });
   }
 
-  caveats.push(...transportCaveats(input.transportObservation));
-  caveats.push(...deliveryCaveats(input.trafficDeliveryStatus));
-  caveats.push(...targetCaveats(input.fastReservationTargetEvaluation));
-  return caveats;
+  const measurementCaveats = [
+    ...transportCaveats(input.transportObservation),
+    ...deliveryCaveats(input.trafficDeliveryStatus),
+    ...targetCaveats(input.fastReservationTargetEvaluation),
+  ];
+  return {
+    caveats: [...caveats, ...measurementCaveats],
+    hasMeasurementCaveat: measurementCaveats.length > 0,
+  };
 }
 
 function transportCaveats(observation: TransportObservation | null): PublicRunCaveat[] {

@@ -77,21 +77,26 @@ export default async function RunHistoryDetailPage({
           <h1 className="m-0 mt-4 text-4xl font-bold leading-tight text-ink">
             {summary.presetName}
           </h1>
+          <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
+            Saved run report for a checkout simulation.
+          </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="m-0 text-sm text-muted">
+              <time dateTime={summary.startedAt ?? summary.endedAt}>
+                {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
+              </time>
+              {" · "}
+              {summary.failureCategory === "operator"
+                ? "Acceptance-to-stop duration: "
+                : "Overall duration: "}
+              {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
+            </p>
             <StatusPill
               status={{
                 label: runResultOutcomeLabel(result.outcome),
                 tone: runResultOutcomeTone(result.outcome),
               }}
             />
-            <p className="m-0 text-sm text-muted">
-              <time dateTime={summary.startedAt ?? summary.endedAt}>
-                {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
-              </time>
-              {" · "}
-              {summary.failureCategory === "operator" ? "Acceptance-to-stop duration: " : ""}
-              {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
-            </p>
           </div>
         </header>
         <PublicRunHistoryDetail detail={publicDetail.data} />
@@ -141,7 +146,7 @@ export default async function RunHistoryDetailPage({
       reason: "No finished result exists for this run.",
     };
 
-  const body = (
+  const body = isAdmin ? (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
@@ -166,6 +171,30 @@ export default async function RunHistoryDetailPage({
           protectedDetails={isAdmin}
           read={detail}
         />
+      </section>
+    </>
+  ) : (
+    <>
+      <header className="mb-4">
+        <h1 className="m-0 text-4xl font-bold leading-tight text-ink">
+          This report is not available
+        </h1>
+      </header>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <ErrorNotice
+          context={{ surface: "history-detail", protected: false }}
+          protectedDetails={false}
+          read={detail}
+        />
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link className={neutralLinkButtonClassName} href="/run-history">
+            Back to run history
+          </Link>
+          <Link className={neutralLinkButtonClassName} href="/">
+            Choose a simulation
+          </Link>
+        </div>
+        <p className="mb-0 mt-4 text-xs text-muted [overflow-wrap:anywhere]">Run ID: {runId}</p>
       </section>
     </>
   );

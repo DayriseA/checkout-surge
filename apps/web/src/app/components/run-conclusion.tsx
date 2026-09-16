@@ -11,7 +11,7 @@ import {
 } from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
 import { invariantLabel, runConclusionSentence } from "../lib/presentation/run-result-presentation";
-import { AdvancedOnly } from "./page-view";
+import { AdvancedOnly, RevealAdvancedLink } from "./page-view";
 import type { TransportObservation } from "./transport-observation";
 
 type Reconciliation = RunResult["reconciliations"][number];
@@ -127,12 +127,16 @@ export function PublicRunConclusion({
   trafficDeliveryStatus = null,
   fastReservationTargetEvaluation = null,
   transportObservation = null,
+  consistencyTargetId,
+  measurementsTargetId,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
   trafficDeliveryStatus?: TrafficDeliveryStatus | null;
   fastReservationTargetEvaluation?: FastReservationTargetEvaluation | null;
   transportObservation?: TransportObservation | null;
+  consistencyTargetId?: string;
+  measurementsTargetId?: string;
 }) {
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const summary = derivePublicRunSummary({
@@ -149,8 +153,22 @@ export function PublicRunConclusion({
       <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
       <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">{summary.title}</p>
       <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
+      {summary.failure ? (
+        <div className="mt-3 text-sm text-muted-strong">
+          <p className="m-0">{summary.failure.explanation}</p>
+          <p className="m-0 mt-1 font-semibold">{summary.failure.action}</p>
+        </div>
+      ) : null}
       <PublicRunCaveatList caveats={summary.caveats} />
-      <PublicRunConclusionProof result={result} />
+      {measurementsTargetId && summary.hasMeasurementCaveat ? (
+        <RevealAdvancedLink targetId={measurementsTargetId}>
+          View technical measurements
+        </RevealAdvancedLink>
+      ) : null}
+      <PublicRunConclusionProof
+        result={result}
+        {...(consistencyTargetId ? { targetId: consistencyTargetId } : {})}
+      />
     </section>
   );
 }
@@ -182,9 +200,16 @@ export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] })
  * the Advanced content of `PublicRunConclusion`, shared with the Watch composition so both
  * surfaces present exactly the same evidence.
  */
-export function PublicRunConclusionProof({ result }: { result: RunResult }) {
+export function PublicRunConclusionProof({
+  result,
+  targetId,
+}: {
+  result: RunResult;
+  targetId?: string;
+}) {
   return (
-    <AdvancedOnly className="mt-4">
+    <AdvancedOnly className="mt-4" {...(targetId ? { id: targetId } : {})}>
+      {targetId ? <h2 className="m-0 text-base font-bold text-ink">Consistency</h2> : null}
       <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
       <ReconciliationStatus result={result} />
       <ConclusionEvidence result={result} showCanonicalCodes={false} />

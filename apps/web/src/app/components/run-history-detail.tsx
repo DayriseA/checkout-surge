@@ -3,8 +3,10 @@ import type {
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
   durableCheckoutLens,
   publicFailureExplanation,
@@ -27,6 +29,7 @@ import {
   primaryButtonClassName,
 } from "./control-styles";
 import { GoldSignals } from "./gold-signals";
+import { AdvancedOnly, BasicOnly } from "./page-view";
 import { PublicRunConclusion, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { ScrollRegion } from "./scroll-region";
@@ -914,13 +917,87 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
   const { run, summary } = detail;
   const result = detail.result;
   const config = run.configSnapshot;
-  const failure = summary.failureCategory
-    ? publicFailureExplanation(summary.failureCategory)
-    : null;
+  const transportObservation = deriveTransportObservation(
+    summary.transportAttemptCounts,
+    summary.httpSummary.transportFailures,
+  );
+  const publicSummary = derivePublicRunSummary({
+    result,
+    trafficDeliveryStatus: summary.trafficDeliverySummary.trafficDeliveryStatus,
+    fastReservationTargetEvaluation: summary.fastReservationTargetEvaluation,
+    transportObservation,
+  });
+  const finalCounts: Array<[string, number | null]> = [
+    ["Units left", publicSummary.counts.remainingStock],
+    ["Units reserved", publicSummary.counts.reservedUnits],
+    ["Orders confirmed", publicSummary.counts.confirmedOrders],
+    ["Awaiting confirmation", publicSummary.counts.pendingOrders],
+    ["Orders failed", publicSummary.counts.failedOrders],
+    ["Attempts turned away because stock ran out", publicSummary.counts.soldOutDecisions],
+  ];
   return (
     <div className="grid grid-cols-1 gap-4">
+      <BasicOnly>
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <h2 className="m-0 text-base font-bold leading-tight text-ink">Scenario</h2>
+          <p className="m-0 mt-2 text-sm leading-6 text-muted-strong">{scenarioRecap(detail)}</p>
+          <p className="m-0 mt-1 text-sm text-muted">
+            This is a simulation of buyers competing for limited stock and orders reaching a
+            simulated order-processing system.
+          </p>
+        </section>
+      </BasicOnly>
+
+      <PublicRunConclusion
+        consistencyTargetId="report-advanced-consistency"
+        fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
+        measurementsTargetId="report-advanced-measurements"
+        result={result}
+        runStatus={summary.status}
+        trafficDeliveryStatus={summary.trafficDeliverySummary.trafficDeliveryStatus}
+        transportObservation={transportObservation}
+      />
+
+      <section
+        aria-labelledby="report-final-counts"
+        className="rounded-lg border border-border bg-surface p-4"
+      >
+        <h2 id="report-final-counts" className="m-0 text-base font-bold leading-tight text-ink">
+          Final stock and orders
+        </h2>
+        <div className="mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-3 max-[600px]:grid-cols-2">
+          {finalCounts.map(([label, value]) => (
+            <div className="rounded border border-border bg-surface-muted p-3" key={label}>
+              <p className="m-0 text-xl font-bold text-ink">{formatCount(value) ?? "—"}</p>
+              <p className="m-0 mt-1 text-xs text-muted">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">What happened</h2>
+        <ul className="mb-0 mt-3 grid gap-2 pl-5 text-sm leading-6 text-muted-strong">
+          {runRecap(detail, publicSummary.counts).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </section>
+
+      <nav aria-label="Report actions" className="flex flex-wrap gap-3">
+        <Link className={neutralLinkButtonClassName} href="/run-history">
+          Back to run history
+        </Link>
+        <Link className={neutralLinkButtonClassName} href="/">
+          Choose another scenario
+        </Link>
+      </nav>
+
+      <AdvancedOnly
+        className="rounded-lg border border-border bg-surface p-4"
+        id="report-advanced-scenario"
+      >
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Scenario settings</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
@@ -991,23 +1068,36 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             title="Backpressure"
           />
         </div>
-      </section>
+        <dl className="m-0 mt-4 grid gap-2 sm:grid-cols-2">
+          <div>
+            <dt className="text-sm text-muted">Run UUID</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{summary.runId}</code>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
+            <dd className="m-0 text-sm font-semibold text-muted-strong">
+              {formatDate(summary.capturedAt)}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Logical queue</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{config.backpressureConfig.queueName}</code>
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted">Physical queue</dt>
+            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+              <code>{config.backpressureConfig.physicalQueueName}</code>
+            </dd>
+          </div>
+        </dl>
+      </AdvancedOnly>
 
-      <PublicRunConclusion
-        fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
-        result={result}
-        runStatus={summary.status}
-        trafficDeliveryStatus={summary.trafficDeliverySummary.trafficDeliveryStatus}
-        transportObservation={deriveTransportObservation(
-          summary.transportAttemptCounts,
-          summary.httpSummary.transportFailures,
-        )}
-      />
-
-      <section aria-labelledby="history-gold-signals" className="grid gap-3">
-        <h2 id="history-gold-signals" className="m-0 text-base font-bold leading-tight text-ink">
-          Gold signals
-        </h2>
+      <AdvancedOnly className="grid gap-3" id="report-advanced-signals">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Signals</h2>
         <GoldSignals
           acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
@@ -1016,11 +1106,14 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           runStatus={run.status}
           terminalSummary={detail.runSignalTimelineSummary}
         />
-      </section>
+      </AdvancedOnly>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <AdvancedOnly
+        className="rounded-lg border border-border bg-surface p-4"
+        id="report-advanced-measurements"
+      >
         <h2 className="m-0 text-base font-bold leading-tight text-ink">
-          Client observation and delivery quality
+          Delivery and measurements
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
@@ -1080,9 +1173,12 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             title={simulatedErpLens.title}
           />
         </div>
-      </section>
+      </AdvancedOnly>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <AdvancedOnly
+        className="rounded-lg border border-border bg-surface p-4"
+        id="report-advanced-lifecycle"
+      >
         <h2 className="m-0 text-base font-bold leading-tight text-ink">
           Lifecycle and final inventory
         </h2>
@@ -1144,47 +1240,67 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             title="Final evidence"
           />
         </div>
-      </section>
-
-      {failure ? (
-        <section className="rounded-lg border border-warning bg-warning-soft p-4">
-          <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
-          <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
-          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
-        </section>
-      ) : null}
-
-      <details className="rounded-lg border border-border bg-surface p-4">
-        <summary className="cursor-pointer font-semibold text-ink">Technical details</summary>
-        <dl className="m-0 mt-3 grid gap-2">
-          <div>
-            <dt className="text-sm text-muted">Run UUID</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{summary.runId}</code>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
-            <dd className="m-0 text-sm font-semibold text-muted-strong">
-              {formatDate(summary.capturedAt)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Logical queue</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{config.backpressureConfig.queueName}</code>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Physical queue</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{config.backpressureConfig.physicalQueueName}</code>
-            </dd>
-          </div>
-        </dl>
-      </details>
+      </AdvancedOnly>
     </div>
   );
+}
+
+function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
+  const { configSnapshot } = detail.run;
+  const traffic = configSnapshot.trafficConfig;
+  const demand =
+    traffic.mode === "buyer-spike"
+      ? `${formatNumber(traffic.buyerCount)} buyers`
+      : `${formatNumber(detail.plannedAttempts)} planned attempts`;
+  const details = [
+    `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(configSnapshot.inventoryConfig.startingStock)} starting units`,
+  ];
+  if (configSnapshot.inventoryConfig.quantityPerCheckout > 1) {
+    details.push(
+      `${formatNumber(configSnapshot.inventoryConfig.quantityPerCheckout)} units per checkout`,
+    );
+  }
+  if (traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt) {
+    details.push("duplicate attempts enabled");
+  }
+  if (configSnapshot.erpConfig.forcedOutage) details.push("simulated ERP outage forced");
+  if (configSnapshot.erpConfig.errorRate > 0) {
+    details.push(`${formatPercent(configSnapshot.erpConfig.errorRate)} simulated ERP failure rate`);
+  }
+  return details.join(" · ");
+}
+
+function runRecap(
+  detail: PublicRunHistoryDetailResponse,
+  counts: ReturnType<typeof derivePublicRunSummary>["counts"],
+): string[] {
+  const { run, summary } = detail;
+  const trafficSubject =
+    run.configSnapshot.trafficConfig.mode === "buyer-spike" ? "Buyer traffic" : "Checkout attempts";
+  const time = (value: string | undefined) =>
+    formatInstantUtc(value, { variant: "timeOnly" }) ?? "not recorded";
+  const count = (value: number | null) => formatCount(value) ?? "not recorded";
+  const trafficRecap = run.trafficStartedAt
+    ? run.trafficEndedAt
+      ? `${trafficSubject} started at ${time(run.trafficStartedAt)} and ended at ${time(run.trafficEndedAt)}.`
+      : `${trafficSubject} started at ${time(run.trafficStartedAt)}; its end was not recorded.`
+    : run.trafficEndedAt
+      ? `${trafficSubject} start was not recorded; it ended at ${time(run.trafficEndedAt)}.`
+      : `${trafficSubject} start and end were not recorded.`;
+  const lines = [
+    trafficRecap,
+    `${count(counts.reservedUnits)} units reserved / ${count(counts.uniqueReservations)} unique reservations; ${count(counts.soldOutDecisions)} attempts turned away because stock ran out.`,
+    `Orders reached their recorded outcome: ${count(counts.confirmedOrders)} confirmed, ${count(counts.failedOrders)} failed, ${count(counts.pendingOrders)} awaiting confirmation.`,
+    `${summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended"}: ${time(run.finalizedAt)}.`,
+  ];
+  if (summary.failureCategory === "operator") {
+    lines.push(
+      run.adminResetCompletedAt
+        ? `Work cleanup and history completed: ${time(run.adminResetCompletedAt)}.`
+        : "Work cleanup and history completion was not recorded; reporting or cleanup may be incomplete, and worker work may still settle.",
+    );
+  }
+  return lines;
 }
 
 function nullableMetricMs(value: number | null): string {

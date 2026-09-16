@@ -117,6 +117,7 @@ describe("public run summary", () => {
       oversoldUnits: 0,
     });
     expect(summary.caveats).toEqual([]);
+    expect(summary.hasMeasurementCaveat).toBe(false);
     expect(summary.failure).toBeNull();
   });
 
@@ -133,6 +134,7 @@ describe("public run summary", () => {
         tone: "warning",
       },
     ]);
+    expect(summary.hasMeasurementCaveat).toBe(true);
   });
 
   it("keeps a qualified measurement distinct from pass and fail", () => {
@@ -488,6 +490,7 @@ describe("public run summary", () => {
         tone: "warning",
       },
     ]);
+    expect(summary.hasMeasurementCaveat).toBe(true);
   });
 
   it("exposes the public failure explanation for a failed run and never fakes zero stock", () => {

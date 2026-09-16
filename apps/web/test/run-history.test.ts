@@ -11,10 +11,11 @@ import {
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { createElement } from "react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { type ComponentProps, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as PageViewComponents from "../src/app/components/page-view.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import {
   AdminRunHistoryDetail,
@@ -45,6 +46,17 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPag
 vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
   readPageViewMode: vi.fn(async () => "basic" as const),
 }));
+
+function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
+  const props = { initialMode: "basic", page: "report" } as unknown as ComponentProps<
+    typeof PageViewComponents.PageView
+  >;
+  return createElement(
+    PageViewComponents.PageView,
+    props,
+    createElement(PublicRunHistoryDetail, { detail }),
+  );
+}
 
 describe("run history", () => {
   it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
@@ -242,14 +254,14 @@ describe("run history", () => {
       createElement(PublicRunHistoryDetail, { detail: detailFixture() }),
     );
 
-    expect(markup).toContain("Accepted configuration");
+    expect(markup).toContain("Scenario settings");
     expect(markup).toContain("Traffic");
     expect(markup).toContain("Inventory");
     expect(markup).toContain("Simulated ERP");
     expect(markup).toContain("Backpressure");
     expect(markup).toContain("Evidence and reconciliation proof");
-    expect(markup).toContain("Gold signals");
-    expect(markup).toContain("Client observation and delivery quality");
+    expect(markup).toContain("Signals");
+    expect(markup).toContain("Delivery and measurements");
     expect(markup).toContain("Checkout response p95 (client-observed)");
     expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("Simulated ERP call p95");
@@ -275,7 +287,11 @@ describe("run history", () => {
     expect([...(deliveryPill?.classList ?? [])]).not.toContain("whitespace-nowrap");
     expect(markup).toContain("Lifecycle and final inventory");
     expect(markup).toContain("Run ended");
-    expect(markup).toContain("Technical details");
+    expect(markup).toContain('id="report-advanced-scenario"');
+    expect(markup).toContain('id="report-advanced-signals"');
+    expect(markup).toContain('id="report-advanced-consistency"');
+    expect(markup).toContain('id="report-advanced-measurements"');
+    expect(markup).toContain('id="report-advanced-lifecycle"');
     expect(markup.match(/55555555-5555-4555-8555-555555555555/g)).toHaveLength(1);
     expect(markup).not.toContain("Failed attempts");
     expect(markup).not.toContain("Timed-out attempts");
@@ -301,6 +317,13 @@ describe("run history", () => {
     expect(markup).not.toContain("load_orchestrator_unavailable");
 
     detail.summary.failureCategory = "reconciliation";
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
     const reconciliationMarkup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail }),
     );
@@ -365,6 +388,126 @@ describe("run history", () => {
 
     expect(markup).toMatch(/Planned demand<\/dt><dd[^>]*>10<\/dd>/);
     expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>99<\/dd>/);
+  });
+
+  it("keeps Basic outcome and canonical counts visible while technical evidence stays mounted", () => {
+    const detail = detailFixture();
+    detail.summary.fastReservationTargetEvaluation = {
+      ...detail.summary.fastReservationTargetEvaluation,
+      observedP95Ms: 2.5,
+      verdict: "fail",
+      qualification: null,
+    };
+    const { container } = render(publicReportInBasic(detail));
+
+    expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
+    expect(
+      screen.getByText(/missed its fast-reservation speed target/).closest("[hidden]"),
+    ).toBeNull();
+    expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
+    expect(
+      screen.getByText(/10 units reserved \/ 10 unique reservations/).closest("[hidden]"),
+    ).toBeNull();
+    expect(screen.getByText("Scenario settings").closest("[hidden]")).not.toBeNull();
+    expect(screen.getByText("Run UUID").closest("[hidden]")).not.toBeNull();
+    expect(
+      screen.getByText("reserved units = starting stock − remaining stock").closest("[hidden]"),
+    ).not.toBeNull();
+    expect(container.querySelector("#report-advanced-signals")?.hasAttribute("hidden")).toBe(true);
+    expect(container.querySelector("#report-advanced-measurements")?.textContent).toContain(
+      "≤ 1ms",
+    );
+    expect(container.querySelector("#report-advanced-measurements")?.hasAttribute("hidden")).toBe(
+      true,
+    );
+    expect(
+      screen.getByText(/Final timeline evidence was not recorded/).closest("[hidden]"),
+    ).not.toBeNull();
+    expect(screen.getByText("Final stock and orders").closest("[hidden]")).toBeNull();
+  });
+
+  it("reveals and focuses technical measurements from a Basic qualification", () => {
+    const { container } = render(publicReportInBasic(detailFixture()));
+    const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
+    expect(target?.hasAttribute("hidden")).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "View technical measurements" }));
+
+    expect(target?.hasAttribute("hidden")).toBe(false);
+    expect(document.activeElement).toBe(target);
+    expect(screen.getByText("qualified").closest("[hidden]")).toBeNull();
+    expect(screen.getByText("Scenario settings").closest("[hidden]")).toBeNull();
+  });
+
+  it("reveals measurements for incomplete replies when delivery and the speed target pass", () => {
+    const detail = detailFixture();
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 20,
+      startedRequests: 20,
+      completedRequests: 20,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    detail.summary.httpSummary = {
+      ...detail.summary.httpSummary,
+      failedRequests: 3,
+      transportFailures: 3,
+    };
+    detail.summary.fastReservationTargetEvaluation = {
+      ...detail.summary.fastReservationTargetEvaluation,
+      observedP95Ms: 0.5,
+      observedSampleCount: 20,
+      expectedResponseCount: 20,
+      verdict: "pass",
+      qualification: null,
+    };
+    const { container } = render(publicReportInBasic(detail));
+    const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
+
+    expect(screen.getByText(/Reply observation incomplete/).closest("[hidden]")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "View technical measurements" }));
+
+    expect(target?.hasAttribute("hidden")).toBe(false);
+    expect(document.activeElement).toBe(target);
+  });
+
+  it("keeps operator-stop guidance and unknown cleanup qualification beside the result", () => {
+    const detail = detailFixture("failed");
+    detail.summary.failureCategory = "operator";
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    delete detail.run.adminResetCompletedAt;
+    delete detail.run.trafficStartedAt;
+    delete detail.run.trafficEndedAt;
+    detail.run.configSnapshot.trafficConfig = {
+      mode: "constant-arrival-rate",
+      ratePerSecond: 25,
+      startDelaySeconds: 0,
+      durationSeconds: 1,
+      quantityPerAttempt: 1,
+    };
+    const { container } = render(publicReportInBasic(detail));
+    const recap = screen.getByRole("heading", { name: "What happened" }).closest("section");
+
+    expect(screen.getByText(/stopped by an operator/).closest("[hidden]")).toBeNull();
+    expect(
+      screen.getByText(/reporting or cleanup may be incomplete/).closest("[hidden]"),
+    ).toBeNull();
+    expect(recap?.textContent).toContain("Checkout attempts start and end were not recorded.");
+    expect(recap?.textContent).not.toContain("arrived");
+    expect(recap?.textContent).not.toContain("Buyer traffic");
+    expect(recap?.textContent).toContain(
+      "10 units reserved / 10 unique reservations; 10 attempts turned away because stock ran out.",
+    );
+    expect(recap?.textContent).toContain("Operator stop decision: 00:00:10 UTC.");
+    expect(container.querySelector("#report-advanced-lifecycle")?.hasAttribute("hidden")).toBe(
+      true,
+    );
   });
 
   it("keeps durable comparison facts visible when final inventory was not recorded", () => {
@@ -565,7 +708,10 @@ describe("run history", () => {
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(markup).toContain("Detail unavailable");
+    expect(markup).toContain("This report is not available");
+    expect(markup).toContain('href="/run-history"');
+    expect(markup).toContain('href="/"');
+    expect(markup).toContain("Run ID: 55555555-5555-4555-8555-555555555555");
     expect(markup).not.toContain("public-history-correlation");
     expect(markup).not.toContain("private public-reader diagnostic");
     expect(markup).not.toContain("Technical details");
@@ -1073,7 +1219,7 @@ describe("run-history cross-route time and duration presentation", () => {
     }
     expect(markups[0]).toMatch(/Duration<\/p><p[^>]*>10 s<\/p>/);
     expect(markups[1]).toMatch(
-      /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · 10 s<\/p>/,
+      /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · Overall duration: 10 s<\/p>/,
     );
     expect(markups[2]).toMatch(/Overall run duration<\/dt><dd[^>]*>10 s<\/dd>/);
   });
