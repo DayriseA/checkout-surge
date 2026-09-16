@@ -19,7 +19,7 @@ All persisted implementation, tests, copy, and handoff notes are in English.
 | Order | Handoff | Dependency | Result | Status |
 | --- | --- | --- | --- | --- |
 | 01 | [Per-page public view control](01-public-view-foundation.md) | None | One accessible per-page view control, cookie-persisted and server-rendered, absent from admin surfaces | Done |
-| 02 | [Shared result summary and essential warnings](02-result-summary-and-warnings.md) | 01 | One public summary vocabulary and consistent result/qualification display | Planned |
+| 02 | [Shared result summary and essential warnings](02-result-summary-and-warnings.md) | 01 | One public summary vocabulary and consistent result/qualification display | Done |
 | 03 | [Watch lifecycle and technical disclosure](03-watch-experience.md) | 02 | Scenario, phase, stock and order progress first; exact-run identity and recovery preserved | Planned |
 | 04 | [Public run report](04-public-run-report.md) | 03 | A readable result and explanation before its complete technical evidence | Planned |
 | 05 | [Demo chooser and custom builder](05-demo-and-custom-builder.md) | 04 | A clear first action, concise presets, and an Advanced builder that retains work | Planned |

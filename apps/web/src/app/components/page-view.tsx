@@ -142,6 +142,10 @@ export function PageView({
   );
 }
 
+/**
+ * Without a PageView context the surface does not participate in public view control (admin or
+ * authenticated renders, embedded uses), so its content stays detailed instead of hiding.
+ */
 export function AdvancedOnly({
   id,
   className,
@@ -151,12 +155,12 @@ export function AdvancedOnly({
   className?: string;
   children: ReactNode;
 }) {
-  const { mode } = useViewMode();
+  const context = useContext(PageViewContext);
   return (
     <div
       className={className}
       data-advanced-only="true"
-      hidden={mode === "basic"}
+      hidden={context !== null && context.mode === "basic"}
       id={id}
       tabIndex={-1}
     >

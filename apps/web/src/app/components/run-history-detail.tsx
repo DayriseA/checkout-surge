@@ -27,11 +27,11 @@ import {
   primaryButtonClassName,
 } from "./control-styles";
 import { GoldSignals } from "./gold-signals";
-import { RunConclusion } from "./run-conclusion";
+import { PublicRunConclusion, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { ScrollRegion } from "./scroll-region";
 import { StatusPill } from "./status-pill";
-import { TransportObservationSection } from "./transport-observation";
+import { deriveTransportObservation, TransportObservationSection } from "./transport-observation";
 
 interface RunHistoryDetailProps {
   actions?: ReactNode;
@@ -993,11 +993,15 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         </div>
       </section>
 
-      <RunConclusion
+      <PublicRunConclusion
+        fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
         result={result}
         runStatus={summary.status}
-        showReconciliationStatus
-        showSentence={false}
+        trafficDeliveryStatus={summary.trafficDeliverySummary.trafficDeliveryStatus}
+        transportObservation={deriveTransportObservation(
+          summary.transportAttemptCounts,
+          summary.httpSummary.transportFailures,
+        )}
       />
 
       <section aria-labelledby="history-gold-signals" className="grid gap-3">

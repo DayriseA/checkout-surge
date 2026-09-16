@@ -1,6 +1,17 @@
-import type { DemoRunStatus, RunResult } from "@checkout-surge/contracts";
+import type {
+  DemoRunStatus,
+  FastReservationTargetEvaluation,
+  RunResult,
+  TrafficDeliveryStatus,
+} from "@checkout-surge/contracts";
+import {
+  derivePublicRunSummary,
+  type PublicRunSummary,
+} from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
 import { invariantLabel, runConclusionSentence } from "../lib/presentation/run-result-presentation";
+import { AdvancedOnly } from "./page-view";
+import type { TransportObservation } from "./transport-observation";
 
 type Reconciliation = RunResult["reconciliations"][number];
 
@@ -81,13 +92,11 @@ export function RunConclusion({
   runStatus,
   showCanonicalCodes = false,
   showReconciliationStatus = false,
-  showSentence = true,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
   showCanonicalCodes?: boolean;
   showReconciliationStatus?: boolean;
-  showSentence?: boolean;
 }) {
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const hasCorrectnessFailure = result.maximumClassification === "correctness_failure";
@@ -96,15 +105,98 @@ export function RunConclusion({
       className={`col-span-full rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
       aria-label="Run conclusion"
     >
-      {showSentence ? (
-        <>
-          <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
-          <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">
-            {runConclusionSentence(result)}
-          </p>
-        </>
-      ) : null}
+      <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
+      <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">
+        {runConclusionSentence(result)}
+      </p>
       {showReconciliationStatus ? <ReconciliationStatus result={result} /> : null}
+      <ConclusionEvidence result={result} showCanonicalCodes={showCanonicalCodes} />
+    </section>
+  );
+}
+
+/**
+ * The public composition of the same canonical result: the shared concise summary and its
+ * material caveats stay visible in both view modes, while the full narration, reconciliation
+ * status, invariant expressions and proof stay available inside the Advanced boundary.
+ */
+export function PublicRunConclusion({
+  result,
+  runStatus,
+  trafficDeliveryStatus = null,
+  fastReservationTargetEvaluation = null,
+  transportObservation = null,
+}: {
+  result: RunResult;
+  runStatus: DemoRunStatus;
+  trafficDeliveryStatus?: TrafficDeliveryStatus | null;
+  fastReservationTargetEvaluation?: FastReservationTargetEvaluation | null;
+  transportObservation?: TransportObservation | null;
+}) {
+  if (runStatus !== "completed" && runStatus !== "failed") return null;
+  const summary = derivePublicRunSummary({
+    result,
+    trafficDeliveryStatus,
+    fastReservationTargetEvaluation,
+    transportObservation,
+  });
+  return (
+    <section
+      className={`col-span-full rounded-lg border p-4 ${publicConclusionClassName(result, summary)}`}
+      aria-label="Run conclusion"
+    >
+      <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
+      <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">{summary.title}</p>
+      <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
+      {summary.caveats.map((caveat) => (
+        <p
+          className={`m-0 mt-3 rounded border px-3 py-2 text-sm font-semibold ${
+            caveat.tone === "danger"
+              ? "border-danger bg-danger-soft text-danger"
+              : "border-warning bg-warning-soft text-warning"
+          }`}
+          key={caveat.message}
+          role="status"
+        >
+          {caveat.message}
+        </p>
+      ))}
+      <AdvancedOnly className="mt-4">
+        <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
+        <ReconciliationStatus result={result} />
+        <ConclusionEvidence result={result} showCanonicalCodes={false} />
+      </AdvancedOnly>
+    </section>
+  );
+}
+
+/** Danger tracks oversell, run failure and contradictory evidence; warnings never escalate. */
+function publicConclusionClassName(result: RunResult, summary: PublicRunSummary): string {
+  const danger =
+    result.maximumClassification === "correctness_failure" ||
+    summary.outcome === "failed" ||
+    summary.outcome === "completed-with-oversell" ||
+    summary.caveats.some((caveat) => caveat.tone === "danger");
+  const warning =
+    summary.outcome === "completed-with-order-failures" ||
+    summary.outcome === "completed-with-unsettled-orders" ||
+    summary.caveats.length > 0;
+  return danger
+    ? "border-danger bg-danger-soft"
+    : warning
+      ? "border-warning bg-warning-soft"
+      : "border-border bg-surface";
+}
+
+function ConclusionEvidence({
+  result,
+  showCanonicalCodes,
+}: {
+  result: RunResult;
+  showCanonicalCodes: boolean;
+}) {
+  return (
+    <>
       <div className="mt-4 grid gap-2">
         {result.invariants.map((invariant) => (
           <div
@@ -160,7 +252,7 @@ export function RunConclusion({
           ) : null}
         </div>
       </details>
-    </section>
+    </>
   );
 }
 

@@ -40,9 +40,10 @@ import { GoldSignals } from "./gold-signals";
 import { useAcceptedRunResult } from "./realtime/use-accepted-run-result";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
-import { RunConclusion } from "./run-conclusion";
+import { PublicRunConclusion } from "./run-conclusion";
 import { ScenarioStrip } from "./scenario-strip";
 import { StatusPill } from "./status-pill";
+import { deriveTransportObservation } from "./transport-observation";
 
 const actionClassName = `inline-flex items-center ${primaryButtonClassName}`;
 const secondaryActionClassName = `${neutralLinkButtonClassName} text-base`;
@@ -386,6 +387,13 @@ function TerminalNarrative({
     composition.run.status === "completed" || composition.run.status === "failed"
       ? composition.run.finalizedAt
       : composition.run.startedAt;
+  const transportObservation =
+    composition.projection.transportAttemptCounts && composition.projection.httpSummary
+      ? deriveTransportObservation(
+          composition.projection.transportAttemptCounts,
+          composition.projection.httpSummary.transportFailures,
+        )
+      : null;
 
   return (
     <>
@@ -394,10 +402,13 @@ function TerminalNarrative({
           {failure.explanation}
         </NarrativeMessage>
       ) : null}
-      <RunConclusion
+      {/* The live projection carries no saved-report delivery or speed-target evidence, so the
+          summary must not invent those qualifications; they appear on the saved report. Reply
+          observation, in contrast, is live transport evidence and is qualified when partial. */}
+      <PublicRunConclusion
         result={composition.result}
         runStatus={composition.run.status}
-        showReconciliationStatus
+        transportObservation={transportObservation}
       />
       <ScenarioStrip configSnapshot={composition.run.configSnapshot} />
       <Signals composition={composition} />

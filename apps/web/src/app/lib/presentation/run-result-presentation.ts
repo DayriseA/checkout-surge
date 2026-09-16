@@ -96,36 +96,116 @@ export function evidenceFromRunHistoryDetail(
   return evidenceFromRunHistorySummary(detail.summary);
 }
 
-export function runConclusionSentence(result: RunResult): string {
-  if (result.outcome === "failed") {
-    const category = result.failureCategory
-      ? ` due to a ${result.failureCategory} failure`
-      : "; the failure category is unavailable";
-    return `The run failed${category}${result.failedOrders ? ` with ${formatNarrativeCount(result.failedOrders)} failed orders` : ""}.`;
-  }
-  if (result.outcome === "outcome-indeterminate") {
-    return result.maximumClassification === "correctness_failure"
-      ? "The completed run has contradictory authoritative evidence: one or more invariants are broken."
-      : "The run outcome is indeterminate because authoritative evidence is incomplete.";
+/**
+ * The plain-language verdict for a run. The default form narrates stock, sold-out rejections and
+ * order outcomes; the `concise` form is the verdict that public summaries show while the full
+ * narration stays available in the run's advanced detail. The concise form keeps known failed
+ * and pending order quantities readable beside every headline that does not already state them.
+ */
+export function runConclusionSentence(
+  result: RunResult,
+  options: { concise?: boolean } = {},
+): string {
+  if (options.concise) {
+    return `${headlineSentence(result)}${orderQuantitiesSuffix(result)}`;
   }
 
+  if (result.outcome === "failed") return failedSentence(result);
+  if (result.outcome === "outcome-indeterminate") return indeterminateSentence(result);
+
   if (result.outcome === "completed-with-oversell") {
-    const stock =
-      result.reservedUnits === null ||
-      result.startingStock === null ||
-      result.oversoldUnits === null
-        ? "Stock evidence is unavailable."
-        : `Durable records show ${formatNarrativeCount(result.reservedUnits)} units reserved against ${formatNarrativeCount(result.startingStock)} starting units, so ${formatNarrativeCount(result.oversoldUnits)} units were oversold.`;
-    return [stock, soldOutSentence(result), neutralOrderSentence(result)].filter(Boolean).join(" ");
+    return [oversellStockSentence(result), soldOutSentence(result), neutralOrderSentence(result)]
+      .filter(Boolean)
+      .join(" ");
   }
 
   const stock =
-    result.startingStock === null || result.remainingStock === null || result.reservedUnits === null
-      ? "Stock evidence is unavailable."
-      : result.remainingStock === 0
-        ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
-        : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain. No units were oversold.`;
+    stockSentence(result) +
+    (result.remainingStock !== null && result.remainingStock !== 0
+      ? " No units were oversold."
+      : "");
   return [stock, soldOutSentence(result), orderSentence(result)].filter(Boolean).join(" ");
+}
+
+function headlineSentence(result: RunResult): string {
+  switch (result.outcome) {
+    case "failed":
+      return failedSentence(result);
+    case "outcome-indeterminate":
+      return indeterminateSentence(result);
+    case "completed-with-oversell":
+      return oversellStockSentence(result);
+    case "completed-with-order-failures":
+    case "completed-with-unsettled-orders":
+      return orderSentence(result);
+    case "completed-successfully":
+      return stockSentence(result);
+  }
+}
+
+/**
+ * Failed and pending quantities stay readable beside every headline that does not already state
+ * them (W07). The suffix reuses the existing order wording and never duplicates a quantity the
+ * headline carries; unknown counts add nothing rather than implying zero.
+ */
+function orderQuantitiesSuffix(result: RunResult): string {
+  switch (result.outcome) {
+    case "failed":
+      // The failed headline already carries a known failed count; only pending is unstated.
+      return hasKnownNonZeroPendingOrders(result) ? ` ${pendingOrdersSentence(result)}` : "";
+    case "completed-with-oversell":
+    case "outcome-indeterminate":
+      return hasKnownNonZeroFailedOrPendingOrders(result) ? ` ${orderSentence(result)}` : "";
+    default:
+      // The order-failures/unsettled headlines are the order sentence; success has no failures.
+      return "";
+  }
+}
+
+function hasKnownNonZeroPendingOrders(result: RunResult): boolean {
+  return result.pendingOrders !== null && result.pendingOrders > 0;
+}
+
+function hasKnownNonZeroFailedOrPendingOrders(result: RunResult): boolean {
+  return (
+    (result.failedOrders !== null && result.failedOrders > 0) ||
+    hasKnownNonZeroPendingOrders(result)
+  );
+}
+
+function pendingOrdersSentence(result: RunResult): string {
+  return `${formatNarrativeCount(result.pendingOrders)} orders remain pending.`;
+}
+
+function failedSentence(result: RunResult): string {
+  const category = result.failureCategory
+    ? ` due to a ${result.failureCategory} failure`
+    : "; the failure category is unavailable";
+  return `The run failed${category}${result.failedOrders ? ` with ${formatNarrativeCount(result.failedOrders)} failed orders` : ""}.`;
+}
+
+function indeterminateSentence(result: RunResult): string {
+  return result.maximumClassification === "correctness_failure"
+    ? "The completed run has contradictory authoritative evidence: one or more invariants are broken."
+    : "The run outcome is indeterminate because authoritative evidence is incomplete.";
+}
+
+function oversellStockSentence(result: RunResult): string {
+  return result.reservedUnits === null ||
+    result.startingStock === null ||
+    result.oversoldUnits === null
+    ? "Stock evidence is unavailable."
+    : `Durable records show ${formatNarrativeCount(result.reservedUnits)} units reserved against ${formatNarrativeCount(result.startingStock)} starting units, so ${formatNarrativeCount(result.oversoldUnits)} units were oversold.`;
+}
+
+function stockSentence(result: RunResult): string {
+  return result.startingStock === null ||
+    result.remainingStock === null ||
+    result.reservedUnits === null
+    ? "Stock evidence is unavailable."
+    : result.remainingStock === 0
+      ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
+      : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain.`;
 }
 
 function soldOutSentence(result: RunResult): string {

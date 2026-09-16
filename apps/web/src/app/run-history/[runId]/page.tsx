@@ -18,7 +18,6 @@ import {
   runResultOutcomeLabel,
   runResultOutcomeTone,
 } from "../../lib/presentation/public-vocabulary";
-import { runConclusionSentence } from "../../lib/presentation/run-result-presentation";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
 import { readPageViewMode } from "../../lib/server/page-view-mode";
 
@@ -78,9 +77,6 @@ export default async function RunHistoryDetailPage({
           <h1 className="m-0 mt-4 text-4xl font-bold leading-tight text-ink">
             {summary.presetName}
           </h1>
-          <p className="m-0 mt-2 max-w-[72ch] text-lg font-semibold leading-7 text-muted-strong">
-            {runConclusionSentence(result)}
-          </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <StatusPill
               status={{

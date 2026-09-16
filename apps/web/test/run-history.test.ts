@@ -473,9 +473,7 @@ describe("run history", () => {
     );
 
     expect(markup).toContain('aria-hidden="true">!</span>Completed with order failures</span>');
-    expect(markup).toContain(
-      "All 10 available units were reserved without overselling. Checkout-Surge recorded 10 sold-out rejections. 8 orders were confirmed, 2 failed, and 0 remain pending.",
-    );
+    expect(markup).toContain("8 orders were confirmed, 2 failed, and 0 remain pending.");
   });
 
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
