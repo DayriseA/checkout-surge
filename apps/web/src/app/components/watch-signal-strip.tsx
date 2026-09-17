@@ -34,7 +34,7 @@ export function WatchSignalStrip({
     <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2" data-watch-signals="">
       {stripSignals.map(({ chart, targetId, title }) => (
         <RevealAdvancedLink
-          className="block rounded-lg border border-border bg-surface-muted p-2 text-left"
+          className="block rounded-lg border border-border bg-surface-muted p-2 text-left [&_svg]:h-14"
           key={chart}
           targetId={hasEvidence ? targetId : fallbackTargetId}
         >
@@ -48,9 +48,9 @@ export function WatchSignalStrip({
             xMax={charts[chart].xMax}
           />
           <span className="mt-1 block text-xs font-semibold leading-5 text-muted-strong">
-            {headlines[chart].value}
+            {headlines[chart].basicValue}
           </span>
-          <span className="sr-only">{`${title} over the run: ${headlines[chart].value}`}</span>
+          <span className="sr-only">{`${title} over the run: ${headlines[chart].basicValue}`}</span>
         </RevealAdvancedLink>
       ))}
     </div>

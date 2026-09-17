@@ -109,7 +109,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   useEffect(() => {
     if (!customSubmissionFailure) return;
-    const builderWasClosed = customBuilderRef.current?.open === false;
     if (customBuilderRef.current) customBuilderRef.current.open = true;
     setCustomBuilderOpen(true);
     if (
@@ -118,8 +117,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     ) {
       if (advancedSettingsRef.current) advancedSettingsRef.current.open = true;
     }
-    if (builderWasClosed && customSubmissionFailure.kind === "validation") {
+    if (customSubmissionFailure.kind === "validation") {
       const target = customSubmissionFailure.entries
+        .filter((entry) => entry.group !== "form")
         .map((entry) => document.getElementById(entry.targetId))
         .find((element) => element !== null);
       (target ?? customSummaryRef.current)?.focus();

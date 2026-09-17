@@ -130,7 +130,7 @@ describe("public run summary", () => {
     expect(summary.caveats).toEqual([
       {
         message:
-          "The run missed its fast-reservation speed target: the measured reservation p95 stayed above the ≤ 1ms target.",
+          "The run missed its fast-reservation speed target: the time within which 95% of measured reservations finished was above the ≤ 1ms target.",
         tone: "warning",
       },
     ]);

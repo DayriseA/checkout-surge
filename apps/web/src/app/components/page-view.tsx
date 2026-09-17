@@ -97,7 +97,7 @@ export function PageView({
 
   return (
     <PageViewContext.Provider value={contextValue}>
-      <fieldset className="mb-4" ref={controlRef}>
+      <fieldset className="mb-2" ref={controlRef}>
         <legend className="text-xs font-bold uppercase text-muted">View</legend>
         <div className="flex flex-wrap items-center gap-2">
           <label className={mode === "basic" ? selectedLabelClassName : unselectedLabelClassName}>

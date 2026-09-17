@@ -181,7 +181,7 @@ function targetCaveats(evaluation: FastReservationTargetEvaluation | null): Publ
     // The threshold is a declared parameter, so it stays a bound ("≤ 1ms"), never a measurement.
     return [
       {
-        message: `The run missed its fast-reservation speed target: the measured reservation p95 stayed above the ≤ ${evaluation.target.thresholdMs}ms target.`,
+        message: `The run missed its fast-reservation speed target: the time within which 95% of measured reservations finished was above the ≤ ${evaluation.target.thresholdMs}ms target.`,
         tone: "warning",
       },
     ];

@@ -59,7 +59,7 @@ import { WatchSignalStrip } from "./watch-signal-strip";
 
 const actionClassName = `inline-flex items-center ${primaryButtonClassName}`;
 const secondaryActionClassName = `${neutralLinkButtonClassName} text-base`;
-const tileClassName = "min-w-0 rounded-lg border border-border bg-surface-muted p-3";
+const tileClassName = "min-w-0 rounded-lg border border-border bg-surface-muted p-2";
 const tileValueClassName = "m-0 text-2xl font-bold leading-tight text-ink";
 const tileLabelClassName = "m-0 text-xs font-bold text-muted";
 
@@ -340,7 +340,7 @@ function RunCard({
   return (
     <section
       aria-label={terminal ? "Run conclusion" : undefined}
-      className="col-span-12 grid gap-4 rounded-lg border border-border bg-surface p-4"
+      className="col-span-12 grid gap-2 rounded-lg border border-border bg-surface p-2"
     >
       <IdentityLine composition={composition} sharedDemo={sharedDemo} />
       <div>
@@ -374,8 +374,8 @@ function RunCard({
         headlines={stripCharts.headlines}
       />
       {terminal ? <PublicRunConclusionProof result={composition.result} /> : null}
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="grid min-w-0 flex-1 gap-2">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 min-[900px]:flex-nowrap">
+        <div className="grid min-w-0 flex-1 gap-2 [&>p]:mt-0">
           {summary && summary.caveats.length > 0 ? (
             <PublicRunCaveatList caveats={summary.caveats} />
           ) : null}
@@ -385,7 +385,7 @@ function RunCard({
             </p>
           ) : null}
         </div>
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 min-[900px]:shrink-0">
           {reportState === "link" ? (
             <Link className={actionClassName} href={`/run-history/${composition.run.runId}`}>
               View run report

@@ -10,10 +10,10 @@ import { formatDurationMs } from "./format";
 import { isRunEvidenceSettled, runEvidenceAbsence } from "./public-vocabulary";
 
 export type SignalHeadlines = {
-  arrival: { value: string; detail: string | null };
-  inventory: { value: string; detail: string | null };
-  backlog: { value: string; detail: string | null };
-  confirmation: { value: string; detail: string | null };
+  arrival: { basicValue: string; value: string; detail: string | null };
+  inventory: { basicValue: string; value: string; detail: string | null };
+  backlog: { basicValue: string; value: string; detail: string | null };
+  confirmation: { basicValue: string; value: string; detail: string | null };
 };
 
 export function selectConfirmationLiveSamples(
@@ -90,24 +90,50 @@ export function deriveSignalHeadlines({
     : runStatus !== null && isRunEvidenceSettled(runStatus, "durable-processing")
       ? "Final convergence evidence unavailable"
       : null;
+  const confirmationCounts =
+    confirmed === null && pending === null
+      ? durableAbsence
+      : `${formatOptionalNumber(confirmed, durableAbsence)}/${formatOptionalNumber(
+          acceptedReservations,
+          durableAbsence,
+        )} confirmed · ${formatOptionalNumber(pending, durableAbsence)} pending`;
+  const confirmationUnavailable = confirmed === null && pending === null;
+  const confirmationP95 =
+    lag?.p95LagMs === null || lag?.p95LagMs === undefined
+      ? null
+      : formatMilliseconds(lag.p95LagMs, durableAbsence);
+  const arrivalValue = arrivalPeak === null ? trafficAbsence : `Peak ${formatRate(arrivalPeak)}`;
+  const inventoryValue =
+    remainingStock === null && initialStock === null
+      ? durableAbsence
+      : `${formatOptionalNumber(remainingStock, durableAbsence)} of ${formatOptionalNumber(
+          initialStock,
+          durableAbsence,
+        )} left · ${
+          oversoldUnits === null ? "oversell unknown" : `${formatNumber(oversoldUnits)} oversold`
+        }`;
+  const backlogValue =
+    peakBacklog === null
+      ? durableAbsence
+      : terminal
+        ? `Peak ${formatNumber(peakBacklog)} · ${
+            terminal.queueBacklog.drainDurationSeconds === null
+              ? "drain duration unavailable"
+              : `drained in ${formatDuration(terminal.queueBacklog.drainDurationSeconds)}`
+          }`
+        : `${formatOptionalNumber(currentBacklog, durableAbsence)} waiting · peak ${formatNumber(
+            peakBacklog,
+          )}`;
 
   return {
     arrival: {
-      value: arrivalPeak === null ? trafficAbsence : `Peak ${formatRate(arrivalPeak)}`,
+      value: arrivalValue,
+      basicValue: arrivalValue,
       detail: arrival ? `Dispatched in ${formatDuration(arrival.dispatchDurationSeconds)}` : null,
     },
     inventory: {
-      value:
-        remainingStock === null && initialStock === null
-          ? durableAbsence
-          : `${formatOptionalNumber(remainingStock, durableAbsence)} of ${formatOptionalNumber(
-              initialStock,
-              durableAbsence,
-            )} left · ${
-              oversoldUnits === null
-                ? "oversell unknown"
-                : `${formatNumber(oversoldUnits)} oversold`
-            }`,
+      value: inventoryValue,
+      basicValue: inventoryValue,
       detail: terminal
         ? terminal.inventoryDrain.timeToDepletionSeconds === null
           ? "not depleted"
@@ -115,32 +141,21 @@ export function deriveSignalHeadlines({
         : null,
     },
     backlog: {
-      value:
-        peakBacklog === null
-          ? durableAbsence
-          : terminal
-            ? `Peak ${formatNumber(peakBacklog)} · ${
-                terminal.queueBacklog.drainDurationSeconds === null
-                  ? "drain duration unavailable"
-                  : `drained in ${formatDuration(terminal.queueBacklog.drainDurationSeconds)}`
-              }`
-            : `${formatOptionalNumber(currentBacklog, durableAbsence)} waiting · peak ${formatNumber(
-                peakBacklog,
-              )}`,
+      value: backlogValue,
+      basicValue: backlogValue,
       detail: null,
     },
     confirmation: {
-      value:
-        confirmed === null && pending === null
-          ? durableAbsence
-          : `${formatOptionalNumber(confirmed, durableAbsence)}/${formatOptionalNumber(
-              acceptedReservations,
-              durableAbsence,
-            )} confirmed · ${formatOptionalNumber(pending, durableAbsence)} pending${
-              lag?.p95LagMs === null || lag?.p95LagMs === undefined
-                ? ""
-                : ` · p95 ${formatMilliseconds(lag.p95LagMs, durableAbsence)}`
-            }${convergenceStatus ? ` · ${convergenceStatus}` : ""}`,
+      value: confirmationUnavailable
+        ? durableAbsence
+        : `${confirmationCounts}${confirmationP95 ? ` · p95 ${confirmationP95}` : ""}${
+            convergenceStatus ? ` · ${convergenceStatus}` : ""
+          }`,
+      basicValue: confirmationUnavailable
+        ? durableAbsence
+        : `${confirmationCounts}${
+            confirmationP95 ? ` · 95% of confirmed orders within ${confirmationP95}` : ""
+          }${convergenceStatus ? ` · ${convergenceStatus}` : ""}`,
       detail:
         confirmed === null && pending === null
           ? null

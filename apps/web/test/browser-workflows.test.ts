@@ -1016,7 +1016,7 @@ describe("public browser starts", () => {
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
     expect(buyerCount.getAttribute("aria-describedby")).toContain("custom-buyers-error");
     expect(screen.getByText(buyerCount.validationMessage)).toBeTruthy();
@@ -1039,7 +1039,7 @@ describe("public browser starts", () => {
     await user.keyboard("{Enter}");
 
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(within(summary).getAllByRole("link")).toHaveLength(2);
     expect(within(summary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
     expect(within(summary).getByRole("link", { name: /Starting stock/ })).toBeTruthy();
@@ -1203,7 +1203,7 @@ describe("public browser starts", () => {
     expect(start.disabled).toBe(false);
     await user.click(start);
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(document.getElementById("custom-traffic-error"));
     await user.click(within(summary).getByRole("link", { name: /Reduce the buyer count/ }));
     expect(document.activeElement).toBe(document.getElementById("custom-traffic-error"));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -1322,7 +1322,7 @@ describe("public browser starts", () => {
 
     const summary = await screen.findByRole("alert", { name: "Fix these settings" });
     const buyerCount = screen.getByLabelText("Buyer count (buyers)");
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(within(summary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
     expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
     expect(buyerCount.getAttribute("aria-describedby")).toContain("custom-buyers-error");

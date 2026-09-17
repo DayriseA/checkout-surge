@@ -431,6 +431,7 @@ export function SignalSparkline({
     coordinates.length === 0
       ? ""
       : `M 0 ${height} L ${line.replaceAll(" ", " L ")} L ${width} ${height} Z`;
+  const singlePoint = coordinates.length === 1 ? coordinates[0] : undefined;
 
   return (
     <svg
@@ -461,6 +462,9 @@ export function SignalSparkline({
           vectorEffect="non-scaling-stroke"
         />
       ) : null}
+      {singlePoint ? (
+        <circle className="fill-accent" cx={singlePoint.x} cy={singlePoint.y} r={4} />
+      ) : null}
       {secondary && secondaryLine ? (
         <polyline
           className="fill-none stroke-danger"
@@ -468,6 +472,9 @@ export function SignalSparkline({
           strokeWidth={1.5}
           vectorEffect="non-scaling-stroke"
         />
+      ) : null}
+      {secondary && singlePoint?.secondaryY !== null && singlePoint?.secondaryY !== undefined ? (
+        <circle className="fill-danger" cx={singlePoint.x} cy={singlePoint.secondaryY} r={3} />
       ) : null}
     </svg>
   );

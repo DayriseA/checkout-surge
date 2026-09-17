@@ -5,6 +5,32 @@ import { describe, expect, it } from "vitest";
 import { GoldSignals, scale } from "../src/app/components/gold-signals.js";
 
 describe("Gold Signals", () => {
+  it("marks a single arrival sample and retains its text equivalent", () => {
+    const markup = renderToStaticMarkup(
+      createElement(GoldSignals, {
+        acceptedReservations: 1,
+        arrivalSummary: {
+          firstAttemptStartedAt: "2026-06-20T00:01:00.000Z",
+          peakArrivalRatePerSecond: 10,
+          peakArrivalWindowSeconds: 1,
+          dispatchDurationSeconds: 0.164,
+          arrivalRateSeries: [{ windowStartedAt: "2026-06-20T00:01:00.000Z", ratePerSecond: 10 }],
+          arrivalWindowCountObserved: 1,
+          arrivalWindowCountRetained: 1,
+          arrivalSeriesLimit: 120,
+        },
+        liveSamples: [],
+        oversoldUnits: null,
+        runStatus: "completed",
+        terminalSummary: null,
+      }),
+    );
+
+    expect(markup).toContain('<circle class="fill-accent"');
+    expect(markup).toContain('aria-label="Request arrival timeline"');
+    expect(markup).toContain("<li>0s: 10</li>");
+  });
+
   it("uses one aligned axis and terminal evidence instead of a low-volume live tail", () => {
     const markup = renderToStaticMarkup(
       createElement(GoldSignals, {
