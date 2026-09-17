@@ -1,4 +1,8 @@
 .git
+.pnpm-store
+.cache/
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 .turbo
 **/.turbo
 **/node_modules
@@ -7,7 +11,8 @@
 **/coverage
 .env*
 .checkout-surge
-*.log
+**/*.log
+**/*.tsbuildinfo
 *.pem
 *.key
 working_docs
