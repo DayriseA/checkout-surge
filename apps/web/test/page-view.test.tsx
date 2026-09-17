@@ -11,7 +11,8 @@ import {
   PageView,
   RevealAdvancedHashTarget,
   RevealAdvancedLink,
-  useViewMode,
+  ViewModeSwitch,
+  ViewPreferenceProvider,
 } from "../src/app/components/page-view.js";
 import {
   parseViewMode,
@@ -22,59 +23,74 @@ import {
 afterEach(cleanup);
 
 beforeEach(() => {
-  // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API; the test resets the cookie the same way the component writes it.
-  document.cookie = "checkout-surge.view.watch=; Max-Age=0; Path=/";
+  // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
+  document.cookie = `${viewModeCookieName}=; Max-Age=0; Path=/`;
+  window.location.hash = "";
 });
 
-function WatchView({ initialMode }: { initialMode: ViewMode }) {
+function WatchView({
+  initialMode,
+  participating = true,
+}: {
+  initialMode: ViewMode;
+  participating?: boolean;
+}) {
   return (
-    <PageView initialMode={initialMode} page="watch">
-      <p>Shared summary</p>
-      <BasicOnly id="basic-section">
-        <p>Basic guidance</p>
-      </BasicOnly>
-      <AdvancedOnly id="technical-section">
-        <p>Technical measurements</p>
-      </AdvancedOnly>
-    </PageView>
+    <ViewPreferenceProvider initialMode={initialMode}>
+      <ViewModeSwitch />
+      {participating ? (
+        <PageView>
+          <p>Shared summary</p>
+          <BasicOnly id="basic-section">
+            <p>Basic guidance</p>
+          </BasicOnly>
+          <AdvancedOnly id="technical-section">
+            <p>Technical measurements</p>
+          </AdvancedOnly>
+        </PageView>
+      ) : null}
+    </ViewPreferenceProvider>
+  );
+}
+
+function view(initialMode: ViewMode, children: React.ReactNode) {
+  return (
+    <ViewPreferenceProvider initialMode={initialMode}>
+      <ViewModeSwitch />
+      <PageView>{children}</PageView>
+    </ViewPreferenceProvider>
   );
 }
 
 describe("view mode helpers", () => {
-  it("parses cookie values strictly and names cookies per page", () => {
+  it("parses cookie values strictly and defines one global cookie", () => {
     expect(parseViewMode("advanced")).toBe("advanced");
     expect(parseViewMode("ADVANCED")).toBe("basic");
     expect(parseViewMode("true")).toBe("basic");
     expect(parseViewMode(undefined)).toBe("basic");
     expect(parseViewMode(null)).toBe("basic");
-    expect(viewModeCookieName("watch")).toBe("checkout-surge.view.watch");
-    expect(viewModeCookieName("report")).toBe("checkout-surge.view.report");
+    expect(viewModeCookieName).toBe("checkout-surge.view");
   });
 });
 
 describe("PageView", () => {
-  it("server-renders the initial mode with the right radio checked and sections hidden", () => {
+  it("server-renders saved content while omitting the switch until participation registers", () => {
     const basicDocument = new DOMParser().parseFromString(
       renderToString(<WatchView initialMode="basic" />),
       "text/html",
     );
-    const basicChecked = basicDocument.querySelector(
-      'input[name="view-watch"][value="basic"]',
-    ) as HTMLInputElement;
-    const basicSection = basicDocument.getElementById("technical-section");
-    expect(basicChecked.checked).toBe(true);
+    expect(basicDocument.querySelector('[role="switch"]')).toBeNull();
     expect(basicDocument.getElementById("basic-section")?.hasAttribute("hidden")).toBe(false);
-    expect(basicSection?.hasAttribute("hidden")).toBe(true);
-    expect(basicSection?.textContent).toContain("Technical measurements");
+    expect(basicDocument.getElementById("technical-section")?.hasAttribute("hidden")).toBe(true);
+    expect(basicDocument.getElementById("technical-section")?.textContent).toContain(
+      "Technical measurements",
+    );
 
     const advancedDocument = new DOMParser().parseFromString(
       renderToString(<WatchView initialMode="advanced" />),
       "text/html",
     );
-    const advancedChecked = advancedDocument.querySelector(
-      'input[name="view-watch"][value="advanced"]',
-    ) as HTMLInputElement;
-    expect(advancedChecked.checked).toBe(true);
+    expect(advancedDocument.querySelector('[role="switch"]')).toBeNull();
     expect(advancedDocument.getElementById("technical-section")?.hasAttribute("hidden")).toBe(
       false,
     );
@@ -84,124 +100,100 @@ describe("PageView", () => {
   it.each<ViewMode>([
     "basic",
     "advanced",
-  ])("hydrates saved %s markup without hydration warnings or cookie writes", async (initialMode) => {
+  ])("hydrates saved %s markup without warnings or cookie writes", async (initialMode) => {
     const serverMarkup = renderToString(<WatchView initialMode={initialMode} />);
     const next = document.createElement("div");
     next.innerHTML = serverMarkup;
     document.body.appendChild(next);
-
     const recoverableErrors: unknown[] = [];
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     let root: ReturnType<typeof hydrateRoot> | null = null;
     await act(async () => {
       root = hydrateRoot(next, <WatchView initialMode={initialMode} />, {
-        onRecoverableError: (error) => {
-          recoverableErrors.push(error);
-        },
+        onRecoverableError: (error) => recoverableErrors.push(error),
       });
-    });
-    await act(async () => {
-      await Promise.resolve();
     });
 
     expect(recoverableErrors).toHaveLength(0);
     expect(consoleError).not.toHaveBeenCalled();
     expect(document.cookie).toBe("");
-    expect(
-      (next.querySelector(`input[name="view-watch"][value="${initialMode}"]`) as HTMLInputElement)
-        .checked,
-    ).toBe(true);
+    expect(next.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(
+      String(initialMode === "advanced"),
+    );
     expect(next.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(
       initialMode === "basic",
     );
-    await act(async () => {
-      root?.unmount();
-    });
+    await act(async () => root?.unmount());
     next.remove();
     consoleError.mockRestore();
   });
 
-  it("switching radios writes the per-page cookie and toggles the hidden attribute only", () => {
+  it("toggles mounted content and persists one global cookie", () => {
     const { container } = render(<WatchView initialMode="basic" />);
-    expect(screen.getByRole("group", { name: "View" })).toBeTruthy();
-    expect(document.cookie).toBe("");
-
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
-
-    expect(document.cookie).toContain("checkout-surge.view.watch=advanced");
-    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
-      true,
-    );
+    const toggle = screen.getByRole("switch", { name: "Advanced" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByRole("radio")).toBeNull();
+    fireEvent.click(toggle);
+    expect(document.cookie).toContain(`${viewModeCookieName}=advanced`);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
     expect(container.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(false);
     expect(container.querySelector("#basic-section")?.hasAttribute("hidden")).toBe(true);
-    expect(container.textContent).toContain("Shared summary");
-
-    fireEvent.click(screen.getByRole("radio", { name: "Basic" }));
-
-    expect(document.cookie).toContain("checkout-surge.view.watch=basic");
+    fireEvent.click(toggle);
+    expect(document.cookie).toContain(`${viewModeCookieName}=basic`);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(container.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(true);
-    expect(container.querySelector("#basic-section")?.hasAttribute("hidden")).toBe(false);
   });
 
-  it("reveal link switches to advanced and moves focus to the target section", () => {
-    const { container } = render(
-      <PageView initialMode="basic" page="watch">
-        <AdvancedOnly id="technical-section">
-          <p>Technical measurements</p>
-        </AdvancedOnly>
-        <RevealAdvancedLink targetId="technical-section">
-          View technical measurements
-        </RevealAdvancedLink>
-      </PageView>,
+  it("shows the switch only while a PageView participates and retains its mode", () => {
+    const { rerender } = render(<WatchView initialMode="advanced" />);
+    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
+      "true",
     );
+    rerender(<WatchView initialMode="advanced" participating={false} />);
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    rerender(<WatchView initialMode="advanced" />);
+    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
+      "true",
+    );
+  });
 
-    fireEvent.click(screen.getByRole("button", { name: "View technical measurements" }));
-
-    expect(document.cookie).toContain("checkout-surge.view.watch=advanced");
+  it("reveal links enable advanced and focus the target", () => {
+    const { container } = render(
+      view(
+        "basic",
+        <>
+          <AdvancedOnly id="technical-section">Technical measurements</AdvancedOnly>
+          <RevealAdvancedLink targetId="technical-section">View measurements</RevealAdvancedLink>
+        </>,
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "View measurements" }));
+    expect(document.cookie).toContain(`${viewModeCookieName}=advanced`);
     const target = container.querySelector("#technical-section");
     expect(target?.hasAttribute("hidden")).toBe(false);
     expect(document.activeElement).toBe(target);
   });
 
-  it("reveals and focuses an Advanced-only target from the initial hash", () => {
+  it("reveals an initial advanced hash once and permits switching off", () => {
     window.location.hash = "#technical-section";
     const { container } = render(
-      <PageView initialMode="basic" page="watch">
-        <RevealAdvancedHashTarget />
-        <AdvancedOnly>
-          <section id="technical-section" tabIndex={-1}>
-            Technical measurements
-          </section>
-        </AdvancedOnly>
-      </PageView>,
+      view(
+        "basic",
+        <>
+          <RevealAdvancedHashTarget />
+          <AdvancedOnly>
+            <section id="technical-section" tabIndex={-1}>
+              Technical measurements
+            </section>
+          </AdvancedOnly>
+        </>,
+      ),
     );
-
-    const target = container.querySelector("#technical-section");
-    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
-      true,
-    );
-    expect(target?.closest("[data-advanced-only]")?.hasAttribute("hidden")).toBe(false);
-    expect(document.activeElement).toBe(target);
-  });
-
-  it("lets the visitor return to basic while a technical hash remains in the address", () => {
-    window.location.hash = "#technical-section";
-    const { container } = render(
-      <PageView initialMode="basic" page="watch">
-        <RevealAdvancedHashTarget />
-        <AdvancedOnly>
-          <section id="technical-section" tabIndex={-1}>
-            Technical measurements
-          </section>
-        </AdvancedOnly>
-      </PageView>,
-    );
-    const basicRadio = screen.getByRole("radio", { name: "Basic" }) as HTMLInputElement;
-    expect(basicRadio.checked).toBe(false);
-
-    fireEvent.click(basicRadio);
-
-    expect(basicRadio.checked).toBe(true);
+    const toggle = screen.getByRole("switch", { name: "Advanced" });
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(document.activeElement).toBe(container.querySelector("#technical-section"));
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
     expect(
       container
         .querySelector("#technical-section")
@@ -210,53 +202,41 @@ describe("PageView", () => {
     ).toBe(true);
   });
 
-  it("moves focus to the control when returning to basic hides the focused section", () => {
+  it("returns focus to the switch when hiding focused advanced content", () => {
     const { container } = render(
-      <PageView initialMode="advanced" page="watch">
+      view(
+        "advanced",
         <AdvancedOnly id="technical-section">
-          <ReturnToBasic />
-        </AdvancedOnly>
-      </PageView>,
+          <button type="button">Inside advanced</button>
+        </AdvancedOnly>,
+      ),
     );
-
-    const insideButton = screen.getByRole("button", { name: "Switch to basic" });
-    insideButton.focus();
-    fireEvent.click(insideButton);
-
-    const basicRadio = screen.getByRole("radio", { name: "Basic" }) as HTMLInputElement;
-    expect(basicRadio.checked).toBe(true);
-    expect(document.activeElement).toBe(basicRadio);
+    const inside = screen.getByRole("button", { name: "Inside advanced" });
+    inside.focus();
+    const toggle = screen.getByRole("switch", { name: "Advanced" });
+    fireEvent.click(toggle);
+    expect(document.activeElement).toBe(toggle);
     expect(container.querySelector("#technical-section")?.hasAttribute("hidden")).toBe(true);
   });
 
-  it("keeps advanced children mounted with their state across switches", () => {
+  it("keeps advanced children mounted with state across switches", () => {
     render(
-      <PageView initialMode="basic" page="watch">
-        <AdvancedOnly id="technical-section">
+      view(
+        "basic",
+        <AdvancedOnly>
           <DraftCounter />
-        </AdvancedOnly>
-      </PageView>,
+        </AdvancedOnly>,
+      ),
     );
-
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    const toggle = screen.getByRole("switch", { name: "Advanced" });
+    fireEvent.click(toggle);
     fireEvent.click(screen.getByRole("button", { name: "Edits 0" }));
     fireEvent.click(screen.getByRole("button", { name: "Edits 1" }));
-
-    fireEvent.click(screen.getByRole("radio", { name: "Basic" }));
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
-
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
     expect(screen.getByRole("button", { name: "Edits 2" })).toBeTruthy();
   });
 });
-
-function ReturnToBasic() {
-  const { setMode } = useViewMode();
-  return (
-    <button onClick={() => setMode("basic")} type="button">
-      Switch to basic
-    </button>
-  );
-}
 
 function DraftCounter() {
   const [count, setCount] = useState(0);

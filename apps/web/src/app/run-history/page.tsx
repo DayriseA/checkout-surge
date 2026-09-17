@@ -8,7 +8,6 @@ import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
-import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Run history" };
 export const dynamic = "force-dynamic";
@@ -69,11 +68,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
     return content;
   }
 
-  return (
-    <PageView initialMode={await readPageViewMode("history")} page="history">
-      {content}
-    </PageView>
-  );
+  return <PageView>{content}</PageView>;
 }
 
 /** Admin sessions get the deletion provider wrapped around the same public list. */

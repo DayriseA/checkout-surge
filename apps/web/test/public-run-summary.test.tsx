@@ -10,7 +10,7 @@ import {
 } from "@checkout-surge/contracts";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { PageView } from "../src/app/components/page-view.js";
+import { PageView, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import { PublicRunConclusion } from "../src/app/components/run-conclusion.js";
 import { deriveTransportObservation } from "../src/app/components/transport-observation.js";
 import {
@@ -575,15 +575,17 @@ describe("public run conclusion", () => {
     overrides: Partial<Omit<PublicRunSummaryInput, "result">> = {},
   ) {
     return render(
-      <PageView initialMode={mode} page="report">
-        <PublicRunConclusion
-          fastReservationTargetEvaluation={overrides.fastReservationTargetEvaluation ?? null}
-          result={deriveRunResult(evidence)}
-          runStatus={evidence.runStatus}
-          trafficDeliveryStatus={overrides.trafficDeliveryStatus ?? null}
-          transportObservation={overrides.transportObservation ?? null}
-        />
-      </PageView>,
+      <ViewPreferenceProvider initialMode={mode}>
+        <PageView>
+          <PublicRunConclusion
+            fastReservationTargetEvaluation={overrides.fastReservationTargetEvaluation ?? null}
+            result={deriveRunResult(evidence)}
+            runStatus={evidence.runStatus}
+            trafficDeliveryStatus={overrides.trafficDeliveryStatus ?? null}
+            transportObservation={overrides.transportObservation ?? null}
+          />
+        </PageView>
+      </ViewPreferenceProvider>,
     );
   }
 

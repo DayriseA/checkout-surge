@@ -4,21 +4,29 @@ import {
   createContext,
   type ReactNode,
   type RefObject,
+  useCallback,
   useContext,
   useEffect,
   useRef,
   useState,
 } from "react";
-import { type ViewMode, type ViewPage, viewModeCookieName } from "../lib/presentation/view-mode";
+import { type ViewMode, viewModeCookieName } from "../lib/presentation/view-mode";
 import { neutralLinkButtonClassName } from "./control-styles";
+
+interface ViewPreferenceContextValue {
+  mode: ViewMode;
+  setMode: (mode: ViewMode) => void;
+  participating: boolean;
+  register: () => () => void;
+  switchRef: RefObject<HTMLButtonElement | null>;
+}
 
 interface PageViewContextValue {
   mode: ViewMode;
-  setMode: (mode: ViewMode) => void;
   revealAdvanced: (targetId: string) => void;
-  controlRef: RefObject<HTMLFieldSetElement | null>;
 }
 
+const ViewPreferenceContext = createContext<ViewPreferenceContextValue | null>(null);
 const PageViewContext = createContext<PageViewContextValue | null>(null);
 
 function focusAdvancedTarget(targetId: string) {
@@ -28,46 +36,99 @@ function focusAdvancedTarget(targetId: string) {
   target?.scrollIntoView({ block: "start", behavior: "instant" });
 }
 
-export function useViewMode(): { mode: ViewMode; setMode: (mode: ViewMode) => void } {
-  const context = useContext(PageViewContext);
+function useViewPreference() {
+  const context = useContext(ViewPreferenceContext);
   if (!context) {
-    throw new Error("useViewMode must be used inside PageView.");
+    throw new Error("View preference controls must be used inside ViewPreferenceProvider.");
   }
-  return { mode: context.mode, setMode: context.setMode };
+  return context;
 }
 
-const selectedLabelClassName =
-  "inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-accent bg-accent-soft px-3.5 py-2.5 text-sm font-semibold text-accent ring-accent has-[:focus-visible]:ring-2";
-const unselectedLabelClassName =
-  "inline-flex min-h-11 cursor-pointer items-center rounded-lg border border-control-border bg-surface px-3.5 py-2.5 text-sm font-semibold text-muted-strong ring-accent has-[:focus-visible]:ring-2";
-
-export function PageView({
-  page,
+export function ViewPreferenceProvider({
   initialMode,
   children,
 }: {
-  page: ViewPage;
   initialMode: ViewMode;
   children: ReactNode;
 }) {
-  const [mode, setMode] = useState(initialMode);
-  const controlRef = useRef<HTMLFieldSetElement>(null);
-  const revealTargetIdRef = useRef<string | null>(null);
+  const [mode, setModeState] = useState(initialMode);
+  const [participantCount, setParticipantCount] = useState(0);
+  const switchRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef(false);
 
-  const switchMode = (nextMode: ViewMode) => {
-    if (nextMode === mode) {
-      return;
+  const setMode = useCallback(
+    (nextMode: ViewMode) => {
+      if (nextMode === mode) return;
+      if (nextMode === "basic") {
+        const active = document.activeElement;
+        returnFocusRef.current =
+          active instanceof Element && active.closest("[data-advanced-only]") !== null;
+      }
+      // biome-ignore lint/suspicious/noDocumentCookie: This plain preference needs no server action.
+      document.cookie = `${viewModeCookieName}=${nextMode}; Path=/; SameSite=Lax; Max-Age=31536000`;
+      setModeState(nextMode);
+    },
+    [mode],
+  );
+
+  const register = useCallback(() => {
+    setParticipantCount((count) => count + 1);
+    return () => setParticipantCount((count) => count - 1);
+  }, []);
+
+  useEffect(() => {
+    if (mode === "basic" && returnFocusRef.current) {
+      returnFocusRef.current = false;
+      switchRef.current?.focus();
     }
-    // biome-ignore lint/suspicious/noDocumentCookie: The view preference is a plain client-side cookie write by design; no server action or request is wanted.
-    document.cookie = `${viewModeCookieName(page)}=${nextMode}; Path=/; SameSite=Lax; Max-Age=31536000`;
-    if (nextMode === "basic") {
-      const active = document.activeElement;
-      returnFocusRef.current =
-        active instanceof Element && active.closest("[data-advanced-only]") !== null;
-    }
-    setMode(nextMode);
-  };
+  }, [mode]);
+
+  return (
+    <ViewPreferenceContext.Provider
+      value={{ mode, participating: participantCount > 0, register, setMode, switchRef }}
+    >
+      {children}
+    </ViewPreferenceContext.Provider>
+  );
+}
+
+export function ViewModeSwitch() {
+  const { mode, participating, setMode, switchRef } = useViewPreference();
+  if (!participating) return null;
+
+  const advanced = mode === "advanced";
+  return (
+    <button
+      aria-checked={advanced}
+      className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-2 py-2 text-sm font-semibold text-ink ring-accent focus-visible:outline-none focus-visible:ring-2"
+      onClick={() => setMode(advanced ? "basic" : "advanced")}
+      ref={switchRef}
+      role="switch"
+      type="button"
+    >
+      <span>Advanced</span>
+      <span
+        aria-hidden="true"
+        className={`flex h-6 w-11 items-center rounded-full border px-0.5 transition-colors ${
+          advanced
+            ? "justify-end border-accent bg-accent"
+            : "justify-start border-control-border bg-surface-muted"
+        }`}
+      >
+        <span className="h-4.5 w-4.5 rounded-full bg-surface shadow-sm" />
+      </span>
+    </button>
+  );
+}
+
+export function PageView({ children }: { children: ReactNode }) {
+  const preference = useContext(ViewPreferenceContext);
+  const mode = preference?.mode ?? "basic";
+  const register = preference?.register;
+  const setMode = preference?.setMode;
+  const revealTargetIdRef = useRef<string | null>(null);
+
+  useEffect(() => register?.(), [register]);
 
   const revealAdvanced = (targetId: string) => {
     if (mode === "advanced") {
@@ -75,7 +136,7 @@ export function PageView({
       return;
     }
     revealTargetIdRef.current = targetId;
-    switchMode("advanced");
+    setMode?.("advanced");
   };
 
   useEffect(() => {
@@ -88,54 +149,14 @@ export function PageView({
       focusAdvancedTarget(targetId);
       return;
     }
-    if (!returnFocusRef.current) {
-      return;
-    }
-    returnFocusRef.current = false;
-    controlRef.current?.querySelector<HTMLInputElement>("input:checked")?.focus();
   }, [mode]);
 
   const contextValue: PageViewContextValue = {
     mode,
-    setMode: switchMode,
     revealAdvanced,
-    controlRef,
   };
 
-  return (
-    <PageViewContext.Provider value={contextValue}>
-      <fieldset className="mb-2" ref={controlRef}>
-        <legend className="text-xs font-bold uppercase text-muted">View</legend>
-        <div className="flex flex-wrap items-center gap-2">
-          <label className={mode === "basic" ? selectedLabelClassName : unselectedLabelClassName}>
-            <input
-              checked={mode === "basic"}
-              className="sr-only"
-              name={`view-${page}`}
-              onChange={() => switchMode("basic")}
-              type="radio"
-              value="basic"
-            />
-            Basic
-          </label>
-          <label
-            className={mode === "advanced" ? selectedLabelClassName : unselectedLabelClassName}
-          >
-            <input
-              checked={mode === "advanced"}
-              className="sr-only"
-              name={`view-${page}`}
-              onChange={() => switchMode("advanced")}
-              type="radio"
-              value="advanced"
-            />
-            Advanced
-          </label>
-        </div>
-      </fieldset>
-      {children}
-    </PageViewContext.Provider>
-  );
+  return <PageViewContext.Provider value={contextValue}>{children}</PageViewContext.Provider>;
 }
 
 /**

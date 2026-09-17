@@ -3,17 +3,14 @@ import Link from "next/link";
 import { AdvancedOnly, PageView } from "./components/page-view";
 import { PublicDemoEntry } from "./components/public-demo-entry";
 import { getPublicDemoSurface } from "./lib/api";
-import { readPageViewMode } from "./lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: { absolute: "Demo · Checkout-Surge" } };
 export const dynamic = "force-dynamic";
 
 export default async function DemoDashboardPage() {
   const surface = await getPublicDemoSurface();
-  const viewMode = await readPageViewMode("demo");
-
   return (
-    <PageView initialMode={viewMode} page="demo">
+    <PageView>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Checkout-Surge demo</h1>

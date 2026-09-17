@@ -12,7 +12,7 @@ import {
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { type ComponentProps, createElement } from "react";
+import { type ComponentProps, createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as PageViewComponents from "../src/app/components/page-view.js";
@@ -43,30 +43,25 @@ vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail,
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
-vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readPageViewMode: vi.fn(async () => "basic" as const),
-}));
-
-function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
-  const props = { initialMode: "basic", page: "report" } as unknown as ComponentProps<
-    typeof PageViewComponents.PageView
-  >;
+function inViewMode(initialMode: "basic" | "advanced", child: ReactNode) {
   return createElement(
-    PageViewComponents.PageView,
-    props,
-    createElement(PublicRunHistoryDetail, { detail }),
+    PageViewComponents.ViewPreferenceProvider,
+    { initialMode } as ComponentProps<typeof PageViewComponents.ViewPreferenceProvider>,
+    createElement(PageViewComponents.ViewModeSwitch),
+    createElement(
+      PageViewComponents.PageView,
+      {} as ComponentProps<typeof PageViewComponents.PageView>,
+      child,
+    ),
   );
 }
 
+function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
+  return inViewMode("basic", createElement(PublicRunHistoryDetail, { detail }));
+}
+
 function historyInMode(initialMode: "basic" | "advanced", history = listFixture()) {
-  const props = { initialMode, page: "history" } as unknown as ComponentProps<
-    typeof PageViewComponents.PageView
-  >;
-  return createElement(
-    PageViewComponents.PageView,
-    props,
-    createElement(RunHistoryList, { history }),
-  );
+  return inViewMode(initialMode, createElement(RunHistoryList, { history }));
 }
 
 describe("run history", () => {
@@ -210,7 +205,7 @@ describe("run history", () => {
     expect(screen.getAllByText("Convergence duration")).toHaveLength(3);
     expect(screen.getByText(/Convergence measures from the end of traffic dispatch/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Advanced" }));
     for (const advanced of container.querySelectorAll('[data-advanced-only="true"]')) {
       expect(advanced.hasAttribute("hidden")).toBe(false);
     }

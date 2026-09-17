@@ -19,7 +19,6 @@ import {
   runResultOutcomeTone,
 } from "../../lib/presentation/public-vocabulary";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
-import { readPageViewMode } from "../../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Run report" };
 export const dynamic = "force-dynamic";
@@ -46,7 +45,6 @@ export default async function RunHistoryDetailPage({
   if (!parsedParams.success) notFound();
 
   const isAdmin = await hasValidAdminPageSession();
-  const viewMode = isAdmin ? "basic" : await readPageViewMode("report");
   const parsedAdminQuery = isAdmin
     ? adminRunHistoryDetailHttpQuerySchema.safeParse((await searchParams) ?? {})
     : null;
@@ -69,7 +67,7 @@ export default async function RunHistoryDetailPage({
   if (publicDetail?.status === "available") {
     const { summary, result, overallDurationMs } = publicDetail.data;
     return (
-      <PageView initialMode={viewMode} page="report">
+      <PageView>
         <header className="mb-4">
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
@@ -205,9 +203,5 @@ export default async function RunHistoryDetailPage({
     return body;
   }
 
-  return (
-    <PageView initialMode={viewMode} page="report">
-      {body}
-    </PageView>
-  );
+  return <PageView>{body}</PageView>;
 }

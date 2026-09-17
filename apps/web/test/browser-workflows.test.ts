@@ -44,7 +44,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
-import { PageView } from "../src/app/components/page-view.js";
+import {
+  PageView,
+  ViewModeSwitch,
+  ViewPreferenceProvider,
+} from "../src/app/components/page-view.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -79,9 +83,6 @@ vi.mock("../src/app/lib/api.js", () => ({
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: vi.fn(async () => false),
-}));
-vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readPageViewMode: vi.fn(async () => "basic" as const),
 }));
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: vi.fn(),
@@ -939,7 +940,7 @@ describe("public browser starts", () => {
       .closest("[data-advanced-only]") as HTMLElement | null;
     expect(advancedFacts?.hidden).toBe(true);
 
-    await user.click(screen.getByRole("radio", { name: "Advanced" }));
+    await user.click(screen.getByRole("switch", { name: "Advanced" }));
     expect(advancedFacts?.hidden).toBe(false);
     expect(within(article).getByText("Detailed assumptions")).toBeTruthy();
   });
@@ -983,8 +984,9 @@ describe("public browser starts", () => {
     expect(builder.open).toBe(true);
     expect(protection.open).toBe(true);
     expect(screen.getByText(nativeError)).toBeTruthy();
-    await user.click(screen.getByRole("radio", { name: "Advanced" }));
-    await user.click(screen.getByRole("radio", { name: "Basic" }));
+    const viewSwitch = screen.getByRole("switch", { name: "Advanced" });
+    await user.click(viewSwitch);
+    await user.click(viewSwitch);
 
     expect(builder.open).toBe(true);
     expect(form.isConnected).toBe(true);
@@ -2129,17 +2131,18 @@ describe("watch browser recovery", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
-    const pageViewProps = {
-      initialMode: "basic",
-      page: "watch",
-    } as unknown as React.ComponentProps<typeof PageView>;
     const { container } = render(
       createElement(
-        PageView,
-        pageViewProps,
-        createElement(OperatorDashboard, {
-          initialRecovery: pendingDashboardRecovery(),
-        }),
+        ViewPreferenceProvider,
+        { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
+        createElement(ViewModeSwitch),
+        createElement(
+          PageView,
+          {} as React.ComponentProps<typeof PageView>,
+          createElement(OperatorDashboard, {
+            initialRecovery: pendingDashboardRecovery(),
+          }),
+        ),
       ),
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
@@ -2157,7 +2160,7 @@ describe("watch browser recovery", () => {
         .filter((element) => !element.closest("[hidden]")),
     ).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Advanced" }));
+    fireEvent.click(screen.getByRole("switch", { name: "Advanced" }));
 
     expect(
       screen.getAllByText("Last-known-good data").filter((element) => !element.closest("[hidden]")),
@@ -2442,12 +2445,7 @@ describe("watch basic composition", () => {
   }
 
   function inBasicView(ui: ReactElement) {
-    // createElement in a `.ts` file: the props object alone cannot carry the required `children`,
-    // so it is widened to PageView's props and the child is passed as the third argument.
-    const props = { initialMode: "basic", page: "watch" } as unknown as React.ComponentProps<
-      typeof PageView
-    >;
-    return createElement(PageView, props, ui);
+    return inBasicPageView(ui);
   }
 
   function activeProjectionFixture(): DashboardProjection {
@@ -2653,8 +2651,8 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
-      true,
+    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
+      "true",
     );
     expect(document.activeElement?.id).toBe("watch-signal-arrival");
     expect(container.querySelector("#watch-signal-arrival")?.hasAttribute("hidden")).toBe(false);
@@ -2694,9 +2692,8 @@ describe("watch basic composition", () => {
       ),
     ).toHaveLength(1);
 
-    for (const mode of ["Advanced", "Basic", "Advanced"] as const) {
-      fireEvent.click(screen.getByRole("radio", { name: mode }));
-    }
+    const viewSwitch = screen.getByRole("switch", { name: "Advanced" });
+    for (let index = 0; index < 3; index += 1) fireEvent.click(viewSwitch);
 
     // One stream, one start-free page, preserved samples, and the live scope still on screen.
     expect(FakeEventSource.instances).toHaveLength(1);
@@ -2886,8 +2883,8 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
-      true,
+    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
+      "true",
     );
     expect(document.activeElement?.id).toBe("watch-advanced-signals");
     expect(container.querySelector("#watch-advanced-signals")?.hasAttribute("hidden")).toBe(false);
@@ -2958,10 +2955,16 @@ describe("web page smoke coverage", () => {
 });
 
 function inBasicDemoView(ui: ReactElement) {
-  const props = { initialMode: "basic", page: "demo" } as unknown as React.ComponentProps<
-    typeof PageView
-  >;
-  return createElement(PageView, props, ui);
+  return inBasicPageView(ui);
+}
+
+function inBasicPageView(ui: ReactElement) {
+  return createElement(
+    ViewPreferenceProvider,
+    { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
+    createElement(ViewModeSwitch),
+    createElement(PageView, {} as React.ComponentProps<typeof PageView>, ui),
+  );
 }
 
 async function replaceInputValue(

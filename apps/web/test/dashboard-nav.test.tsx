@@ -4,11 +4,25 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardNav } from "../src/app/components/dashboard-nav.js";
+import { PageView, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 
 const pathname = vi.hoisted(() => ({ value: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
 
 afterEach(cleanup);
+
+function renderNavigation(children: React.ReactNode, participating = false) {
+  return (
+    <ViewPreferenceProvider initialMode="basic">
+      <DashboardNav>{children}</DashboardNav>
+      {participating ? (
+        <PageView>
+          <span>Page</span>
+        </PageView>
+      ) : null}
+    </ViewPreferenceProvider>
+  );
+}
 
 describe("DashboardNav", () => {
   it.each([
@@ -20,7 +34,7 @@ describe("DashboardNav", () => {
     ["/admin", "Admin"],
   ])("marks the current dashboard route for %s", (currentPathname, expectedName) => {
     pathname.value = currentPathname;
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
 
     const navigation = screen.getByRole("navigation", { name: "Dashboard routes" });
     const currentLinks = screen
@@ -43,11 +57,7 @@ describe("DashboardNav", () => {
 
   it("opens by keyboard and exposes every route, Repository, and the children slot", async () => {
     const user = userEvent.setup();
-    render(
-      <DashboardNav>
-        <button type="button">Sign out</button>
-      </DashboardNav>,
-    );
+    render(renderNavigation(<button type="button">Sign out</button>));
 
     const toggle = screen.getByRole("button", { name: "Menu" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -85,7 +95,7 @@ describe("DashboardNav", () => {
 
   it("closes on Escape and returns focus to the toggle", async () => {
     const user = userEvent.setup();
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
 
     await user.click(toggle);
@@ -98,7 +108,7 @@ describe("DashboardNav", () => {
 
   it("closes on an outside pointer-down", async () => {
     const user = userEvent.setup();
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
 
     await user.click(toggle);
@@ -111,13 +121,23 @@ describe("DashboardNav", () => {
   it("closes when the pathname changes", async () => {
     const user = userEvent.setup();
     pathname.value = "/";
-    const { rerender } = render(<DashboardNav>{null}</DashboardNav>);
+    const { rerender } = render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
     await user.click(toggle);
 
     pathname.value = "/watch";
-    rerender(<DashboardNav>{null}</DashboardNav>);
+    rerender(renderNavigation(null));
 
     await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("false"));
+  });
+
+  it("keeps the participating view switch outside the mobile menu panel", () => {
+    render(renderNavigation(null, true));
+    const toggle = screen.getByRole("switch", { name: "Advanced" });
+    const menu = screen.getByRole("button", { name: "Menu" });
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(toggle.closest("#dashboard-navigation-panel")).toBeNull();
+    expect(toggle.classList).toContain("min-h-11");
+    expect(menu.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 });

@@ -8,15 +8,15 @@ const sessionMock = vi.hoisted(() => vi.fn(async () => false));
 vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(async () => publicSurface),
 }));
-vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readPageViewMode: vi.fn(async () => "basic" as const),
-}));
 vi.mock("../src/app/components/public-demo-entry.js", () => ({
   PublicDemoEntry: () =>
     createElement("section", { id: "public-start-controls" }, "Preset and start controls"),
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: sessionMock,
+}));
+vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
+  readViewMode: vi.fn(async () => "basic" as const),
 }));
 vi.mock("../src/app/components/admin-nav.js", () => ({
   AdminSignOut: () => createElement("button", { type: "button" }, "Sign out"),

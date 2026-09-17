@@ -17,7 +17,7 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: sessionMock,
 }));
 vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readPageViewMode: viewModeMock,
+  readViewMode: viewModeMock,
 }));
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: adminReads.erp,
@@ -119,14 +119,13 @@ describe("server-decided admin presentation", () => {
   });
 
   it("keeps History public while including cleanup only in authenticated server HTML", async () => {
+    viewModeMock.mockClear();
     const anonymous = renderToStaticMarkup(
       await RunHistoryPage({ searchParams: Promise.resolve({ page: "1" }) }),
     );
     expect(anonymous).toContain("Public history list");
     expect(anonymous).not.toContain("Authenticated history cleanup");
-    expect(anonymous).toContain("<legend");
-    expect(anonymous).toContain('name="view-history"');
-    expect(viewModeMock).toHaveBeenCalledWith("history");
+    expect(anonymous).not.toContain("<legend");
 
     sessionMock.mockResolvedValue(true);
     const authenticated = renderToStaticMarkup(
@@ -135,7 +134,7 @@ describe("server-decided admin presentation", () => {
     expect(authenticated).toContain("Public history list");
     expect(authenticated).toContain("Authenticated history cleanup");
     expect(authenticated).not.toContain("<legend");
-    expect(viewModeMock).toHaveBeenCalledTimes(1);
+    expect(viewModeMock).not.toHaveBeenCalled();
   });
 
   it("keeps history diagnostics anonymous-safe while retaining them for authenticated failures", async () => {

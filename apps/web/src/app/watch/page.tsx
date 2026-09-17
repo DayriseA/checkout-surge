@@ -12,7 +12,6 @@ import {
   type AcceptedRunResult,
   acceptedRunResultFromRead,
 } from "../lib/presentation/accepted-run-result";
-import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "Live watch" };
 export const dynamic = "force-dynamic";
@@ -45,10 +44,8 @@ export default async function WatchPage({
         : history;
   }
 
-  const viewMode = await readPageViewMode("watch");
-
   return (
-    <PageView initialMode={viewMode} page="watch">
+    <PageView>
       <header className="mb-2 flex items-baseline gap-4 max-[900px]:block">
         <h1 className="m-0 shrink-0 text-2xl font-bold leading-tight text-ink">Live watch</h1>
         <p className="m-0 text-sm leading-5 text-muted max-[900px]:mt-1">

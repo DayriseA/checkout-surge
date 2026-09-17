@@ -6,7 +6,6 @@ import {
   RevealAdvancedHashTarget,
 } from "../components/page-view";
 import { publicNarrative, publicVocabulary } from "../lib/presentation/public-vocabulary";
-import { readPageViewMode } from "../lib/server/page-view-mode";
 
 export const metadata: Metadata = { title: "About" };
 export const dynamic = "force-dynamic";
@@ -14,11 +13,9 @@ export const dynamic = "force-dynamic";
 const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
 const termLinkClassName = "font-semibold text-accent underline";
 
-export default async function AboutPage() {
-  const viewMode = await readPageViewMode("about");
-
+export default function AboutPage() {
   return (
-    <PageView initialMode={viewMode} page="about">
+    <PageView>
       <RevealAdvancedHashTarget />
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>

@@ -4,7 +4,7 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: vi.fn(),
 }));
 vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readPageViewMode: vi.fn(async () => "basic" as const),
+  readViewMode: vi.fn(async () => "basic" as const),
 }));
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: vi.fn(),
