@@ -21,6 +21,13 @@ interface PageViewContextValue {
 
 const PageViewContext = createContext<PageViewContextValue | null>(null);
 
+function focusAdvancedTarget(targetId: string) {
+  const target = document.getElementById(targetId);
+  target?.focus({ preventScroll: true });
+  // Align the section start using the document's sticky-header scroll padding.
+  target?.scrollIntoView({ block: "start", behavior: "instant" });
+}
+
 export function useViewMode(): { mode: ViewMode; setMode: (mode: ViewMode) => void } {
   const context = useContext(PageViewContext);
   if (!context) {
@@ -64,7 +71,7 @@ export function PageView({
 
   const revealAdvanced = (targetId: string) => {
     if (mode === "advanced") {
-      document.getElementById(targetId)?.focus();
+      focusAdvancedTarget(targetId);
       return;
     }
     revealTargetIdRef.current = targetId;
@@ -78,7 +85,7 @@ export function PageView({
         return;
       }
       revealTargetIdRef.current = null;
-      document.getElementById(targetId)?.focus();
+      focusAdvancedTarget(targetId);
       return;
     }
     if (!returnFocusRef.current) {
