@@ -179,6 +179,9 @@ export default async function RunHistoryDetailPage({
         <h1 className="m-0 text-4xl font-bold leading-tight text-ink">
           This report is not available
         </h1>
+        <p className="mt-3 max-w-[66ch] leading-6 text-muted">
+          We could not load a saved report from this link.
+        </p>
       </header>
       <section className="rounded-lg border border-border bg-surface p-4">
         <ErrorNotice
@@ -194,7 +197,6 @@ export default async function RunHistoryDetailPage({
             Choose a simulation
           </Link>
         </div>
-        <p className="mb-0 mt-4 text-xs text-muted [overflow-wrap:anywhere]">Run ID: {runId}</p>
       </section>
     </>
   );

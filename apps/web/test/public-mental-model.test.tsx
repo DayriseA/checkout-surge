@@ -49,40 +49,47 @@ describe("public visitor mental model", () => {
     expect(advancedStory).toContain(
       "Redis atomically reserves units immediately without overselling",
     );
-    expect(advancedStory).toContain("every unique reservation reaches a durable outcome");
+    expect(advancedStory).toContain(
+      "every unique reservation reaches a confirmed or failed outcome",
+    );
     expect(advancedStory).toContain("not universal production evidence");
     expect(advancedStory).toContain('href="/about"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
-  it("keeps the about narrative in causal order and distinguishes real from simulated", async () => {
+  it("explains the Basic sale flow, failure path, success test, and simulation boundary", async () => {
     const markup = renderToStaticMarkup(await AboutPage());
-    const orderedSectionIds = [
-      "failure-story",
-      "redis-fast-path",
-      "queue-protection",
-      "real-and-simulated",
-      "gold-signals",
-      "success",
-      "limits-and-source",
+    const basicSectionIds = [
+      "sale-example",
+      "reservation-and-confirmation",
+      "basic-success",
+      "simulation-and-source",
     ];
-    const sectionPositions = orderedSectionIds.map((id) => markup.indexOf(`id="${id}"`));
+    const sectionPositions = basicSectionIds.map((id) => markup.indexOf(`id="${id}"`));
 
     expect(sectionPositions.every((position) => position >= 0)).toBe(true);
     expect(sectionPositions).toEqual([...sectionPositions].sort((left, right) => left - right));
-
-    expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
-    expect(markup).toContain("buyers are simulated by the load generator (k6)");
-    expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
-    expect(markup).toContain("simulated emails recorded");
-    expect(markup).toContain("There is no production external ERP or notification integration");
+    expect(markup).toContain("100 simulated buyers trying to buy 10 units");
+    expect(markup).toContain("Attempts turned away because stock ran out");
+    expect(markup).toContain("expected when stock is limited and are not failed orders");
+    expect(markup).toContain("Buyers");
+    expect(markup).toContain("Reserve stock");
+    expect(markup).toContain("Wait for processing");
+    expect(markup).toContain("Order outcome");
+    expect(markup).toContain("Confirmed or failed");
     expect(markup).toContain(
-      "Every unique reservation must first reach a durable confirmed or failed order outcome",
+      "every reservation reached a confirmed or failed outcome, no orders failed or remained pending, nothing was oversold",
     );
+    expect(markup).toContain("enough evidence was recorded to verify those facts");
+    expect(markup).toContain("Speed and traffic-delivery results are reported separately");
+    expect(markup).toContain("buyers and business activity are simulated");
+    expect(markup).toContain("no real purchase takes place");
+    expect(markup).toContain("Local results depend on the computer");
   });
 
-  it("renders four causal signals, an accessible seven-node diagram, and stable glossary anchors", async () => {
+  it("keeps the architecture, technical narrative, and glossary mounted but hidden in Basic", async () => {
     const markup = renderToStaticMarkup(await AboutPage());
+    const advancedMarkup = markup.slice(markup.indexOf('data-advanced-only="true"'));
     const signalSection = markup.slice(
       markup.indexOf('id="gold-signals"'),
       markup.indexOf('id="success"'),
@@ -103,6 +110,23 @@ describe("public visitor mental model", () => {
       "reservation-vs-confirmation",
     ];
 
+    expect(advancedMarkup).toContain('hidden=""');
+    expect(advancedMarkup).toContain('id="failure-story"');
+    expect(advancedMarkup).toContain('id="redis-fast-path"');
+    expect(advancedMarkup).toContain('id="queue-protection"');
+    expect(advancedMarkup).toContain('id="real-and-simulated"');
+    expect(advancedMarkup).toContain('id="gold-signals"');
+    expect(advancedMarkup).toContain('id="success"');
+    expect(advancedMarkup).toContain('id="limits-and-source"');
+    expect(advancedMarkup).toContain('id="glossary"');
+    expect(advancedMarkup).toContain(
+      "A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime",
+    );
+    expect(advancedMarkup).toContain("buyers are simulated by the load generator (k6)");
+    expect(advancedMarkup).toContain(
+      "Legacy-ERP delay, capacity, failures, and outages are simulated",
+    );
+    expect(advancedMarkup).toContain("simulated emails recorded");
     expect(signalSection.indexOf("Request arrival")).toBeLessThan(
       signalSection.indexOf("Inventory drain"),
     );
@@ -159,7 +183,7 @@ describe("public visitor mental model", () => {
     expect(publicNarrative.watchOrientation).toContain(
       "simulated buyers compete for limited stock",
     );
-    expect(publicNarrative.watchOrientation).toContain("durable outcomes");
+    expect(publicNarrative.watchOrientation).toContain("confirmed or failed");
   });
 
   it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {

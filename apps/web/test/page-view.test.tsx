@@ -9,6 +9,7 @@ import {
   AdvancedOnly,
   BasicOnly,
   PageView,
+  RevealAdvancedHashTarget,
   RevealAdvancedLink,
   useViewMode,
 } from "../src/app/components/page-view.js";
@@ -160,6 +161,53 @@ describe("PageView", () => {
     const target = container.querySelector("#technical-section");
     expect(target?.hasAttribute("hidden")).toBe(false);
     expect(document.activeElement).toBe(target);
+  });
+
+  it("reveals and focuses an Advanced-only target from the initial hash", () => {
+    window.location.hash = "#technical-section";
+    const { container } = render(
+      <PageView initialMode="basic" page="watch">
+        <RevealAdvancedHashTarget />
+        <AdvancedOnly>
+          <section id="technical-section" tabIndex={-1}>
+            Technical measurements
+          </section>
+        </AdvancedOnly>
+      </PageView>,
+    );
+
+    const target = container.querySelector("#technical-section");
+    expect((screen.getByRole("radio", { name: "Advanced" }) as HTMLInputElement).checked).toBe(
+      true,
+    );
+    expect(target?.closest("[data-advanced-only]")?.hasAttribute("hidden")).toBe(false);
+    expect(document.activeElement).toBe(target);
+  });
+
+  it("lets the visitor return to basic while a technical hash remains in the address", () => {
+    window.location.hash = "#technical-section";
+    const { container } = render(
+      <PageView initialMode="basic" page="watch">
+        <RevealAdvancedHashTarget />
+        <AdvancedOnly>
+          <section id="technical-section" tabIndex={-1}>
+            Technical measurements
+          </section>
+        </AdvancedOnly>
+      </PageView>,
+    );
+    const basicRadio = screen.getByRole("radio", { name: "Basic" }) as HTMLInputElement;
+    expect(basicRadio.checked).toBe(false);
+
+    fireEvent.click(basicRadio);
+
+    expect(basicRadio.checked).toBe(true);
+    expect(
+      container
+        .querySelector("#technical-section")
+        ?.closest("[data-advanced-only]")
+        ?.hasAttribute("hidden"),
+    ).toBe(true);
   });
 
   it("moves focus to the control when returning to basic hides the focused section", () => {

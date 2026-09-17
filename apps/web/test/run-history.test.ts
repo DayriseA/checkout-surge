@@ -405,7 +405,9 @@ describe("run history", () => {
     const reconciliationMarkup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail }),
     );
-    expect(reconciliationMarkup).toContain("did not reconcile in the final evidence");
+    expect(reconciliationMarkup).toContain(
+      "The final counts did not agree, so the result could not be verified",
+    );
     expect(reconciliationMarkup).not.toMatch(/finalization|finalized/i);
   });
 
@@ -787,9 +789,10 @@ describe("run history", () => {
     const markup = renderToStaticMarkup(page);
 
     expect(markup).toContain("This report is not available");
+    expect(markup).toContain("We could not load a saved report from this link");
     expect(markup).toContain('href="/run-history"');
     expect(markup).toContain('href="/"');
-    expect(markup).toContain("Run ID: 55555555-5555-4555-8555-555555555555");
+    expect(markup).not.toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).not.toContain("public-history-correlation");
     expect(markup).not.toContain("private public-reader diagnostic");
     expect(markup).not.toContain("Technical details");

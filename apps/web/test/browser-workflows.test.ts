@@ -2945,7 +2945,8 @@ describe("web page smoke coverage", () => {
       await WatchPage({ searchParams: Promise.resolve({ acceptedRunId: "not-a-uuid" }) }),
     );
 
-    expect(output).toContain("Invalid run context");
+    expect(output).toContain("This Watch link is invalid");
+    expect(output).toContain("This link does not identify a saved run");
     expect(output).toContain("No result has been selected");
     // Concise history and demo navigation, without exposing identifiers.
     expect(output).toContain('href="/run-history"');

@@ -313,12 +313,13 @@ describe("error presentation", () => {
   });
 
   it("keeps resource-not-found actions contextual", () => {
-    expect(
-      mapErrorPresentation(
-        { status: "unavailable", errorCode: "resource_not_found" },
-        "history-detail",
-      ).action.href,
-    ).toBe("/run-history");
+    const missingReport = mapErrorPresentation(
+      { status: "unavailable", errorCode: "resource_not_found" },
+      "history-detail",
+    );
+    expect(missingReport.headline).toBe("That saved report could not be found");
+    expect(missingReport.explanation).toBe("Choose an available report from run history.");
+    expect(missingReport.action.href).toBe("/run-history");
     expect(
       mapErrorPresentation(
         { status: "unavailable", errorCode: "resource_not_found" },

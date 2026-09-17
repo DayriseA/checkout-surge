@@ -207,3 +207,31 @@ export function RevealAdvancedLink({
     </button>
   );
 }
+
+/**
+ * Reveals an Advanced-only hash target on arrival and on later hash changes only. The latest
+ * `revealAdvanced` is read through a ref so a mode switch never re-applies the standing hash and
+ * overrides the visitor's explicit choice.
+ */
+export function RevealAdvancedHashTarget() {
+  const context = useContext(PageViewContext);
+  const revealAdvancedRef = useRef(context?.revealAdvanced);
+  revealAdvancedRef.current = context?.revealAdvanced;
+
+  useEffect(() => {
+    const revealHashTarget = () => {
+      const targetId = window.location.hash.slice(1);
+      if (!targetId) return;
+      const target = document.getElementById(targetId);
+      if (target?.closest("[data-advanced-only]")) {
+        revealAdvancedRef.current?.(targetId);
+      }
+    };
+
+    revealHashTarget();
+    window.addEventListener("hashchange", revealHashTarget);
+    return () => window.removeEventListener("hashchange", revealHashTarget);
+  }, []);
+
+  return null;
+}

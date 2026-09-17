@@ -48,7 +48,7 @@ const states = {
     "processing-accepted-reservations",
     "progress",
     "processing unique reservations",
-    `${publicVocabulary.uniqueReservationsSecured} are progressing to durable outcomes.`,
+    `${publicVocabulary.uniqueReservationsSecured} are waiting to be confirmed or failed.`,
   ),
   completed: state(
     "completed-successfully",

@@ -21,6 +21,7 @@ export const publicVocabulary = {
   uniqueReservationsSecured: "Unique reservations secured",
   soldOutRejectionsRecorded: "sold-out rejections recorded by Checkout-Surge",
   soldOutRejectionsSeen: "sold-out rejections seen by the load generator",
+  soldOutAttempts: "Attempts turned away because stock ran out",
   httpFailurePopulation: "load-generator attempts; connection failures may have no response",
   startingStock: "starting stock",
   pendingReservations: "reservations awaiting durable storage",
@@ -36,7 +37,7 @@ export const publicVocabulary = {
 export const publicNarrative = {
   repositoryUrl: "https://github.com/DayriseA/checkout-surge",
   watchOrientation:
-    "You’re watching simulated buyers compete for limited stock: reservations happen first, then queued orders reach durable outcomes.",
+    "You’re watching simulated buyers compete for limited stock: reservations happen first, then queued orders are confirmed or failed.",
 } as const;
 
 export { liveTrafficMetricWindowSeconds };
@@ -179,12 +180,12 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
       };
     case "reconciliation":
       return {
-        explanation: "The observed checkout populations did not reconcile in the final evidence.",
+        explanation: "The final counts did not agree, so the result could not be verified.",
         action: "Review the evidence below, then start a new run if you need a clean comparison.",
       };
     case "business":
       return {
-        explanation: "One or more accepted orders did not reach the expected durable outcome.",
+        explanation: "One or more reserved orders did not reach a confirmed or failed outcome.",
         action: "Review the order outcome totals, then start a new run to try again.",
       };
     case "inventory":

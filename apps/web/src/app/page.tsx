@@ -35,9 +35,9 @@ export default async function DemoDashboardPage() {
             Simulated buyers compete for limited stock. Redis atomically reserves units immediately
             without overselling, and orders for unique reservations wait in a BullMQ queue. Workers
             drain that queue at a safe rate while calling a deliberately slow simulated ERP; a run
-            succeeds only when every unique reservation reaches a durable outcome, none fail, and
-            oversold units remain zero. Results depend on the environment and are not universal
-            production evidence.
+            succeeds only when every unique reservation reaches a confirmed or failed outcome, no
+            orders fail, and oversold units remain zero. Results depend on the environment and are
+            not universal production evidence.
           </p>
           <Link className="mt-3 inline-block font-semibold text-accent underline" href="/about">
             How this works

@@ -666,10 +666,12 @@ function BasicSyncNotice({
 function InvalidAcceptedRunContext() {
   return (
     <section className="col-span-12 rounded-lg border border-warning bg-warning-soft p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Accepted run result</p>
-      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">Invalid run context</h2>
+      <p className="m-0 text-xs font-bold uppercase text-muted">Saved run report</p>
+      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+        This Watch link is invalid
+      </h2>
       <p className="m-0 mt-2 leading-6 text-muted-strong">
-        This Watch link does not contain a valid accepted run ID. No result has been selected.
+        This link does not identify a saved run. No result has been selected.
       </p>
       <div className="mt-3 flex flex-wrap gap-3">
         <Link className={secondaryActionClassName} href="/run-history">

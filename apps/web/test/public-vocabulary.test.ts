@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   circuitStateLabel,
   isRunEvidenceSettled,
+  publicFailureExplanation,
   publicStatusLabel,
   publicVocabulary,
   rateWindowLabel,
@@ -20,6 +21,7 @@ describe("public vocabulary", () => {
     expect(publicVocabulary.soldOutRejectionsSeen).toBe(
       "sold-out rejections seen by the load generator",
     );
+    expect(publicVocabulary.soldOutAttempts).toBe("Attempts turned away because stock ran out");
   });
 
   it("settles load-generator absence when traffic ends and durable absence only at a terminal status", () => {
@@ -69,5 +71,14 @@ describe("public vocabulary", () => {
     expect(circuitStateLabel("open")).toBe("Calls paused to protect the ERP");
     expect(circuitStateLabel("half_open")).toBe("Testing recovery");
     expect(rateWindowLabel(1)).toBe("1-second window");
+  });
+
+  it("explains public failures without reconciliation or durable-outcome jargon", () => {
+    expect(publicFailureExplanation("reconciliation").explanation).toBe(
+      "The final counts did not agree, so the result could not be verified.",
+    );
+    expect(publicFailureExplanation("business").explanation).toBe(
+      "One or more reserved orders did not reach a confirmed or failed outcome.",
+    );
   });
 });

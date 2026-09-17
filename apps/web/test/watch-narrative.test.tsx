@@ -319,7 +319,8 @@ describe("watch narrative", () => {
       }),
     );
 
-    expect(output).toContain("Invalid run context");
+    expect(output).toContain("This Watch link is invalid");
+    expect(output).toContain("This link does not identify a saved run");
     expect(output).toContain("No result has been selected");
     expect(output).toContain('href="/run-history"');
     expect(output).toContain("Open run history");
