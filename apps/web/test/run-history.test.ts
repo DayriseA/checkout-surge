@@ -6,7 +6,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
-  evaluateFastReservationTarget,
   type PublicRunHistoryDetailResponse,
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
@@ -467,18 +466,9 @@ describe("run history", () => {
 
   it("keeps Basic outcome and canonical counts visible while technical evidence stays mounted", () => {
     const detail = detailFixture();
-    detail.summary.fastReservationTargetEvaluation = {
-      ...detail.summary.fastReservationTargetEvaluation,
-      observedP95Ms: 2.5,
-      verdict: "fail",
-      qualification: null,
-    };
     const { container } = render(publicReportInBasic(detail));
 
     expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
-    expect(
-      screen.getByText(/missed its fast-reservation speed target/).closest("[hidden]"),
-    ).toBeNull();
     expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
     expect(
       screen.getByText(/10 units reserved \/ 10 unique reservations/).closest("[hidden]"),
@@ -490,7 +480,7 @@ describe("run history", () => {
     ).not.toBeNull();
     expect(container.querySelector("#report-advanced-signals")?.hasAttribute("hidden")).toBe(true);
     expect(container.querySelector("#report-advanced-measurements")?.textContent).toContain(
-      "≤ 1ms",
+      "Observed reservation p95",
     );
     expect(container.querySelector("#report-advanced-measurements")?.hasAttribute("hidden")).toBe(
       true,
@@ -501,20 +491,7 @@ describe("run history", () => {
     expect(screen.getByText("Final stock and orders").closest("[hidden]")).toBeNull();
   });
 
-  it("reveals and focuses technical measurements from a Basic qualification", () => {
-    const { container } = render(publicReportInBasic(detailFixture()));
-    const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
-    expect(target?.hasAttribute("hidden")).toBe(true);
-
-    fireEvent.click(screen.getByRole("button", { name: "View technical measurements" }));
-
-    expect(target?.hasAttribute("hidden")).toBe(false);
-    expect(document.activeElement).toBe(target);
-    expect(screen.getByText("qualified").closest("[hidden]")).toBeNull();
-    expect(screen.getByText("Scenario settings").closest("[hidden]")).toBeNull();
-  });
-
-  it("reveals measurements for incomplete replies when delivery and the speed target pass", () => {
+  it("reveals measurements for incomplete replies", () => {
     const detail = detailFixture();
     detail.summary.transportAttemptCounts = {
       plannedRequests: 20,
@@ -527,14 +504,6 @@ describe("run history", () => {
       ...detail.summary.httpSummary,
       failedRequests: 3,
       transportFailures: 3,
-    };
-    detail.summary.fastReservationTargetEvaluation = {
-      ...detail.summary.fastReservationTargetEvaluation,
-      observedP95Ms: 0.5,
-      observedSampleCount: 20,
-      expectedResponseCount: 20,
-      verdict: "pass",
-      qualification: null,
     };
     const { container } = render(publicReportInBasic(detail));
     const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
@@ -1453,7 +1422,6 @@ function detailFixture(
         trafficDeliveryStatus: status === "failed" ? "failed" : "complete",
       },
       serverReservationTimingSummary: serverTiming,
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(serverTiming, 20),
       businessOutcomeSummary,
       terminalInventorySnapshot,
       runSignalTimelineSummary: null,

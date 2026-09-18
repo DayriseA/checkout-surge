@@ -137,8 +137,8 @@ export function OperatorDashboard({
   const sameRunAccepted = Boolean(
     trackedResult && liveRun && trackedResult.runId === liveRun.runId,
   );
-  // The saved-report delivery/speed qualifications exist only in the visitor's own already-read
-  // public detail; they join the shared verdict only when the accepted run is the run on screen.
+  // The saved-report delivery qualification exists only in the visitor's own already-read public
+  // detail; it joins the shared verdict only when the accepted run is the run on screen.
   const savedEvidence: AcceptedRunReportEvidence | null =
     trackedResult?.status === "available" && sameRunAccepted
       ? (trackedResult.reportEvidence ?? null)
@@ -423,7 +423,6 @@ function terminalSummary(
   return derivePublicRunSummary({
     result: composition.result,
     trafficDeliveryStatus: savedEvidence?.trafficDeliveryStatus ?? null,
-    fastReservationTargetEvaluation: savedEvidence?.fastReservationTargetEvaluation ?? null,
     transportObservation,
   });
 }
@@ -701,7 +700,6 @@ function AcceptedResultNarrative({
     ? derivePublicRunSummary({
         result: reportEvidence.result,
         trafficDeliveryStatus: reportEvidence.trafficDeliveryStatus,
-        fastReservationTargetEvaluation: reportEvidence.fastReservationTargetEvaluation,
         transportObservation: deriveTransportObservation(
           reportEvidence.transportAttemptCounts,
           reportEvidence.transportFailures,

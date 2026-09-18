@@ -124,7 +124,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
-            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}
@@ -924,7 +923,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
   const publicSummary = derivePublicRunSummary({
     result,
     trafficDeliveryStatus: summary.trafficDeliverySummary.trafficDeliveryStatus,
-    fastReservationTargetEvaluation: summary.fastReservationTargetEvaluation,
     transportObservation,
   });
   const finalCounts: Array<[string, number | null]> = [
@@ -950,7 +948,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 
       <PublicRunConclusion
         consistencyTargetId="report-advanced-consistency"
-        fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
         measurementsTargetId="report-advanced-measurements"
         result={result}
         runStatus={summary.status}
@@ -1131,7 +1128,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
-            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}

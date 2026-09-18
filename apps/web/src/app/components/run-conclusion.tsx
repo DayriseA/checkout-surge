@@ -1,9 +1,4 @@
-import type {
-  DemoRunStatus,
-  FastReservationTargetEvaluation,
-  RunResult,
-  TrafficDeliveryStatus,
-} from "@checkout-surge/contracts";
+import type { DemoRunStatus, RunResult, TrafficDeliveryStatus } from "@checkout-surge/contracts";
 import {
   derivePublicRunSummary,
   type PublicRunCaveat,
@@ -125,7 +120,6 @@ export function PublicRunConclusion({
   result,
   runStatus,
   trafficDeliveryStatus = null,
-  fastReservationTargetEvaluation = null,
   transportObservation = null,
   consistencyTargetId,
   measurementsTargetId,
@@ -133,7 +127,6 @@ export function PublicRunConclusion({
   result: RunResult;
   runStatus: DemoRunStatus;
   trafficDeliveryStatus?: TrafficDeliveryStatus | null;
-  fastReservationTargetEvaluation?: FastReservationTargetEvaluation | null;
   transportObservation?: TransportObservation | null;
   consistencyTargetId?: string;
   measurementsTargetId?: string;
@@ -142,7 +135,6 @@ export function PublicRunConclusion({
   const summary = derivePublicRunSummary({
     result,
     trafficDeliveryStatus,
-    fastReservationTargetEvaluation,
     transportObservation,
   });
   return (

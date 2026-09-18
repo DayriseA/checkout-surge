@@ -66,8 +66,7 @@ function BasicAbout() {
           A successful run shows that every reservation reached a confirmed or failed outcome, no
           orders failed or remained pending, nothing was oversold, and enough evidence was recorded
           to verify those facts. Speed and traffic-delivery results are reported separately: a run
-          can protect stock correctly while missing a speed target or receiving only part of its
-          planned traffic.
+          can protect stock correctly while receiving only part of its planned traffic.
         </p>
       </section>
 

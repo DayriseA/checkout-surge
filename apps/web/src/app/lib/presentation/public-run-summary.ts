@@ -1,8 +1,4 @@
-import type {
-  FastReservationTargetEvaluation,
-  RunResult,
-  TrafficDeliveryStatus,
-} from "@checkout-surge/contracts";
+import type { RunResult, TrafficDeliveryStatus } from "@checkout-surge/contracts";
 import type { TransportObservation } from "../../components/transport-observation";
 import { formatCount } from "./format";
 import { publicFailureExplanation, runResultOutcomeLabel } from "./public-vocabulary";
@@ -19,12 +15,11 @@ import { runConclusionSentence } from "./run-result-presentation";
 export interface PublicRunSummaryInput {
   result: RunResult;
   /**
-   * Saved-report evidence only. `DashboardProjection` carries neither the delivery summary nor
-   * the reservation-target evaluation, so live Watch passes null and the summary never invents
-   * a delivery or speed-target verdict. The public report supplies both.
+   * Saved-report evidence only. `DashboardProjection` never carries the delivery summary, so
+   * live Watch passes null and the summary never invents a delivery qualification. The public
+   * report supplies it.
    */
   trafficDeliveryStatus: TrafficDeliveryStatus | null;
-  fastReservationTargetEvaluation: FastReservationTargetEvaluation | null;
   /**
    * Live load-generator reply evidence, derived by the caller with
    * `deriveTransportObservation` where the transport counts exist; this caveat does NOT require
@@ -62,7 +57,7 @@ export interface PublicRunSummary {
    * and investigation-worthy evidence stay visible next to each other, expected
    * duplicate-population differences never become a caveat, and partial reply observation is
    * qualified from live transport evidence. Saved-report evidence is only needed for the
-   * delivery and speed-target caveats.
+   * delivery caveats.
    */
   caveats: PublicRunCaveat[];
   /** Whether at least one caveat is explained by the detailed delivery/measurement evidence. */
@@ -140,7 +135,6 @@ function publicRunCaveats(
   const measurementCaveats = [
     ...transportCaveats(input.transportObservation),
     ...deliveryCaveats(input.trafficDeliveryStatus),
-    ...targetCaveats(input.fastReservationTargetEvaluation),
   ];
   return {
     caveats: [...caveats, ...measurementCaveats],
@@ -172,27 +166,5 @@ function deliveryCaveats(status: TrafficDeliveryStatus | null): PublicRunCaveat[
           message: "Partial delivery: not all planned checkout attempts were delivered.",
           tone: "warning" as const,
         },
-  ];
-}
-
-function targetCaveats(evaluation: FastReservationTargetEvaluation | null): PublicRunCaveat[] {
-  if (!evaluation || evaluation.verdict === "pass") return [];
-  if (evaluation.verdict === "fail") {
-    // The threshold is a declared parameter, so it stays a bound ("≤ 1ms"), never a measurement.
-    return [
-      {
-        message: `The run missed its fast-reservation speed target: the time within which 95% of measured reservations finished was above the ≤ ${evaluation.target.thresholdMs}ms target.`,
-        tone: "warning",
-      },
-    ];
-  }
-  return [
-    {
-      message:
-        evaluation.qualification === "measurement_unavailable"
-          ? "The fast-reservation speed target could not be evaluated: server timing was unavailable."
-          : `The fast-reservation speed target could not be fully evaluated: server timing covered ${evaluation.observedSampleCount} of ${evaluation.expectedResponseCount} recorded replies.`,
-      tone: "warning",
-    },
   ];
 }

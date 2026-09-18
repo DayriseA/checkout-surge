@@ -4,11 +4,7 @@ import type {
   TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import {
-  deriveRecordedReplyCount,
-  emptyRequestArrivalSummary,
-  evaluateFastReservationTarget,
-} from "@checkout-surge/contracts";
+import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -100,15 +96,8 @@ describe("transport observation section", () => {
     expect(markup.indexOf("Fast inventory reservation")).toBeLessThan(
       markup.indexOf("Request arrival"),
     );
-    expect(markup).toContain("Inventory reservation target");
     expect(markup).toContain("Observed reservation p95");
-    // The declared target and the observed bound sit adjacent and must spell milliseconds the
-    // same way, so the panel's whole comparison reads in one unit.
-    expect(markup).toMatch(/Inventory reservation target<\/dt><dd[^>]*>≤ 1ms<\/dd>/);
     expect(markup).toContain("≤ 25ms");
-    expect(markup).not.toContain("≤ 1 ms");
-    expect(markup).toContain("Target verdict");
-    expect(markup).toMatch(/Target verdict<\/dt><dd[^>]*>fail<\/dd>/);
     expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("≤ 100ms");
     expect(markup).toContain("bounded p95 estimate");
@@ -175,7 +164,7 @@ describe("transport observation section", () => {
       createElement(TransportObservationSection, {
         arrivalSummary: emptyRequestArrivalSummary,
         counts: counts({ completedRequests: 7, interruptedRequests: 3 }),
-        ...timingProps(7),
+        ...timingProps(),
         httpSummary: httpSummary(),
         surface: "list",
       }),
@@ -193,7 +182,7 @@ describe("transport observation section", () => {
           firstAttemptStartedAt: "2026-06-20T12:00:10.000Z",
         },
         counts: counts({ completedRequests: 10 }),
-        ...timingProps(10),
+        ...timingProps(),
         httpSummary: httpSummary(),
         startDelaySeconds: 3,
         surface: "detail",
@@ -247,7 +236,7 @@ describe("transport observation section", () => {
           arrivalSeriesLimit: 120,
         },
         counts: counts({ completedRequests: 10 }),
-        ...timingProps(10),
+        ...timingProps(),
         httpSummary: httpSummary(),
         surface: "detail",
       }),
@@ -297,7 +286,7 @@ function renderSection(
     createElement(TransportObservationSection, {
       arrivalSummary: emptyRequestArrivalSummary,
       counts: transportAttemptCounts,
-      ...timingProps(deriveRecordedReplyCount(transportAttemptCounts, summary.transportFailures)),
+      ...timingProps(),
       httpSummary: summary,
       httpTimingBreakdownSummary: timingBreakdown(),
       surface: "detail",
@@ -305,17 +294,13 @@ function renderSection(
   );
 }
 
-function timingProps(expectedResponseCount: number) {
+function timingProps() {
   const serverReservationTimingSummary: ServerReservationTimingSummary = {
     redisAtomicReservation: { sampleCount: 10, averageMs: 4, p95Ms: 25 },
     reserveOrderService: { sampleCount: 10, averageMs: 30, p95Ms: 100 },
   };
   return {
     serverReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      serverReservationTimingSummary,
-      expectedResponseCount,
-    ),
   };
 }
 

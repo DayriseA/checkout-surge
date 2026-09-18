@@ -4,7 +4,6 @@ import {
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
 } from "@checkout-surge/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -400,10 +399,6 @@ function runHistoryDetailFixture() {
         notes: [],
       },
       serverReservationTimingSummary: emptyServerReservationTimingSummary,
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(
-        emptyServerReservationTimingSummary,
-        10,
-      ),
       businessOutcomeSummary: {
         acceptedReservations: 6,
         reservedUnits: 6,

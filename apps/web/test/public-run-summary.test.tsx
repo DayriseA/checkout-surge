@@ -2,9 +2,6 @@
 
 import {
   deriveRunResult,
-  emptyServerReservationTimingSummary,
-  evaluateFastReservationTarget,
-  type FastReservationTargetEvaluation,
   type RunResultEvidence,
   type TrafficDeliveryStatus,
 } from "@checkout-surge/contracts";
@@ -60,27 +57,6 @@ const cleanEvidence: RunResultEvidence = {
   },
 };
 
-const passingTargetEvaluation: FastReservationTargetEvaluation = {
-  target: {
-    operation: "redis_atomic_reservation",
-    percentile: "p95",
-    thresholdMs: 1,
-    startEvent: "stock_reservation_gateway_call_started",
-    endEvent: "stock_reservation_decision_received",
-  },
-  observedP95Ms: 0.5,
-  observedSampleCount: 20,
-  expectedResponseCount: 20,
-  verdict: "pass",
-  qualification: null,
-};
-
-const failingTargetEvaluation: FastReservationTargetEvaluation = {
-  ...passingTargetEvaluation,
-  observedP95Ms: 2.5,
-  verdict: "fail",
-};
-
 function summaryInput(
   overrides: Partial<Omit<PublicRunSummaryInput, "result">> = {},
   evidence: RunResultEvidence = cleanEvidence,
@@ -88,7 +64,6 @@ function summaryInput(
   return {
     result: deriveRunResult(evidence),
     trafficDeliveryStatus: null,
-    fastReservationTargetEvaluation: null,
     transportObservation: null,
     ...overrides,
   };
@@ -96,12 +71,7 @@ function summaryInput(
 
 describe("public run summary", () => {
   it("keeps a clean sellout free of alarms and exposes known counts", () => {
-    const summary = derivePublicRunSummary(
-      summaryInput({
-        fastReservationTargetEvaluation: passingTargetEvaluation,
-        trafficDeliveryStatus: "complete",
-      }),
-    );
+    const summary = derivePublicRunSummary(summaryInput({ trafficDeliveryStatus: "complete" }));
 
     expect(summary.title).toBe("Completed");
     expect(summary.sentence).toBe("All 250 available units were reserved without overselling.");
@@ -119,55 +89,6 @@ describe("public run summary", () => {
     expect(summary.caveats).toEqual([]);
     expect(summary.hasMeasurementCaveat).toBe(false);
     expect(summary.failure).toBeNull();
-  });
-
-  it("shows a failed speed target beside business success without order-failure severity", () => {
-    const summary = derivePublicRunSummary(
-      summaryInput({ fastReservationTargetEvaluation: failingTargetEvaluation }),
-    );
-
-    expect(summary.title).toBe("Completed");
-    expect(summary.caveats).toEqual([
-      {
-        message:
-          "The run missed its fast-reservation speed target: the time within which 95% of measured reservations finished was above the ≤ 1ms target.",
-        tone: "warning",
-      },
-    ]);
-    expect(summary.hasMeasurementCaveat).toBe(true);
-  });
-
-  it("keeps a qualified measurement distinct from pass and fail", () => {
-    const unmeasurable = derivePublicRunSummary(
-      summaryInput({
-        fastReservationTargetEvaluation: evaluateFastReservationTarget(
-          emptyServerReservationTimingSummary,
-          20,
-        ),
-      }),
-    );
-    const partiallyObserved = derivePublicRunSummary(
-      summaryInput({
-        fastReservationTargetEvaluation: evaluateFastReservationTarget(
-          {
-            redisAtomicReservation: { sampleCount: 8, averageMs: 0.5, p95Ms: 0.5 },
-            reserveOrderService: { sampleCount: 8, averageMs: 0.5, p95Ms: 0.5 },
-          },
-          20,
-        ),
-      }),
-    );
-
-    expect(unmeasurable.caveats).toEqual([
-      {
-        message:
-          "The fast-reservation speed target could not be evaluated: server timing was unavailable.",
-        tone: "warning",
-      },
-    ]);
-    expect(partiallyObserved.caveats[0]?.message).toBe(
-      "The fast-reservation speed target could not be fully evaluated: server timing covered 8 of 20 recorded replies.",
-    );
   });
 
   it("never invents saved-report qualifications for live Watch", () => {
@@ -578,7 +499,6 @@ describe("public run conclusion", () => {
       <ViewPreferenceProvider initialMode={mode}>
         <PageView>
           <PublicRunConclusion
-            fastReservationTargetEvaluation={overrides.fastReservationTargetEvaluation ?? null}
             result={deriveRunResult(evidence)}
             runStatus={evidence.runStatus}
             trafficDeliveryStatus={overrides.trafficDeliveryStatus ?? null}
@@ -612,7 +532,6 @@ describe("public run conclusion", () => {
 
   it("renders the same visible summary and caveats in both view modes", () => {
     const overrides = {
-      fastReservationTargetEvaluation: failingTargetEvaluation,
       trafficDeliveryStatus: "degraded" as TrafficDeliveryStatus,
       transportObservation: interruptedReplies,
     };
@@ -625,7 +544,6 @@ describe("public run conclusion", () => {
         container,
         "Partial delivery: not all planned checkout attempts were delivered.",
       );
-      expectVisible(container, "The run missed its fast-reservation speed target");
       expectVisible(
         container,
         "Reply observation incomplete: outcomes and latency cover 17 of 20 attempts.",
@@ -699,7 +617,6 @@ describe("public run conclusion", () => {
   it("keeps detailed evidence visible for renders outside any public view control", () => {
     const { container } = render(
       <PublicRunConclusion
-        fastReservationTargetEvaluation={null}
         result={deriveRunResult(cleanEvidence)}
         runStatus="completed"
         trafficDeliveryStatus={null}

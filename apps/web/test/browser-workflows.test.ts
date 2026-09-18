@@ -12,8 +12,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
-  type FastReservationTargetEvaluation,
   type HealthResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
@@ -2531,17 +2529,6 @@ describe("watch basic composition", () => {
     });
   }
 
-  function failingTargetEvaluation(): FastReservationTargetEvaluation {
-    const evaluation = evaluateFastReservationTarget(
-      {
-        redisAtomicReservation: { sampleCount: 10, averageMs: 2.4, p95Ms: 2.5 },
-        reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
-      },
-      10,
-    );
-    return { ...evaluation, observedP95Ms: 2.5, verdict: "fail" };
-  }
-
   function qualifiedDetailFor(runId: string): PublicRunHistoryDetailResponse {
     const detail = runHistoryDetailFixtureFor(runId);
     return {
@@ -2552,7 +2539,6 @@ describe("watch basic composition", () => {
           ...detail.summary.trafficDeliverySummary,
           trafficDeliveryStatus: "degraded",
         },
-        fastReservationTargetEvaluation: failingTargetEvaluation(),
       },
     };
   }
@@ -2586,7 +2572,6 @@ describe("watch basic composition", () => {
     // Availability confirms the link, and the visitor's own exact-run evidence qualifies it.
     expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeTruthy();
     expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
-    expectVisible(container, "The run missed its fast-reservation speed target");
     expect(screen.getAllByText("Final result")).toHaveLength(1);
   });
 
@@ -3330,10 +3315,6 @@ function runHistorySummaryFixture(
       notes: [],
     },
     serverReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      serverReservationTimingSummary,
-      10,
-    ),
     businessOutcomeSummary: {
       acceptedReservations: 6,
       reservedUnits: 6,

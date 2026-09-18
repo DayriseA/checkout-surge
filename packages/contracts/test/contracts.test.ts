@@ -56,7 +56,6 @@ import {
   errorPayloadCodeSchema,
   errorPayloadCodes,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
   hasObservedRequestArrivals,
   healthReadyPath,
   healthResponseSchema,
@@ -752,38 +751,6 @@ describe("run lifecycle contracts", () => {
     expect(() => demoRunSnapshotSchema.parse({ ...report, status: "completed" })).toThrow();
   });
 
-  it("evaluates the declared Redis reservation p95 target at one shared boundary", () => {
-    expect(evaluateFastReservationTarget(serverReservationTimingSummary, 10)).toMatchObject({
-      target: {
-        operation: "redis_atomic_reservation",
-        percentile: "p95",
-        thresholdMs: 1,
-        startEvent: "stock_reservation_gateway_call_started",
-        endEvent: "stock_reservation_decision_received",
-      },
-      observedP95Ms: 1,
-      verdict: "pass",
-      qualification: null,
-    });
-
-    const failed = serverReservationTimingSummarySchema.parse({
-      ...serverReservationTimingSummary,
-      redisAtomicReservation: { sampleCount: 10, averageMs: 4, p95Ms: 25 },
-    });
-    expect(evaluateFastReservationTarget(failed, 10).verdict).toBe("fail");
-    expect(evaluateFastReservationTarget(failed, 9)).toMatchObject({
-      verdict: "qualified",
-      qualification: "incomplete_server_observation",
-    });
-    expect(() =>
-      reservationTimingMeasurementSchema.parse({
-        sampleCount: 0,
-        averageMs: 0,
-        p95Ms: null,
-      }),
-    ).toThrow();
-  });
-
   it("derives recorded replies from completed attempts and transport failures", () => {
     expect(
       deriveRecordedReplyCount(
@@ -797,6 +764,16 @@ describe("run lifecycle contracts", () => {
         3,
       ),
     ).toBe(5);
+  });
+
+  it("requires reservation timing values when samples are present", () => {
+    expect(() =>
+      reservationTimingMeasurementSchema.parse({
+        sampleCount: 0,
+        averageMs: 0,
+        p95Ms: null,
+      }),
+    ).toThrow();
   });
 
   it("binds demo-run lifecycle states to their legal timestamp shapes", () => {
@@ -2291,10 +2268,6 @@ describe("public runtime policy contract", () => {
         notes: [],
       },
       serverReservationTimingSummary,
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(
-        serverReservationTimingSummary,
-        10,
-      ),
       businessOutcomeSummary: {
         acceptedReservations: 6,
         reservedUnits: 10,

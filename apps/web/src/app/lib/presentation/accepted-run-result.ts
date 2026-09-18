@@ -1,5 +1,4 @@
 import type {
-  FastReservationTargetEvaluation,
   PublicRunHistoryDetailResponse,
   RunResult,
   TrafficDeliveryStatus,
@@ -9,15 +8,13 @@ import type { CompletedBackendRead } from "../api";
 
 /**
  * The small public summary/qualification subset retained from the visitor's own already-read
- * public run detail. `DashboardProjection` never carries the delivery summary or the
- * reservation-target evaluation, so this retained detail is the only source of the saved-report
- * delivery/speed qualifications on Watch. The transport counts stay raw inputs; callers derive
- * the observation with `deriveTransportObservation`.
+ * public run detail. `DashboardProjection` never carries the delivery summary, so this retained
+ * detail is the only source of the saved-report delivery qualification on Watch. The transport
+ * counts stay raw inputs; callers derive the observation with `deriveTransportObservation`.
  */
 export interface AcceptedRunReportEvidence {
   result: RunResult;
   trafficDeliveryStatus: TrafficDeliveryStatus;
-  fastReservationTargetEvaluation: FastReservationTargetEvaluation;
   transportAttemptCounts: TransportAttemptCounts;
   transportFailures: number;
 }
@@ -47,7 +44,6 @@ export function acceptedRunResultFromRead(
           reportEvidence: {
             result: read.data.result,
             trafficDeliveryStatus: read.data.summary.trafficDeliverySummary.trafficDeliveryStatus,
-            fastReservationTargetEvaluation: read.data.summary.fastReservationTargetEvaluation,
             transportAttemptCounts: read.data.summary.transportAttemptCounts,
             transportFailures: read.data.summary.httpSummary.transportFailures,
           },
