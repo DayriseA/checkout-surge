@@ -193,12 +193,7 @@ describe("error presentation", () => {
 
   it.each([
     ["active_run_exists", "A demo run is already in progress", "watch", "/watch"],
-    [
-      "reset_incomplete",
-      "The demo backend isn't ready yet — try again in a moment",
-      "check",
-      undefined,
-    ],
+    ["reset_incomplete", "The previous run is still recovering", "check", undefined],
   ] as const)("maps the bounded conflict cause %s", (cause, headline, kind, href) => {
     const presentation = mapErrorPresentation(
       {
@@ -318,12 +313,13 @@ describe("error presentation", () => {
   });
 
   it("keeps resource-not-found actions contextual", () => {
-    expect(
-      mapErrorPresentation(
-        { status: "unavailable", errorCode: "resource_not_found" },
-        "history-detail",
-      ).action.href,
-    ).toBe("/run-history");
+    const missingReport = mapErrorPresentation(
+      { status: "unavailable", errorCode: "resource_not_found" },
+      "history-detail",
+    );
+    expect(missingReport.headline).toBe("That saved report could not be found");
+    expect(missingReport.explanation).toBe("Choose an available report from run history.");
+    expect(missingReport.action.href).toBe("/run-history");
     expect(
       mapErrorPresentation(
         { status: "unavailable", errorCode: "resource_not_found" },

@@ -25,6 +25,13 @@ export function ErrorNotice({
 }) {
   const resolvedPresentation =
     presentation ?? mapErrorPresentation(read ?? { status: "loading" }, context);
+  const mayShowProtectedDetails =
+    protectedDetails &&
+    (typeof context === "string"
+      ? context === "admin-read" || context === "admin-operation"
+      : context.protected === true ||
+        context.surface === "admin-read" ||
+        context.surface === "admin-operation");
   if (read?.status === "available" && resolvedPresentation.action.kind === "none") return null;
   if (read?.status === "loading" && !presentation) {
     return <p className="m-0 text-muted">{resolvedPresentation.headline}.</p>;
@@ -67,7 +74,7 @@ export function ErrorNotice({
         </ul>
       ) : null}
       {actionNode ? <span>{actionNode}</span> : null}
-      {protectedDetails ? (
+      {mayShowProtectedDetails ? (
         <TechnicalDetails details={resolvedPresentation.technicalDetails} />
       ) : null}
     </div>

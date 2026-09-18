@@ -8,7 +8,11 @@ import { notFound } from "next/navigation";
 import { neutralLinkButtonClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
-import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
+import {
+  AdminRunHistoryDetail,
+  PublicRunHistoryDetail,
+  scenarioRecap,
+} from "../../components/run-history-detail";
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
@@ -17,7 +21,6 @@ import {
   runResultOutcomeLabel,
   runResultOutcomeTone,
 } from "../../lib/presentation/public-vocabulary";
-import { runConclusionSentence } from "../../lib/presentation/run-result-presentation";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
 
 export const metadata: Metadata = { title: "Run report" };
@@ -75,24 +78,30 @@ export default async function RunHistoryDetailPage({
           <h1 className="m-0 mt-4 text-4xl font-bold leading-tight text-ink">
             {summary.presetName}
           </h1>
-          <p className="m-0 mt-2 max-w-[72ch] text-lg font-semibold leading-7 text-muted-strong">
-            {runConclusionSentence(result)}
+          <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
+            {scenarioRecap(publicDetail.data)}
+          </p>
+          <p className="m-0 mt-1 max-w-[66ch] text-sm leading-6 text-muted">
+            This is a simulation of buyers competing for limited stock and orders reaching a
+            simulated order-processing system.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
+            <p className="m-0 text-sm text-muted">
+              <time dateTime={summary.startedAt ?? summary.endedAt}>
+                {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
+              </time>
+              {" · "}
+              {summary.failureCategory === "operator"
+                ? "Acceptance-to-stop duration: "
+                : "Overall duration: "}
+              {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
+            </p>
             <StatusPill
               status={{
                 label: runResultOutcomeLabel(result.outcome),
                 tone: runResultOutcomeTone(result.outcome),
               }}
             />
-            <p className="m-0 text-sm text-muted">
-              <time dateTime={summary.startedAt ?? summary.endedAt}>
-                {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
-              </time>
-              {" · "}
-              {summary.failureCategory === "operator" ? "Acceptance-to-stop duration: " : ""}
-              {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
-            </p>
           </div>
         </header>
         <PublicRunHistoryDetail detail={publicDetail.data} />
@@ -142,7 +151,7 @@ export default async function RunHistoryDetailPage({
       reason: "No finished result exists for this run.",
     };
 
-  return (
+  const body = isAdmin ? (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
@@ -169,5 +178,37 @@ export default async function RunHistoryDetailPage({
         />
       </section>
     </>
+  ) : (
+    <>
+      <header className="mb-4">
+        <h1 className="m-0 text-4xl font-bold leading-tight text-ink">
+          This report is not available
+        </h1>
+        <p className="mt-3 max-w-[66ch] leading-6 text-muted">
+          We could not load a saved report from this link.
+        </p>
+      </header>
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <ErrorNotice
+          context={{ surface: "history-detail", protected: false }}
+          protectedDetails={false}
+          read={detail}
+        />
+        <div className="mt-4 flex flex-wrap gap-3">
+          <Link className={neutralLinkButtonClassName} href="/run-history">
+            Back to run history
+          </Link>
+          <Link className={neutralLinkButtonClassName} href="/">
+            Choose a simulation
+          </Link>
+        </div>
+      </section>
+    </>
   );
+
+  if (isAdmin) {
+    return body;
+  }
+
+  return body;
 }

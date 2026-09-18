@@ -35,7 +35,6 @@ import {
   emptyServerReservationTimingSummary,
   erpResilienceStatusPath,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
   healthResponseSchema,
   inventoryStatusSchema,
   livenessResponseSchema,
@@ -628,10 +627,6 @@ function runHistorySummaryFixture(): RunHistorySummary {
       notes: [],
     },
     serverReservationTimingSummary: emptyServerReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      emptyServerReservationTimingSummary,
-      10,
-    ),
     businessOutcomeSummary: businessOutcomeFixture(),
     replayPossible: false,
     terminalInventorySnapshot: {

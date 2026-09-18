@@ -9,9 +9,7 @@ import {
   adminRunHistoryDetailResponseSchema,
   countUnavailableLoadRunDiagnosticProbes,
   deriveLoadExecutionPlan,
-  deriveRecordedReplyCount,
   deriveRunResult,
-  evaluateFastReservationTarget,
   httpTimingBreakdownSummarySchema,
   internalRunFailureReasonSchema,
   type LoadRunDiagnosticsSummary,
@@ -641,10 +639,6 @@ function toPublicRunHistorySummary(
     httpSummary,
     trafficDeliverySummary: publicDeliverySummary,
     serverReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      serverReservationTimingSummary,
-      deriveRecordedReplyCount(transportAttemptCounts, httpSummary.transportFailures),
-    ),
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
       row.businessOutcomeSummary,
       context,
@@ -741,10 +735,6 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
       context,
     ),
     serverReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      serverReservationTimingSummary,
-      deriveRecordedReplyCount(transportAttemptCounts, httpSummary.transportFailures),
-    ),
     businessOutcomeSummary: parsePersistedBusinessOutcomeSummary(
       row.businessOutcomeSummary,
       context,

@@ -3,8 +3,10 @@ import type {
   PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
   durableCheckoutLens,
   publicFailureExplanation,
@@ -27,11 +29,16 @@ import {
   primaryButtonClassName,
 } from "./control-styles";
 import { GoldSignals } from "./gold-signals";
-import { RunConclusion } from "./run-conclusion";
+import { PublicRunConclusion, PublicRunConclusionProof, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { ScrollRegion } from "./scroll-region";
 import { StatusPill } from "./status-pill";
-import { TransportObservationSection } from "./transport-observation";
+import {
+  deriveTransportObservation,
+  formatHistogramBoundMilliseconds,
+  formatMilliseconds,
+  TransportObservationSection,
+} from "./transport-observation";
 
 interface RunHistoryDetailProps {
   actions?: ReactNode;
@@ -121,7 +128,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <TransportObservationSection
             arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
             counts={summary.transportAttemptCounts}
-            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
             httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
             httpSummary={summary.httpSummary}
             serverReservationTimingSummary={summary.serverReservationTimingSummary}
@@ -914,13 +920,109 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
   const { run, summary } = detail;
   const result = detail.result;
   const config = run.configSnapshot;
-  const failure = summary.failureCategory
-    ? publicFailureExplanation(summary.failureCategory)
-    : null;
+  const transportObservation = deriveTransportObservation(
+    summary.transportAttemptCounts,
+    summary.httpSummary.transportFailures,
+  );
+  const publicSummary = derivePublicRunSummary({
+    result,
+    trafficDeliveryStatus: summary.trafficDeliverySummary.trafficDeliveryStatus,
+    transportObservation,
+  });
+  const finalCounts: Array<[string, number | null]> = [
+    ["Units left", publicSummary.counts.remainingStock],
+    ["Units reserved", publicSummary.counts.reservedUnits],
+    ["Orders confirmed", publicSummary.counts.confirmedOrders],
+    ["Awaiting confirmation", publicSummary.counts.pendingOrders],
+    ["Orders failed", publicSummary.counts.failedOrders],
+    ["Attempts turned away because stock ran out", publicSummary.counts.soldOutDecisions],
+  ];
+  const deliveryFigures: Array<[string, string, string | undefined]> = [
+    [
+      "Delivery coverage",
+      transportObservation.coveragePercent === null
+        ? "n/a"
+        : `${transportObservation.coveragePercent}%`,
+      "of dispatched attempts",
+    ],
+    [
+      "Observed reservation p95",
+      formatHistogramBoundMilliseconds(
+        summary.serverReservationTimingSummary.redisAtomicReservation.p95Ms,
+      ),
+      "bounded p95 estimate",
+    ],
+    [
+      "Checkout response p95 (client-observed)",
+      formatMilliseconds(summary.httpSummary.p95LatencyMs),
+      transportObservation.hasUnrecordedReplies ? "observed replies only" : undefined,
+    ],
+    [
+      "Reservation-to-confirmation p95",
+      nullableMetricMs(detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null),
+      undefined,
+    ],
+  ];
   return (
     <div className="grid grid-cols-1 gap-4">
+      <PublicRunConclusion
+        measurementsTargetId="report-advanced-measurements"
+        result={result}
+        runStatus={summary.status}
+        showProof={false}
+        trafficDeliveryStatus={summary.trafficDeliverySummary.trafficDeliveryStatus}
+        transportObservation={transportObservation}
+      />
+
+      <section
+        aria-labelledby="report-final-counts"
+        className="rounded-lg border border-border bg-surface p-4"
+      >
+        <h2 id="report-final-counts" className="m-0 text-base font-bold leading-tight text-ink">
+          Final stock and orders
+        </h2>
+        <div className="mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-3 max-[600px]:grid-cols-2">
+          {finalCounts.map(([label, value]) => (
+            <div className="rounded border border-border bg-surface-muted p-3" key={label}>
+              <p className="m-0 text-xl font-bold text-ink">{formatCount(value) ?? "—"}</p>
+              <p className="m-0 mt-1 text-xs text-muted">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Accepted configuration</h2>
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">What happened</h2>
+        <ul className="mb-0 mt-3 grid gap-2 pl-5 text-sm leading-6 text-muted-strong">
+          {runRecap(detail, publicSummary.counts).map((line) => (
+            <li key={line}>{line}</li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="grid gap-3" id="report-advanced-signals">
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Signals</h2>
+        <GoldSignals
+          acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
+          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+          failedOrders={summary.businessOutcomeSummary.failedOrders}
+          oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
+          runStatus={run.status}
+          terminalSummary={detail.runSignalTimelineSummary}
+        />
+      </section>
+
+      <PublicRunConclusionProof
+        alwaysVisible
+        result={result}
+        targetId="report-advanced-consistency"
+      />
+
+      <section
+        className="rounded-lg border border-border bg-surface p-4"
+        id="report-advanced-scenario"
+      >
+        <h2 className="m-0 text-base font-bold leading-tight text-ink">Scenario settings</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
@@ -993,30 +1095,13 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         </div>
       </section>
 
-      <RunConclusion
-        result={result}
-        runStatus={summary.status}
-        showReconciliationStatus
-        showSentence={false}
-      />
-
-      <section aria-labelledby="history-gold-signals" className="grid gap-3">
-        <h2 id="history-gold-signals" className="m-0 text-base font-bold leading-tight text-ink">
-          Gold signals
-        </h2>
-        <GoldSignals
-          acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
-          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-          failedOrders={summary.businessOutcomeSummary.failedOrders}
-          oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
-          runStatus={run.status}
-          terminalSummary={detail.runSignalTimelineSummary}
-        />
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <section
+        className="rounded-lg border border-border bg-surface p-4"
+        id="report-advanced-measurements"
+        tabIndex={-1}
+      >
         <h2 className="m-0 text-base font-bold leading-tight text-ink">
-          Client observation and delivery quality
+          Delivery and measurements
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
@@ -1030,157 +1115,254 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             }}
           />
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
-          <TransportObservationSection
-            arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-            counts={summary.transportAttemptCounts}
-            fastReservationTargetEvaluation={summary.fastReservationTargetEvaluation}
-            httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
-            httpSummary={summary.httpSummary}
-            serverReservationTimingSummary={summary.serverReservationTimingSummary}
-            startDelaySeconds={config.trafficConfig.startDelaySeconds}
-            surface="detail"
-            hideZeroExceptions
-            {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
-          />
-          <FactList
-            caption={simulatedErpLens.caption}
-            facts={[
-              ["Simulated ERP call attempts", formatNumber(detail.erpAttempts.totalCount)],
-              ["Succeeded attempts", formatNumber(detail.erpAttempts.byStatus.succeeded)],
-              ...(detail.erpAttempts.byStatus.failed > 0
-                ? [
-                    ["Failed attempts", formatNumber(detail.erpAttempts.byStatus.failed)] as [
-                      string,
-                      ReactNode,
-                    ],
-                  ]
-                : []),
-              ...(detail.erpAttempts.byStatus.timedOut > 0
-                ? [
-                    ["Timed-out attempts", formatNumber(detail.erpAttempts.byStatus.timedOut)] as [
-                      string,
-                      ReactNode,
-                    ],
-                  ]
-                : []),
-              ["Simulated ERP call average", nullableMetricMs(detail.erpAttempts.averageLatencyMs)],
-              ["Simulated ERP call p95", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
-              [
-                "Reservation-to-confirmation p95",
-                nullableMetricMs(
-                  detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null,
-                ),
-              ],
-            ]}
-            title={simulatedErpLens.title}
-          />
+        <div
+          className="mt-3 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1"
+          data-delivery-summary=""
+        >
+          {deliveryFigures.map(([label, value, note]) => (
+            <div className="rounded border border-border bg-surface-muted p-3" key={label}>
+              <p className="m-0 text-xl font-bold text-ink">{value}</p>
+              <p className="m-0 mt-1 text-xs text-muted">{label}</p>
+              {note ? <p className="m-0 mt-1 text-xs text-muted">{note}</p> : null}
+            </div>
+          ))}
         </div>
+        {transportObservation.hasUnrecordedReplies ? (
+          <p
+            className="m-0 mt-3 rounded-lg border border-[#ecd08f] bg-warning-soft p-3 text-xs leading-5 text-warning"
+            data-measurement-caveat=""
+          >
+            Checkout response p95 (client-observed) covers only the{" "}
+            {formatCount(transportObservation.repliesRecorded) ?? "unavailable"} of{" "}
+            {formatCount(transportObservation.counts.plannedRequests) ?? "unavailable"} planned
+            attempts that recorded a reply. Server-observed reservation timing and durable
+            reservation-to-confirmation timing use separate evidence.
+          </p>
+        ) : null}
+        <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
+          Local run note: the load generator, API, database, order-processing service, and simulated
+          ERP share one host. This is not hosted benchmark evidence.
+        </p>
+        <details className="mt-4 rounded border border-border px-3 py-2">
+          <summary className="cursor-pointer font-semibold text-muted-strong">
+            All measurements
+          </summary>
+          <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
+            <TransportObservationSection
+              arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+              counts={summary.transportAttemptCounts}
+              httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
+              httpSummary={summary.httpSummary}
+              serverReservationTimingSummary={summary.serverReservationTimingSummary}
+              startDelaySeconds={config.trafficConfig.startDelaySeconds}
+              surface="detail"
+              hideZeroExceptions
+              {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
+            />
+            <FactList
+              caption={simulatedErpLens.caption}
+              facts={[
+                ["Simulated ERP call attempts", formatNumber(detail.erpAttempts.totalCount)],
+                ["Succeeded attempts", formatNumber(detail.erpAttempts.byStatus.succeeded)],
+                ...(detail.erpAttempts.byStatus.failed > 0
+                  ? [
+                      ["Failed attempts", formatNumber(detail.erpAttempts.byStatus.failed)] as [
+                        string,
+                        ReactNode,
+                      ],
+                    ]
+                  : []),
+                ...(detail.erpAttempts.byStatus.timedOut > 0
+                  ? [
+                      [
+                        "Timed-out attempts",
+                        formatNumber(detail.erpAttempts.byStatus.timedOut),
+                      ] as [string, ReactNode],
+                    ]
+                  : []),
+                [
+                  "Simulated ERP call average",
+                  nullableMetricMs(detail.erpAttempts.averageLatencyMs),
+                ],
+                ["Simulated ERP call p95", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
+                [
+                  "Reservation-to-confirmation p95",
+                  nullableMetricMs(
+                    detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null,
+                  ),
+                ],
+              ]}
+              title={simulatedErpLens.title}
+            />
+          </div>
+        </details>
       </section>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">
-          Lifecycle and final inventory
-        </h2>
-        <div className="mt-3 grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">
-          <FactList
-            facts={[
-              ["Run accepted", formatDate(summary.startedAt)],
-              ["Checkout traffic started", formatDate(run.trafficStartedAt)],
-              ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
-              [
-                summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended",
-                formatDate(run.finalizedAt),
-              ],
-              ...(summary.failureCategory === "operator"
-                ? [
-                    [
-                      "Acceptance-to-stop duration",
-                      formatDurationMs(detail.overallDurationMs) ?? "Unknown",
-                    ] as [string, ReactNode],
-                  ]
-                : []),
-              ...resetCompletionFacts(run, summary),
-            ]}
-            title="Lifecycle"
-          />
-          <FactList
-            facts={[
-              ...(summary.terminalInventorySnapshot
-                ? [
-                    [
-                      publicVocabulary.startingStock,
-                      formatNumber(summary.terminalInventorySnapshot.startingStock),
-                    ] as [string, ReactNode],
-                    [
-                      "Remaining stock",
-                      formatNumber(summary.terminalInventorySnapshot.remainingStock),
-                    ] as [string, ReactNode],
-                    [
-                      "Reserved stock",
-                      formatNumber(summary.terminalInventorySnapshot.reservedStock),
-                    ] as [string, ReactNode],
-                  ]
-                : [
-                    [publicVocabulary.startingStock, "not recorded"] as [string, ReactNode],
-                    ["Remaining stock", "not recorded"] as [string, ReactNode],
-                    ["Reserved stock", "not recorded"] as [string, ReactNode],
-                  ]),
-              [
-                publicVocabulary.uniqueReservationsSecured,
-                formatNumber(summary.businessOutcomeSummary.acceptedReservations),
-              ],
-              [
-                publicVocabulary.soldOutRejectionsRecorded,
-                formatNumber(summary.businessOutcomeSummary.soldOutRejections),
-              ],
-              ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-              ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
-            ]}
-            title="Final evidence"
-          />
-        </div>
+      <section id="report-advanced-lifecycle">
+        <details className="rounded-lg border border-border bg-surface px-4 py-3">
+          <summary className="cursor-pointer">
+            <h2 className="m-0 inline text-base font-bold leading-tight text-ink">
+              Lifecycle and reference
+            </h2>
+          </summary>
+          <div className="mt-3 grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">
+            <FactList
+              facts={[
+                ["Run accepted", formatDate(summary.startedAt)],
+                ["Checkout traffic started", formatDate(run.trafficStartedAt)],
+                ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
+                [
+                  summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended",
+                  formatDate(run.finalizedAt),
+                ],
+                ...(summary.failureCategory === "operator"
+                  ? [
+                      [
+                        "Acceptance-to-stop duration",
+                        formatDurationMs(detail.overallDurationMs) ?? "Unknown",
+                      ] as [string, ReactNode],
+                    ]
+                  : []),
+                ...resetCompletionFacts(run, summary),
+              ]}
+              title="Lifecycle"
+            />
+            <FactList
+              facts={[
+                ...(summary.terminalInventorySnapshot
+                  ? [
+                      [
+                        publicVocabulary.startingStock,
+                        formatNumber(summary.terminalInventorySnapshot.startingStock),
+                      ] as [string, ReactNode],
+                      [
+                        "Remaining stock",
+                        formatNumber(summary.terminalInventorySnapshot.remainingStock),
+                      ] as [string, ReactNode],
+                      [
+                        "Reserved stock",
+                        formatNumber(summary.terminalInventorySnapshot.reservedStock),
+                      ] as [string, ReactNode],
+                    ]
+                  : [
+                      [publicVocabulary.startingStock, "not recorded"] as [string, ReactNode],
+                      ["Remaining stock", "not recorded"] as [string, ReactNode],
+                      ["Reserved stock", "not recorded"] as [string, ReactNode],
+                    ]),
+                [
+                  publicVocabulary.uniqueReservationsSecured,
+                  formatNumber(summary.businessOutcomeSummary.acceptedReservations),
+                ],
+                [
+                  publicVocabulary.soldOutRejectionsRecorded,
+                  formatNumber(summary.businessOutcomeSummary.soldOutRejections),
+                ],
+                ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
+                ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+              ]}
+              title="Final evidence"
+            />
+          </div>
+          <dl className="m-0 mt-4 grid gap-2 sm:grid-cols-2">
+            <div>
+              <dt className="text-sm text-muted">Run UUID</dt>
+              <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+                <code>{summary.runId}</code>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
+              <dd className="m-0 text-sm font-semibold text-muted-strong">
+                {formatDate(summary.capturedAt)}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted">Logical queue</dt>
+              <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+                <code>{config.backpressureConfig.queueName}</code>
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm text-muted">Physical queue</dt>
+              <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+                <code>{config.backpressureConfig.physicalQueueName}</code>
+              </dd>
+            </div>
+          </dl>
+        </details>
       </section>
 
-      {failure ? (
-        <section className="rounded-lg border border-warning bg-warning-soft p-4">
-          <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
-          <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
-          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
-        </section>
-      ) : null}
-
-      <details className="rounded-lg border border-border bg-surface p-4">
-        <summary className="cursor-pointer font-semibold text-ink">Technical details</summary>
-        <dl className="m-0 mt-3 grid gap-2">
-          <div>
-            <dt className="text-sm text-muted">Run UUID</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{summary.runId}</code>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
-            <dd className="m-0 text-sm font-semibold text-muted-strong">
-              {formatDate(summary.capturedAt)}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Logical queue</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{config.backpressureConfig.queueName}</code>
-            </dd>
-          </div>
-          <div>
-            <dt className="text-sm text-muted">Physical queue</dt>
-            <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
-              <code>{config.backpressureConfig.physicalQueueName}</code>
-            </dd>
-          </div>
-        </dl>
-      </details>
+      <nav aria-label="Report actions" className="flex flex-wrap gap-3">
+        <Link className={neutralLinkButtonClassName} href="/run-history">
+          Back to run history
+        </Link>
+        <Link className={neutralLinkButtonClassName} href="/">
+          Choose another scenario
+        </Link>
+        <a className={neutralLinkButtonClassName} href="#main-content">
+          Back to top
+        </a>
+      </nav>
     </div>
   );
+}
+
+export function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
+  const { configSnapshot } = detail.run;
+  const traffic = configSnapshot.trafficConfig;
+  const demand =
+    traffic.mode === "buyer-spike"
+      ? `${formatNumber(traffic.buyerCount)} buyers`
+      : `${formatNumber(detail.plannedAttempts)} planned attempts`;
+  const details = [
+    `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(configSnapshot.inventoryConfig.startingStock)} starting units`,
+  ];
+  if (configSnapshot.inventoryConfig.quantityPerCheckout > 1) {
+    details.push(
+      `${formatNumber(configSnapshot.inventoryConfig.quantityPerCheckout)} units per checkout`,
+    );
+  }
+  if (traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt) {
+    details.push("duplicate attempts enabled");
+  }
+  if (configSnapshot.erpConfig.forcedOutage) details.push("simulated ERP outage forced");
+  if (configSnapshot.erpConfig.errorRate > 0) {
+    details.push(`${formatPercent(configSnapshot.erpConfig.errorRate)} simulated ERP failure rate`);
+  }
+  return details.join(" · ");
+}
+
+function runRecap(
+  detail: PublicRunHistoryDetailResponse,
+  counts: ReturnType<typeof derivePublicRunSummary>["counts"],
+): string[] {
+  const { run, summary } = detail;
+  const trafficSubject =
+    run.configSnapshot.trafficConfig.mode === "buyer-spike" ? "Buyer traffic" : "Checkout attempts";
+  const time = (value: string | undefined) =>
+    formatInstantUtc(value, { variant: "timeOnly" }) ?? "not recorded";
+  const count = (value: number | null) => formatCount(value) ?? "not recorded";
+  const trafficRecap = run.trafficStartedAt
+    ? run.trafficEndedAt
+      ? `${trafficSubject} started at ${time(run.trafficStartedAt)} and ended at ${time(run.trafficEndedAt)}.`
+      : `${trafficSubject} started at ${time(run.trafficStartedAt)}; its end was not recorded.`
+    : run.trafficEndedAt
+      ? `${trafficSubject} start was not recorded; it ended at ${time(run.trafficEndedAt)}.`
+      : `${trafficSubject} start and end were not recorded.`;
+  const lines = [
+    trafficRecap,
+    `${count(counts.reservedUnits)} units reserved / ${count(counts.uniqueReservations)} unique reservations; ${count(counts.soldOutDecisions)} attempts turned away because stock ran out.`,
+    `Orders reached their recorded outcome: ${count(counts.confirmedOrders)} confirmed, ${count(counts.failedOrders)} failed, ${count(counts.pendingOrders)} awaiting confirmation.`,
+    `${summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended"}: ${time(run.finalizedAt)}.`,
+  ];
+  if (summary.failureCategory === "operator") {
+    lines.push(
+      run.adminResetCompletedAt
+        ? `Work cleanup and history completed: ${time(run.adminResetCompletedAt)}.`
+        : "Work cleanup and history completion was not recorded; reporting or cleanup may be incomplete, and worker work may still settle.",
+    );
+  }
+  return lines;
 }
 
 function nullableMetricMs(value: number | null): string {

@@ -98,4 +98,26 @@ describe("ErrorNotice action and disclosure boundary", () => {
     expect(screen.getByText("admin-correlation")).toBeTruthy();
     expect(screen.getByText("backend diagnostic")).toBeTruthy();
   });
+
+  it("cannot expose backend details on a public surface even when disclosure is requested", () => {
+    const { container } = render(
+      <ErrorNotice
+        context="history-detail"
+        presentation={{
+          headline: "Report unavailable",
+          action: { kind: "none", label: "" },
+          tone: "warning",
+          technicalDetails: {
+            correlationId: "private-public-correlation",
+            reason: "private public-reader diagnostic",
+          },
+        }}
+        protectedDetails
+      />,
+    );
+
+    expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).not.toContain("private-public-correlation");
+    expect(container.textContent).not.toContain("private public-reader diagnostic");
+  });
 });

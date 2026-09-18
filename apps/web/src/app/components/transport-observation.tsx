@@ -1,5 +1,4 @@
 import type {
-  FastReservationTargetEvaluation,
   HttpTimingBreakdownSummary,
   RequestArrivalSummary,
   ServerReservationTimingSummary,
@@ -113,7 +112,6 @@ export function survivorshipWarningText(
 export function TransportObservationSection({
   arrivalSummary,
   counts,
-  fastReservationTargetEvaluation,
   hideZeroExceptions = false,
   httpTimingBreakdownSummary,
   httpSummary,
@@ -124,7 +122,6 @@ export function TransportObservationSection({
 }: {
   arrivalSummary: RequestArrivalSummary;
   counts: TransportAttemptCounts;
-  fastReservationTargetEvaluation: FastReservationTargetEvaluation;
   hideZeroExceptions?: boolean;
   httpTimingBreakdownSummary?: HttpTimingBreakdownSummary;
   httpSummary: TrafficHttpSummary;
@@ -138,10 +135,7 @@ export function TransportObservationSection({
 
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <FastReservationEvidence
-        evaluation={fastReservationTargetEvaluation}
-        summary={serverReservationTimingSummary}
-      />
+      <FastReservationEvidence summary={serverReservationTimingSummary} />
       <div className="mt-4 border-t border-border pt-3">
         <RequestArrivalEvidence summary={arrivalSummary} showSeries={surface === "detail"} />
       </div>
@@ -255,13 +249,7 @@ export function deriveHarnessPreparation(
   };
 }
 
-function FastReservationEvidence({
-  evaluation,
-  summary,
-}: {
-  evaluation: FastReservationTargetEvaluation;
-  summary: ServerReservationTimingSummary;
-}) {
+function FastReservationEvidence({ summary }: { summary: ServerReservationTimingSummary }) {
   return (
     <>
       <h3 className="m-0 text-sm font-bold text-ink">Fast inventory reservation</h3>
@@ -270,30 +258,16 @@ function FastReservationEvidence({
       </p>
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
-          label="Inventory reservation target"
-          value={formatHistogramBoundMilliseconds(evaluation.target.thresholdMs)}
-        />
-        <ObservationRow
           label="Observed reservation p95"
           note="bounded p95 estimate"
-          value={formatHistogramBoundMilliseconds(evaluation.observedP95Ms)}
+          value={formatHistogramBoundMilliseconds(summary.redisAtomicReservation.p95Ms)}
         />
-        <ObservationRow label="Target verdict" value={evaluation.verdict} />
         <ObservationRow
           label="Reservation processing p95 bound"
           note="bounded p95 estimate; service entry → response ready"
           value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
         />
       </dl>
-      {evaluation.qualification ? (
-        <p className="m-0 mt-2 text-xs text-muted">
-          Qualified:{" "}
-          {evaluation.qualification === "measurement_unavailable"
-            ? "server timing was unavailable"
-            : `server timing covered ${formatNumber(evaluation.observedSampleCount)} samples while the load generator recorded ${formatNumber(evaluation.expectedResponseCount)} replies`}
-          .
-        </p>
-      ) : null}
       <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
         Local run note: the load generator, API, database, order-processing service, and simulated
         ERP share one host. This is not hosted benchmark evidence.
@@ -572,7 +546,7 @@ function formatNumber(value: number): string {
   return formatCount(value) ?? "n/a";
 }
 
-function formatMilliseconds(value: number | null | undefined): string {
+export function formatMilliseconds(value: number | null | undefined): string {
   return formatDurationMs(value) ?? "n/a";
 }
 
@@ -582,13 +556,9 @@ function formatMilliseconds(value: number | null | undefined): string {
  * into seconds while its neighbours stay in milliseconds would hide the unit the ladder is
  * defined in. This is a sanctioned exemption from the tiered duration policy.
  *
- * The declared p95 target renders through here for the same reason: it is a hard-coded parameter
- * and `1` is itself a member of the bucket ladder, so it must read `≤ 1ms` beside `≤ 25ms` rather
- * than in a second spelling of the same unit.
- *
  * The bucket edges start at 0.25 ms, so `formatNumber` must keep fractional input.
  */
-function formatHistogramBoundMilliseconds(value: number | null): string {
+export function formatHistogramBoundMilliseconds(value: number | null): string {
   return value === null ? "n/a" : `≤ ${formatNumber(value)}ms`;
 }
 

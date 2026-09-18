@@ -12,7 +12,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
   type HealthResponse,
   type PublicPresetListResponse,
   type PublicRunHistoryDetailResponse,
@@ -36,7 +35,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
@@ -163,7 +162,7 @@ describe("public browser starts", () => {
     vi.stubGlobal("window", navigationWindow);
     const user = userEvent.setup();
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    if (entry === "custom") await user.click(screen.getByText("Build your own run"));
+    if (entry === "custom") await user.click(screen.getByText("Customize a scenario"));
     const start = screen.getByRole("button", {
       name: entry === "custom" ? "Start custom run" : "Start Preview 1k",
     }) as HTMLButtonElement;
@@ -621,6 +620,49 @@ describe("public browser starts", () => {
     );
   });
 
+  it.each([
+    ["preview-1k", "Preview 1k", "33333333-3333-4333-8333-333333333331"],
+    ["surge-5k", "Surge 5k", "33333333-3333-4333-8333-333333333332"],
+    ["surge-10k", "Surge 10k", "33333333-3333-4333-8333-333333333333"],
+    ["idempotency-check-200", "Duplicate-click storm", "33333333-3333-4333-8333-333333333334"],
+  ] as const)("starts the %s public preset through the accepted-run path", async (slug, name, id) => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return jsonResponse(startDemoRunResponseFixture(), 202);
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    const preview = demoPresetFixture("preview-1k");
+    surface.presets.data.presets = [
+      demoPresetFixture("public-custom"),
+      {
+        ...preview,
+        id,
+        slug,
+        display: { ...preview.display, name },
+      },
+    ];
+
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface }));
+    await user.click(screen.getByRole("button", { name: `Start ${name}` }));
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/watch?acceptedRunId=55555555-5555-4555-8555-555555555555",
+      ),
+    );
+    const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
+    expect(jsonRequestBody(init)).toEqual({ presetSlug: slug });
+  });
+
   it("navigates an accepted custom start with the response run ID", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
@@ -637,7 +679,7 @@ describe("public browser starts", () => {
     const user = userEvent.setup();
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
 
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     await waitFor(() =>
@@ -667,7 +709,13 @@ describe("public browser starts", () => {
     expect(reload).toHaveBeenCalledOnce();
   });
 
-  it("blocks public starts on fresh global recovery without exposing operator controls", () => {
+  it("blocks public starts on fresh global recovery and lets visitors check again", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) =>
+      String(input) === healthReadyProxyPath
+        ? jsonResponse(readinessFixture())
+        : jsonResponse(dashboardRecoveryFixture({ revision: 2 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     const surface = publicDemoSurfaceFixture();
     surface.recovery = {
       status: "available",
@@ -680,9 +728,16 @@ describe("public browser starts", () => {
     expect(
       (screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement).disabled,
     ).toBe(true);
-    expect(screen.getByText(/temporarily unavailable while operator recovery/)).toBeTruthy();
+    expect(screen.getByText("The previous run is still recovering")).toBeTruthy();
+    expect(screen.getByText(/Worker work may still settle/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Reset/ })).toBeNull();
     expect(screen.getByText("Recovery incomplete")).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(findFetchCall(fetchMock, dashboardRecoveryProxyPath)[0]).toBe(
+      dashboardRecoveryProxyPath,
+    );
+    expect(findFetchCall(fetchMock, healthReadyProxyPath)[0]).toBe(healthReadyProxyPath);
   });
 
   it("reloads to recheck a reset-incomplete conflict while keeping starts blocked", async () => {
@@ -707,9 +762,7 @@ describe("public browser starts", () => {
     const start = screen.getByRole("button", { name: "Start Preview 1k" }) as HTMLButtonElement;
     await user.click(start);
 
-    expect(
-      await screen.findByText("The demo backend isn't ready yet — try again in a moment"),
-    ).toBeTruthy();
+    expect(await screen.findByText("The previous run is still recovering")).toBeTruthy();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     expect(start.disabled).toBe(true);
     expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
@@ -806,6 +859,12 @@ describe("public browser starts", () => {
       throw new Error("Expected Preview 1k card.");
     }
 
+    const customDisclosure = screen.getByText("Customize a scenario");
+    await user.click(customDisclosure);
+    await replaceInputValue("Buyer count (buyers)", "321", user);
+    await user.click(customDisclosure);
+    expect(screen.getByText("Edited settings retained")).toBeTruthy();
+
     await user.click(within(previewArticle).getByRole("button", { name: "Start Preview 1k" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
@@ -827,7 +886,7 @@ describe("public browser starts", () => {
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
 
     expect(screen.getByRole("button", { name: "Start Preview 1k" })).toBeTruthy();
-    const expander = screen.getByText("Build your own run");
+    const expander = screen.getByText("Customize a scenario");
     const details = expander.closest("details") as HTMLDetailsElement;
     expect(details.open).toBe(false);
     await user.click(expander);
@@ -838,19 +897,131 @@ describe("public browser starts", () => {
     expect(screen.getByRole("group", { name: "Slow ERP" })).toBeTruthy();
   });
 
+  it("keeps concise preset facts visible and opens preset details independently", async () => {
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    const duplicatePreset = demoPresetFixture("preview-1k");
+    if (duplicatePreset.trafficConfig.mode !== "buyer-spike") {
+      throw new Error("Expected spike preset.");
+    }
+    surface.presets.data.presets = [
+      demoPresetFixture("public-custom"),
+      demoPresetFixture("preview-1k"),
+      {
+        ...duplicatePreset,
+        id: "33333333-3333-4333-8333-333333333334",
+        slug: "idempotency-check-200",
+        display: {
+          ...duplicatePreset.display,
+          name: "Duplicate-click storm",
+          outcomeFocus: ["idempotency", "happy_path"],
+        },
+        trafficConfig: {
+          ...duplicatePreset.trafficConfig,
+          duplicateEachBuyerAttempt: true,
+        },
+      },
+    ];
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface }));
+
+    const duplicateArticle = screen.getByText("Duplicate-click storm").closest("article");
+    const previewArticle = screen.getByText("Preview 1k").closest("article");
+    if (!duplicateArticle || !previewArticle) throw new Error("Expected both preset cards.");
+    expect(within(duplicateArticle).getByText("Each buyer tries twice")).toBeTruthy();
+    expect(
+      within(duplicateArticle).getByRole("button", { name: "Start Duplicate-click storm" }),
+    ).toBeTruthy();
+
+    const duplicateDetails = duplicateArticle.querySelector("details");
+    const previewDetails = previewArticle.querySelector("details");
+    const duplicateSummary = duplicateDetails?.querySelector("summary");
+    const previewSummary = previewDetails?.querySelector("summary");
+    if (!duplicateDetails || !previewDetails || !duplicateSummary || !previewSummary) {
+      throw new Error("Expected preset technical disclosures.");
+    }
+    expect(duplicateDetails.open).toBe(false);
+    expect(previewDetails.open).toBe(false);
+    expect(duplicateSummary.textContent).toContain("Technical details for Duplicate-click storm");
+    expect(previewSummary.textContent).toContain("Technical details for Preview 1k");
+
+    await user.click(duplicateSummary);
+    expect(duplicateDetails.open).toBe(true);
+    expect(previewDetails.open).toBe(false);
+    expect(within(duplicateArticle).getByText("Detailed assumptions")).toBeTruthy();
+
+    await user.click(previewSummary);
+    expect(duplicateDetails.open).toBe(true);
+    expect(previewDetails.open).toBe(true);
+  });
+
+  it("retains the custom draft, disclosure state, and field errors across collapse", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    const builderSummary = screen.getByText("Customize a scenario");
+    const builder = builderSummary.closest("details") as HTMLDetailsElement;
+    await user.click(builderSummary);
+    await user.click(screen.getByLabelText("Steady stream"));
+    const protectionSummary = document.querySelector("#custom-protection-settings > summary");
+    if (!(protectionSummary instanceof HTMLElement))
+      throw new Error("Expected protection summary.");
+    const protection = protectionSummary.closest("details") as HTMLDetailsElement;
+    await user.click(protectionSummary);
+    const form = screen.getByRole("form", { name: "Custom run builder" });
+    const stock = screen.getByLabelText("Starting stock (units)") as HTMLInputElement;
+    await user.clear(stock);
+    fireEvent.invalid(stock);
+    const nativeError = stock.validationMessage;
+    expect(stock.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(nativeError)).toBeTruthy();
+
+    await user.click(builderSummary);
+    expect(builder.open).toBe(false);
+    expect(screen.getByText("Edited settings retained")).toBeTruthy();
+    expect(form.isConnected).toBe(true);
+    expect(stock.isConnected).toBe(true);
+    expect(protection.isConnected).toBe(true);
+    expect(document.querySelector('form[aria-label="Custom run builder"]')).toBe(form);
+    expect(document.getElementById("custom-stock")).toBe(stock);
+    expect(document.getElementById("custom-protection-settings")).toBe(protection);
+
+    await user.click(builderSummary);
+    expect(builder.open).toBe(true);
+    expect(protection.open).toBe(true);
+    expect(screen.getByText(nativeError)).toBeTruthy();
+    expect(form.isConnected).toBe(true);
+    expect(stock.isConnected).toBe(true);
+    expect(protection.isConnected).toBe(true);
+    expect(document.querySelector('form[aria-label="Custom run builder"]')).toBe(form);
+    expect(document.getElementById("custom-stock")).toBe(stock);
+    expect(document.getElementById("custom-protection-settings")).toBe(protection);
+    expect(protection.open).toBe(true);
+    expect(
+      (document.getElementById("custom-traffic-mode-constant-arrival-rate") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect((document.getElementById("custom-stock") as HTMLInputElement).value).toBe("");
+    expect(document.getElementById("custom-stock")?.getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByText(nativeError)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("associates native field errors and blocks invalid custom submission", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     const buyerCount = screen.getByLabelText("Buyer count (buyers)") as HTMLInputElement;
 
     await user.clear(buyerCount);
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
     expect(buyerCount.getAttribute("aria-describedby")).toContain("custom-buyers-error");
     expect(screen.getByText(buyerCount.validationMessage)).toBeTruthy();
@@ -864,7 +1035,7 @@ describe("public browser starts", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     const buyerCount = screen.getByLabelText("Buyer count (buyers)") as HTMLInputElement;
     const startingStock = screen.getByLabelText("Starting stock (units)") as HTMLInputElement;
 
@@ -873,7 +1044,7 @@ describe("public browser starts", () => {
     await user.keyboard("{Enter}");
 
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(within(summary).getAllByRole("link")).toHaveLength(2);
     expect(within(summary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
     expect(within(summary).getByRole("link", { name: /Starting stock/ })).toBeTruthy();
@@ -891,7 +1062,7 @@ describe("public browser starts", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     const buyerCount = screen.getByLabelText("Buyer count (buyers)") as HTMLInputElement;
 
     await user.clear(buyerCount);
@@ -913,7 +1084,7 @@ describe("public browser starts", () => {
     const user = userEvent.setup();
     const surface = publicDemoSurfaceFixture();
     render(createElement(PublicDemoEntry, { surface }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
 
     const group = screen.getByRole("group", { name: "Traffic pattern" });
     const spike = within(group).getByRole("radio", { name: "Everyone at once" });
@@ -929,7 +1100,7 @@ describe("public browser starts", () => {
     if (surface.runtimePolicy.status !== "available") throw new Error("Expected runtime policy.");
     surface.runtimePolicy.data.policy.publicCustomLimits.allowedTrafficModes = ["buyer-spike"];
     render(createElement(PublicDemoEntry, { surface }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     expect(
       (
         within(screen.getByRole("group", { name: "Traffic pattern" })).getByRole("radio", {
@@ -948,7 +1119,7 @@ describe("public browser starts", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     const buyerCount = screen.getByLabelText("Buyer count (buyers)");
 
     await user.clear(buyerCount);
@@ -1000,7 +1171,7 @@ describe("public browser starts", () => {
     surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.errorRate = ratio;
     surface.runtimePolicy.data.policy.publicCustomLimits.maxErpErrorRate = Math.max(0.25, ratio);
     render(createElement(PublicDemoEntry, { surface }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
 
     const errorRate = screen.getByLabelText("Failure rate (percent)") as HTMLInputElement;
     expect(errorRate.value).toBe(percent);
@@ -1020,7 +1191,7 @@ describe("public browser starts", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
 
     expect(screen.getByText("Planned total attempts: 1,000")).toBeTruthy();
     await user.click(screen.getByRole("checkbox", { name: /Duplicate each buyer attempt/ }));
@@ -1037,7 +1208,7 @@ describe("public browser starts", () => {
     expect(start.disabled).toBe(false);
     await user.click(start);
     const summary = screen.getByRole("alert", { name: "Fix these settings" });
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(document.getElementById("custom-traffic-error"));
     await user.click(within(summary).getByRole("link", { name: /Reduce the buyer count/ }));
     expect(document.activeElement).toBe(document.getElementById("custom-traffic-error"));
     expect(fetchMock).not.toHaveBeenCalled();
@@ -1051,7 +1222,7 @@ describe("public browser starts", () => {
   it("calculates constant-arrival attempts as rate times duration", async () => {
     const user = userEvent.setup();
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     await user.click(screen.getByLabelText("Steady stream"));
     await replaceInputValue("Arrival rate (requests/second)", "125", user);
     await replaceInputValue("Traffic duration (seconds)", "20", user);
@@ -1074,7 +1245,7 @@ describe("public browser starts", () => {
     surface.runtimePolicy.data.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
     render(createElement(PublicDemoEntry, { surface }));
     expect(screen.queryByLabelText("Forced outage")).toBeNull();
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     for (const protectedControl of [
       "Worker concurrency (workers)",
       "Retry attempts (attempts)",
@@ -1094,7 +1265,7 @@ describe("public browser starts", () => {
     await replaceInputValue("Delay per order (milliseconds)", "125", user);
     await replaceInputValue("Capacity (orders/second)", "33", user);
     await replaceInputValue("Failure rate (percent)", "0.2", user);
-    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+    await user.keyboard("{Enter}");
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
@@ -1151,12 +1322,12 @@ describe("public browser starts", () => {
     Object.defineProperty(navigationWindow, "location", { value: { assign } });
     vi.stubGlobal("window", navigationWindow);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     const summary = await screen.findByRole("alert", { name: "Fix these settings" });
     const buyerCount = screen.getByLabelText("Buyer count (buyers)");
-    expect(document.activeElement).toBe(summary);
+    expect(document.activeElement).toBe(buyerCount);
     expect(within(summary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
     expect(buyerCount.getAttribute("aria-invalid")).toBe("true");
     expect(buyerCount.getAttribute("aria-describedby")).toContain("custom-buyers-error");
@@ -1169,6 +1340,95 @@ describe("public browser starts", () => {
     await replaceInputValue("Buyer count (buyers)", "999", user);
     expect(screen.queryByRole("alert", { name: "Fix these settings" })).toBeNull();
     expect(buyerCount.getAttribute("aria-invalid")).toBeNull();
+  });
+
+  it("reopens collapsed custom and protection disclosures for a late field error", async () => {
+    const user = userEvent.setup();
+    const startRequest = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+      if (String(input) === demoRunStartProxyPath) return startRequest.promise;
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    const builderSummary = screen.getByText("Customize a scenario");
+    const builder = builderSummary.closest("details") as HTMLDetailsElement;
+    await user.click(builderSummary);
+    const protectionSummary = document.querySelector("#custom-protection-settings > summary");
+    if (!(protectionSummary instanceof HTMLElement))
+      throw new Error("Expected protection summary.");
+    const protection = protectionSummary.closest("details") as HTMLDetailsElement;
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await user.click(builderSummary);
+    expect(builder.open).toBe(false);
+
+    startRequest.resolve(
+      new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "invalid_run_configuration",
+            message: "Private contract violation detail.",
+            correlationId: "late-custom-rejection",
+            details: { path: ["trafficConfig", "maxDurationSeconds"] },
+            timestamp: "2026-06-20T00:00:00.000Z",
+          }),
+        ),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    expect(await screen.findByRole("alert", { name: "Fix these settings" })).toBeTruthy();
+    await waitFor(() => expect(builder.open).toBe(true));
+    expect(protection.open).toBe(true);
+    expect(document.activeElement).toBe(document.getElementById("custom-safety-cutoff"));
+    expect((document.getElementById("custom-safety-cutoff") as HTMLInputElement).value).toBe("2");
+  });
+
+  it("drops a late validation error for a traffic field that became inactive", async () => {
+    const user = userEvent.setup();
+    const startRequest = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) return startRequest.promise;
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    const builderSummary = screen.getByText("Customize a scenario");
+    const builder = builderSummary.closest("details") as HTMLDetailsElement;
+    await user.click(builderSummary);
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    await user.click(screen.getByLabelText("Steady stream"));
+    await user.click(builderSummary);
+
+    startRequest.resolve(
+      new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "invalid_run_configuration",
+            message: "Private stale field detail.",
+            correlationId: "stale-custom-rejection",
+            details: { path: ["trafficConfig", "buyerCount"] },
+            timestamp: "2026-06-20T00:00:00.000Z",
+          }),
+        ),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: "Start custom run" }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    expect(builder.open).toBe(false);
+    expect(screen.queryByRole("alert", { name: "Fix these settings" })).toBeNull();
+    expect(screen.queryByText(/Buyer count: Use an available value/)).toBeNull();
+    expect(document.getElementById("custom-buyers")).toBeNull();
   });
 
   it("uses a safe custom-form fallback for an unknown backend validation path", async () => {
@@ -1190,7 +1450,7 @@ describe("public browser starts", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     const form = screen.getByRole("form", { name: "Custom run builder" });
@@ -1252,24 +1512,23 @@ describe("public browser starts", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("alert", { name: "Operation failure" })).toBeNull();
 
-    await user.click(screen.getByText("Build your own run"));
+    await user.click(screen.getByText("Customize a scenario"));
     await user.click(screen.getByRole("button", { name: "Start custom run" }));
 
     const summary = await screen.findByRole("alert", { name: "Operation failure" });
     expect(document.activeElement).toBe(summary);
-    expect(
-      within(summary).getByText("The demo backend isn't ready yet — try again in a moment"),
-    ).toBeTruthy();
-    expect(within(summary).getByText("Check again before starting a run.")).toBeTruthy();
+    expect(within(summary).getByText("The previous run is still recovering")).toBeTruthy();
+    expect(within(summary).getByText(/Worker work may still settle/)).toBeTruthy();
     expect(within(summary).queryByRole("link")).toBeNull();
     expect(summary.textContent).not.toContain(
       "Backend conflict detail must not become public copy.",
     );
     await waitFor(() =>
-      expect(
-        screen.getAllByText("The demo backend isn't ready yet — try again in a moment"),
-      ).toHaveLength(3),
+      expect(screen.getAllByText("The previous run is still recovering")).toHaveLength(2),
     );
+    expect(
+      screen.queryByText("The demo backend isn't ready yet — try again in a moment"),
+    ).toBeNull();
   });
 });
 
@@ -1595,18 +1854,18 @@ describe("watch browser recovery", () => {
     expect(loadingMarkup).toContain("Run: checking availability");
     expect(loadingMarkup).toContain("Checking availability.");
     expect(loadingMarkup).not.toContain("No run has started");
-    expect(loadingMarkup).not.toContain("Sale evidence");
+    expect(loadingMarkup).not.toContain("data-watch-signals");
 
     expect(unavailableMarkup).toContain("Run: updates unavailable");
     expect(unavailableMarkup).toContain("Something didn");
     expect(unavailableMarkup).not.toContain("No run has started");
     expect(unavailableMarkup.toLowerCase()).not.toContain("not yet");
-    expect(unavailableMarkup).not.toContain("Sale evidence");
+    expect(unavailableMarkup).not.toContain("data-watch-signals");
 
     expect(idleMarkup).toContain("No run has started");
-    expect(idleMarkup).toContain("Start a demo");
+    expect(idleMarkup).toContain("Choose a simulation");
     expect(idleMarkup).toContain("No completed runs yet");
-    expect(idleMarkup).toContain("Technical details");
+    expect(idleMarkup).toContain("Run availability and updates");
     expect(idleMarkup.toLowerCase()).not.toContain("not yet");
     expect(idleMarkup).not.toContain("Live panels");
     expect(idleMarkup).not.toContain("in progress");
@@ -1736,7 +1995,8 @@ describe("watch browser recovery", () => {
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("7 waiting · peak 7");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
-    expect(markup).not.toContain("Reservation and confirmation summary");
+    // Run-owned outcome totals stay reachable in the grouped technical processing section.
+    expect(markup).toContain("Reservation and confirmation summary");
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
@@ -1874,7 +2134,7 @@ describe("watch browser recovery", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
-    render(
+    const { container } = render(
       createElement(OperatorDashboard, {
         initialRecovery: pendingDashboardRecovery(),
       }),
@@ -1886,9 +2146,25 @@ describe("watch browser recovery", () => {
 
     await screen.findByText("The latest information is temporarily unavailable");
     expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh", hidden: true })
+        .filter((element) => !element.closest("details:not([open])")),
+    ).toHaveLength(1);
+
+    fireEvent.click(screen.getByText("Technical details", { selector: "summary" }));
+
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
+    expect(
+      screen
+        .getAllByRole("button", { name: "Refresh", hidden: true })
+        .filter((element) => !element.closest("details:not([open])")),
+    ).toHaveLength(1);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
-    expect(screen.queryAllByText("Correlation watch-refresh-failed")).toHaveLength(0);
+    const connection = container.querySelector<HTMLElement>("#watch-advanced-connection");
+    if (!connection) throw new Error("Expected the technical connection group.");
+    expect(within(connection).getByRole("alert")).toBeTruthy();
   });
 });
 
@@ -1984,7 +2260,7 @@ describe("accepted Watch result handoff", () => {
     );
 
     expect(
-      screen.getByText("The exact result is not available yet.", { exact: false }),
+      screen.getByText("The saved result for this run is being checked", { exact: false }),
     ).toBeTruthy();
     expect(screen.queryByText("No completed runs yet")).toBeNull();
     expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
@@ -2124,13 +2400,508 @@ describe("accepted Watch result handoff", () => {
       }),
     );
 
+    // The accepted run keeps its own section and its exact report link.
+    expect(output).toContain("Your result");
     expect(output).toContain(`href="/run-history/${acceptedRunId}"`);
-    expect(output).toContain(`Live panels are following shared run <code>${newerRunId}</code>`);
+    // The shared run is labeled as the shared demo without exposing its identity here.
+    expect(output).toContain("Now running in the shared demo");
     expect(output).toContain("The surge is under way");
+    expect(output).not.toContain(`Live panels are following shared run`);
+  });
+});
+
+describe("watch composition", () => {
+  const acceptedRunId = "55555555-5555-4555-8555-555555555555";
+  const sharedRunId = "77777777-7777-4777-8777-777777777777";
+
+  function innermostByText(container: HTMLElement, needle: string): HTMLElement | null {
+    const match = [...container.querySelectorAll("*")].find(
+      (element) =>
+        element.textContent?.includes(needle) &&
+        ![...element.children].some((child) => child.textContent?.includes(needle)),
+    );
+    return (match as HTMLElement) ?? null;
+  }
+
+  function expectVisible(container: HTMLElement, needle: string): void {
+    const element = innermostByText(container, needle);
+    expect(element).not.toBeNull();
+    expect(element?.closest("details:not([open])")).toBeNull();
+  }
+
+  function expectHidden(container: HTMLElement, needle: string): void {
+    const element = innermostByText(container, needle);
+    expect(element).not.toBeNull();
+    expect(element?.closest("details:not([open])")).not.toBeNull();
+  }
+
+  const watchSurface = (ui: ReactElement) => ui;
+
+  function activeProjectionFixture(): DashboardProjection {
+    return dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      recentMetrics: [
+        {
+          metricName: "traffic.request_arrival_rate",
+          value: 8,
+          unit: "requests_per_second",
+          timestamp: "2026-06-20T00:00:11.000Z",
+        },
+      ],
+    });
+  }
+
+  function runInventoryFixture(): NonNullable<DashboardProjection["inventory"]> {
+    return {
+      saleOfferId: "22222222-2222-4222-8222-222222222222",
+      allocatedStock: 100,
+      remainingStock: 12,
+      reservedStock: 88,
+      pendingPersistenceCount: 0,
+      expiredReservationCount: 0,
+      oldestPendingPersistenceAgeSeconds: 0,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 88,
+        peakRatePerSecond: 88,
+        peakWindowSeconds: 1,
+        unit: "reservations_per_second",
+        measuredAt: "2026-06-20T00:00:11.000Z",
+      },
+      soldOutPressure: {
+        rejectionCount: 500,
+        latestObservedAt: "2026-06-20T00:00:11.000Z",
+      },
+      observedAt: "2026-06-20T00:00:11.000Z",
+      lastUpdatedAt: "2026-06-20T00:00:11.000Z",
+    };
+  }
+
+  function terminalProjectionFixture(runId: string): DashboardProjection {
+    return dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ runId, status: "completed", trafficStatus: "succeeded" }),
+      inventory: {
+        saleOfferId: "22222222-2222-4222-8222-222222222222",
+        allocatedStock: 250,
+        remainingStock: 0,
+        reservedStock: 250,
+        pendingPersistenceCount: 0,
+        expiredReservationCount: 0,
+        oldestPendingPersistenceAgeSeconds: 0,
+        reservationThroughput: {
+          windowSeconds: 60,
+          successfulReservationCount: 250,
+          peakRatePerSecond: 250,
+          peakWindowSeconds: 1,
+          unit: "reservations_per_second",
+          measuredAt: "2026-06-20T00:00:11.000Z",
+        },
+        soldOutPressure: {
+          rejectionCount: 750,
+          latestObservedAt: "2026-06-20T00:00:11.000Z",
+        },
+        observedAt: "2026-06-20T00:00:11.000Z",
+        lastUpdatedAt: "2026-06-20T00:00:11.000Z",
+      },
+      businessOutcome: {
+        acceptedReservations: 250,
+        reservedUnits: 250,
+        soldOutRejections: 750,
+        queuedOrders: 0,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 250,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 250,
+      },
+      recoveredAt: "2026-06-20T00:00:12.000Z",
+      revision: 2,
+    });
+  }
+
+  function qualifiedDetailFor(runId: string): PublicRunHistoryDetailResponse {
+    const detail = runHistoryDetailFixtureFor(runId);
+    return {
+      ...detail,
+      summary: {
+        ...detail.summary,
+        trafficDeliverySummary: {
+          ...detail.summary.trafficDeliverySummary,
+          trafficDeliveryStatus: "degraded",
+        },
+      },
+    };
+  }
+
+  it("keeps one verdict while the same-run saved report is preparing, then links and qualifies", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resourceNotFoundResponse(sharedRunId))
+      .mockResolvedValueOnce(jsonResponse(qualifiedDetailFor(sharedRunId)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: sharedRunId },
+          initialRecovery: available(terminalProjectionFixture(sharedRunId)),
+        }),
+      ),
+    );
+
+    // The known terminal result stays visible while only the saved report is pending.
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+    expectVisible(container, "All 250 available units were reserved without overselling.");
+    expectVisible(container, "Preparing saved report");
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeNull();
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(2_000));
+
+    // Availability confirms the link, and the visitor's own exact-run evidence qualifies it.
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeTruthy();
+    expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+  });
+
+  it("keeps the manual Check again retry for an exhausted same-run lookup", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(resourceNotFoundResponse(sharedRunId));
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      createElement(OperatorDashboard, {
+        acceptedResult: { status: "unavailable", runId: sharedRunId },
+        initialRecovery: available(terminalProjectionFixture(sharedRunId)),
+      }),
+    );
+
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    for (const delay of [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]) {
+      await act(async () => vi.advanceTimersByTimeAsync(delay));
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await act(async () => Promise.resolve());
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(screen.getAllByText("Final result")).toHaveLength(1);
+  });
+
+  it("separates an ID-only accepted run from the shared demo run without exposing UUIDs", () => {
+    const idOnlyAcceptedRunId = "88888888-8888-4888-8888-888888888888";
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: idOnlyAcceptedRunId },
+          initialRecovery: available(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+            }),
+          ),
+        }),
+      ),
+    );
+
+    expectVisible(container, "Your result");
+    expectVisible(container, "The saved result for this run is being checked");
+    expectHidden(container, idOnlyAcceptedRunId);
+    // A's card carries neither fabricated metadata nor B's counts.
+    const acceptedCard = container.querySelector('[data-accepted-result=""]');
+    expect(acceptedCard?.textContent).not.toContain("Preview 1k");
+    expect(acceptedCard?.textContent).not.toContain("Units left");
+    expectVisible(container, "Now running in the shared demo");
+    expectVisible(container, "The surge is under way");
+  });
+
+  it("opens technical details focused on a signal's full chart from its sparkline", async () => {
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(activeProjectionFixture()),
+        }),
+      ),
+    );
+
+    const arrivalsTile = screen.getByText("Arrivals").closest("button");
+    if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
+    fireEvent.click(arrivalsTile);
+
+    expect(
+      screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
+    ).toBe(true);
+    await waitFor(() => expect(document.activeElement?.id).toBe("watch-signal-arrival"));
+    expect(container.querySelector("#watch-signal-arrival")?.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("keeps the stream, samples, and report retries intact across repeated details toggles", async () => {
+    vi.useFakeTimers();
+    const activeFixture = activeProjectionFixture();
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === publicRunHistoryDetailProxyPath(acceptedRunId)) {
+        return Promise.resolve(resourceNotFoundResponse(acceptedRunId));
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(jsonResponse(activeFixture));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", FakeEventSource);
+    render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          acceptedResult: { status: "awaiting", runId: acceptedRunId },
+          initialRecovery: available(activeFixture),
+        }),
+      ),
+    );
+    await act(async () => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const arrivalLineBefore =
+      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+    expect(arrivalLineBefore).not.toBe("");
+
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(1);
+
+    const detailsSummary = screen.getByText("Technical details", { selector: "summary" });
+    for (let index = 0; index < 4; index += 1) fireEvent.click(detailsSummary);
+
+    // One stream, one start-free page, preserved samples, and the live scope still on screen.
+    expect(FakeEventSource.instances).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(0);
+    const arrivalLineAfter =
+      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+    expect(arrivalLineAfter).toBe(arrivalLineBefore);
+    expect(screen.getByText("The surge is under way")).toBeTruthy();
+
+    // The scheduled report retry continues on its original backoff instead of restarting.
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(1);
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+    expect(
+      fetchMock.mock.calls.filter(
+        ([input]) => String(input) === publicRunHistoryDetailProxyPath(acceptedRunId),
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("warns about a failed authoritative read while last-known counts stay visible", async () => {
+    const activeFixture = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      inventory: runInventoryFixture(),
+      businessOutcome: {
+        acceptedReservations: 60,
+        reservedUnits: 88,
+        soldOutRejections: 500,
+        queuedOrders: 40,
+        processingOrders: 20,
+        retryingOrders: 0,
+        confirmedOrders: 0,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+    });
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const failedRead = () =>
+      new Response(
+        JSON.stringify(
+          errorPayloadSchema.parse({
+            code: "backend_unavailable",
+            message: "Recovery temporarily unavailable.",
+            correlationId: "watch-basic-sync-failure",
+            timestamp: "2026-06-20T00:00:11.000Z",
+          }),
+        ),
+        { status: 503, headers: { "content-type": "application/json" } },
+      );
+    const pendingRefresh = deferred<Response>();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(failedRead()).mockReturnValueOnce(pendingRefresh.promise),
+    );
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(activeFixture),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    // The stream stays connected; only the authoritative read fails.
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const detailsRefresh = container.querySelector<HTMLButtonElement>(
+      "#watch-advanced-connection button",
+    );
+    if (!detailsRefresh) throw new Error("Expected the technical-details refresh control.");
+    fireEvent.click(detailsRefresh);
+
+    await screen.findAllByText("Last-known-good data");
+    expectVisible(container, "Last-known-good data");
+    expectVisible(container, "Retry scheduled in 1 s (attempt 1).");
+    expectVisible(container, "Updated");
+    // The last-known counts stay visible beside the warning.
+    expectVisible(container, "Units left");
+    expectVisible(container, "Awaiting confirmation");
+    // The connected stream means no reconnect announcement is duplicated here.
+    expect(screen.queryByText("Live updates interrupted")).toBeNull();
+    fireEvent.click(screen.getByText("Technical details", { selector: "summary" }));
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Refresh", hidden: true })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    const refreshing = screen.getByRole("button", { name: "Refreshing" }) as HTMLButtonElement;
+    expect(refreshing.disabled).toBe(true);
+    expectVisible(container, "Refreshing the latest run data now.");
+    pendingRefresh.resolve(failedRead());
+    await act(async () => pendingRefresh.promise);
+    expectVisible(container, "Retry scheduled in 1 s (attempt 1).");
+  });
+
+  it("shows a failed authoritative read after an idle snapshot", async () => {
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify(
+            errorPayloadSchema.parse({
+              code: "backend_unavailable",
+              message: "Recovery temporarily unavailable.",
+              correlationId: "watch-idle-sync-failure",
+              timestamp: "2026-06-20T00:00:11.000Z",
+            }),
+          ),
+          { status: 503, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(dashboardRecoveryFixture()),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+    const detailsRefresh = container.querySelector<HTMLButtonElement>(
+      "#watch-advanced-connection button",
+    );
+    if (!detailsRefresh) throw new Error("Expected the technical-details refresh control.");
+    fireEvent.click(detailsRefresh);
+
+    await screen.findAllByText("Last-known-good data");
+    expectVisible(container, "Last-known-good data");
+    expectVisible(container, "Choose a simulation");
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeTruthy();
+    expect(container.querySelector('[data-sync-warning=""] time')).toBeNull();
+  });
+
+  it("keeps the reading age visible when a connected run's readings go stale", async () => {
+    const staleFixture = dashboardRecoveryFixture({
+      currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
+      inventory: runInventoryFixture(),
+      businessOutcome: {
+        acceptedReservations: 60,
+        reservedUnits: 88,
+        soldOutRejections: 500,
+        queuedOrders: 40,
+        processingOrders: 20,
+        retryingOrders: 0,
+        confirmedOrders: 0,
+        failedOrders: 0,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 0,
+      },
+    });
+    vi.stubGlobal("EventSource", FakeEventSource);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(staleFixture)));
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(staleFixture),
+        }),
+      ),
+    );
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+
+    await screen.findAllByText("stale, showing last known values", { exact: false });
+    expect(container.querySelectorAll('[data-sync-warning=""]')).toHaveLength(1);
+    expectVisible(container, "stale, showing last known values");
+    expectVisible(container, "Units left");
+    // Stale readings alone are not a sync failure: no last-known-good block appears.
+    expect(screen.queryByText("Last-known-good data")).toBeNull();
+  });
+
+  it("targets the Signals group from a sparkline when no chart evidence exists yet", async () => {
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(
+            dashboardRecoveryFixture({
+              currentRun: demoRunFixture({ status: "starting", runId: sharedRunId }),
+            }),
+          ),
+        }),
+      ),
+    );
+
+    const arrivalsTile = screen.getByText("Arrivals").closest("button");
+    if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
+    fireEvent.click(arrivalsTile);
+
+    expect(
+      screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
+    ).toBe(true);
+    await waitFor(() => expect(document.activeElement?.id).toBe("watch-advanced-signals"));
+    expect(container.querySelector("#watch-advanced-signals")?.hasAttribute("hidden")).toBe(false);
   });
 });
 
 describe("web page smoke coverage", () => {
+  it("keeps Demo compact with independent technical details", async () => {
+    vi.mocked(getPublicDemoSurface).mockResolvedValue(publicDemoSurfaceFixture());
+    const demo = await DemoDashboardPage();
+
+    render(demo);
+
+    expect(
+      screen.getByText(/Starting a bounded run uses the one shared demo runtime/),
+    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "How the surge stays safe" })).toBeTruthy();
+    const detailsSummary = screen.getByText("Technical details", { selector: "summary" });
+    const details = detailsSummary.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await userEvent.setup().click(detailsSummary);
+    expect(details.open).toBe(true);
+  });
+
+  it("keeps Watch technical details local and collapsed", async () => {
+    vi.mocked(getRunHistoryPage).mockResolvedValue(available(runHistoryListFixture()));
+    const watch = await WatchPage();
+
+    render(watch);
+
+    const details = screen
+      .getByText("Technical details", { selector: "summary" })
+      .closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await userEvent.setup().click(details.querySelector("summary") as HTMLElement);
+    expect(details.open).toBe(true);
+  });
+
   it("renders the routed page surfaces with stubbed data reads", async () => {
     vi.stubGlobal("EventSource", undefined);
     vi.stubGlobal(
@@ -2170,9 +2941,9 @@ describe("web page smoke coverage", () => {
     expect(screen.getByRole("heading", { name: "Preview 1k" })).toBeTruthy();
     cleanup();
 
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     expect(aboutMarkup.match(/k6/g)).toHaveLength(1);
-    render(createElement(AboutPage));
+    render(await AboutPage());
     expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
   });
 
@@ -2181,8 +2952,13 @@ describe("web page smoke coverage", () => {
       await WatchPage({ searchParams: Promise.resolve({ acceptedRunId: "not-a-uuid" }) }),
     );
 
-    expect(output).toContain("Invalid run context");
+    expect(output).toContain("This Watch link is invalid");
+    expect(output).toContain("This link does not identify a saved run");
     expect(output).toContain("No result has been selected");
+    // Concise history and demo navigation, without exposing identifiers.
+    expect(output).toContain('href="/run-history"');
+    expect(output).toContain("Open run history");
+    expect(output).toContain("Choose a simulation");
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
     expect(getRunHistoryPage).not.toHaveBeenCalled();
   });
@@ -2551,10 +3327,6 @@ function runHistorySummaryFixture(
       notes: [],
     },
     serverReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      serverReservationTimingSummary,
-      10,
-    ),
     businessOutcomeSummary: {
       acceptedReservations: 6,
       reservedUnits: 6,

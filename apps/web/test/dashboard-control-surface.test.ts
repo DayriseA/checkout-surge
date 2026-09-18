@@ -57,15 +57,15 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Curated surge presets");
     expect(markup).toContain("Preview 1k");
     expect(markup).not.toContain("Forced outage");
-    expect(markup).toContain("Build your own run");
+    expect(markup).toContain("Customize a scenario");
     expect(markup).toContain("Start custom run");
     expect(markup.match(/Starting a bounded run uses the one shared demo runtime/g)?.length).toBe(
-      2,
+      1,
     );
     expect(markup).toContain("other visitors can&#x27;t start until it finishes");
     expect(markup).toContain("A successful start opens the live view.");
     expect(markup).toContain("Capacity (orders/second)");
-    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Build your own run"));
+    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Customize a scenario"));
     expect(markup).toContain("<form");
     expect(markup).not.toContain("bg-bg");
     expect(markup).toContain("min-h-11");
@@ -147,6 +147,8 @@ describe("dashboard control surface", () => {
     surface.presets.data.presets = [];
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
     expect(markup).toContain("No curated public presets are currently available.");
+    expect(markup).toContain("Scenarios unavailable");
+    expect(markup).not.toContain(">ready<");
   });
 
   it("renders reordered and newly-added public presets from response data", () => {
@@ -250,7 +252,9 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("50 ms");
     expect(markup).toContain("Yes — every buyer sends the same request twice");
     expect(markup).toContain("The API safely replays the same accepted reservation");
-    expect(markup).toContain("What to watch for");
+    expect(markup).toContain("What happens");
+    expect(markup).toContain("Each buyer tries twice");
+    expect(markup).toContain("Detailed assumptions");
     expect(markup).toContain("Duplicate clicks replay one reservation");
     expect(markup).toContain("Reservations confirm cleanly");
     expect(markup).not.toContain("happy_path");
@@ -270,6 +274,7 @@ describe("dashboard control surface", () => {
     );
     expect(onlyCustomMarkup).toContain("No curated public presets are currently available.");
     expect(onlyCustomMarkup).toContain("Start custom run");
+    expect(onlyCustomMarkup).toContain("Custom scenario ready");
 
     const noCustom = publicSurfaceFixture(null);
     if (noCustom.presets.status !== "available") throw new Error("Expected available presets.");

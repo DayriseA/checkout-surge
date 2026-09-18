@@ -9,7 +9,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
-  evaluateFastReservationTarget,
   type PublicRunHistoryDetailResponse,
   publicRunHistoryDetailResponseSchema,
   publicRunHistorySummarySchema,
@@ -713,10 +712,6 @@ function summaryFixture(evidence: RunResultEvidence): RunHistorySummary {
       notes: [],
     },
     serverReservationTimingSummary: emptyServerReservationTimingSummary,
-    fastReservationTargetEvaluation: evaluateFastReservationTarget(
-      emptyServerReservationTimingSummary,
-      generator.transportAttemptCounts.completedRequests,
-    ),
     businessOutcomeSummary: {
       acceptedReservations: durable.uniqueReservations,
       reservedUnits: durable.reservedUnits,

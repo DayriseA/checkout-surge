@@ -5,7 +5,7 @@ export function ScenarioStrip({ configSnapshot }: { configSnapshot: AcceptedRunC
   const facts = deriveRunConfigFacts(configSnapshot);
   return (
     <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Frozen scenario</p>
+      <p className="m-0 text-xs font-bold uppercase text-muted">Scenario settings</p>
       <h2 className="m-0 mt-1 text-lg font-bold leading-tight text-ink">
         What this run was configured to test
       </h2>

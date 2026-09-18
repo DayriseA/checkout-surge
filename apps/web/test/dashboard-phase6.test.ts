@@ -768,15 +768,17 @@ describe("Phase 6 projection dashboard", () => {
    * the whole desktop-row contract, spans included: a separate per-panel span test would only
    * restate what the panels found here already prove.
    */
-  it("places the run ERP and consistency panels side by side in the dashboard composition", () => {
+  it("places the run ERP and consistency panels side by side in the Processing group", () => {
     const markup = renderToStaticMarkup(
       createElement(OperatorDashboard, {
         initialRecovery: available(projectionFixture()),
       }),
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
-    const grid = document.querySelector(".grid-cols-12");
-    if (!grid) throw new Error("Expected a 12-column dashboard grid.");
+    const processing = document.querySelector("#watch-advanced-processing");
+    if (!processing) throw new Error("Expected the Processing technical group.");
+    const grid = processing.querySelector(".grid-cols-12");
+    if (!grid) throw new Error("Expected a 12-column Processing grid.");
     const erpPanel = panelSection(document, "Simulated ERP outcomes");
     const lagPanel = panelSection(document, "Fast reservation vs final confirmation");
     // Positions among the grid's own children, by element identity. Comparing indices rather than
@@ -804,7 +806,7 @@ describe("Phase 6 projection dashboard", () => {
     "idle",
     "active",
     "completed",
-  ] as const)("fills every Technical details desktop row for %s evidence", (status) => {
+  ] as const)("keeps every grouped technical section's desktop rows filled for %s evidence", (status) => {
     const projection = projectionFixture();
     if (status === "idle") {
       projection.currentRun = null;
@@ -825,39 +827,68 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
-    const technical = [...document.querySelectorAll("details")].find(
-      (details) => details.querySelector(":scope > summary")?.textContent === "Technical details",
+    const groups = [...document.querySelectorAll("[id^='watch-advanced-']")];
+    expect(groups.map((group) => group.id)).toEqual(
+      status === "idle"
+        ? ["watch-advanced-connection"]
+        : [
+            "watch-advanced-scenario",
+            "watch-advanced-signals",
+            "watch-advanced-processing",
+            "watch-advanced-consistency",
+            "watch-advanced-connection",
+          ],
     );
-    const grid = technical?.querySelector(":scope > .grid-cols-12");
-    if (!grid) throw new Error("Expected the Technical details 12-column grid.");
-    const spans = [...grid.children].map((panel) => {
-      const span = [...panel.classList]
-        .map((className) => /^col-span-(\d+)$/.exec(className)?.[1])
-        .find(Boolean);
-      if (!span) throw new Error(`Expected a desktop span on ${panel.textContent}.`);
-      return Number(span);
-    });
+    for (const group of groups) {
+      const grid = group.querySelector(".grid-cols-12");
+      if (!grid) throw new Error(`Expected a 12-column grid in #${group.id}.`);
+      const spans = [...grid.children].map((panel) => {
+        const span = [...panel.classList]
+          .map((className) => /^col-span-(\d+|full)$/.exec(className)?.[1])
+          .find(Boolean);
+        if (!span) throw new Error(`Expected a desktop span on ${panel.textContent}.`);
+        // `col-span-full` is the panels' existing full-width form of 12 columns.
+        return span === "full" ? 12 : Number(span);
+      });
 
-    let rowWidth = 0;
-    for (const span of spans) {
-      rowWidth += span;
-      expect(rowWidth).toBeLessThanOrEqual(12);
-      if (rowWidth === 12) rowWidth = 0;
+      let rowWidth = 0;
+      for (const span of spans) {
+        rowWidth += span;
+        expect(rowWidth).toBeLessThanOrEqual(12);
+        if (rowWidth === 12) rowWidth = 0;
+      }
+      expect(rowWidth).toBe(0);
+      expect(spans).toEqual(groupSpans(group.id));
     }
-    expect(rowWidth).toBe(0);
-    expect(spans).toEqual(
-      status === "idle" ? [12] : status === "active" ? [4, 8, 12, 12] : [4, 8, 12, 6, 6, 12, 12],
-    );
+    const processing = document.querySelector("#watch-advanced-processing");
     if (status === "completed") {
+      const grid = processing?.querySelector(".grid-cols-12");
+      if (!grid) throw new Error("Expected the Processing 12-column grid.");
       const children = [...grid.children];
       const outcomesIndex = children.findIndex((panel) =>
         panel.textContent?.includes("Reservation and confirmation summary"),
       );
-      const systemIndex = children.findIndex((panel) =>
-        panel.textContent?.includes("System status across all runs and visitors"),
+      expect(outcomesIndex).toBe(0);
+      expect(document.querySelector("#watch-advanced-consistency")?.textContent).toContain(
+        "Evidence and reconciliation proof",
       );
-      expect(outcomesIndex).toBeGreaterThan(-1);
-      expect(systemIndex).toBe(outcomesIndex + 1);
+    }
+
+    function groupSpans(groupId: string): number[] {
+      switch (groupId) {
+        case "watch-advanced-scenario":
+          return [12, 12];
+        case "watch-advanced-signals":
+          return [12];
+        case "watch-advanced-consistency":
+          return status === "completed" ? [12, 12] : [12];
+        case "watch-advanced-processing":
+          return [12, 6, 6];
+        case "watch-advanced-connection":
+          return status === "idle" ? [12] : [4, 8, 12];
+        default:
+          throw new Error(`Unexpected group ${groupId}.`);
+      }
     }
   });
 

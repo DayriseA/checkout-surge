@@ -28,12 +28,12 @@ import {
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
+import { publicVocabulary, trafficModeLabel } from "../lib/presentation/public-vocabulary";
 import {
-  outcomeFocusLabel,
-  publicVocabulary,
-  trafficModeLabel,
-} from "../lib/presentation/public-vocabulary";
-import { deriveRunConfigFacts } from "../lib/presentation/run-config-presentation";
+  deriveRunConfigFacts,
+  presetDistinguishingBehavior,
+  presetOutcomeFocus,
+} from "../lib/presentation/run-config-presentation";
 import {
   deriveRunPresentationState,
   type PresentationState,
@@ -94,24 +94,37 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       ? draftFromSnapshot(surface.runtimePolicy.data.policy.publicCustomDefaults)
       : fallbackDraft(),
   );
+  const customModeRef = useRef(customDraft.mode);
+  customModeRef.current = customDraft.mode;
   const [customSubmissionFailure, setCustomSubmissionFailure] =
     useState<CustomSubmissionFailure | null>(null);
   const customValidationEntries =
     customSubmissionFailure?.kind === "validation" ? customSubmissionFailure.entries : [];
   const customSummaryRef = useRef<HTMLDivElement>(null);
+  const customBuilderRef = useRef<HTMLDetailsElement>(null);
   const advancedSettingsRef = useRef<HTMLDetailsElement>(null);
+  const [customBuilderOpen, setCustomBuilderOpen] = useState(false);
+  const [customDraftEdited, setCustomDraftEdited] = useState(false);
 
   useEffect(() => {
+    if (!customSubmissionFailure) return;
+    if (customBuilderRef.current) customBuilderRef.current.open = true;
+    setCustomBuilderOpen(true);
     if (
-      customValidationEntries.some((entry) => entry.group === "advanced") &&
-      advancedSettingsRef.current
+      customSubmissionFailure.kind === "validation" &&
+      customSubmissionFailure.entries.some((entry) => entry.group === "advanced")
     ) {
-      advancedSettingsRef.current.open = true;
+      if (advancedSettingsRef.current) advancedSettingsRef.current.open = true;
     }
-  }, [customValidationEntries]);
-
-  useEffect(() => {
-    if (customSubmissionFailure) customSummaryRef.current?.focus();
+    if (customSubmissionFailure.kind === "validation") {
+      const target = customSubmissionFailure.entries
+        .filter((entry) => entry.group !== "form")
+        .map((entry) => document.getElementById(entry.targetId))
+        .find((element) => element !== null);
+      (target ?? customSummaryRef.current)?.focus();
+    } else {
+      customSummaryRef.current?.focus();
+    }
   }, [customSubmissionFailure]);
 
   const {
@@ -275,6 +288,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     surface.presets.status !== "available" ||
     recovery.status !== "available";
   const customStartDisabled = startDisabled;
+  const startOptionsAvailable =
+    curatedPresets.length > 0 || Boolean(runtimePolicy && customPreset && customConfig);
   // Derived post-start reconciliation window: a start is pending its post-failure
   // reconciliation while the failed-start presentation is up and the starting slug has
   // not been released (it is only released once both required reads complete).
@@ -282,6 +297,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
     setCustomDraft(update);
+    setCustomDraftEdited(true);
     setCustomSubmissionFailure(null);
   }
 
@@ -334,10 +350,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         isCustom &&
         (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
       ) {
-        setCustomSubmissionFailure({
-          kind: "validation",
-          entries: presentCustomRunIssues([customValidationPath(result.details?.path)]),
-        });
+        const entries = presentCustomRunIssues([customValidationPath(result.details?.path)]).filter(
+          (entry) => customEntryAppliesToMode(entry, customModeRef.current),
+        );
+        setCustomSubmissionFailure(entries.length > 0 ? { kind: "validation", entries } : null);
         return;
       }
 
@@ -381,6 +397,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </h2>
           </div>
           <StartGate
+            isStarting={startingSlug !== null}
             isRetryScheduled={isRetryScheduled}
             onRetry={
               startConflictBlock === "reset_incomplete"
@@ -391,6 +408,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             }
             postStartReconciliationPending={postStartReconciliationPending}
             readiness={readiness}
+            readyLabel={curatedPresets.length > 0 ? "ready" : "Custom scenario ready"}
             recovery={recovery}
             retriesExhausted={retriesExhausted}
             retryAttempt={retryAttempt}
@@ -400,14 +418,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             startRetryAfterMs={
               startRetryUntil === null ? null : Math.max(0, startRetryUntil - Date.now())
             }
+            startOptionsAvailable={startOptionsAvailable}
           />
         </div>
-        {recovery.status === "available" && recovery.data.resetRecovery === "incomplete" ? (
-          <p role="status">
-            The demo is temporarily unavailable while operator recovery completes. Worker work may
-            still settle; new runs are unavailable.
-          </p>
-        ) : null}
         <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
@@ -432,40 +445,51 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     <h3 className="m-0 text-base font-bold text-ink" id={headingId}>
                       {preset.display.name}
                     </h3>
-                    <span className="text-sm leading-5 text-muted">
-                      {preset.display.description}
-                    </span>
                   </div>
-                  <dl className="m-0 mb-3 grid grid-cols-2 gap-3 text-sm">
-                    <Fact
-                      label="Scenario"
-                      value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
-                    />
-                    <Fact label={facts.surgeLabel} value={facts.surgeValue} />
+                  <dl className="m-0 mb-3 grid grid-cols-3 gap-3 text-sm max-[900px]:grid-cols-2">
+                    <Fact label={facts.demandLabel} value={facts.demandValue} />
                     <Fact
                       label={publicVocabulary.startingStock}
                       value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
                     />
-                    <Fact
-                      label="Simulated ERP capacity"
-                      value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
-                    />
-                    <Fact
-                      label="Simulated ERP delay per order"
-                      value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
-                    />
-                    <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
-                    <Fact
-                      label="Expected sold-out rejections"
-                      value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
-                    />
-                    <Fact label="Approximate settling" value={facts.settlingCopy} />
-                    <Fact label="What to watch for" value={facts.outcomeFocus} />
+                    <Fact label="What happens" value={facts.distinguishingBehavior} />
                   </dl>
-                  <ConditionalCaveat show={facts.hasDuplicateAttempts}>
-                    The API safely replays the same accepted reservation, so accepted responses can
-                    exceed unique reservations in the completed result.
-                  </ConditionalCaveat>
+                  <details className="mb-3">
+                    <summary className="cursor-pointer rounded text-sm font-semibold text-accent ring-accent focus-visible:outline-none focus-visible:ring-2">
+                      Technical details
+                      <span className="sr-only"> for {preset.display.name}</span>
+                    </summary>
+                    <div className="mt-3 grid gap-3">
+                      <p className="m-0 text-sm leading-5 text-muted">
+                        {preset.display.description}
+                      </p>
+                      <dl className="m-0 grid grid-cols-2 gap-3 text-sm">
+                        <Fact
+                          label="Scenario"
+                          value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
+                        />
+                        <Fact
+                          label="Simulated ERP capacity"
+                          value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
+                        />
+                        <Fact
+                          label="Simulated ERP delay per order"
+                          value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
+                        />
+                        <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
+                        <Fact
+                          label="Expected sold-out rejections"
+                          value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
+                        />
+                        <Fact label="Approximate settling" value={facts.settlingCopy} />
+                        <Fact label="Detailed assumptions" value={facts.outcomeFocus} />
+                      </dl>
+                      <ConditionalCaveat show={facts.hasDuplicateAttempts}>
+                        The API safely replays the same accepted reservation, so accepted responses
+                        can exceed unique reservations in the completed result.
+                      </ConditionalCaveat>
+                    </div>
+                  </details>
                   <button
                     className={`${primaryButtonClassName} mt-3`}
                     disabled={startDisabled}
@@ -489,9 +513,16 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         )}
       </section>
 
-      <details className={`${panelClassName} col-span-12`}>
+      <details
+        className={`${panelClassName} col-span-12`}
+        onToggle={(event) => setCustomBuilderOpen(event.currentTarget.open)}
+        ref={customBuilderRef}
+      >
         <summary className="cursor-pointer text-base font-bold text-ink">
-          Build your own run
+          Customize a scenario
+          {!customBuilderOpen && customDraftEdited ? (
+            <span className="ml-2 text-sm font-normal text-muted">Edited settings retained</span>
+          ) : null}
         </summary>
         {runtimePolicy && customPreset && customConfig ? (
           <form
@@ -733,7 +764,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               ) : null}
             </fieldset>
 
-            <details className="rounded-lg border border-border p-3" ref={advancedSettingsRef}>
+            <details
+              className="rounded-lg border border-border p-3"
+              id="custom-protection-settings"
+              ref={advancedSettingsRef}
+            >
               <summary className="cursor-pointer font-bold text-ink">
                 Advanced protection settings
               </summary>
@@ -790,7 +825,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <p className="m-0 text-sm leading-6 text-muted-strong">
               {publicRunBudgetCopy(runtimePolicy)}
             </p>
-            <SharedRuntimeDisclosure />
             {customSubmissionFailure ? (
               <CustomErrorSummary failure={customSubmissionFailure} summaryRef={customSummaryRef} />
             ) : null}
@@ -840,9 +874,12 @@ export function derivePresetCardFacts(preset: DemoPresetContract) {
     surgeValue: configFacts.surgeValue,
     hasDuplicateAttempts: configFacts.hasDuplicateAttempts,
     duplicateAttempts: configFacts.duplicateAttempts,
+    demandLabel: configFacts.demandLabel,
+    demandValue: configFacts.demandValue,
+    distinguishingBehavior: presetDistinguishingBehavior(preset),
     expectedSoldOutCount: Math.max(0, uniqueAttempts - preset.inventoryConfig.startingStock),
     settlingCopy: `Usually about ${formatDurationMs(settlingSeconds * 1_000) ?? `${settlingSeconds}s`} on the demo host; actual time depends on the environment`,
-    outcomeFocus: preset.display.outcomeFocus.map(outcomeFocusLabel).join(" · "),
+    outcomeFocus: presetOutcomeFocus(preset),
   };
 }
 
@@ -1068,10 +1105,12 @@ function Unavailable({ read, onRetry }: { read: BackendRead<unknown>; onRetry?: 
 }
 
 function StartGate({
+  isStarting,
   isRetryScheduled,
   onRetry,
   postStartReconciliationPending,
   readiness,
+  readyLabel,
   recovery,
   retriesExhausted,
   retryAttempt,
@@ -1079,11 +1118,14 @@ function StartGate({
   presentation,
   statusMessage,
   startRetryAfterMs,
+  startOptionsAvailable,
 }: {
+  isStarting: boolean;
   isRetryScheduled: boolean;
   onRetry: () => void;
   postStartReconciliationPending: boolean;
   readiness: BackendRead<HealthResponse>;
+  readyLabel: string;
   recovery: BackendRead<DashboardProjection>;
   retriesExhausted: boolean;
   retryAttempt: number;
@@ -1091,6 +1133,7 @@ function StartGate({
   presentation: ErrorPresentation | null;
   statusMessage: string | null;
   startRetryAfterMs: number | null;
+  startOptionsAvailable: boolean;
 }) {
   const resetIncomplete =
     recovery.status === "available" && recovery.data.resetRecovery === "incomplete";
@@ -1125,28 +1168,35 @@ function StartGate({
           <StatusPill status={{ label: "Recovery incomplete", tone: "warning" }} />
         ) : runInProgress ? (
           <StatusPill status={deriveRunPresentationState(recovery)} />
-        ) : readinessBlocked ? (
-          <StatusPill status={readinessPresentation(readiness)} />
         ) : postStartReconciliationPending ? (
           <StatusPill status={{ label: "Checking run status", tone: "idle" }} />
+        ) : isStarting ? (
+          <StatusPill status={{ label: "Starting", tone: "progress" }} />
+        ) : startRetryAfterMs !== null ? (
+          <StatusPill status={{ label: "Cooldown", tone: "warning" }} />
+        ) : readinessBlocked ? (
+          <StatusPill status={readinessPresentation(readiness)} />
+        ) : !startOptionsAvailable ? (
+          <StatusPill status={{ label: "Scenarios unavailable", tone: "warning" }} />
         ) : (
-          <StatusPill status={{ label: "ready", tone: "idle" }} />
+          <StatusPill status={{ label: readyLabel, tone: "idle" }} />
         )}
       </div>
       {activeRunPresentation ? (
         <ErrorNotice
           className="w-full"
           context="public-start"
+          {...(resetIncomplete ? { onRetry } : {})}
           presentation={activeRunPresentation}
         />
       ) : null}
-      {!activeRunPresentation && readinessBlocked ? (
+      {!activeRunPresentation && !presentation && readinessBlocked ? (
         <ReadinessNotice
           {...(readiness.status === "unavailable" && readiness.retryAfterMs ? {} : { onRetry })}
           read={readiness}
         />
       ) : null}
-      {!activeRunPresentation && recoveryUnavailable ? (
+      {!activeRunPresentation && !presentation && recoveryUnavailable ? (
         <Unavailable onRetry={onRetry} read={recovery} />
       ) : null}
       {!activeRunPresentation &&
@@ -1173,6 +1223,13 @@ function StartGate({
       ) : null}
     </div>
   );
+}
+
+function customEntryAppliesToMode(entry: CustomRunSummaryEntry, mode: TrafficMode): boolean {
+  if (mode === "buyer-spike") {
+    return entry.fieldId !== "custom-rate" && entry.fieldId !== "custom-duration";
+  }
+  return entry.fieldId !== "custom-buyers" && entry.fieldId !== "custom-safety-cutoff";
 }
 
 export function readinessPresentation(readiness: BackendRead<HealthResponse>): PresentationState {

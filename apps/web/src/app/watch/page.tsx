@@ -45,14 +45,12 @@ export default async function WatchPage({
 
   return (
     <>
-      <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
-        <div>
-          <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Live watch</h1>
-          <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Follow the current flash-sale run: buyer traffic, inventory, order processing, and final
-            outcomes.
-          </p>
-        </div>
+      <header className="mb-2 flex items-baseline gap-4 max-[900px]:block">
+        <h1 className="m-0 shrink-0 text-2xl font-bold leading-tight text-ink">Live watch</h1>
+        <p className="m-0 text-sm leading-5 text-muted max-[900px]:mt-1">
+          Follow the flash sale from live activity to the final result; technical details are
+          available below.
+        </p>
       </header>
       <OperatorDashboard
         {...(acceptedResult ? { acceptedResult } : {})}

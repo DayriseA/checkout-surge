@@ -6,12 +6,11 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
-  evaluateFastReservationTarget,
   type PublicRunHistoryDetailResponse,
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -42,6 +41,9 @@ vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail,
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
+function publicReport(detail: PublicRunHistoryDetailResponse) {
+  return createElement(PublicRunHistoryDetail, { detail });
+}
 
 describe("run history", () => {
   it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
@@ -109,29 +111,88 @@ describe("run history", () => {
     }
   });
 
-  it("renders one compact comparison row without list-only technical evidence", () => {
-    const markup = renderToStaticMarkup(createElement(RunHistoryList, { history: listFixture() }));
+  it("renders the complete list", async () => {
+    const history = listFixture();
+    const first = history.summaries[0];
+    if (!first) throw new Error("Expected a run summary fixture.");
+    history.summaries.push(
+      {
+        ...first,
+        runId: "66666666-6666-4666-8666-666666666666",
+        presetName: "Order failure warning scenario",
+        resultOutcome: "completed-with-order-failures",
+        plannedAttempts: 1_200,
+        startingStock: 100,
+        uniqueReservations: 100,
+        soldOutRejections: 1_100,
+        confirmedOrders: 98,
+        failedOrders: 2,
+        overallDurationMs: 12_000,
+        convergenceDurationSeconds: 4,
+      },
+      {
+        ...first,
+        runId: "77777777-7777-4777-8777-777777777777",
+        presetName: "Result awaiting enough evidence to be verified",
+        resultOutcome: "outcome-indeterminate",
+      },
+    );
+    getRunHistoryPage.mockResolvedValue({ status: "available", data: history });
+    const page = await RunHistoryPage({});
+    const { container } = render(page);
 
-    expect(markup).toContain("Preview 1k");
-    expect(markup).toContain("2026-06-20 00:00:00 UTC");
-    expect(markup).toContain(
-      '<time class="mt-1 block text-sm text-muted" dateTime="2026-06-20T00:00:00.000Z">',
+    const completedRow = screen.getByRole("heading", { name: "Preview 1k" }).closest("article");
+    const warningRow = screen
+      .getByRole("heading", { name: "Order failure warning scenario" })
+      .closest("article");
+    if (!completedRow || !warningRow) throw new Error("Expected complete history rows.");
+    const expectVisibleFact = (row: HTMLElement, label: string, value: string) => {
+      const labelElement = within(row).getByText(label, { selector: "p" });
+      expect(labelElement.closest("[hidden]")).toBeNull();
+      expect(labelElement.nextElementSibling?.textContent).toBe(value);
+    };
+
+    expect(within(completedRow).getByText("20 attempts · 10 units")).toBeTruthy();
+    expect(within(completedRow).getByText("Completed")).toBeTruthy();
+    expectVisibleFact(completedRow, "Confirmed orders", "10");
+    expectVisibleFact(completedRow, "Failed orders", "0");
+    expectVisibleFact(completedRow, "Overall duration", "10 s");
+
+    expect(within(warningRow).getByText("1,200 attempts · 100 units")).toBeTruthy();
+    expect(within(warningRow).getByText("Completed with order failures").classList).toContain(
+      "text-warning",
     );
-    expect(markup).not.toContain("ago");
-    expect(markup).toContain("Completed");
-    expect(markup).toContain("Planned demand / starting stock");
-    expect(markup).toContain("Unique reservations secured / sold-out rejections");
-    expect(markup).toContain("Confirmed / failed orders");
-    expect(markup).toContain("Convergence");
-    expect(markup).toContain("xl:grid-cols-");
-    expect(markup).not.toContain("lg:grid-cols-");
-    expect(markup).not.toContain("55555555-5555-4555-8555-555555555555</");
-    expect(markup).not.toContain("Traffic delivery");
-    expect(markup).not.toContain("Final inventory");
-    expect(markup).not.toContain("Page 1 ·");
-    expect(markup).toContain(
-      '<span class="sr-only"> for Preview 1k run from 2026-06-20 00:00:00 UTC</span>',
+    expectVisibleFact(warningRow, "Confirmed orders", "98");
+    expectVisibleFact(warningRow, "Failed orders", "2");
+    expectVisibleFact(warningRow, "Overall duration", "12 s");
+
+    expect(screen.getByText("Result not fully verified").classList).toContain("text-muted-strong");
+    const occurredAt = completedRow.querySelector("time");
+    expect(occurredAt?.dateTime).toBe("2026-06-20T00:00:00.000Z");
+    expect(occurredAt?.textContent).toContain("2026-06-20 00:00:00 UTC");
+    const reportLink = within(completedRow).getByRole("link", {
+      name: "View report for Preview 1k run from 2026-06-20 00:00:00 UTC",
+    });
+    expect(reportLink.getAttribute("href")).toBe(
+      "/run-history/55555555-5555-4555-8555-555555555555",
     );
+    for (const row of container.querySelectorAll("article")) {
+      expect(within(row as HTMLElement).getAllByRole("link")).toHaveLength(1);
+    }
+    expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(3);
+    expect(screen.getAllByText("Sold-out rejections")).toHaveLength(3);
+    expect(screen.getAllByText("Convergence duration")).toHaveLength(3);
+    expect(screen.getByText(/Convergence measures from the end of traffic dispatch/)).toBeTruthy();
+
+    expectVisibleFact(completedRow, "Unique reservations secured", "10");
+    expectVisibleFact(completedRow, "Sold-out rejections", "10");
+    expectVisibleFact(completedRow, "Convergence duration", "2 s");
+    expectVisibleFact(warningRow, "Unique reservations secured", "100");
+    expectVisibleFact(warningRow, "Sold-out rejections", "1,100");
+    expectVisibleFact(warningRow, "Convergence duration", "4 s");
+    expect(container.textContent).not.toContain("Traffic delivery");
+    expect(container.textContent).not.toContain("Final inventory");
+    expect(container.textContent).not.toContain("55555555-5555-4555-8555-555555555555");
   });
 
   it("names detail links and keeps destructive controls outside named pagination", () => {
@@ -152,6 +213,10 @@ describe("run history", () => {
         createElement(RunHistoryList, { history }),
       ),
     );
+
+    expect(screen.queryByRole("group", { name: "View" })).toBeNull();
+    expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(2);
+    expect(screen.getAllByText("Convergence duration")).toHaveLength(2);
 
     expect(
       screen.getByRole("link", {
@@ -181,13 +246,13 @@ describe("run history", () => {
   });
 
   it("handles empty, multiple-page, and out-of-range run states", () => {
-    expect(
-      renderToStaticMarkup(
-        createElement(RunHistoryList, {
-          history: { ...listFixture(), summaries: [], totalCount: 0 },
-        }),
-      ),
-    ).toContain("No runs yet");
+    const empty = renderToStaticMarkup(
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), summaries: [], totalCount: 0 },
+      }),
+    );
+    expect(empty).toContain("No runs yet");
+    expect(empty).toMatch(/href="\/"[^>]*>Start a simulation<\/a>/);
 
     expect(
       renderToStaticMarkup(
@@ -239,14 +304,14 @@ describe("run history", () => {
       createElement(PublicRunHistoryDetail, { detail: detailFixture() }),
     );
 
-    expect(markup).toContain("Accepted configuration");
+    expect(markup).toContain("Scenario settings");
     expect(markup).toContain("Traffic");
     expect(markup).toContain("Inventory");
     expect(markup).toContain("Simulated ERP");
     expect(markup).toContain("Backpressure");
     expect(markup).toContain("Evidence and reconciliation proof");
-    expect(markup).toContain("Gold signals");
-    expect(markup).toContain("Client observation and delivery quality");
+    expect(markup).toContain("Signals");
+    expect(markup).toContain("Delivery and measurements");
     expect(markup).toContain("Checkout response p95 (client-observed)");
     expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("Simulated ERP call p95");
@@ -270,9 +335,13 @@ describe("run history", () => {
     );
     expect(deliveryPill).toBeDefined();
     expect([...(deliveryPill?.classList ?? [])]).not.toContain("whitespace-nowrap");
-    expect(markup).toContain("Lifecycle and final inventory");
+    expect(markup).toContain("Lifecycle and reference");
     expect(markup).toContain("Run ended");
-    expect(markup).toContain("Technical details");
+    expect(markup).toContain('id="report-advanced-scenario"');
+    expect(markup).toContain('id="report-advanced-signals"');
+    expect(markup).toContain('id="report-advanced-consistency"');
+    expect(markup).toContain('id="report-advanced-measurements"');
+    expect(markup).toContain('id="report-advanced-lifecycle"');
     expect(markup.match(/55555555-5555-4555-8555-555555555555/g)).toHaveLength(1);
     expect(markup).not.toContain("Failed attempts");
     expect(markup).not.toContain("Timed-out attempts");
@@ -284,6 +353,17 @@ describe("run history", () => {
     expect(markup).not.toContain("source");
     expect(markup).not.toContain("saleOffer");
     expect(markup).not.toMatch(/finalization|finalized/i);
+
+    const sectionOrder = [
+      "report-advanced-signals",
+      "report-advanced-consistency",
+      "report-advanced-scenario",
+      "report-advanced-measurements",
+      "report-advanced-lifecycle",
+    ].map((id) => markup.indexOf(`id="${id}"`));
+    expect(sectionOrder).toEqual([...sectionOrder].sort((left, right) => left - right));
+    expect(markup.indexOf('aria-label="Report actions"')).toBeGreaterThan(sectionOrder.at(-1) ?? 0);
+    expect(markup).toContain('href="#main-content"');
   });
 
   it("promotes sanitized failure guidance and nonzero ERP failures", () => {
@@ -298,10 +378,19 @@ describe("run history", () => {
     expect(markup).not.toContain("load_orchestrator_unavailable");
 
     detail.summary.failureCategory = "reconciliation";
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
     const reconciliationMarkup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail }),
     );
-    expect(reconciliationMarkup).toContain("did not reconcile in the final evidence");
+    expect(reconciliationMarkup).toContain(
+      "The final counts did not agree, so the result could not be verified",
+    );
     expect(reconciliationMarkup).not.toMatch(/finalization|finalized/i);
   });
 
@@ -348,6 +437,41 @@ describe("run history", () => {
     expect(markup).toContain(">60<");
   });
 
+  it("renders all four delivery summary values and preserves missing measurements", () => {
+    const detail = detailFixture();
+    detail.summary.serverReservationTimingSummary = {
+      ...detail.summary.serverReservationTimingSummary,
+      redisAtomicReservation: {
+        ...detail.summary.serverReservationTimingSummary.redisAtomicReservation,
+        p95Ms: 5,
+      },
+    };
+    const { container, unmount } = render(createElement(PublicRunHistoryDetail, { detail }));
+    const summaryRows = container.querySelector("[data-delivery-summary]");
+
+    expect([...(summaryRows?.children ?? [])].map((row) => row.textContent)).toEqual([
+      "100%Delivery coverageof dispatched attempts",
+      "≤ 5msObserved reservation p95bounded p95 estimate",
+      "42 msCheckout response p95 (client-observed)",
+      "n/aReservation-to-confirmation p95",
+    ]);
+
+    unmount();
+    const missingDetail = detailFixture();
+    delete missingDetail.summary.httpSummary.p95LatencyMs;
+    const missing = render(createElement(PublicRunHistoryDetail, { detail: missingDetail }));
+    expect(
+      [...(missing.container.querySelector("[data-delivery-summary]")?.children ?? [])].map(
+        (row) => row.textContent,
+      ),
+    ).toEqual([
+      "100%Delivery coverageof dispatched attempts",
+      "n/aObserved reservation p95bounded p95 estimate",
+      "n/aCheckout response p95 (client-observed)",
+      "n/aReservation-to-confirmation p95",
+    ]);
+  });
+
   it("keeps accepted-config demand distinct from mismatched generator evidence", () => {
     const detail = detailFixture();
     detail.plannedAttempts = 10;
@@ -362,6 +486,109 @@ describe("run history", () => {
 
     expect(markup).toMatch(/Planned demand<\/dt><dd[^>]*>10<\/dd>/);
     expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>99<\/dd>/);
+  });
+
+  it("keeps the complete report visible", () => {
+    const detail = detailFixture();
+    const { container } = render(publicReport(detail));
+
+    expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
+    expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
+    expect(
+      screen.getByText(/10 units reserved \/ 10 unique reservations/).closest("[hidden]"),
+    ).toBeNull();
+    expect(screen.getByText("Scenario settings").closest("[hidden]")).toBeNull();
+    expect(screen.getByText("Run UUID").closest("details")?.open).toBe(false);
+    expect(
+      screen.getByText("reserved units = starting stock − remaining stock").closest("[hidden]"),
+    ).toBeNull();
+    expect(container.querySelector("#report-advanced-signals")?.hasAttribute("hidden")).toBe(false);
+    expect(container.querySelector("#report-advanced-measurements")?.textContent).toContain(
+      "Observed reservation p95",
+    );
+    expect(
+      container.querySelector<HTMLDetailsElement>("#report-advanced-measurements details")?.open,
+    ).toBe(false);
+    expect(
+      screen.getByText(/Final timeline evidence was not recorded/).closest("[hidden]"),
+    ).toBeNull();
+    expect(screen.getByText("Final stock and orders").closest("[hidden]")).toBeNull();
+  });
+
+  it("reveals measurements for incomplete replies", () => {
+    const detail = detailFixture();
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 20,
+      startedRequests: 20,
+      completedRequests: 20,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    detail.summary.httpSummary = {
+      ...detail.summary.httpSummary,
+      failedRequests: 3,
+      transportFailures: 3,
+    };
+    const { container } = render(publicReport(detail));
+    const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
+    const disclosure = target?.querySelector<HTMLDetailsElement>("details");
+    const caveat = target?.querySelector("[data-measurement-caveat]");
+
+    expect(screen.getByText(/Reply observation incomplete/).closest("[hidden]")).toBeNull();
+    expect(caveat?.textContent).toContain(
+      "Checkout response p95 (client-observed) covers only the 17 of 20 planned attempts",
+    );
+    expect(caveat?.textContent).toContain(
+      "Server-observed reservation timing and durable reservation-to-confirmation timing use separate evidence.",
+    );
+    expect(caveat?.textContent).not.toContain("The p95 describes replies received only");
+    expect(disclosure?.open).toBe(false);
+    fireEvent.click(screen.getByRole("link", { name: "View technical measurements" }));
+
+    expect(disclosure?.open).toBe(true);
+    expect(document.activeElement).toBe(target);
+
+    fireEvent.click(screen.getByRole("link", { name: "View technical measurements" }));
+    expect(disclosure?.open).toBe(true);
+  });
+
+  it("keeps operator-stop guidance and unknown cleanup qualification beside the result", () => {
+    const detail = detailFixture("failed");
+    detail.summary.failureCategory = "operator";
+    detail.result = deriveRunResult({
+      ...resultEvidence(detail),
+      generator: {
+        transportAttemptCounts: detail.summary.transportAttemptCounts,
+        httpSummary: detail.summary.httpSummary,
+      },
+    });
+    delete detail.run.adminResetCompletedAt;
+    delete detail.run.trafficStartedAt;
+    delete detail.run.trafficEndedAt;
+    detail.run.configSnapshot.trafficConfig = {
+      mode: "constant-arrival-rate",
+      ratePerSecond: 25,
+      startDelaySeconds: 0,
+      durationSeconds: 1,
+      quantityPerAttempt: 1,
+    };
+    const { container } = render(publicReport(detail));
+    const recap = screen.getByRole("heading", { name: "What happened" }).closest("section");
+
+    expect(screen.getByText(/stopped by an operator/).closest("[hidden]")).toBeNull();
+    expect(
+      screen.getByText(/reporting or cleanup may be incomplete/).closest("[hidden]"),
+    ).toBeNull();
+    expect(recap?.textContent).toContain("Checkout attempts start and end were not recorded.");
+    expect(recap?.textContent).not.toContain("arrived");
+    expect(recap?.textContent).not.toContain("Buyer traffic");
+    expect(recap?.textContent).toContain(
+      "10 units reserved / 10 unique reservations; 10 attempts turned away because stock ran out.",
+    );
+    expect(recap?.textContent).toContain("Operator stop decision: 00:00:10 UTC.");
+    expect(
+      container.querySelector<HTMLDetailsElement>("#report-advanced-lifecycle details")?.open,
+    ).toBe(false);
   });
 
   it("keeps durable comparison facts visible when final inventory was not recorded", () => {
@@ -437,6 +664,9 @@ describe("run history", () => {
 
     expect(markup).toContain("<h1");
     expect(markup).toContain("Preview 1k</h1>");
+    expect(markup).toContain("Everyone at once · 1,000 buyers · 250 starting units");
+    expect(markup).toContain("This is a simulation of buyers competing for limited stock");
+    expect(markup).not.toContain("Saved run report for a checkout simulation.");
     expect(markup).toContain("All 10 available units were reserved without overselling.");
     expect(markup).toContain("Completed");
     expect(markup).toContain("2026-06-20 00:00:00 UTC");
@@ -470,9 +700,7 @@ describe("run history", () => {
     );
 
     expect(markup).toContain('aria-hidden="true">!</span>Completed with order failures</span>');
-    expect(markup).toContain(
-      "All 10 available units were reserved without overselling. Checkout-Surge recorded 10 sold-out rejections. 8 orders were confirmed, 2 failed, and 0 remain pending.",
-    );
+    expect(markup).toContain("8 orders were confirmed, 2 failed, and 0 remain pending.");
   });
 
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
@@ -564,7 +792,11 @@ describe("run history", () => {
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(markup).toContain("Detail unavailable");
+    expect(markup).toContain("This report is not available");
+    expect(markup).toContain("We could not load a saved report from this link");
+    expect(markup).toContain('href="/run-history"');
+    expect(markup).toContain('href="/"');
+    expect(markup).not.toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).not.toContain("public-history-correlation");
     expect(markup).not.toContain("private public-reader diagnostic");
     expect(markup).not.toContain("Technical details");
@@ -1070,9 +1302,9 @@ describe("run-history cross-route time and duration presentation", () => {
       container.innerHTML = markup;
       expect(container.textContent).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
-    expect(markups[0]).toMatch(/Duration<\/p><p[^>]*>10 s<\/p>/);
+    expect(markups[0]).toMatch(/Overall duration<\/p><p[^>]*>10 s<\/p>/);
     expect(markups[1]).toMatch(
-      /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · 10 s<\/p>/,
+      /dateTime="2026-06-20T00:00:00.000Z">2026-06-20 00:00:00 UTC<\/time> · Overall duration: 10 s<\/p>/,
     );
     expect(markups[2]).toMatch(/Overall run duration<\/dt><dd[^>]*>10 s<\/dd>/);
   });
@@ -1104,7 +1336,7 @@ describe("run-history cross-route time and duration presentation", () => {
       createElement(AdminRunHistoryDetail, { detail: adminDetail }),
     );
 
-    expect(listMarkup).toMatch(/Duration<\/p><p[^>]*>not recorded<\/p>/);
+    expect(listMarkup).toMatch(/Overall duration<\/p><p[^>]*>not recorded<\/p>/);
     expect(publicMarkup).toContain("duration not recorded");
     expect(adminMarkup).toMatch(/Overall run duration<\/dt><dd[^>]*>— no recorded start<\/dd>/);
     expect(adminMarkup).not.toMatch(/Overall run duration<\/dt><dd[^>]*>0 ms<\/dd>/);
@@ -1230,7 +1462,6 @@ function detailFixture(
         trafficDeliveryStatus: status === "failed" ? "failed" : "complete",
       },
       serverReservationTimingSummary: serverTiming,
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(serverTiming, 20),
       businessOutcomeSummary,
       terminalInventorySnapshot,
       runSignalTimelineSummary: null,

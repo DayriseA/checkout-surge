@@ -4,7 +4,6 @@ import {
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
   errorPayloadSchema,
-  evaluateFastReservationTarget,
 } from "@checkout-surge/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -89,8 +88,9 @@ describe("dashboard backend API reads", () => {
       `http://api.internal/demo/runs/history/${runId}`,
       expect.objectContaining({ cache: "no-store" }),
     );
+    // The run ID stays in the technical identity line; the summary says the result is being checked.
     expect(output).toContain(`Accepted run ID: <code>${runId}</code>`);
-    expect(output).toContain("The exact result is not available yet");
+    expect(output).toContain("The saved result for this run is being checked");
   });
 
   it("reads paginated run history through the shared API contract", async () => {
@@ -399,10 +399,6 @@ function runHistoryDetailFixture() {
         notes: [],
       },
       serverReservationTimingSummary: emptyServerReservationTimingSummary,
-      fastReservationTargetEvaluation: evaluateFastReservationTarget(
-        emptyServerReservationTimingSummary,
-        10,
-      ),
       businessOutcomeSummary: {
         acceptedReservations: 6,
         reservedUnits: 6,

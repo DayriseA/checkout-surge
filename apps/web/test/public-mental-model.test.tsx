@@ -30,57 +30,46 @@ afterEach(() => {
 });
 
 describe("public visitor mental model", () => {
-  it("places the concise causal story and one caveat directly before the start controls", async () => {
+  it("leads with the chooser and keeps the safety story visible", async () => {
     const markup = renderToStaticMarkup(await DemoDashboardPage());
     const capsuleIndex = markup.indexOf('id="demo-mental-model"');
     const controlsIndex = markup.indexOf('id="public-start-controls"');
 
     expect(capsuleIndex).toBeGreaterThan(-1);
-    expect(controlsIndex).toBeGreaterThan(capsuleIndex);
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "Simulated buyers compete for limited stock",
+    expect(controlsIndex).toBeLessThan(capsuleIndex);
+    expect(markup).toContain(
+      "Choose a simulation, start it, and watch a simulated flash sale unfold.",
     );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
+    const safetyStory = markup.slice(capsuleIndex);
+    expect(safetyStory).not.toContain('hidden=""');
+    expect(safetyStory).toContain("Simulated buyers compete for limited stock");
+    expect(safetyStory).toContain(
       "Redis atomically reserves units immediately without overselling",
     );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "every unique reservation reaches a durable outcome",
-    );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain(
-      "not universal production evidence",
-    );
-    expect(markup.slice(capsuleIndex, controlsIndex)).toContain('href="/about"');
+    expect(safetyStory).toContain("every unique reservation reaches a confirmed or failed outcome");
+    expect(safetyStory).toContain("not universal production evidence");
+    expect(safetyStory).toContain('href="/about"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
-  it("keeps the about narrative in causal order and distinguishes real from simulated", () => {
-    const markup = renderToStaticMarkup(createElement(AboutPage));
-    const orderedSectionIds = [
-      "failure-story",
-      "redis-fast-path",
-      "queue-protection",
-      "real-and-simulated",
-      "gold-signals",
-      "success",
-      "limits-and-source",
+  it("shows one technical presentation", async () => {
+    const markup = renderToStaticMarkup(await AboutPage());
+    const removedSectionIds = [
+      "sale-example",
+      "reservation-and-confirmation",
+      "basic-success",
+      "simulation-and-source",
     ];
-    const sectionPositions = orderedSectionIds.map((id) => markup.indexOf(`id="${id}"`));
-
-    expect(sectionPositions.every((position) => position >= 0)).toBe(true);
-    expect(sectionPositions).toEqual([...sectionPositions].sort((left, right) => left - right));
-
-    expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
-    expect(markup).toContain("buyers are simulated by the load generator (k6)");
-    expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
-    expect(markup).toContain("simulated emails recorded");
-    expect(markup).toContain("There is no production external ERP or notification integration");
-    expect(markup).toContain(
-      "Every unique reservation must first reach a durable confirmed or failed order outcome",
-    );
+    for (const id of removedSectionIds) {
+      expect(markup).not.toContain(`id="${id}"`);
+    }
+    expect(markup).not.toContain("100 simulated buyers trying to buy 10 units");
+    expect(markup).toContain("The flash-sale failure story");
+    expect(markup).toContain("Results are environment-dependent");
   });
 
-  it("renders four causal signals, an accessible seven-node diagram, and stable glossary anchors", () => {
-    const markup = renderToStaticMarkup(createElement(AboutPage));
+  it("keeps the architecture, technical narrative, and glossary visible", async () => {
+    const markup = renderToStaticMarkup(await AboutPage());
     const signalSection = markup.slice(
       markup.indexOf('id="gold-signals"'),
       markup.indexOf('id="success"'),
@@ -101,6 +90,19 @@ describe("public visitor mental model", () => {
       "reservation-vs-confirmation",
     ];
 
+    expect(markup).not.toContain('hidden=""');
+    expect(markup).toContain('id="failure-story"');
+    expect(markup).toContain('id="redis-fast-path"');
+    expect(markup).toContain('id="queue-protection"');
+    expect(markup).toContain('id="real-and-simulated"');
+    expect(markup).toContain('id="gold-signals"');
+    expect(markup).toContain('id="success"');
+    expect(markup).toContain('id="limits-and-source"');
+    expect(markup).toContain('id="glossary"');
+    expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
+    expect(markup).toContain("buyers are simulated by the load generator (k6)");
+    expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
+    expect(markup).toContain("simulated emails recorded");
     expect(signalSection.indexOf("Request arrival")).toBeLessThan(
       signalSection.indexOf("Inventory drain"),
     );
@@ -144,7 +146,7 @@ describe("public visitor mental model", () => {
   });
 
   it("links the repository safely from about and global navigation and supplies B05 copy", async () => {
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );
@@ -157,11 +159,11 @@ describe("public visitor mental model", () => {
     expect(publicNarrative.watchOrientation).toContain(
       "simulated buyers compete for limited stock",
     );
-    expect(publicNarrative.watchOrientation).toContain("durable outcomes");
+    expect(publicNarrative.watchOrientation).toContain("confirmed or failed");
   });
 
   it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
-    const aboutMarkup = renderToStaticMarkup(createElement(AboutPage));
+    const aboutMarkup = renderToStaticMarkup(await AboutPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );

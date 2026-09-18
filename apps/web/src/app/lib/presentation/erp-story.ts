@@ -117,6 +117,26 @@ export function deriveRunErpStory(
 }
 
 /**
+ * Whether the run's ERP story expresses waiting or uncertainty rather than settled fact: paused
+ * calls, a recovery test in progress, an unreadable protection read, protection state still
+ * unreported while the run keeps producing evidence, or an unavailable retry read. False for
+ * keeping up, constrained-but-coping, and a genuine no-activity absence — none of those explains
+ * a delay a reader might be waiting on.
+ */
+export function erpStoryExplainsWaiting(
+  erp: RunErpOutcomeSummary | null,
+  runStatus: DemoRunStatus | null = null,
+): boolean {
+  const story = deriveRunErpStory(erp, runStatus);
+  return (
+    story.nextAction !== null ||
+    story.sentence === erpStorySentence.protectionUnreadable ||
+    story.sentence === erpStorySentence.protectionUnreportedPending ||
+    story.sentence === erpStorySentence.retryStatusUnavailable
+  );
+}
+
+/**
  * Translates the shared protection state the API service publishes. Every `reason` below is a case
  * that service emits; switching on it is what keeps a partial read ("retry pressure could not be
  * counted") from being presented as a calm reading of zero.

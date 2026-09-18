@@ -477,13 +477,7 @@ describe("run history service", () => {
         redisAtomicReservation: { sampleCount: 3, averageMs: 4, p95Ms: 25 },
         reserveOrderService: { sampleCount: 3, averageMs: 30, p95Ms: 100 },
       },
-      fastReservationTargetEvaluation: {
-        expectedResponseCount: 3,
-        observedSampleCount: 3,
-        verdict: "fail",
-      },
     });
-    expect(detail?.summary.fastReservationTargetEvaluation.expectedResponseCount).toBe(3);
   });
 
   it("rejects malformed persisted server timing with summary-row context", async () => {

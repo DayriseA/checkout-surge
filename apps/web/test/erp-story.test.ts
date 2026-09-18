@@ -5,7 +5,11 @@ import type {
   SharedErpProtectionStatus,
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
-import { deriveRunErpStory, deriveSharedErpStory } from "../src/app/lib/presentation/erp-story.js";
+import {
+  deriveRunErpStory,
+  deriveSharedErpStory,
+  erpStoryExplainsWaiting,
+} from "../src/app/lib/presentation/erp-story.js";
 
 const pendingProtectionSentence =
   "Simulated-ERP protection state has not been reported for these calls";
@@ -157,6 +161,55 @@ describe("simulated-ERP story", () => {
 
     expect(story.sentence).toBe("Simulated-ERP protection state is unavailable");
     expect(story.nextAction).toBeNull();
+  });
+
+  // Only waiting or uncertain stories explain a delay; health, strain, and settled
+  // absences must not reach the last-known warning guard.
+  it.each([
+    {
+      name: "calls are paused",
+      erp: runErp({ circuit: circuit("open", { nextAttemptAt: "2026-06-20T00:00:19.000Z" }) }),
+      expected: true,
+    },
+    {
+      name: "recovery is being tested",
+      erp: runErp({ circuit: circuit("half_open", { halfOpenProbeInFlight: false }) }),
+      expected: true,
+    },
+    {
+      name: "protection state is unreadable",
+      erp: runErp({ circuit: null, circuitReadStatus: "unavailable", recentAttemptCount: 3 }),
+      expected: true,
+    },
+    {
+      name: "protection state is still unreported while calls happened",
+      erp: runErp({ circuit: null, recentAttemptCount: 4, recentFailureCount: 2 }),
+      runStatus: "active" as const,
+      expected: true,
+    },
+    {
+      name: "the run is keeping up",
+      erp: runErp({ circuit: circuit("closed") }),
+      expected: false,
+    },
+    {
+      name: "the run is constrained but coping",
+      erp: runErp({ circuit: circuit("closed"), recentFailureCount: 1 }),
+      expected: false,
+    },
+    {
+      name: "there was no activity",
+      erp: runErp({ circuit: null, recentAttemptCount: 0 }),
+      expected: false,
+    },
+    {
+      name: "the unreported snapshot is settled with a finished run",
+      erp: runErp({ circuit: null, recentAttemptCount: 4, recentFailureCount: 2 }),
+      runStatus: "completed" as const,
+      expected: false,
+    },
+  ])("erpStoryExplainsWaiting is $expected when $name", ({ erp, runStatus, expected }) => {
+    expect(erpStoryExplainsWaiting(erp, runStatus ?? null)).toBe(expected);
   });
 
   // Each case below is a status/reason pair `deriveSharedProtectionState` in the API's ERP status

@@ -10,6 +10,10 @@ vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
 
 afterEach(cleanup);
 
+function renderNavigation(children: React.ReactNode) {
+  return <DashboardNav>{children}</DashboardNav>;
+}
+
 describe("DashboardNav", () => {
   it.each([
     ["/", "Demo"],
@@ -20,7 +24,7 @@ describe("DashboardNav", () => {
     ["/admin", "Admin"],
   ])("marks the current dashboard route for %s", (currentPathname, expectedName) => {
     pathname.value = currentPathname;
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
 
     const navigation = screen.getByRole("navigation", { name: "Dashboard routes" });
     const currentLinks = screen
@@ -43,11 +47,7 @@ describe("DashboardNav", () => {
 
   it("opens by keyboard and exposes every route, Repository, and the children slot", async () => {
     const user = userEvent.setup();
-    render(
-      <DashboardNav>
-        <button type="button">Sign out</button>
-      </DashboardNav>,
-    );
+    render(renderNavigation(<button type="button">Sign out</button>));
 
     const toggle = screen.getByRole("button", { name: "Menu" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
@@ -85,7 +85,7 @@ describe("DashboardNav", () => {
 
   it("closes on Escape and returns focus to the toggle", async () => {
     const user = userEvent.setup();
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
 
     await user.click(toggle);
@@ -98,7 +98,7 @@ describe("DashboardNav", () => {
 
   it("closes on an outside pointer-down", async () => {
     const user = userEvent.setup();
-    render(<DashboardNav>{null}</DashboardNav>);
+    render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
 
     await user.click(toggle);
@@ -111,12 +111,12 @@ describe("DashboardNav", () => {
   it("closes when the pathname changes", async () => {
     const user = userEvent.setup();
     pathname.value = "/";
-    const { rerender } = render(<DashboardNav>{null}</DashboardNav>);
+    const { rerender } = render(renderNavigation(null));
     const toggle = screen.getByRole("button", { name: "Menu" });
     await user.click(toggle);
 
     pathname.value = "/watch";
-    rerender(<DashboardNav>{null}</DashboardNav>);
+    rerender(renderNavigation(null));
 
     await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("false"));
   });

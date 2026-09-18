@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { publicNarrative, publicVocabulary } from "../lib/presentation/public-vocabulary";
 
 export const metadata: Metadata = { title: "About" };
+export const dynamic = "force-dynamic";
 
 const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
 const termLinkClassName = "font-semibold text-accent underline";
@@ -13,13 +14,20 @@ export default function AboutPage() {
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">About</h1>
           <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            How Checkout-Surge keeps a scarce-stock decision fast while slower confirmation work
-            catches up safely.
+            How this simulated flash sale reserves limited stock and confirms orders without
+            overselling.
           </p>
         </div>
       </header>
+      <TechnicalAbout />
+    </>
+  );
+}
 
-      <section className={sectionClassName} id="failure-story">
+function TechnicalAbout() {
+  return (
+    <>
+      <section className={sectionClassName} id="failure-story" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">The flash-sale failure story</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           Simulated buyers arrive together and compete for fewer units than they want. If every
@@ -29,7 +37,7 @@ export default function AboutPage() {
         </p>
       </section>
 
-      <section className={sectionClassName} id="redis-fast-path">
+      <section className={sectionClassName} id="redis-fast-path" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">Redis makes the atomic scarcity decision</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           The API asks Redis to reserve each unit immediately in one atomic operation. Competing
@@ -41,7 +49,7 @@ export default function AboutPage() {
         <ArchitectureDiagram />
       </section>
 
-      <section className={sectionClassName} id="queue-protection">
+      <section className={sectionClassName} id="queue-protection" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">The queue protects the simulated ERP</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           Orders for unique reservations enter a BullMQ queue. Workers take that{" "}
@@ -57,7 +65,7 @@ export default function AboutPage() {
         </p>
       </section>
 
-      <section className={sectionClassName} id="real-and-simulated">
+      <section className={sectionClassName} id="real-and-simulated" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">What is real and what is simulated</h2>
         <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
           <div>
@@ -79,7 +87,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      <section className={sectionClassName} id="gold-signals">
+      <section className={sectionClassName} id="gold-signals" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">Four signals tell one causal story</h2>
         <ol className="mt-3 grid gap-3 pl-5 leading-7 text-muted-strong">
           <li>
@@ -104,7 +112,7 @@ export default function AboutPage() {
         </ol>
       </section>
 
-      <section className={sectionClassName} id="success">
+      <section className={sectionClassName} id="success" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">What success means</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           Every unique reservation must first reach a durable confirmed or failed order outcome. A
@@ -118,26 +126,32 @@ export default function AboutPage() {
         </p>
       </section>
 
-      <section className={sectionClassName} id="limits-and-source">
+      <section className={sectionClassName} id="limits-and-source" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">Results are environment-dependent</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           Throughput and timing depend on the host, available resources, configuration, and
           competing processes. A local or containerized result is not universal production evidence,
           a hosted benchmark, or a production-readiness claim.
         </p>
-        <a
-          className="mt-3 inline-block font-semibold text-accent underline"
-          href={publicNarrative.repositoryUrl}
-          rel="noopener noreferrer"
-          target="_blank"
-        >
-          View the Checkout-Surge repository
-          <span className="sr-only"> (opens in a new tab)</span>
-        </a>
+        <RepositoryLink />
       </section>
 
       <PublicGlossary />
     </>
+  );
+}
+
+function RepositoryLink() {
+  return (
+    <a
+      className="mt-3 inline-block font-semibold text-accent underline"
+      href={publicNarrative.repositoryUrl}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      View the Checkout-Surge repository
+      <span className="sr-only"> (opens in a new tab)</span>
+    </a>
   );
 }
 
@@ -294,13 +308,18 @@ function PublicGlossary() {
   ] as const;
 
   return (
-    <section aria-labelledby="glossary-heading" className={sectionClassName} id="glossary">
+    <section
+      aria-labelledby="glossary-heading"
+      className={sectionClassName}
+      id="glossary"
+      tabIndex={-1}
+    >
       <h2 className="m-0 text-xl font-bold text-ink" id="glossary-heading">
         Glossary
       </h2>
       <dl className="mt-3 grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
         {terms.map(([id, term, definition]) => (
-          <div className="rounded-lg bg-surface-muted p-3" id={id} key={id}>
+          <div className="rounded-lg bg-surface-muted p-3" id={id} key={id} tabIndex={-1}>
             <dt className="font-bold text-ink">{term}</dt>
             <dd className="m-0 mt-1 leading-6 text-muted-strong">{definition}</dd>
           </div>

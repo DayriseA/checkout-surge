@@ -364,7 +364,17 @@ function conflictPresentation(
           },
           tone: "warning",
         }
-      : publicBackendRetryPresentation(retryAfterMs);
+      : {
+          headline: "The previous run is still recovering",
+          explanation:
+            "Worker work may still settle. New runs remain unavailable until recovery completes.",
+          action: {
+            kind: "check",
+            label: "Check again",
+            ...(retryAfterMs ? { retryAfterMs } : {}),
+          },
+          tone: "warning",
+        };
   }
   return context.surface === "public-start"
     ? publicBackendUnavailablePresentation()
@@ -400,8 +410,8 @@ function resourceNotFoundPresentation(
 ): Omit<ErrorPresentation, "technicalDetails"> {
   if (context.surface === "history-detail") {
     return {
-      headline: "That result is no longer available",
-      explanation: "Return to run history to choose another finished run.",
+      headline: "That saved report could not be found",
+      explanation: "Choose an available report from run history.",
       action: { kind: "retry", label: "View run history", href: "/run-history" },
       tone: "warning",
     };
