@@ -4,24 +4,14 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardNav } from "../src/app/components/dashboard-nav.js";
-import { PageView, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 
 const pathname = vi.hoisted(() => ({ value: "/" }));
 vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
 
 afterEach(cleanup);
 
-function renderNavigation(children: React.ReactNode, participating = false) {
-  return (
-    <ViewPreferenceProvider initialMode="basic">
-      <DashboardNav>{children}</DashboardNav>
-      {participating ? (
-        <PageView>
-          <span>Page</span>
-        </PageView>
-      ) : null}
-    </ViewPreferenceProvider>
-  );
+function renderNavigation(children: React.ReactNode) {
+  return <DashboardNav>{children}</DashboardNav>;
 }
 
 describe("DashboardNav", () => {
@@ -129,15 +119,5 @@ describe("DashboardNav", () => {
     rerender(renderNavigation(null));
 
     await waitFor(() => expect(toggle.getAttribute("aria-expanded")).toBe("false"));
-  });
-
-  it("keeps the participating view switch outside the mobile menu panel", () => {
-    render(renderNavigation(null, true));
-    const toggle = screen.getByRole("switch", { name: "Advanced" });
-    const menu = screen.getByRole("button", { name: "Menu" });
-    expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(toggle.closest("#dashboard-navigation-panel")).toBeNull();
-    expect(toggle.classList).toContain("min-h-11");
-    expect(menu.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 });

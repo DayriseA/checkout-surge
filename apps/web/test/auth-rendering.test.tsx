@@ -5,7 +5,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const sessionMock = vi.hoisted(() => vi.fn(async () => false));
-const viewModeMock = vi.hoisted(() => vi.fn(async () => "basic" as const));
 const adminReads = vi.hoisted(() => ({
   erp: vi.fn(async () => ({ status: "available" })),
   presets: vi.fn(async () => ({ status: "available" })),
@@ -15,9 +14,6 @@ const adminReads = vi.hoisted(() => ({
 const historyRead = vi.hoisted(() => vi.fn());
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: sessionMock,
-}));
-vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readViewMode: viewModeMock,
 }));
 vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminErpChaos: adminReads.erp,
@@ -50,7 +46,6 @@ import RunHistoryPage from "../src/app/run-history/page.js";
 
 beforeEach(() => {
   sessionMock.mockResolvedValue(false);
-  viewModeMock.mockResolvedValue("basic");
   historyRead.mockResolvedValue({
     status: "available",
     data: {
@@ -119,7 +114,6 @@ describe("server-decided admin presentation", () => {
   });
 
   it("keeps History public while including cleanup only in authenticated server HTML", async () => {
-    viewModeMock.mockClear();
     const anonymous = renderToStaticMarkup(
       await RunHistoryPage({ searchParams: Promise.resolve({ page: "1" }) }),
     );
@@ -134,7 +128,6 @@ describe("server-decided admin presentation", () => {
     expect(authenticated).toContain("Public history list");
     expect(authenticated).toContain("Authenticated history cleanup");
     expect(authenticated).not.toContain("<legend");
-    expect(viewModeMock).not.toHaveBeenCalled();
   });
 
   it("keeps history diagnostics anonymous-safe while retaining them for authenticated failures", async () => {

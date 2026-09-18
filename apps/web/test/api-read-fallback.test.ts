@@ -88,7 +88,7 @@ describe("dashboard backend API reads", () => {
       `http://api.internal/demo/runs/history/${runId}`,
       expect.objectContaining({ cache: "no-store" }),
     );
-    // The run ID stays in the Advanced-only identity line; Basic says the result is being checked.
+    // The run ID stays in the technical identity line; the summary says the result is being checked.
     expect(output).toContain(`Accepted run ID: <code>${runId}</code>`);
     expect(output).toContain("The saved result for this run is being checked");
   });

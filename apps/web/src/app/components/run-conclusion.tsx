@@ -6,7 +6,6 @@ import {
 } from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
 import { invariantLabel, runConclusionSentence } from "../lib/presentation/run-result-presentation";
-import { AdvancedOnly } from "./page-view";
 import { ReportMeasurementsLink } from "./report-measurements-link";
 import type { TransportObservation } from "./transport-observation";
 
@@ -113,9 +112,8 @@ export function RunConclusion({
 }
 
 /**
- * The public composition of the same canonical result: the shared concise summary and its
- * material caveats stay visible in both view modes, while the full narration, reconciliation
- * status, invariant expressions and proof stay available inside the Advanced boundary.
+ * The public composition of the same canonical result: the shared concise summary, material
+ * caveats, full narration, reconciliation status, invariant expressions and proof.
  */
 export function PublicRunConclusion({
   result,
@@ -168,7 +166,7 @@ export function PublicRunConclusion({
   );
 }
 
-/** Every material qualification, outside the Advanced boundary. */
+/** Every material qualification for the public result. */
 export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] }) {
   return (
     <>
@@ -190,10 +188,9 @@ export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] })
 }
 
 /**
- * The Advanced-only proof of the same canonical result: the full narration, reconciliation
- * status, invariant expressions with actual/expected values and the reconciliation proof. It is
- * the Advanced content of `PublicRunConclusion`, shared with the Watch composition so both
- * surfaces present exactly the same evidence.
+ * The proof of the same canonical result: the full narration, reconciliation status, invariant
+ * expressions with actual/expected values and the reconciliation proof, shared with the Watch
+ * composition so both surfaces present exactly the same evidence.
  */
 export function PublicRunConclusionProof({
   alwaysVisible = false,
@@ -223,9 +220,9 @@ export function PublicRunConclusionProof({
     );
   }
   return (
-    <AdvancedOnly className="mt-4" {...(targetId ? { id: targetId } : {})}>
+    <div className="mt-4" {...(targetId ? { id: targetId } : {})} tabIndex={-1}>
       {content}
-    </AdvancedOnly>
+    </div>
   );
 }
 

@@ -163,7 +163,7 @@ describe("simulated-ERP story", () => {
     expect(story.nextAction).toBeNull();
   });
 
-  // Only waiting or uncertain stories explain a delay in Basic; health, strain, and settled
+  // Only waiting or uncertain stories explain a delay; health, strain, and settled
   // absences must not reach the last-known warning guard.
   it.each([
     {

@@ -58,8 +58,8 @@ export type GoldSignalInput = {
 };
 
 /**
- * The single sample-to-points selection shared by the full Advanced charts and the Basic Watch
- * signal strip, so both presentations always describe the same evidence.
+ * The single sample-to-points selection shared by the full charts and the Watch signal strip, so
+ * both presentations always describe the same evidence.
  */
 export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts {
   const terminal = input.terminalSummary;
@@ -331,7 +331,7 @@ function SignalPanel({
   area?: boolean;
   caption: string;
   headline: string | null;
-  /** Stable focus target for the Basic signal strip's contextual links. */
+  /** Stable focus target for the signal strip's contextual links. */
   id?: string;
   markers: EventMarker[];
   points: SignalPoint[];

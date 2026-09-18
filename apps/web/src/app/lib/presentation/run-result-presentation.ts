@@ -99,7 +99,7 @@ export function evidenceFromRunHistoryDetail(
 /**
  * The plain-language verdict for a run. The default form narrates stock, sold-out rejections and
  * order outcomes; the `concise` form is the verdict that public summaries show while the full
- * narration stays available in the run's advanced detail. The concise form keeps known failed
+ * narration stays available in the run's full detail. The concise form keeps known failed
  * and pending order quantities readable beside every headline that does not already state them.
  */
 export function runConclusionSentence(

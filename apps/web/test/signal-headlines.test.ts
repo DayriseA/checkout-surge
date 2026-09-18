@@ -28,12 +28,12 @@ describe("signal headlines", () => {
     });
 
     expect(headlines.arrival).toEqual({
-      basicValue: "Peak 10 attempts/s",
+      summaryValue: "Peak 10 attempts/s",
       value: "Peak 10 attempts/s",
       detail: "Dispatched in 2 s",
     });
     expect(headlines.inventory).toEqual({
-      basicValue: "0 of 10 left · 0 oversold",
+      summaryValue: "0 of 10 left · 0 oversold",
       value: "0 of 10 left · 0 oversold",
       detail: "depleted in 5 s",
     });
@@ -41,10 +41,10 @@ describe("signal headlines", () => {
     expect(headlines.confirmation.value).toBe(
       "9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s",
     );
-    expect(headlines.confirmation.basicValue).toBe(
+    expect(headlines.confirmation.summaryValue).toBe(
       "9/10 confirmed · 0 pending · 95% of confirmed orders within 3 s · Converged in 118 s",
     );
-    expect(headlines.confirmation.basicValue).not.toMatch(/\bp95\b/i);
+    expect(headlines.confirmation.summaryValue).not.toMatch(/\bp95\b/i);
     expect(headlines.confirmation.detail).toBe("1 failed · lag avg 2 s, max 4 s");
   });
 
@@ -140,7 +140,7 @@ describe("signal headlines", () => {
     });
 
     expect(headlines.confirmation).toEqual({
-      basicValue: "Not yet available",
+      summaryValue: "Not yet available",
       value: "Not yet available",
       detail: null,
     });

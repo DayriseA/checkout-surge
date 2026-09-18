@@ -35,14 +35,12 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type * as React from "react";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
-import { ViewModeSwitch, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -61,7 +59,6 @@ import {
   publicRunHistoryDetailProxyPath,
 } from "../src/app/lib/control-paths.js";
 import { acceptedRunResultFromRead } from "../src/app/lib/presentation/accepted-run-result.js";
-import { viewModeCookieName } from "../src/app/lib/presentation/view-mode.js";
 import DemoDashboardPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
@@ -1998,7 +1995,7 @@ describe("watch browser recovery", () => {
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("7 waiting · peak 7");
     expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
-    // Run-owned outcome totals stay reachable in the grouped Advanced Processing section.
+    // Run-owned outcome totals stay reachable in the grouped technical processing section.
     expect(markup).toContain("Reservation and confirmation summary");
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
@@ -2138,14 +2135,9 @@ describe("watch browser recovery", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const { container } = render(
-      createElement(
-        ViewPreferenceProvider,
-        { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
-        createElement(ViewModeSwitch),
-        createElement(OperatorDashboard, {
-          initialRecovery: pendingDashboardRecovery(),
-        }),
-      ),
+      createElement(OperatorDashboard, {
+        initialRecovery: pendingDashboardRecovery(),
+      }),
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
@@ -2160,7 +2152,6 @@ describe("watch browser recovery", () => {
         .filter((element) => !element.closest("details:not([open])")),
     ).toHaveLength(1);
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     fireEvent.click(screen.getByText("Technical details", { selector: "summary" }));
 
     expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
@@ -2412,14 +2403,14 @@ describe("accepted Watch result handoff", () => {
     // The accepted run keeps its own section and its exact report link.
     expect(output).toContain("Your result");
     expect(output).toContain(`href="/run-history/${acceptedRunId}"`);
-    // The shared run is labeled as the shared demo, and its identity stays out of Basic.
+    // The shared run is labeled as the shared demo without exposing its identity here.
     expect(output).toContain("Now running in the shared demo");
     expect(output).toContain("The surge is under way");
     expect(output).not.toContain(`Live panels are following shared run`);
   });
 });
 
-describe("watch basic composition", () => {
+describe("watch composition", () => {
   const acceptedRunId = "55555555-5555-4555-8555-555555555555";
   const sharedRunId = "77777777-7777-4777-8777-777777777777";
 
@@ -2444,14 +2435,7 @@ describe("watch basic composition", () => {
     expect(element?.closest("details:not([open])")).not.toBeNull();
   }
 
-  function inBasicView(ui: ReactElement) {
-    return createElement(
-      ViewPreferenceProvider,
-      { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
-      createElement(ViewModeSwitch),
-      ui,
-    );
-  }
+  const watchSurface = (ui: ReactElement) => ui;
 
   function activeProjectionFixture(): DashboardProjection {
     return dashboardRecoveryFixture({
@@ -2558,7 +2542,7 @@ describe("watch basic composition", () => {
       .mockResolvedValueOnce(jsonResponse(qualifiedDetailFor(sharedRunId)));
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           acceptedResult: { status: "awaiting", runId: sharedRunId },
           initialRecovery: available(terminalProjectionFixture(sharedRunId)),
@@ -2604,10 +2588,10 @@ describe("watch basic composition", () => {
     expect(screen.getAllByText("Final result")).toHaveLength(1);
   });
 
-  it("separates an ID-only accepted run from the shared demo run without UUIDs in Basic", () => {
+  it("separates an ID-only accepted run from the shared demo run without exposing UUIDs", () => {
     const idOnlyAcceptedRunId = "88888888-8888-4888-8888-888888888888";
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           acceptedResult: { status: "awaiting", runId: idOnlyAcceptedRunId },
           initialRecovery: available(
@@ -2632,7 +2616,7 @@ describe("watch basic composition", () => {
 
   it("opens technical details focused on a signal's full chart from its sparkline", async () => {
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(activeProjectionFixture()),
         }),
@@ -2643,7 +2627,6 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     expect(
       screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
     ).toBe(true);
@@ -2666,7 +2649,7 @@ describe("watch basic composition", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("EventSource", FakeEventSource);
     render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           acceptedResult: { status: "awaiting", runId: acceptedRunId },
           initialRecovery: available(activeFixture),
@@ -2713,7 +2696,7 @@ describe("watch basic composition", () => {
     ).toHaveLength(2);
   });
 
-  it("warns about a failed authoritative read in Basic while last-known counts stay visible", async () => {
+  it("warns about a failed authoritative read while last-known counts stay visible", async () => {
     const activeFixture = dashboardRecoveryFixture({
       currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
       inventory: runInventoryFixture(),
@@ -2749,7 +2732,7 @@ describe("watch basic composition", () => {
       vi.fn().mockResolvedValueOnce(failedRead()).mockReturnValueOnce(pendingRefresh.promise),
     );
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(activeFixture),
         }),
@@ -2785,7 +2768,7 @@ describe("watch basic composition", () => {
     expectVisible(container, "Retry scheduled in 1 s (attempt 1).");
   });
 
-  it("shows a failed authoritative read in Basic after an idle snapshot", async () => {
+  it("shows a failed authoritative read after an idle snapshot", async () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal(
       "fetch",
@@ -2804,7 +2787,7 @@ describe("watch basic composition", () => {
       ),
     );
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(dashboardRecoveryFixture()),
         }),
@@ -2825,7 +2808,7 @@ describe("watch basic composition", () => {
     expect(container.querySelector('[data-sync-warning=""] time')).toBeNull();
   });
 
-  it("keeps the reading age visible in Basic when a connected run's readings go stale", async () => {
+  it("keeps the reading age visible when a connected run's readings go stale", async () => {
     const staleFixture = dashboardRecoveryFixture({
       currentRun: demoRunFixture({ status: "active", runId: sharedRunId }),
       inventory: runInventoryFixture(),
@@ -2845,7 +2828,7 @@ describe("watch basic composition", () => {
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse(staleFixture)));
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(staleFixture),
         }),
@@ -2864,7 +2847,7 @@ describe("watch basic composition", () => {
 
   it("targets the Signals group from a sparkline when no chart evidence exists yet", async () => {
     const { container } = render(
-      inBasicView(
+      watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(
             dashboardRecoveryFixture({
@@ -2879,7 +2862,6 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     expect(
       screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
     ).toBe(true);
@@ -2889,26 +2871,12 @@ describe("watch basic composition", () => {
 });
 
 describe("web page smoke coverage", () => {
-  it.each([
-    "basic",
-    "advanced",
-  ] as const)("keeps Demo compact and independent with a saved %s preference", async (initialMode) => {
+  it("keeps Demo compact with independent technical details", async () => {
     vi.mocked(getPublicDemoSurface).mockResolvedValue(publicDemoSurfaceFixture());
-    // biome-ignore lint/suspicious/noDocumentCookie: Exercise the existing plain view preference.
-    document.cookie = `${viewModeCookieName}=${initialMode}`;
-    const cookieBefore = document.cookie;
     const demo = await DemoDashboardPage();
 
-    render(
-      createElement(
-        ViewPreferenceProvider,
-        { initialMode } as React.ComponentProps<typeof ViewPreferenceProvider>,
-        createElement(ViewModeSwitch),
-        demo,
-      ),
-    );
+    render(demo);
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     expect(
       screen.getByText(/Starting a bounded run uses the one shared demo runtime/),
     ).toBeTruthy();
@@ -2918,36 +2886,20 @@ describe("web page smoke coverage", () => {
     expect(details.open).toBe(false);
     await userEvent.setup().click(detailsSummary);
     expect(details.open).toBe(true);
-    expect(document.cookie).toBe(cookieBefore);
   });
 
-  it.each([
-    "basic",
-    "advanced",
-  ] as const)("keeps Watch local and collapsed with a saved %s preference", async (initialMode) => {
+  it("keeps Watch technical details local and collapsed", async () => {
     vi.mocked(getRunHistoryPage).mockResolvedValue(available(runHistoryListFixture()));
-    // biome-ignore lint/suspicious/noDocumentCookie: Exercise the existing plain view preference.
-    document.cookie = `${viewModeCookieName}=${initialMode}`;
-    const cookieBefore = document.cookie;
     const watch = await WatchPage();
 
-    render(
-      createElement(
-        ViewPreferenceProvider,
-        { initialMode } as React.ComponentProps<typeof ViewPreferenceProvider>,
-        createElement(ViewModeSwitch),
-        watch,
-      ),
-    );
+    render(watch);
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     const details = screen
       .getByText("Technical details", { selector: "summary" })
       .closest("details") as HTMLDetailsElement;
     expect(details.open).toBe(false);
     await userEvent.setup().click(details.querySelector("summary") as HTMLElement);
     expect(details.open).toBe(true);
-    expect(document.cookie).toBe(cookieBefore);
   });
 
   it("renders the routed page surfaces with stubbed data reads", async () => {

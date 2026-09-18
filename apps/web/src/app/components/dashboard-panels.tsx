@@ -187,7 +187,7 @@ function ErpStoryLead({ story, caption }: { story: ErpStory; caption?: string })
 }
 
 /**
- * The one-line observation age and delivery state, shared by every data panel and by the Basic
+ * The one-line observation age and delivery state, shared by every data panel and by the summary
  * Watch last-known warning: retained readings must never appear without their reading time.
  */
 export function FreshnessLine({ freshness }: { freshness: Freshness }) {

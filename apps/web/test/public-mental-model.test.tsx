@@ -4,9 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const publicSurface = vi.hoisted(() => ({ id: "public-surface" }));
 const sessionMock = vi.hoisted(() => vi.fn(async () => false));
-const readViewModeMock = vi.hoisted(() =>
-  vi.fn(async (): Promise<"basic" | "advanced"> => "basic"),
-);
 
 vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(async () => publicSurface),
@@ -18,24 +15,18 @@ vi.mock("../src/app/components/public-demo-entry.js", () => ({
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: sessionMock,
 }));
-vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readViewMode: readViewModeMock,
-}));
 vi.mock("../src/app/components/admin-nav.js", () => ({
   AdminSignOut: () => createElement("button", { type: "button" }, "Sign out"),
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
 import AboutPage from "../src/app/about/page.js";
-import { ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import RootLayout from "../src/app/layout.js";
 import { publicNarrative } from "../src/app/lib/presentation/public-vocabulary.js";
 import DemoDashboardPage from "../src/app/page.js";
 
 afterEach(() => {
   sessionMock.mockResolvedValue(false);
-  readViewModeMock.mockClear();
-  readViewModeMock.mockResolvedValue("basic");
 });
 
 describe("public visitor mental model", () => {
@@ -50,7 +41,6 @@ describe("public visitor mental model", () => {
       "Choose a simulation, start it, and watch a simulated flash sale unfold.",
     );
     const safetyStory = markup.slice(capsuleIndex);
-    expect(safetyStory).not.toContain("data-advanced-only");
     expect(safetyStory).not.toContain('hidden=""');
     expect(safetyStory).toContain("Simulated buyers compete for limited stock");
     expect(safetyStory).toContain(
@@ -62,29 +52,20 @@ describe("public visitor mental model", () => {
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
-  it("shows one technical presentation under either saved preference", async () => {
-    const basicPreferenceMarkup = renderToStaticMarkup(
-      <ViewPreferenceProvider initialMode="basic">{await AboutPage()}</ViewPreferenceProvider>,
-    );
-    const advancedPreferenceMarkup = renderToStaticMarkup(
-      <ViewPreferenceProvider initialMode="advanced">{await AboutPage()}</ViewPreferenceProvider>,
-    );
-    const basicSectionIds = [
+  it("shows one technical presentation", async () => {
+    const markup = renderToStaticMarkup(await AboutPage());
+    const removedSectionIds = [
       "sale-example",
       "reservation-and-confirmation",
       "basic-success",
       "simulation-and-source",
     ];
-    expect(advancedPreferenceMarkup).toBe(basicPreferenceMarkup);
-    expect(readViewModeMock).not.toHaveBeenCalled();
-    expect(basicPreferenceMarkup).not.toContain("data-basic-only");
-    expect(basicPreferenceMarkup).not.toContain("data-advanced-only");
-    for (const id of basicSectionIds) {
-      expect(basicPreferenceMarkup).not.toContain(`id="${id}"`);
+    for (const id of removedSectionIds) {
+      expect(markup).not.toContain(`id="${id}"`);
     }
-    expect(basicPreferenceMarkup).not.toContain("100 simulated buyers trying to buy 10 units");
-    expect(basicPreferenceMarkup).toContain("The flash-sale failure story");
-    expect(basicPreferenceMarkup).toContain("Results are environment-dependent");
+    expect(markup).not.toContain("100 simulated buyers trying to buy 10 units");
+    expect(markup).toContain("The flash-sale failure story");
+    expect(markup).toContain("Results are environment-dependent");
   });
 
   it("keeps the architecture, technical narrative, and glossary visible", async () => {

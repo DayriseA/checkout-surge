@@ -10,11 +10,10 @@ import {
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { type ComponentProps, createElement } from "react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as PageViewComponents from "../src/app/components/page-view.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import {
   AdminRunHistoryDetail,
@@ -22,7 +21,6 @@ import {
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import { buildRunHistoryTrace } from "../src/app/lib/presentation/run-history-trace.js";
-import { viewModeCookieName } from "../src/app/lib/presentation/view-mode.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 
@@ -43,16 +41,8 @@ vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail,
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
-function publicReportWithPreference(
-  initialMode: "basic" | "advanced",
-  detail: PublicRunHistoryDetailResponse,
-) {
-  return createElement(
-    PageViewComponents.ViewPreferenceProvider,
-    { initialMode } as ComponentProps<typeof PageViewComponents.ViewPreferenceProvider>,
-    createElement(PageViewComponents.ViewModeSwitch),
-    createElement(PublicRunHistoryDetail, { detail }),
-  );
+function publicReport(detail: PublicRunHistoryDetailResponse) {
+  return createElement(PublicRunHistoryDetail, { detail });
 }
 
 describe("run history", () => {
@@ -121,13 +111,7 @@ describe("run history", () => {
     }
   });
 
-  it.each([
-    "basic",
-    "advanced",
-  ] as const)("renders the complete list without a view switch for the saved %s preference", async (initialMode) => {
-    // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
-    document.cookie = `${viewModeCookieName}=${initialMode}; Path=/`;
-    const savedPreference = document.cookie;
+  it("renders the complete list", async () => {
     const history = listFixture();
     const first = history.summaries[0];
     if (!first) throw new Error("Expected a run summary fixture.");
@@ -155,14 +139,7 @@ describe("run history", () => {
     );
     getRunHistoryPage.mockResolvedValue({ status: "available", data: history });
     const page = await RunHistoryPage({});
-    const { container } = render(
-      createElement(
-        PageViewComponents.ViewPreferenceProvider,
-        { initialMode } as ComponentProps<typeof PageViewComponents.ViewPreferenceProvider>,
-        createElement(PageViewComponents.ViewModeSwitch),
-        page,
-      ),
-    );
+    const { container } = render(page);
 
     const completedRow = screen.getByRole("heading", { name: "Preview 1k" }).closest("article");
     const warningRow = screen
@@ -202,7 +179,6 @@ describe("run history", () => {
     for (const row of container.querySelectorAll("article")) {
       expect(within(row as HTMLElement).getAllByRole("link")).toHaveLength(1);
     }
-    expect(container.querySelectorAll('[data-advanced-only="true"]')).toHaveLength(0);
     expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(3);
     expect(screen.getAllByText("Sold-out rejections")).toHaveLength(3);
     expect(screen.getAllByText("Convergence duration")).toHaveLength(3);
@@ -217,8 +193,6 @@ describe("run history", () => {
     expect(container.textContent).not.toContain("Traffic delivery");
     expect(container.textContent).not.toContain("Final inventory");
     expect(container.textContent).not.toContain("55555555-5555-4555-8555-555555555555");
-    await waitFor(() => expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull());
-    expect(document.cookie).toBe(savedPreference);
   });
 
   it("names detail links and keeps destructive controls outside named pagination", () => {
@@ -514,14 +488,10 @@ describe("run history", () => {
     expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>99<\/dd>/);
   });
 
-  it.each([
-    "basic",
-    "advanced",
-  ] as const)("keeps the complete report visible without joining the saved %s preference", (initialMode) => {
+  it("keeps the complete report visible", () => {
     const detail = detailFixture();
-    const { container } = render(publicReportWithPreference(initialMode, detail));
+    const { container } = render(publicReport(detail));
 
-    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
     expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
     expect(
@@ -559,7 +529,7 @@ describe("run history", () => {
       failedRequests: 3,
       transportFailures: 3,
     };
-    const { container } = render(publicReportWithPreference("basic", detail));
+    const { container } = render(publicReport(detail));
     const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
     const disclosure = target?.querySelector<HTMLDetailsElement>("details");
     const caveat = target?.querySelector("[data-measurement-caveat]");
@@ -602,7 +572,7 @@ describe("run history", () => {
       durationSeconds: 1,
       quantityPerAttempt: 1,
     };
-    const { container } = render(publicReportWithPreference("basic", detail));
+    const { container } = render(publicReport(detail));
     const recap = screen.getByRole("heading", { name: "What happened" }).closest("section");
 
     expect(screen.getByText(/stopped by an operator/).closest("[hidden]")).toBeNull();

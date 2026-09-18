@@ -302,7 +302,7 @@ describe("watch narrative", () => {
     expect(output).not.toContain("Choose a simulation");
   });
 
-  it("explains paused order confirmation in Basic while a run is active", () => {
+  it("explains paused order confirmation while a run is active", () => {
     const activeProjection = projection(run("active"));
     activeProjection.erp = pausedErp();
     const output = markup(available(activeProjection));

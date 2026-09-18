@@ -179,7 +179,7 @@ export function OperatorDashboard({
         sharedDemo={Boolean(trackedResult && !sameRunAccepted)}
       />
       <div className="col-span-12">
-        <BasicSyncNotice
+        <SyncNotice
           composition={composition}
           hasSyncIssue={hasSyncIssue}
           isRefreshing={isRefreshing}
@@ -195,7 +195,7 @@ export function OperatorDashboard({
         realtimeStatus={realtimeStatus}
         reconnectExhausted={reconnectExhausted}
       />
-      <AdvancedGroups
+      <TechnicalGroups
         acceptedResult={trackedResult}
         composition={composition}
         detailsRef={technicalDetailsRef}
@@ -326,7 +326,7 @@ function RunCard({
     composition.phase === "active" || composition.phase === "draining"
       ? deriveRunErpStory(projection.erp, composition.run.status)
       : null;
-  // Only waiting or uncertain protection explains delay or uncertainty in Basic; a healthy or
+  // Only waiting or uncertain protection explains delay or uncertainty here; a healthy or
   // coping circuit is not a fact a visitor needs between the counts and the signals.
   const erpWaiting =
     erpStory && erpStoryExplainsWaiting(projection.erp, composition.run.status) ? erpStory : null;
@@ -574,7 +574,7 @@ function CountsRow({
   );
 }
 
-/** The evidence selection shared verbatim by the Basic strip and the full Advanced charts. */
+/** The evidence selection shared verbatim by the summary strip and full technical charts. */
 function goldSignalInput(composition: RunWatchComposition): GoldSignalInput {
   const outcome = composition.projection.businessOutcome;
   const startingStock = composition.projection.inventory?.allocatedStock ?? null;
@@ -600,11 +600,11 @@ function goldSignalInput(composition: RunWatchComposition): GoldSignalInput {
 }
 
 /**
- * The Basic last-known warning: stale, disconnected, or unsupported in-progress readings keep
+ * The last-known warning: stale, disconnected, or unsupported in-progress readings keep
  * their age visible, while a failed authoritative read warns whenever last-known data exists.
  * The disconnected stream's own reconnect announcement stays with `RealtimeRecoveryNotice`.
  */
-function BasicSyncNotice({
+function SyncNotice({
   composition,
   hasSyncIssue,
   isRefreshing,
@@ -637,7 +637,7 @@ function BasicSyncNotice({
   if (!freshnessWarning && !hasLastKnownSyncIssue) {
     return null;
   }
-  // Same action gate as the Advanced RecoveryStatusPanel: a server retry-after throttle replaces
+  // Same action gate as the technical RecoveryStatusPanel: a server retry-after throttle replaces
   // the manual Refresh action with the scheduled-retry sentence.
   const retryWaitActive = (syncIssue?.retryAfterMs ?? 0) > 0;
   return (
@@ -808,7 +808,7 @@ function IdleNarrative({
 }
 
 /** Technical sections stay mounted inside one local disclosure across realtime updates. */
-function AdvancedGroups({
+function TechnicalGroups({
   acceptedResult,
   composition,
   detailsRef,

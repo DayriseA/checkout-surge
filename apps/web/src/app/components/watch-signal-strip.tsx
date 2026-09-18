@@ -50,9 +50,9 @@ export function WatchSignalStrip({
             xMax={charts[chart].xMax}
           />
           <span className="mt-1 block text-xs font-semibold leading-5 text-muted-strong">
-            {headlines[chart].basicValue}
+            {headlines[chart].summaryValue}
           </span>
-          <span className="sr-only">{`${title} over the run: ${headlines[chart].basicValue}`}</span>
+          <span className="sr-only">{`${title} over the run: ${headlines[chart].summaryValue}`}</span>
         </button>
       ))}
     </div>

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { publicNarrative } from "../lib/presentation/public-vocabulary";
-import { ViewModeSwitch } from "./page-view";
 
 const dashboardNavItems = [
   { href: "/", label: "Demo" },
@@ -60,7 +59,6 @@ export function DashboardNav({ children }: { children: ReactNode }) {
       className="relative flex items-center justify-end gap-1 max-[420px]:w-full"
       ref={navigationRef}
     >
-      <ViewModeSwitch />
       <button
         aria-controls="dashboard-navigation-panel"
         aria-expanded={open}

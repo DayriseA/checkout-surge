@@ -10,10 +10,10 @@ import { formatDurationMs } from "./format";
 import { isRunEvidenceSettled, runEvidenceAbsence } from "./public-vocabulary";
 
 export type SignalHeadlines = {
-  arrival: { basicValue: string; value: string; detail: string | null };
-  inventory: { basicValue: string; value: string; detail: string | null };
-  backlog: { basicValue: string; value: string; detail: string | null };
-  confirmation: { basicValue: string; value: string; detail: string | null };
+  arrival: { summaryValue: string; value: string; detail: string | null };
+  inventory: { summaryValue: string; value: string; detail: string | null };
+  backlog: { summaryValue: string; value: string; detail: string | null };
+  confirmation: { summaryValue: string; value: string; detail: string | null };
 };
 
 export function selectConfirmationLiveSamples(
@@ -128,12 +128,12 @@ export function deriveSignalHeadlines({
   return {
     arrival: {
       value: arrivalValue,
-      basicValue: arrivalValue,
+      summaryValue: arrivalValue,
       detail: arrival ? `Dispatched in ${formatDuration(arrival.dispatchDurationSeconds)}` : null,
     },
     inventory: {
       value: inventoryValue,
-      basicValue: inventoryValue,
+      summaryValue: inventoryValue,
       detail: terminal
         ? terminal.inventoryDrain.timeToDepletionSeconds === null
           ? "not depleted"
@@ -142,7 +142,7 @@ export function deriveSignalHeadlines({
     },
     backlog: {
       value: backlogValue,
-      basicValue: backlogValue,
+      summaryValue: backlogValue,
       detail: null,
     },
     confirmation: {
@@ -151,7 +151,7 @@ export function deriveSignalHeadlines({
         : `${confirmationCounts}${confirmationP95 ? ` · p95 ${confirmationP95}` : ""}${
             convergenceStatus ? ` · ${convergenceStatus}` : ""
           }`,
-      basicValue: confirmationUnavailable
+      summaryValue: confirmationUnavailable
         ? durableAbsence
         : `${confirmationCounts}${
             confirmationP95 ? ` · 95% of confirmed orders within ${confirmationP95}` : ""

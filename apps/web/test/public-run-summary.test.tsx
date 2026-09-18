@@ -7,7 +7,6 @@ import {
 } from "@checkout-surge/contracts";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { PageView, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import { PublicRunConclusion } from "../src/app/components/run-conclusion.js";
 import { deriveTransportObservation } from "../src/app/components/transport-observation.js";
 import {
@@ -490,22 +489,17 @@ describe("public run conclusion", () => {
     },
   };
 
-  function renderInViewMode(
-    mode: "basic" | "advanced",
+  function renderConclusion(
     evidence: RunResultEvidence = cleanEvidence,
     overrides: Partial<Omit<PublicRunSummaryInput, "result">> = {},
   ) {
     return render(
-      <ViewPreferenceProvider initialMode={mode}>
-        <PageView>
-          <PublicRunConclusion
-            result={deriveRunResult(evidence)}
-            runStatus={evidence.runStatus}
-            trafficDeliveryStatus={overrides.trafficDeliveryStatus ?? null}
-            transportObservation={overrides.transportObservation ?? null}
-          />
-        </PageView>
-      </ViewPreferenceProvider>,
+      <PublicRunConclusion
+        result={deriveRunResult(evidence)}
+        runStatus={evidence.runStatus}
+        trafficDeliveryStatus={overrides.trafficDeliveryStatus ?? null}
+        transportObservation={overrides.transportObservation ?? null}
+      />,
     );
   }
 
@@ -524,56 +518,41 @@ describe("public run conclusion", () => {
     expect(element?.closest("[hidden]")).toBeNull();
   }
 
-  function expectHidden(container: HTMLElement, needle: string): void {
-    const element = innermostByText(container, needle);
-    expect(element).not.toBeNull();
-    expect(element?.closest("[hidden]")).not.toBeNull();
-  }
-
-  it("renders the same visible summary and caveats in both view modes", () => {
+  it("renders the visible summary and caveats", () => {
     const overrides = {
       trafficDeliveryStatus: "degraded" as TrafficDeliveryStatus,
       transportObservation: interruptedReplies,
     };
 
-    for (const mode of ["basic", "advanced"] as const) {
-      const { container } = renderInViewMode(mode, cleanEvidence, overrides);
-      expectVisible(container, "Completed");
-      expectVisible(container, "All 250 available units were reserved without overselling.");
-      expectVisible(
-        container,
-        "Partial delivery: not all planned checkout attempts were delivered.",
-      );
-      expectVisible(
-        container,
-        "Reply observation incomplete: outcomes and latency cover 17 of 20 attempts.",
-      );
-    }
+    const { container } = renderConclusion(cleanEvidence, overrides);
+    expectVisible(container, "Completed");
+    expectVisible(container, "All 250 available units were reserved without overselling.");
+    expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
+    expectVisible(
+      container,
+      "Reply observation incomplete: outcomes and latency cover 17 of 20 attempts.",
+    );
   });
 
-  it("keeps proof mounted but hidden in Basic and available in Advanced", () => {
-    const basic = renderInViewMode("basic");
-    const advanced = renderInViewMode("advanced");
-
+  it("keeps the full proof visible", () => {
+    const { container } = renderConclusion();
+    expect(container.querySelector('.mt-4[tabindex="-1"]')).not.toBeNull();
     for (const marker of [
       "reserved units = starting stock − remaining stock",
       "Evidence and reconciliation proof",
     ]) {
-      expectHidden(basic.container, marker);
-      expectVisible(advanced.container, marker);
+      expectVisible(container, marker);
     }
-    // The full narration is an Advanced-level detail; the concise verdict stays outside.
-    expectVisible(advanced.container, "Checkout-Surge recorded 750 sold-out rejections");
+    expectVisible(container, "Checkout-Surge recorded 750 sold-out rejections");
   });
 
-  it("keeps failed and pending quantities readable in Basic beside an oversell headline", () => {
-    const { container } = renderInViewMode("basic", oversellWithPendingEvidence, {
+  it("keeps failed and pending quantities readable beside an oversell headline", () => {
+    const { container } = renderConclusion(oversellWithPendingEvidence, {
       trafficDeliveryStatus: "complete",
     });
 
     expectVisible(container, "10 units were oversold");
     expectVisible(container, "240 orders were confirmed, 0 failed, and 20 remain pending.");
-    // The broken stock invariant of an oversell run stays visible in Basic as well.
     expectVisible(
       container,
       "Contradictory evidence: the final stock and order records disagree, so this result needs investigation.",
@@ -581,7 +560,7 @@ describe("public run conclusion", () => {
   });
 
   it("keeps contradictory and incomplete evidence visible beside failure and indeterminate headlines", () => {
-    const failed = renderInViewMode("basic", failedWithBrokenInvariantEvidence);
+    const failed = renderConclusion(failedWithBrokenInvariantEvidence);
     expectVisible(
       failed.container,
       "The run failed due to a business failure with 50 failed orders.",
@@ -591,7 +570,7 @@ describe("public run conclusion", () => {
       "Contradictory evidence: the final stock and order records disagree, so this result needs investigation.",
     );
 
-    const contradictory = renderInViewMode("basic", contradictoryWithUnavailableEvidence);
+    const contradictory = renderConclusion(contradictoryWithUnavailableEvidence);
     expectVisible(
       contradictory.container,
       "The completed run has contradictory authoritative evidence",
@@ -603,7 +582,7 @@ describe("public run conclusion", () => {
   });
 
   it("qualifies incomplete reply observation when delivery status is complete", () => {
-    const { container } = renderInViewMode("basic", cleanEvidence, {
+    const { container } = renderConclusion(cleanEvidence, {
       trafficDeliveryStatus: "complete",
       transportObservation: interruptedReplies,
     });
@@ -614,7 +593,7 @@ describe("public run conclusion", () => {
     );
   });
 
-  it("keeps detailed evidence visible for renders outside any public view control", () => {
+  it("keeps detailed evidence visible", () => {
     const { container } = render(
       <PublicRunConclusion
         result={deriveRunResult(cleanEvidence)}
