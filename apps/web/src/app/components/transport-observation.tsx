@@ -546,7 +546,7 @@ function formatNumber(value: number): string {
   return formatCount(value) ?? "n/a";
 }
 
-function formatMilliseconds(value: number | null | undefined): string {
+export function formatMilliseconds(value: number | null | undefined): string {
   return formatDurationMs(value) ?? "n/a";
 }
 
@@ -558,7 +558,7 @@ function formatMilliseconds(value: number | null | undefined): string {
  *
  * The bucket edges start at 0.25 ms, so `formatNumber` must keep fractional input.
  */
-function formatHistogramBoundMilliseconds(value: number | null): string {
+export function formatHistogramBoundMilliseconds(value: number | null): string {
   return value === null ? "n/a" : `≤ ${formatNumber(value)}ms`;
 }
 

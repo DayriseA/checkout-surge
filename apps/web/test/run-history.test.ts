@@ -11,7 +11,7 @@ import {
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { type ComponentProps, createElement, type ReactNode } from "react";
+import { type ComponentProps, createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as PageViewComponents from "../src/app/components/page-view.js";
@@ -43,21 +43,16 @@ vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail,
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({ hasValidAdminPageSession }));
-function inViewMode(initialMode: "basic" | "advanced", child: ReactNode) {
+function publicReportWithPreference(
+  initialMode: "basic" | "advanced",
+  detail: PublicRunHistoryDetailResponse,
+) {
   return createElement(
     PageViewComponents.ViewPreferenceProvider,
     { initialMode } as ComponentProps<typeof PageViewComponents.ViewPreferenceProvider>,
     createElement(PageViewComponents.ViewModeSwitch),
-    createElement(
-      PageViewComponents.PageView,
-      {} as ComponentProps<typeof PageViewComponents.PageView>,
-      child,
-    ),
+    createElement(PublicRunHistoryDetail, { detail }),
   );
-}
-
-function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
-  return inViewMode("basic", createElement(PublicRunHistoryDetail, { detail }));
 }
 
 describe("run history", () => {
@@ -366,7 +361,7 @@ describe("run history", () => {
     );
     expect(deliveryPill).toBeDefined();
     expect([...(deliveryPill?.classList ?? [])]).not.toContain("whitespace-nowrap");
-    expect(markup).toContain("Lifecycle and final inventory");
+    expect(markup).toContain("Lifecycle and reference");
     expect(markup).toContain("Run ended");
     expect(markup).toContain('id="report-advanced-scenario"');
     expect(markup).toContain('id="report-advanced-signals"');
@@ -384,6 +379,17 @@ describe("run history", () => {
     expect(markup).not.toContain("source");
     expect(markup).not.toContain("saleOffer");
     expect(markup).not.toMatch(/finalization|finalized/i);
+
+    const sectionOrder = [
+      "report-advanced-signals",
+      "report-advanced-consistency",
+      "report-advanced-scenario",
+      "report-advanced-measurements",
+      "report-advanced-lifecycle",
+    ].map((id) => markup.indexOf(`id="${id}"`));
+    expect(sectionOrder).toEqual([...sectionOrder].sort((left, right) => left - right));
+    expect(markup.indexOf('aria-label="Report actions"')).toBeGreaterThan(sectionOrder.at(-1) ?? 0);
+    expect(markup).toContain('href="#main-content"');
   });
 
   it("promotes sanitized failure guidance and nonzero ERP failures", () => {
@@ -457,6 +463,41 @@ describe("run history", () => {
     expect(markup).toContain(">60<");
   });
 
+  it("renders all four delivery summary values and preserves missing measurements", () => {
+    const detail = detailFixture();
+    detail.summary.serverReservationTimingSummary = {
+      ...detail.summary.serverReservationTimingSummary,
+      redisAtomicReservation: {
+        ...detail.summary.serverReservationTimingSummary.redisAtomicReservation,
+        p95Ms: 5,
+      },
+    };
+    const { container, unmount } = render(createElement(PublicRunHistoryDetail, { detail }));
+    const summaryRows = container.querySelector("[data-delivery-summary]");
+
+    expect([...(summaryRows?.children ?? [])].map((row) => row.textContent)).toEqual([
+      "100%Delivery coverageof dispatched attempts",
+      "≤ 5msObserved reservation p95bounded p95 estimate",
+      "42 msCheckout response p95 (client-observed)",
+      "n/aReservation-to-confirmation p95",
+    ]);
+
+    unmount();
+    const missingDetail = detailFixture();
+    delete missingDetail.summary.httpSummary.p95LatencyMs;
+    const missing = render(createElement(PublicRunHistoryDetail, { detail: missingDetail }));
+    expect(
+      [...(missing.container.querySelector("[data-delivery-summary]")?.children ?? [])].map(
+        (row) => row.textContent,
+      ),
+    ).toEqual([
+      "100%Delivery coverageof dispatched attempts",
+      "n/aObserved reservation p95bounded p95 estimate",
+      "n/aCheckout response p95 (client-observed)",
+      "n/aReservation-to-confirmation p95",
+    ]);
+  });
+
   it("keeps accepted-config demand distinct from mismatched generator evidence", () => {
     const detail = detailFixture();
     detail.plannedAttempts = 10;
@@ -473,30 +514,34 @@ describe("run history", () => {
     expect(markup).toMatch(/Planned attempts<\/dt><dd[^>]*>99<\/dd>/);
   });
 
-  it("keeps Basic outcome and canonical counts visible while technical evidence stays mounted", () => {
+  it.each([
+    "basic",
+    "advanced",
+  ] as const)("keeps the complete report visible without joining the saved %s preference", (initialMode) => {
     const detail = detailFixture();
-    const { container } = render(publicReportInBasic(detail));
+    const { container } = render(publicReportWithPreference(initialMode, detail));
 
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
     expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
     expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
     expect(
       screen.getByText(/10 units reserved \/ 10 unique reservations/).closest("[hidden]"),
     ).toBeNull();
-    expect(screen.getByText("Scenario settings").closest("[hidden]")).not.toBeNull();
-    expect(screen.getByText("Run UUID").closest("[hidden]")).not.toBeNull();
+    expect(screen.getByText("Scenario settings").closest("[hidden]")).toBeNull();
+    expect(screen.getByText("Run UUID").closest("details")?.open).toBe(false);
     expect(
       screen.getByText("reserved units = starting stock − remaining stock").closest("[hidden]"),
-    ).not.toBeNull();
-    expect(container.querySelector("#report-advanced-signals")?.hasAttribute("hidden")).toBe(true);
+    ).toBeNull();
+    expect(container.querySelector("#report-advanced-signals")?.hasAttribute("hidden")).toBe(false);
     expect(container.querySelector("#report-advanced-measurements")?.textContent).toContain(
       "Observed reservation p95",
     );
-    expect(container.querySelector("#report-advanced-measurements")?.hasAttribute("hidden")).toBe(
-      true,
-    );
+    expect(
+      container.querySelector<HTMLDetailsElement>("#report-advanced-measurements details")?.open,
+    ).toBe(false);
     expect(
       screen.getByText(/Final timeline evidence was not recorded/).closest("[hidden]"),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(screen.getByText("Final stock and orders").closest("[hidden]")).toBeNull();
   });
 
@@ -514,14 +559,27 @@ describe("run history", () => {
       failedRequests: 3,
       transportFailures: 3,
     };
-    const { container } = render(publicReportInBasic(detail));
+    const { container } = render(publicReportWithPreference("basic", detail));
     const target = container.querySelector<HTMLElement>("#report-advanced-measurements");
+    const disclosure = target?.querySelector<HTMLDetailsElement>("details");
+    const caveat = target?.querySelector("[data-measurement-caveat]");
 
     expect(screen.getByText(/Reply observation incomplete/).closest("[hidden]")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "View technical measurements" }));
+    expect(caveat?.textContent).toContain(
+      "Checkout response p95 (client-observed) covers only the 17 of 20 planned attempts",
+    );
+    expect(caveat?.textContent).toContain(
+      "Server-observed reservation timing and durable reservation-to-confirmation timing use separate evidence.",
+    );
+    expect(caveat?.textContent).not.toContain("The p95 describes replies received only");
+    expect(disclosure?.open).toBe(false);
+    fireEvent.click(screen.getByRole("link", { name: "View technical measurements" }));
 
-    expect(target?.hasAttribute("hidden")).toBe(false);
+    expect(disclosure?.open).toBe(true);
     expect(document.activeElement).toBe(target);
+
+    fireEvent.click(screen.getByRole("link", { name: "View technical measurements" }));
+    expect(disclosure?.open).toBe(true);
   });
 
   it("keeps operator-stop guidance and unknown cleanup qualification beside the result", () => {
@@ -544,7 +602,7 @@ describe("run history", () => {
       durationSeconds: 1,
       quantityPerAttempt: 1,
     };
-    const { container } = render(publicReportInBasic(detail));
+    const { container } = render(publicReportWithPreference("basic", detail));
     const recap = screen.getByRole("heading", { name: "What happened" }).closest("section");
 
     expect(screen.getByText(/stopped by an operator/).closest("[hidden]")).toBeNull();
@@ -558,9 +616,9 @@ describe("run history", () => {
       "10 units reserved / 10 unique reservations; 10 attempts turned away because stock ran out.",
     );
     expect(recap?.textContent).toContain("Operator stop decision: 00:00:10 UTC.");
-    expect(container.querySelector("#report-advanced-lifecycle")?.hasAttribute("hidden")).toBe(
-      true,
-    );
+    expect(
+      container.querySelector<HTMLDetailsElement>("#report-advanced-lifecycle details")?.open,
+    ).toBe(false);
   });
 
   it("keeps durable comparison facts visible when final inventory was not recorded", () => {
@@ -636,6 +694,9 @@ describe("run history", () => {
 
     expect(markup).toContain("<h1");
     expect(markup).toContain("Preview 1k</h1>");
+    expect(markup).toContain("Everyone at once · 1,000 buyers · 250 starting units");
+    expect(markup).toContain("This is a simulation of buyers competing for limited stock");
+    expect(markup).not.toContain("Saved run report for a checkout simulation.");
     expect(markup).toContain("All 10 available units were reserved without overselling.");
     expect(markup).toContain("Completed");
     expect(markup).toContain("2026-06-20 00:00:00 UTC");

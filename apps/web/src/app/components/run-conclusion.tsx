@@ -6,7 +6,8 @@ import {
 } from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
 import { invariantLabel, runConclusionSentence } from "../lib/presentation/run-result-presentation";
-import { AdvancedOnly, RevealAdvancedLink } from "./page-view";
+import { AdvancedOnly } from "./page-view";
+import { ReportMeasurementsLink } from "./report-measurements-link";
 import type { TransportObservation } from "./transport-observation";
 
 type Reconciliation = RunResult["reconciliations"][number];
@@ -123,6 +124,7 @@ export function PublicRunConclusion({
   transportObservation = null,
   consistencyTargetId,
   measurementsTargetId,
+  showProof = true,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
@@ -130,6 +132,7 @@ export function PublicRunConclusion({
   transportObservation?: TransportObservation | null;
   consistencyTargetId?: string;
   measurementsTargetId?: string;
+  showProof?: boolean;
 }) {
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const summary = derivePublicRunSummary({
@@ -153,14 +156,14 @@ export function PublicRunConclusion({
       ) : null}
       <PublicRunCaveatList caveats={summary.caveats} />
       {measurementsTargetId && summary.hasMeasurementCaveat ? (
-        <RevealAdvancedLink targetId={measurementsTargetId}>
-          View technical measurements
-        </RevealAdvancedLink>
+        <ReportMeasurementsLink targetId={measurementsTargetId} />
       ) : null}
-      <PublicRunConclusionProof
-        result={result}
-        {...(consistencyTargetId ? { targetId: consistencyTargetId } : {})}
-      />
+      {showProof ? (
+        <PublicRunConclusionProof
+          result={result}
+          {...(consistencyTargetId ? { targetId: consistencyTargetId } : {})}
+        />
+      ) : null}
     </section>
   );
 }
@@ -193,18 +196,35 @@ export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] })
  * surfaces present exactly the same evidence.
  */
 export function PublicRunConclusionProof({
+  alwaysVisible = false,
   result,
   targetId,
 }: {
+  alwaysVisible?: boolean;
   result: RunResult;
   targetId?: string;
 }) {
-  return (
-    <AdvancedOnly className="mt-4" {...(targetId ? { id: targetId } : {})}>
+  const content = (
+    <>
       {targetId ? <h2 className="m-0 text-base font-bold text-ink">Consistency</h2> : null}
       <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
       <ReconciliationStatus result={result} />
       <ConclusionEvidence result={result} showCanonicalCodes={false} />
+    </>
+  );
+  if (alwaysVisible) {
+    return (
+      <section
+        className="rounded-lg border border-border bg-surface p-4"
+        {...(targetId ? { id: targetId, tabIndex: -1 } : {})}
+      >
+        {content}
+      </section>
+    );
+  }
+  return (
+    <AdvancedOnly className="mt-4" {...(targetId ? { id: targetId } : {})}>
+      {content}
     </AdvancedOnly>
   );
 }

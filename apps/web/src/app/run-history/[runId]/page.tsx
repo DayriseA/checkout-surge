@@ -7,9 +7,12 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { neutralLinkButtonClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
-import { PageView } from "../../components/page-view";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
-import { AdminRunHistoryDetail, PublicRunHistoryDetail } from "../../components/run-history-detail";
+import {
+  AdminRunHistoryDetail,
+  PublicRunHistoryDetail,
+  scenarioRecap,
+} from "../../components/run-history-detail";
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
@@ -67,7 +70,7 @@ export default async function RunHistoryDetailPage({
   if (publicDetail?.status === "available") {
     const { summary, result, overallDurationMs } = publicDetail.data;
     return (
-      <PageView>
+      <>
         <header className="mb-4">
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
@@ -76,7 +79,11 @@ export default async function RunHistoryDetailPage({
             {summary.presetName}
           </h1>
           <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
-            Saved run report for a checkout simulation.
+            {scenarioRecap(publicDetail.data)}
+          </p>
+          <p className="m-0 mt-1 max-w-[66ch] text-sm leading-6 text-muted">
+            This is a simulation of buyers competing for limited stock and orders reaching a
+            simulated order-processing system.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <p className="m-0 text-sm text-muted">
@@ -98,7 +105,7 @@ export default async function RunHistoryDetailPage({
           </div>
         </header>
         <PublicRunHistoryDetail detail={publicDetail.data} />
-      </PageView>
+      </>
     );
   }
 
@@ -203,5 +210,5 @@ export default async function RunHistoryDetailPage({
     return body;
   }
 
-  return <PageView>{body}</PageView>;
+  return body;
 }
