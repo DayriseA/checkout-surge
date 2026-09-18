@@ -248,28 +248,34 @@ describe("watch narrative", () => {
       );
       const identity = output.indexOf('aria-label="Run phase"');
       const strip = output.indexOf('data-watch-signals=""');
-      const scenario = output.indexOf('id="watch-advanced-scenario"');
       const signals = output.indexOf('id="watch-advanced-signals"');
+      const scenario = output.indexOf('id="watch-advanced-scenario"');
       const processing = output.indexOf('id="watch-advanced-processing"');
       const consistency = output.indexOf('id="watch-advanced-consistency"');
       const connection = output.indexOf('id="watch-advanced-connection"');
 
       expect(identity).toBeGreaterThan(-1);
       expect(strip).toBeGreaterThan(identity);
-      expect(scenario).toBeGreaterThan(strip);
-      expect(signals).toBeGreaterThan(scenario);
-      expect(processing).toBeGreaterThan(signals);
-      expect(consistency).toBeGreaterThan(processing);
-      expect(connection).toBeGreaterThan(consistency);
       if (status === "active" || status === "draining") {
+        // Live mode: the board leads the technical groups, and the collapsed run context holds
+        // only the scenario and connection groups.
+        expect(signals).toBeGreaterThan(strip);
+        expect(scenario).toBeGreaterThan(signals);
+        expect(connection).toBeGreaterThan(scenario);
+        expect(processing).toBe(-1);
+        expect(consistency).toBe(-1);
         const verdict = output.indexOf(
           status === "active" ? "The surge is under way" : "Confirming remaining orders",
         );
         expect(verdict).toBeGreaterThan(identity);
         expect(output).not.toContain("Try another scenario");
         expect(output).not.toContain("View run report");
-      }
-      if (status === "completed" || status === "failed") {
+      } else {
+        expect(scenario).toBeGreaterThan(strip);
+        expect(signals).toBeGreaterThan(scenario);
+        expect(processing).toBeGreaterThan(signals);
+        expect(consistency).toBeGreaterThan(processing);
+        expect(connection).toBeGreaterThan(consistency);
         expect(output.indexOf("View run report")).toBeGreaterThan(strip);
         expect(output.indexOf("Try another scenario")).toBeGreaterThan(strip);
       }

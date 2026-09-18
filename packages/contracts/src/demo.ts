@@ -232,6 +232,11 @@ export const businessOutcomeSummarySchema = z
     acceptedReservations: nonnegativeIntegerSchema,
     /** Durable sum of reservation quantities; acceptedReservations is a row count. */
     reservedUnits: nonnegativeIntegerSchema,
+    /**
+     * Durable count captured once at traffic-completion enrichment; 0 until then, so a live 0
+     * means "not captured yet", not "no rejections". The live count during a run is
+     * `inventory.soldOutPressure.rejectionCount`; finalization requires both to agree.
+     */
     soldOutRejections: nonnegativeIntegerSchema,
     /** Live form of queueBacklogDefinition: accepted_awaiting_first_processing_start. */
     queuedOrders: nonnegativeIntegerSchema,

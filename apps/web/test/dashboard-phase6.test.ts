@@ -769,9 +769,12 @@ describe("Phase 6 projection dashboard", () => {
    * restate what the panels found here already prove.
    */
   it("places the run ERP and consistency panels side by side in the Processing group", () => {
+    // The grouped panels are the report-mode layout, so this needs a terminal run; a live run
+    // renders the compact board instead.
+    const projection = completedProjectionFixture();
     const markup = renderToStaticMarkup(
       createElement(OperatorDashboard, {
-        initialRecovery: available(projectionFixture()),
+        initialRecovery: available(projection),
       }),
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
@@ -828,17 +831,7 @@ describe("Phase 6 projection dashboard", () => {
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
     const groups = [...document.querySelectorAll("[id^='watch-advanced-']")];
-    expect(groups.map((group) => group.id)).toEqual(
-      status === "idle"
-        ? ["watch-advanced-connection"]
-        : [
-            "watch-advanced-scenario",
-            "watch-advanced-signals",
-            "watch-advanced-processing",
-            "watch-advanced-consistency",
-            "watch-advanced-connection",
-          ],
-    );
+    expect(groups.map((group) => group.id)).toEqual(groupIds(status));
     for (const group of groups) {
       const grid = group.querySelector(".grid-cols-12");
       if (!grid) throw new Error(`Expected a 12-column grid in #${group.id}.`);
@@ -858,7 +851,7 @@ describe("Phase 6 projection dashboard", () => {
         if (rowWidth === 12) rowWidth = 0;
       }
       expect(rowWidth).toBe(0);
-      expect(spans).toEqual(groupSpans(group.id));
+      expect(spans).toEqual(groupSpans(group.id, status));
     }
     const processing = document.querySelector("#watch-advanced-processing");
     if (status === "completed") {
@@ -874,18 +867,36 @@ describe("Phase 6 projection dashboard", () => {
       );
     }
 
-    function groupSpans(groupId: string): number[] {
+    function groupIds(phase: "idle" | "active" | "completed"): string[] {
+      switch (phase) {
+        case "idle":
+          return ["watch-advanced-connection"];
+        case "active":
+          // Live mode: the board leads, and the collapsed run context holds scenario and connection.
+          return ["watch-advanced-signals", "watch-advanced-scenario", "watch-advanced-connection"];
+        case "completed":
+          return [
+            "watch-advanced-scenario",
+            "watch-advanced-signals",
+            "watch-advanced-processing",
+            "watch-advanced-consistency",
+            "watch-advanced-connection",
+          ];
+      }
+    }
+
+    function groupSpans(groupId: string, phase: "idle" | "active" | "completed"): number[] {
       switch (groupId) {
         case "watch-advanced-scenario":
           return [12, 12];
         case "watch-advanced-signals":
           return [12];
         case "watch-advanced-consistency":
-          return status === "completed" ? [12, 12] : [12];
+          return phase === "completed" ? [12, 12] : [12];
         case "watch-advanced-processing":
           return [12, 6, 6];
         case "watch-advanced-connection":
-          return status === "idle" ? [12] : [4, 8, 12];
+          return phase === "idle" ? [12] : phase === "active" ? [12, 12] : [4, 8, 12];
         default:
           throw new Error(`Unexpected group ${groupId}.`);
       }
@@ -1283,5 +1294,20 @@ function drainingProjectionFixture(): DashboardProjection {
     arrivalSeriesLimit: 120,
   };
 
+  return projection;
+}
+
+/** The active fixture carried to its terminal report-mode phase. */
+function completedProjectionFixture(): DashboardProjection {
+  const projection = projectionFixture();
+  const currentRun = projection.currentRun;
+  if (currentRun?.status !== "active") throw new Error("Expected an active run fixture.");
+  projection.currentRun = {
+    ...currentRun,
+    status: "completed",
+    trafficStatus: "succeeded",
+    trafficEndedAt: "2026-06-20T00:00:11.000Z",
+    finalizedAt: "2026-06-20T00:00:12.000Z",
+  };
   return projection;
 }

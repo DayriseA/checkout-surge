@@ -93,12 +93,12 @@ const protectionClockLabel = {
   projected: "Projected by API at",
 } as const;
 
-function formatNumber(value: number): string {
+export function formatNumber(value: number | null | undefined): string {
   return formatCount(value) ?? "—";
 }
 
 /** Rates are not counts or durations; they keep their own precision rule and unit label. */
-function formatRate(value: number | null | undefined, unit: string, absent = "—"): string {
+export function formatRate(value: number | null | undefined, unit: string, absent = "—"): string {
   if (value === null || value === undefined) {
     return absent;
   }
@@ -116,11 +116,11 @@ function formatScheduledTime(value: string | undefined | null): string {
   return formatInstantUtc(value) ?? "not scheduled";
 }
 
-function formatDurationSeconds(value: number | null | undefined, absent = "—"): string {
+export function formatDurationSeconds(value: number | null | undefined, absent = "—"): string {
   return formatDurationMs(value === null || value === undefined ? null : value * 1000) ?? absent;
 }
 
-function formatMilliseconds(value: number | null | undefined, absent = "—"): string {
+export function formatMilliseconds(value: number | null | undefined, absent = "—"): string {
   return formatDurationMs(value) ?? absent;
 }
 
@@ -129,7 +129,7 @@ function formatMilliseconds(value: number | null | undefined, absent = "—"): s
  * follows the one duration policy rather than the sample's raw precision; every other unit is a
  * rate or a ratio and keeps its own precision rule and unit label.
  */
-function formatMetric(value: number, unit: string, absent = "—"): string {
+export function formatMetric(value: number, unit: string, absent = "—"): string {
   if (unit === millisecondUnit) {
     return formatDurationMs(value) ?? absent;
   }
@@ -139,7 +139,7 @@ function formatMetric(value: number, unit: string, absent = "—"): string {
   }).format(value)} ${unit}`;
 }
 
-function formatFailureSample(value: number, unit: string): string {
+export function formatFailureSample(value: number, unit: string): string {
   return unit === "ratio"
     ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value * 100)}%`
     : formatMetric(value, unit);
@@ -559,7 +559,7 @@ export function RequestSurgePanel({
   );
 }
 
-function findLatestMetric(
+export function findLatestMetric(
   metrics: DashboardProjection["recentMetrics"],
   predicate: (metricName: string, unit: string) => boolean,
 ): DashboardProjection["recentMetrics"][number] | null {

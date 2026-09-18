@@ -13,7 +13,7 @@ Inventory keys are scoped per sale offer:
 - `inventory:{saleOfferId}:pending-persistence-records` stores the self-sufficient hold, idempotency context, retry timing, attempt count, recovery deadline, last error, and pending/exhausted state used by the sole per-sale recovery owner. There is no global pending index.
 - `inventory:{saleOfferId}:events` stores the newest 500 hot-path inventory updates in chronological insertion order. It is a bounded diagnostic window, not a recovery source or supported public API.
 - `inventory:{saleOfferId}:reservation-throughput` stores an exact fixed 60-slot ring of per-second successful reservation-request counts.
-- `inventory:{saleOfferId}:sold-out` stores the run-scoped sold-out count and its latest-observed time for durable accounting at finalization.
+- `inventory:{saleOfferId}:sold-out` stores the run-scoped sold-out count and its latest-observed time for durable accounting at finalization. Dashboard consumers must read the live count from `inventory.soldOutPressure` while a run accepts traffic, because the durable `businessOutcome.soldOutRejections` stays `0` until traffic-completion enrichment.
 - `inventory:{saleOfferId}:idempotency:{idempotencyKey}` stores per-sale idempotency outcomes.
 
 The local seed path initializes these keys from `sale_offers.allocated_stock`, and generated demo runs initialize them from the accepted run configuration snapshot. `sale_offers.allocated_stock` is the durable starting allocation for this demo; it is not a live remaining-inventory counter.

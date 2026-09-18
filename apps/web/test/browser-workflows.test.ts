@@ -1882,7 +1882,9 @@ describe("watch browser recovery", () => {
 
     expect(markup).toContain("Run: accepting checkout attempts");
     expect(markup).toContain("Not yet available");
-    expect(markup).toContain("No inventory evidence yet.");
+    // Live mode renders missing evidence as em-dash placeholders on the board instead of the
+    // report-mode "no evidence yet" panels.
+    expect(markup).toContain("of — left");
     expect(markup).not.toContain("No run has started");
   });
 
@@ -1994,9 +1996,9 @@ describe("watch browser recovery", () => {
 
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("7 waiting · peak 7");
-    expect(markup).toContain("Run-owned retrying orders are shown separately (3)");
-    // Run-owned outcome totals stay reachable in the grouped technical processing section.
-    expect(markup).toContain("Reservation and confirmation summary");
+    // Run-owned outcome totals stay reachable on the live board: the run's own retrying count (3)
+    // is separate from the shared queue's retry pressure (29) in the run context's system status.
+    expect(markup).toMatch(/Retrying<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toContain("System status across all runs and visitors");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
     expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
@@ -2652,7 +2654,7 @@ describe("watch composition", () => {
     );
     await act(async () => FakeEventSource.instances[0]?.emit("open", new Event("open")));
     const arrivalLineBefore =
-      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+      document.querySelector("[data-watch-signals] svg polyline")?.getAttribute("points") ?? "";
     expect(arrivalLineBefore).not.toBe("");
 
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
@@ -2671,7 +2673,7 @@ describe("watch composition", () => {
       fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
     ).toHaveLength(0);
     const arrivalLineAfter =
-      document.querySelector("#watch-advanced-signals svg polyline")?.getAttribute("points") ?? "";
+      document.querySelector("[data-watch-signals] svg polyline")?.getAttribute("points") ?? "";
     expect(arrivalLineAfter).toBe(arrivalLineBefore);
     expect(screen.getByText("The surge is under way")).toBeTruthy();
 
