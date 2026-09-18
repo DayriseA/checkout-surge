@@ -1,10 +1,4 @@
 import type { Metadata } from "next";
-import {
-  AdvancedOnly,
-  BasicOnly,
-  PageView,
-  RevealAdvancedHashTarget,
-} from "../components/page-view";
 import { publicNarrative, publicVocabulary } from "../lib/presentation/public-vocabulary";
 
 export const metadata: Metadata = { title: "About" };
@@ -15,8 +9,7 @@ const termLinkClassName = "font-semibold text-accent underline";
 
 export default function AboutPage() {
   return (
-    <PageView>
-      <RevealAdvancedHashTarget />
+    <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <h1 className="m-0 text-4xl font-bold leading-tight text-ink">About</h1>
@@ -26,97 +19,12 @@ export default function AboutPage() {
           </p>
         </div>
       </header>
-
-      <BasicOnly>
-        <BasicAbout />
-      </BasicOnly>
-
-      <AdvancedOnly>
-        <AdvancedAbout />
-      </AdvancedOnly>
-    </PageView>
-  );
-}
-
-function BasicAbout() {
-  return (
-    <>
-      <section className={sectionClassName} id="sale-example">
-        <h2 className="m-0 text-xl font-bold text-ink">A sale with more buyers than stock</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
-          Imagine 100 simulated buyers trying to buy 10 units at once. The first safe decisions
-          reserve those units. The other 90 are counted as “{publicVocabulary.soldOutAttempts}”:
-          they are expected when stock is limited and are not failed orders.
-        </p>
-        <ConceptualDiagram />
-      </section>
-
-      <section className={sectionClassName} id="reservation-and-confirmation">
-        <h2 className="m-0 text-xl font-bold text-ink">Reservation comes before confirmation</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
-          A reservation secures stock for one checkout without overselling it. Confirmation happens
-          later, after the reserved order is processed. A reserved order can be confirmed or fail,
-          so reservation alone does not mean the purchase succeeded.
-        </p>
-      </section>
-
-      <section className={sectionClassName} id="basic-success">
-        <h2 className="m-0 text-xl font-bold text-ink">What success means</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
-          A successful run shows that every reservation reached a confirmed or failed outcome, no
-          orders failed or remained pending, nothing was oversold, and enough evidence was recorded
-          to verify those facts. Speed and traffic-delivery results are reported separately: a run
-          can protect stock correctly while receiving only part of its planned traffic.
-        </p>
-      </section>
-
-      <section className={sectionClassName} id="simulation-and-source">
-        <h2 className="m-0 text-xl font-bold text-ink">A simulation, not a real purchase</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
-          The buyers and business activity are simulated, and no real purchase takes place. Local
-          results depend on the computer, available resources, configuration, and other running
-          work, so they are not a universal performance promise.
-        </p>
-        <RepositoryLink />
-      </section>
+      <TechnicalAbout />
     </>
   );
 }
 
-function ConceptualDiagram() {
-  const stepClassName =
-    "min-w-36 flex-1 rounded-lg border border-border bg-surface-muted p-3 text-center font-semibold text-ink";
-  return (
-    <figure className="m-0 mt-5" aria-labelledby="sale-flow-caption">
-      <ol className="m-0 flex list-none flex-wrap items-stretch gap-2 p-0">
-        <li className={stepClassName}>Buyers</li>
-        <li aria-hidden="true" className="self-center font-bold text-muted">
-          →
-        </li>
-        <li className={stepClassName}>Reserve stock</li>
-        <li aria-hidden="true" className="self-center font-bold text-muted">
-          →
-        </li>
-        <li className={stepClassName}>Wait for processing</li>
-        <li aria-hidden="true" className="self-center font-bold text-muted">
-          →
-        </li>
-        <li className={stepClassName}>
-          Order outcome
-          <span className="mt-1 block text-sm font-normal text-muted-strong">
-            Confirmed or failed
-          </span>
-        </li>
-      </ol>
-      <figcaption className="mt-3 text-sm leading-6 text-muted" id="sale-flow-caption">
-        Text summary: Buyers try to reserve stock, reserved orders wait for processing, and each
-        order ends confirmed or failed.
-      </figcaption>
-    </figure>
-  );
-}
-
-function AdvancedAbout() {
+function TechnicalAbout() {
   return (
     <>
       <section className={sectionClassName} id="failure-story" tabIndex={-1}>

@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 const publicSurface = vi.hoisted(() => ({ id: "public-surface" }));
 const sessionMock = vi.hoisted(() => vi.fn(async () => false));
+const readViewModeMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<"basic" | "advanced"> => "basic"),
+);
 
 vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(async () => publicSurface),
@@ -16,7 +19,7 @@ vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: sessionMock,
 }));
 vi.mock("../src/app/lib/server/page-view-mode.js", () => ({
-  readViewMode: vi.fn(async () => "basic" as const),
+  readViewMode: readViewModeMock,
 }));
 vi.mock("../src/app/components/admin-nav.js", () => ({
   AdminSignOut: () => createElement("button", { type: "button" }, "Sign out"),
@@ -24,12 +27,15 @@ vi.mock("../src/app/components/admin-nav.js", () => ({
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
 import AboutPage from "../src/app/about/page.js";
+import { ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import RootLayout from "../src/app/layout.js";
 import { publicNarrative } from "../src/app/lib/presentation/public-vocabulary.js";
 import DemoDashboardPage from "../src/app/page.js";
 
 afterEach(() => {
   sessionMock.mockResolvedValue(false);
+  readViewModeMock.mockClear();
+  readViewModeMock.mockResolvedValue("basic");
 });
 
 describe("public visitor mental model", () => {
@@ -56,39 +62,33 @@ describe("public visitor mental model", () => {
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
-  it("explains the Basic sale flow, failure path, success test, and simulation boundary", async () => {
-    const markup = renderToStaticMarkup(await AboutPage());
+  it("shows one technical presentation under either saved preference", async () => {
+    const basicPreferenceMarkup = renderToStaticMarkup(
+      <ViewPreferenceProvider initialMode="basic">{await AboutPage()}</ViewPreferenceProvider>,
+    );
+    const advancedPreferenceMarkup = renderToStaticMarkup(
+      <ViewPreferenceProvider initialMode="advanced">{await AboutPage()}</ViewPreferenceProvider>,
+    );
     const basicSectionIds = [
       "sale-example",
       "reservation-and-confirmation",
       "basic-success",
       "simulation-and-source",
     ];
-    const sectionPositions = basicSectionIds.map((id) => markup.indexOf(`id="${id}"`));
-
-    expect(sectionPositions.every((position) => position >= 0)).toBe(true);
-    expect(sectionPositions).toEqual([...sectionPositions].sort((left, right) => left - right));
-    expect(markup).toContain("100 simulated buyers trying to buy 10 units");
-    expect(markup).toContain("Attempts turned away because stock ran out");
-    expect(markup).toContain("expected when stock is limited and are not failed orders");
-    expect(markup).toContain("Buyers");
-    expect(markup).toContain("Reserve stock");
-    expect(markup).toContain("Wait for processing");
-    expect(markup).toContain("Order outcome");
-    expect(markup).toContain("Confirmed or failed");
-    expect(markup).toContain(
-      "every reservation reached a confirmed or failed outcome, no orders failed or remained pending, nothing was oversold",
-    );
-    expect(markup).toContain("enough evidence was recorded to verify those facts");
-    expect(markup).toContain("Speed and traffic-delivery results are reported separately");
-    expect(markup).toContain("buyers and business activity are simulated");
-    expect(markup).toContain("no real purchase takes place");
-    expect(markup).toContain("Local results depend on the computer");
+    expect(advancedPreferenceMarkup).toBe(basicPreferenceMarkup);
+    expect(readViewModeMock).not.toHaveBeenCalled();
+    expect(basicPreferenceMarkup).not.toContain("data-basic-only");
+    expect(basicPreferenceMarkup).not.toContain("data-advanced-only");
+    for (const id of basicSectionIds) {
+      expect(basicPreferenceMarkup).not.toContain(`id="${id}"`);
+    }
+    expect(basicPreferenceMarkup).not.toContain("100 simulated buyers trying to buy 10 units");
+    expect(basicPreferenceMarkup).toContain("The flash-sale failure story");
+    expect(basicPreferenceMarkup).toContain("Results are environment-dependent");
   });
 
-  it("keeps the architecture, technical narrative, and glossary mounted but hidden in Basic", async () => {
+  it("keeps the architecture, technical narrative, and glossary visible", async () => {
     const markup = renderToStaticMarkup(await AboutPage());
-    const advancedMarkup = markup.slice(markup.indexOf('data-advanced-only="true"'));
     const signalSection = markup.slice(
       markup.indexOf('id="gold-signals"'),
       markup.indexOf('id="success"'),
@@ -109,23 +109,19 @@ describe("public visitor mental model", () => {
       "reservation-vs-confirmation",
     ];
 
-    expect(advancedMarkup).toContain('hidden=""');
-    expect(advancedMarkup).toContain('id="failure-story"');
-    expect(advancedMarkup).toContain('id="redis-fast-path"');
-    expect(advancedMarkup).toContain('id="queue-protection"');
-    expect(advancedMarkup).toContain('id="real-and-simulated"');
-    expect(advancedMarkup).toContain('id="gold-signals"');
-    expect(advancedMarkup).toContain('id="success"');
-    expect(advancedMarkup).toContain('id="limits-and-source"');
-    expect(advancedMarkup).toContain('id="glossary"');
-    expect(advancedMarkup).toContain(
-      "A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime",
-    );
-    expect(advancedMarkup).toContain("buyers are simulated by the load generator (k6)");
-    expect(advancedMarkup).toContain(
-      "Legacy-ERP delay, capacity, failures, and outages are simulated",
-    );
-    expect(advancedMarkup).toContain("simulated emails recorded");
+    expect(markup).not.toContain('hidden=""');
+    expect(markup).toContain('id="failure-story"');
+    expect(markup).toContain('id="redis-fast-path"');
+    expect(markup).toContain('id="queue-protection"');
+    expect(markup).toContain('id="real-and-simulated"');
+    expect(markup).toContain('id="gold-signals"');
+    expect(markup).toContain('id="success"');
+    expect(markup).toContain('id="limits-and-source"');
+    expect(markup).toContain('id="glossary"');
+    expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
+    expect(markup).toContain("buyers are simulated by the load generator (k6)");
+    expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
+    expect(markup).toContain("simulated emails recorded");
     expect(signalSection.indexOf("Request arrival")).toBeLessThan(
       signalSection.indexOf("Inventory drain"),
     );
