@@ -225,9 +225,6 @@ export function RecoveryStatusPanel({
   recovery,
   realtimeStatus,
   isRefreshing = false,
-  isRetryScheduled = false,
-  retryAttempt = 0,
-  retryDelayMs = null,
   hasSyncIssue = false,
   syncIssue = null,
   presentation,
@@ -238,9 +235,6 @@ export function RecoveryStatusPanel({
   recovery: BackendRead<DashboardProjection>;
   realtimeStatus: RealtimeConnectionStatus;
   isRefreshing?: boolean;
-  isRetryScheduled?: boolean;
-  retryAttempt?: number;
-  retryDelayMs?: number | null;
   hasSyncIssue?: boolean;
   syncIssue?: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
   presentation: PresentationState;
@@ -267,7 +261,10 @@ export function RecoveryStatusPanel({
           <h2 className={panelTitleClassName}>Run availability and updates</h2>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {onRefresh && recovery.status !== "loading" && !retryWaitActive ? (
+          {onRefresh &&
+          recovery.status !== "loading" &&
+          !retryWaitActive &&
+          !hasLastKnownGoodSyncIssue ? (
             <button
               className={`${buttonClassName} px-3 py-2 text-sm`}
               disabled={isRefreshing}
@@ -289,17 +286,9 @@ export function RecoveryStatusPanel({
           />
         </div>
       </div>
-      {hasLastKnownGoodSyncIssue ? (
-        <div className="mb-3 grid gap-1 rounded-lg border border-border bg-surface-muted p-3 leading-6 text-muted-strong">
-          <strong>Last-known-good data</strong>
-          <div>
-            {isRefreshing
-              ? "Refreshing the latest run data now."
-              : isRetryScheduled && retryDelayMs !== null
-                ? `Retry scheduled in ${formatMilliseconds(retryDelayMs)} (attempt ${retryAttempt}).`
-                : "The latest authoritative data is unavailable."}
-          </div>
-          {syncIssue ? <ErrorNotice context="watch-read" read={syncIssue} /> : null}
+      {hasLastKnownGoodSyncIssue && syncIssue ? (
+        <div className="mb-3">
+          <ErrorNotice context="watch-read" read={syncIssue} />
         </div>
       ) : null}
       {data ? (

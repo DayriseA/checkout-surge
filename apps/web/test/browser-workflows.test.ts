@@ -42,11 +42,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
-import {
-  PageView,
-  ViewModeSwitch,
-  ViewPreferenceProvider,
-} from "../src/app/components/page-view.js";
+import { ViewModeSwitch, ViewPreferenceProvider } from "../src/app/components/page-view.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
@@ -2146,13 +2142,9 @@ describe("watch browser recovery", () => {
         ViewPreferenceProvider,
         { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
         createElement(ViewModeSwitch),
-        createElement(
-          PageView,
-          {} as React.ComponentProps<typeof PageView>,
-          createElement(OperatorDashboard, {
-            initialRecovery: pendingDashboardRecovery(),
-          }),
-        ),
+        createElement(OperatorDashboard, {
+          initialRecovery: pendingDashboardRecovery(),
+        }),
       ),
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
@@ -2161,29 +2153,27 @@ describe("watch browser recovery", () => {
     act(() => FakeEventSource.instances[0]?.emit("error", new Event("error")));
 
     await screen.findByText("The latest information is temporarily unavailable");
-    expect(
-      screen.getAllByText("Last-known-good data").filter((element) => !element.closest("[hidden]")),
-    ).toHaveLength(1);
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
     expect(
       screen
         .getAllByRole("button", { name: "Refresh", hidden: true })
-        .filter((element) => !element.closest("[hidden]")),
+        .filter((element) => !element.closest("details:not([open])")),
     ).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("switch", { name: "Advanced" }));
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    fireEvent.click(screen.getByText("Technical details", { selector: "summary" }));
 
-    expect(
-      screen.getAllByText("Last-known-good data").filter((element) => !element.closest("[hidden]")),
-    ).toHaveLength(1);
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
     expect(
       screen
         .getAllByRole("button", { name: "Refresh", hidden: true })
-        .filter((element) => !element.closest("[hidden]")),
+        .filter((element) => !element.closest("details:not([open])")),
     ).toHaveLength(1);
-    expect(container.querySelector('[data-basic-only="true"]')?.hasAttribute("hidden")).toBe(true);
     expect(screen.getByText("Preview 1k")).toBeTruthy();
     expect(screen.queryAllByText("Unavailable")).toHaveLength(0);
-    expect(screen.queryAllByText("Correlation watch-refresh-failed")).toHaveLength(0);
+    const connection = container.querySelector<HTMLElement>("#watch-advanced-connection");
+    if (!connection) throw new Error("Expected the technical connection group.");
+    expect(within(connection).getByRole("alert")).toBeTruthy();
   });
 });
 
@@ -2445,17 +2435,22 @@ describe("watch basic composition", () => {
   function expectVisible(container: HTMLElement, needle: string): void {
     const element = innermostByText(container, needle);
     expect(element).not.toBeNull();
-    expect(element?.closest("[hidden]")).toBeNull();
+    expect(element?.closest("details:not([open])")).toBeNull();
   }
 
   function expectHidden(container: HTMLElement, needle: string): void {
     const element = innermostByText(container, needle);
     expect(element).not.toBeNull();
-    expect(element?.closest("[hidden]")).not.toBeNull();
+    expect(element?.closest("details:not([open])")).not.toBeNull();
   }
 
   function inBasicView(ui: ReactElement) {
-    return inBasicPageView(ui);
+    return createElement(
+      ViewPreferenceProvider,
+      { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
+      createElement(ViewModeSwitch),
+      ui,
+    );
   }
 
   function activeProjectionFixture(): DashboardProjection {
@@ -2635,7 +2630,7 @@ describe("watch basic composition", () => {
     expectVisible(container, "The surge is under way");
   });
 
-  it("opens Advanced focused on a signal's full chart from its sparkline", () => {
+  it("opens technical details focused on a signal's full chart from its sparkline", async () => {
     const { container } = render(
       inBasicView(
         createElement(OperatorDashboard, {
@@ -2648,14 +2643,15 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
-    expect(document.activeElement?.id).toBe("watch-signal-arrival");
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    expect(
+      screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
+    ).toBe(true);
+    await waitFor(() => expect(document.activeElement?.id).toBe("watch-signal-arrival"));
     expect(container.querySelector("#watch-signal-arrival")?.hasAttribute("hidden")).toBe(false);
   });
 
-  it("keeps the stream, samples, and report retries intact across repeated mode switches", async () => {
+  it("keeps the stream, samples, and report retries intact across repeated details toggles", async () => {
     vi.useFakeTimers();
     const activeFixture = activeProjectionFixture();
     const fetchMock = vi.fn((input: string | URL | Request) => {
@@ -2689,8 +2685,8 @@ describe("watch basic composition", () => {
       ),
     ).toHaveLength(1);
 
-    const viewSwitch = screen.getByRole("switch", { name: "Advanced" });
-    for (let index = 0; index < 3; index += 1) fireEvent.click(viewSwitch);
+    const detailsSummary = screen.getByText("Technical details", { selector: "summary" });
+    for (let index = 0; index < 4; index += 1) fireEvent.click(detailsSummary);
 
     // One stream, one start-free page, preserved samples, and the live scope still on screen.
     expect(FakeEventSource.instances).toHaveLength(1);
@@ -2762,11 +2758,11 @@ describe("watch basic composition", () => {
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     // The stream stays connected; only the authoritative read fails.
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
-    const advancedRefresh = container.querySelector<HTMLButtonElement>(
+    const detailsRefresh = container.querySelector<HTMLButtonElement>(
       "#watch-advanced-connection button",
     );
-    if (!advancedRefresh) throw new Error("Expected the Advanced refresh control.");
-    fireEvent.click(advancedRefresh);
+    if (!detailsRefresh) throw new Error("Expected the technical-details refresh control.");
+    fireEvent.click(detailsRefresh);
 
     await screen.findAllByText("Last-known-good data");
     expectVisible(container, "Last-known-good data");
@@ -2777,6 +2773,9 @@ describe("watch basic composition", () => {
     expectVisible(container, "Awaiting confirmation");
     // The connected stream means no reconnect announcement is duplicated here.
     expect(screen.queryByText("Live updates interrupted")).toBeNull();
+    fireEvent.click(screen.getByText("Technical details", { selector: "summary" }));
+    expect(screen.getAllByText("Last-known-good data")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Refresh", hidden: true })).toHaveLength(1);
     fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     const refreshing = screen.getByRole("button", { name: "Refreshing" }) as HTMLButtonElement;
     expect(refreshing.disabled).toBe(true);
@@ -2813,11 +2812,11 @@ describe("watch basic composition", () => {
     );
     await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
     act(() => FakeEventSource.instances[0]?.emit("open", new Event("open")));
-    const advancedRefresh = container.querySelector<HTMLButtonElement>(
+    const detailsRefresh = container.querySelector<HTMLButtonElement>(
       "#watch-advanced-connection button",
     );
-    if (!advancedRefresh) throw new Error("Expected the Advanced refresh control.");
-    fireEvent.click(advancedRefresh);
+    if (!detailsRefresh) throw new Error("Expected the technical-details refresh control.");
+    fireEvent.click(detailsRefresh);
 
     await screen.findAllByText("Last-known-good data");
     expectVisible(container, "Last-known-good data");
@@ -2863,7 +2862,7 @@ describe("watch basic composition", () => {
     expect(screen.queryByText("Last-known-good data")).toBeNull();
   });
 
-  it("targets the Signals group from a sparkline when no chart evidence exists yet", () => {
+  it("targets the Signals group from a sparkline when no chart evidence exists yet", async () => {
     const { container } = render(
       inBasicView(
         createElement(OperatorDashboard, {
@@ -2880,10 +2879,11 @@ describe("watch basic composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect(screen.getByRole("switch", { name: "Advanced" }).getAttribute("aria-checked")).toBe(
-      "true",
-    );
-    expect(document.activeElement?.id).toBe("watch-advanced-signals");
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    expect(
+      screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
+    ).toBe(true);
+    await waitFor(() => expect(document.activeElement?.id).toBe("watch-advanced-signals"));
     expect(container.querySelector("#watch-advanced-signals")?.hasAttribute("hidden")).toBe(false);
   });
 });
@@ -2917,6 +2917,35 @@ describe("web page smoke coverage", () => {
     const details = detailsSummary.closest("details") as HTMLDetailsElement;
     expect(details.open).toBe(false);
     await userEvent.setup().click(detailsSummary);
+    expect(details.open).toBe(true);
+    expect(document.cookie).toBe(cookieBefore);
+  });
+
+  it.each([
+    "basic",
+    "advanced",
+  ] as const)("keeps Watch local and collapsed with a saved %s preference", async (initialMode) => {
+    vi.mocked(getRunHistoryPage).mockResolvedValue(available(runHistoryListFixture()));
+    // biome-ignore lint/suspicious/noDocumentCookie: Exercise the existing plain view preference.
+    document.cookie = `${viewModeCookieName}=${initialMode}`;
+    const cookieBefore = document.cookie;
+    const watch = await WatchPage();
+
+    render(
+      createElement(
+        ViewPreferenceProvider,
+        { initialMode } as React.ComponentProps<typeof ViewPreferenceProvider>,
+        createElement(ViewModeSwitch),
+        watch,
+      ),
+    );
+
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    const details = screen
+      .getByText("Technical details", { selector: "summary" })
+      .closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await userEvent.setup().click(details.querySelector("summary") as HTMLElement);
     expect(details.open).toBe(true);
     expect(document.cookie).toBe(cookieBefore);
   });
@@ -2982,15 +3011,6 @@ describe("web page smoke coverage", () => {
     expect(getRunHistoryPage).not.toHaveBeenCalled();
   });
 });
-
-function inBasicPageView(ui: ReactElement) {
-  return createElement(
-    ViewPreferenceProvider,
-    { initialMode: "basic" } as React.ComponentProps<typeof ViewPreferenceProvider>,
-    createElement(ViewModeSwitch),
-    createElement(PageView, {} as React.ComponentProps<typeof PageView>, ui),
-  );
-}
 
 async function replaceInputValue(
   label: string | RegExp,

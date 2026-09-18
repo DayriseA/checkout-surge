@@ -106,7 +106,7 @@ describe("watch narrative", () => {
     expect(output.match(/Not yet available/g)?.length).toBeGreaterThanOrEqual(4);
   });
 
-  it("keeps the frozen configuration reachable in the Advanced Scenario group while starting", () => {
+  it("keeps the frozen configuration reachable in local technical details while starting", () => {
     const output = dashboardMarkup(available(projection(run("starting"))));
 
     expect(output).toContain("Scenario settings");
@@ -231,7 +231,7 @@ describe("watch narrative", () => {
     expect(output).not.toContain("<meter");
   });
 
-  it("keeps the run story bands ahead of the grouped Advanced sections", () => {
+  it("keeps the run story bands ahead of the grouped technical sections", () => {
     for (const status of ["active", "draining", "completed", "failed"] as const) {
       const currentProjection =
         status === "completed" || status === "failed"

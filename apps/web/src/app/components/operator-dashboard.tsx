@@ -47,7 +47,6 @@ import {
 } from "./dashboard-panels";
 import { ErrorNotice } from "./error-notice";
 import { deriveGoldSignalCharts, type GoldSignalInput, GoldSignals } from "./gold-signals";
-import { AdvancedOnly, BasicOnly } from "./page-view";
 import { useAcceptedRunResult } from "./realtime/use-accepted-run-result";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
@@ -119,6 +118,15 @@ export function OperatorDashboard({
     onDisconnect: () => void notifyRealtimeDisconnected(),
   });
   const [now, setNow] = useState(() => new Date());
+  const technicalDetailsRef = useRef<HTMLDetailsElement>(null);
+  const revealTechnicalDetails = useCallback((targetId: string) => {
+    if (technicalDetailsRef.current) technicalDetailsRef.current.open = true;
+    requestAnimationFrame(() => {
+      const target = document.getElementById(targetId);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "start", behavior: "instant" });
+    });
+  }, []);
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 2_000);
     return () => clearInterval(interval);
@@ -166,10 +174,11 @@ export function OperatorDashboard({
         }
         onAcceptedRetry={() => void accepted.retryNow()}
         onRetry={() => void retryNow()}
+        onRevealTechnicalDetails={revealTechnicalDetails}
         savedEvidence={savedEvidence}
         sharedDemo={Boolean(trackedResult && !sameRunAccepted)}
       />
-      <BasicOnly className="col-span-12">
+      <div className="col-span-12">
         <BasicSyncNotice
           composition={composition}
           hasSyncIssue={hasSyncIssue}
@@ -180,21 +189,21 @@ export function OperatorDashboard({
           retryDelayMs={retryDelayMs}
           syncIssue={syncIssue}
         />
-      </BasicOnly>
+      </div>
       <RealtimeRecoveryNotice
         className="col-span-12"
         realtimeStatus={realtimeStatus}
         reconnectExhausted={reconnectExhausted}
       />
       <AdvancedGroups
+        acceptedResult={trackedResult}
         composition={composition}
+        detailsRef={technicalDetailsRef}
         hasSyncIssue={hasSyncIssue}
         isRefreshing={isRefreshing}
-        isRetryScheduled={isRetryScheduled}
         onRetry={() => void retryNow()}
         realtimeStatus={realtimeStatus}
-        retryAttempt={retryAttempt}
-        retryDelayMs={retryDelayMs}
+        stoppedRun={acceptedResult === undefined}
         syncIssue={syncIssue}
       />
     </div>
@@ -224,6 +233,7 @@ export function WatchNarrative({
   hideLatestCompletedRun = false,
   onAcceptedRetry,
   onRetry,
+  onRevealTechnicalDetails = () => undefined,
   savedEvidence = null,
   sharedDemo = false,
 }: {
@@ -232,6 +242,7 @@ export function WatchNarrative({
   hideLatestCompletedRun?: boolean;
   onAcceptedRetry?: () => void;
   onRetry?: () => void;
+  onRevealTechnicalDetails?: (targetId: string) => void;
   savedEvidence?: AcceptedRunReportEvidence | null;
   sharedDemo?: boolean;
 }) {
@@ -275,6 +286,7 @@ export function WatchNarrative({
           accepted={accepted}
           composition={composition}
           onAcceptedRetry={onAcceptedRetry}
+          onRevealTechnicalDetails={onRevealTechnicalDetails}
           savedEvidence={savedEvidence}
           sharedDemo={sharedDemo}
         />
@@ -283,19 +295,21 @@ export function WatchNarrative({
 }
 
 /**
- * The five-band Basic Watch layout for every run phase: identity line, verdict line, counts row,
- * signal strip, caveat and actions. The Advanced-only proof and panels render outside this card.
+ * The five-band compact Watch layout for every run phase: identity line, verdict line, counts row,
+ * signal strip, caveat and actions. Technical proof and panels render outside this card.
  */
 function RunCard({
   accepted,
   composition,
   onAcceptedRetry,
+  onRevealTechnicalDetails,
   savedEvidence,
   sharedDemo,
 }: {
   accepted: TrackedAcceptedResult | null;
   composition: RunWatchComposition;
   onAcceptedRetry?: (() => void) | undefined;
+  onRevealTechnicalDetails: (targetId: string) => void;
   savedEvidence: AcceptedRunReportEvidence | null;
   sharedDemo: boolean;
 }) {
@@ -372,8 +386,8 @@ function RunCard({
         charts={stripCharts.charts}
         hasEvidence={stripCharts.hasEvidence}
         headlines={stripCharts.headlines}
+        onReveal={onRevealTechnicalDetails}
       />
-      {terminal ? <PublicRunConclusionProof result={composition.result} /> : null}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 min-[900px]:flex-nowrap">
         <div className="grid min-w-0 flex-1 gap-2 [&>p]:mt-0">
           {summary && summary.caveats.length > 0 ? (
@@ -752,11 +766,6 @@ function AcceptedResultNarrative({
           {operatorReset ? "Check stopped result again" : "Check accepted result again"}
         </button>
       ) : null}
-      <AdvancedOnly className="mt-3">
-        <p className="m-0 break-all text-sm text-muted">
-          {operatorReset ? "Stopped run ID" : "Accepted run ID"}: <code>{result.runId}</code>
-        </p>
-      </AdvancedOnly>
     </section>
   );
 }
@@ -798,30 +807,26 @@ function IdleNarrative({
   );
 }
 
-/**
- * The grouped Advanced sections: Scenario, Signals, Processing, Consistency, and
- * Connection/shared system. They stay mounted across a mode switch (hidden with the `hidden`
- * attribute) and every existing public technical section remains reachable in one of them.
- */
+/** Technical sections stay mounted inside one local disclosure across realtime updates. */
 function AdvancedGroups({
+  acceptedResult,
   composition,
+  detailsRef,
   hasSyncIssue,
   isRefreshing,
-  isRetryScheduled,
   onRetry,
   realtimeStatus,
-  retryAttempt,
-  retryDelayMs,
+  stoppedRun,
   syncIssue,
 }: {
+  acceptedResult: AcceptedRunResult | undefined;
   composition: WatchComposition;
+  detailsRef: React.RefObject<HTMLDetailsElement | null>;
   hasSyncIssue: boolean;
   isRefreshing: boolean;
-  isRetryScheduled: boolean;
   onRetry: () => void;
   realtimeStatus: Parameters<typeof RecoveryStatusPanel>[0]["realtimeStatus"];
-  retryAttempt: number;
-  retryDelayMs: number | null;
+  stoppedRun: boolean;
   syncIssue: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
 }) {
   // A composition carrying a projection is a run phase, so its run-owned evidence exists here.
@@ -830,118 +835,131 @@ function AdvancedGroups({
   const run = projection?.currentRun ?? null;
   const outcome = projection?.businessOutcome ?? null;
   return (
-    <>
-      {runComposition && projection && run ? (
-        <>
-          <AdvancedOnly className="col-span-12" id="watch-advanced-scenario">
-            <div className="grid grid-cols-12 gap-4">
-              <ScenarioStrip configSnapshot={run.configSnapshot} />
-              <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
-                <h2 className="m-0 text-base font-bold leading-tight text-ink">Run identity</h2>
-                <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
-                  <div className="min-w-0">
-                    <dt className="mb-1 text-xs font-bold text-muted">Run UUID</dt>
-                    <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
-                      <code>{run.runId}</code>
-                    </dd>
+    <details className="col-span-12 rounded-lg border border-border bg-surface" ref={detailsRef}>
+      <summary className="cursor-pointer rounded-lg px-4 py-3 font-bold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+        Technical details
+      </summary>
+      <div className="grid grid-cols-12 gap-4 border-t border-border p-4">
+        {runComposition && projection && run ? (
+          <>
+            <div className="col-span-12" id="watch-advanced-scenario" tabIndex={-1}>
+              <div className="grid grid-cols-12 gap-4">
+                <ScenarioStrip configSnapshot={run.configSnapshot} />
+                <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+                  <h2 className="m-0 text-base font-bold leading-tight text-ink">Run identity</h2>
+                  <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
+                    <div className="min-w-0">
+                      <dt className="mb-1 text-xs font-bold text-muted">Run UUID</dt>
+                      <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
+                        <code>{run.runId}</code>
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="mb-1 text-xs font-bold text-muted">Started</dt>
+                      <dd className="m-0 text-sm font-semibold text-ink">
+                        {formatInstantUtc(run.startedAt) ?? "—"}
+                      </dd>
+                    </div>
+                    <div className="min-w-0">
+                      <dt className="mb-1 text-xs font-bold text-muted">Finalized</dt>
+                      <dd className="m-0 text-sm font-semibold text-ink">
+                        {formatInstantUtc(run.finalizedAt) ?? "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </section>
+              </div>
+            </div>
+            <div className="col-span-12" id="watch-advanced-signals" tabIndex={-1}>
+              <div className="grid grid-cols-12 gap-4">
+                <GoldSignals {...goldSignalInput(runComposition)} />
+              </div>
+            </div>
+            <div className="col-span-12" id="watch-advanced-processing" tabIndex={-1}>
+              <div className="grid grid-cols-12 gap-4">
+                <RunOutcomesPanel
+                  freshness={composition.freshness}
+                  presentation={deriveOutcomePresentationState(
+                    outcome,
+                    run,
+                    composition.presentation,
+                  )}
+                  recovery={composition.panelRecovery}
+                />
+                <RunErpOutcomesPanel
+                  freshness={composition.freshness}
+                  presentation={deriveRunErpOutcomeState(projection.erp, run)}
+                  recovery={composition.panelRecovery}
+                />
+                <ConsistencyLagPanel
+                  freshness={composition.freshness}
+                  presentation={deriveLagPresentationState(
+                    projection.consistencyLag?.pendingConfirmationCount ?? null,
+                    projection.consistencyLag?.confirmedOrderCount ?? null,
+                    run,
+                  )}
+                  recovery={composition.panelRecovery}
+                />
+              </div>
+            </div>
+            <div className="col-span-12" id="watch-advanced-consistency" tabIndex={-1}>
+              <div className="grid grid-cols-12 gap-4">
+                <InventoryDrainPanel
+                  freshness={composition.freshness}
+                  presentation={deriveInventoryOutcomeState(
+                    projection.inventory,
+                    run,
+                    outcome?.reservedUnits ?? null,
+                  )}
+                  recovery={composition.panelRecovery}
+                />
+                {composition.phase === "completed" || composition.phase === "failed" ? (
+                  <div className="col-span-12">
+                    <PublicRunConclusionProof result={composition.result} />
                   </div>
-                  <div className="min-w-0">
-                    <dt className="mb-1 text-xs font-bold text-muted">Started</dt>
-                    <dd className="m-0 text-sm font-semibold text-ink">
-                      {formatInstantUtc(run.startedAt) ?? "—"}
-                    </dd>
-                  </div>
-                  <div className="min-w-0">
-                    <dt className="mb-1 text-xs font-bold text-muted">Finalized</dt>
-                    <dd className="m-0 text-sm font-semibold text-ink">
-                      {formatInstantUtc(run.finalizedAt) ?? "—"}
-                    </dd>
-                  </div>
-                </dl>
-              </section>
+                ) : null}
+              </div>
             </div>
-          </AdvancedOnly>
-          <AdvancedOnly className="col-span-12" id="watch-advanced-signals">
-            <div className="grid grid-cols-12 gap-4">
-              <GoldSignals {...goldSignalInput(runComposition)} />
-            </div>
-          </AdvancedOnly>
-          <AdvancedOnly className="col-span-12" id="watch-advanced-processing">
-            <div className="grid grid-cols-12 gap-4">
-              <RunOutcomesPanel
-                freshness={composition.freshness}
-                presentation={deriveOutcomePresentationState(
-                  outcome,
-                  run,
-                  composition.presentation,
-                )}
-                recovery={composition.panelRecovery}
-              />
-              <RunErpOutcomesPanel
-                freshness={composition.freshness}
-                presentation={deriveRunErpOutcomeState(projection.erp, run)}
-                recovery={composition.panelRecovery}
-              />
-              <ConsistencyLagPanel
-                freshness={composition.freshness}
-                presentation={deriveLagPresentationState(
-                  projection.consistencyLag?.pendingConfirmationCount ?? null,
-                  projection.consistencyLag?.confirmedOrderCount ?? null,
-                  run,
-                )}
-                recovery={composition.panelRecovery}
-              />
-            </div>
-          </AdvancedOnly>
-          <AdvancedOnly className="col-span-12" id="watch-advanced-consistency">
-            <div className="grid grid-cols-12 gap-4">
-              <InventoryDrainPanel
-                freshness={composition.freshness}
-                presentation={deriveInventoryOutcomeState(
-                  projection.inventory,
-                  run,
-                  outcome?.reservedUnits ?? null,
-                )}
-                recovery={composition.panelRecovery}
-              />
-            </div>
-          </AdvancedOnly>
-        </>
-      ) : null}
-      <AdvancedOnly className="col-span-12" id="watch-advanced-connection">
-        <div className="grid grid-cols-12 gap-4">
-          <RecoveryStatusPanel
-            freshness={composition.freshness}
-            fullWidth={!projection || !run}
-            hasSyncIssue={hasSyncIssue}
-            isRefreshing={isRefreshing}
-            isRetryScheduled={isRetryScheduled}
-            onRefresh={onRetry}
-            presentation={composition.presentation}
-            realtimeStatus={realtimeStatus}
-            recovery={composition.panelRecovery}
-            retryAttempt={retryAttempt}
-            retryDelayMs={retryDelayMs}
-            syncIssue={syncIssue}
-          />
-          {projection && run ? (
-            <>
-              <RequestSurgePanel
-                freshness={composition.freshness}
-                recovery={composition.panelRecovery}
-              />
-              <SystemStatusPanel
-                erpPresentation={deriveSharedErpProtectionState(
-                  projection.systemStatus?.erpProtection ?? null,
-                )}
-                presentation={deriveSharedRuntimeState(projection.systemStatus)}
-                recovery={composition.panelRecovery}
-              />
-            </>
-          ) : null}
+          </>
+        ) : null}
+        <div className="col-span-12" id="watch-advanced-connection" tabIndex={-1}>
+          <div className="grid grid-cols-12 gap-4">
+            <RecoveryStatusPanel
+              freshness={composition.freshness}
+              fullWidth={!projection || !run}
+              hasSyncIssue={hasSyncIssue}
+              isRefreshing={isRefreshing}
+              onRefresh={onRetry}
+              presentation={composition.presentation}
+              realtimeStatus={realtimeStatus}
+              recovery={composition.panelRecovery}
+              syncIssue={syncIssue}
+            />
+            {projection && run ? (
+              <>
+                <RequestSurgePanel
+                  freshness={composition.freshness}
+                  recovery={composition.panelRecovery}
+                />
+                <SystemStatusPanel
+                  erpPresentation={deriveSharedErpProtectionState(
+                    projection.systemStatus?.erpProtection ?? null,
+                  )}
+                  presentation={deriveSharedRuntimeState(projection.systemStatus)}
+                  recovery={composition.panelRecovery}
+                />
+              </>
+            ) : null}
+            {acceptedResult ? (
+              <p className="col-span-12 m-0 break-all text-sm text-muted">
+                {stoppedRun ? "Stopped run ID" : "Accepted run ID"}:{" "}
+                <code>{acceptedResult.runId}</code>
+              </p>
+            ) : null}
+          </div>
         </div>
-      </AdvancedOnly>
-    </>
+      </div>
+    </details>
   );
 }
 

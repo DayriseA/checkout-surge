@@ -776,7 +776,7 @@ describe("Phase 6 projection dashboard", () => {
     );
     const document = new DOMParser().parseFromString(markup, "text/html");
     const processing = document.querySelector("#watch-advanced-processing");
-    if (!processing) throw new Error("Expected the Processing Advanced group.");
+    if (!processing) throw new Error("Expected the Processing technical group.");
     const grid = processing.querySelector(".grid-cols-12");
     if (!grid) throw new Error("Expected a 12-column Processing grid.");
     const erpPanel = panelSection(document, "Simulated ERP outcomes");
@@ -806,7 +806,7 @@ describe("Phase 6 projection dashboard", () => {
     "idle",
     "active",
     "completed",
-  ] as const)("keeps every grouped Advanced section's desktop rows filled for %s evidence", (status) => {
+  ] as const)("keeps every grouped technical section's desktop rows filled for %s evidence", (status) => {
     const projection = projectionFixture();
     if (status === "idle") {
       projection.currentRun = null;
@@ -869,6 +869,9 @@ describe("Phase 6 projection dashboard", () => {
         panel.textContent?.includes("Reservation and confirmation summary"),
       );
       expect(outcomesIndex).toBe(0);
+      expect(document.querySelector("#watch-advanced-consistency")?.textContent).toContain(
+        "Evidence and reconciliation proof",
+      );
     }
 
     function groupSpans(groupId: string): number[] {
@@ -876,8 +879,9 @@ describe("Phase 6 projection dashboard", () => {
         case "watch-advanced-scenario":
           return [12, 12];
         case "watch-advanced-signals":
-        case "watch-advanced-consistency":
           return [12];
+        case "watch-advanced-consistency":
+          return status === "completed" ? [12, 12] : [12];
         case "watch-advanced-processing":
           return [12, 6, 6];
         case "watch-advanced-connection":
