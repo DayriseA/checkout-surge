@@ -27,8 +27,6 @@ import {
   deriveLagPresentationState,
   deriveOutcomePresentationState,
   deriveRunErpOutcomeState,
-  deriveSharedErpProtectionState,
-  deriveSharedRuntimeState,
 } from "../lib/presentation/run-presentation-state";
 import {
   deriveWatchComposition,
@@ -838,15 +836,7 @@ function TechnicalGroups({
       {projection && run && !livePhase ? (
         <RequestSurgePanel freshness={composition.freshness} recovery={composition.panelRecovery} />
       ) : null}
-      {projection && run ? (
-        <SystemStatusPanel
-          erpPresentation={deriveSharedErpProtectionState(
-            projection.systemStatus?.erpProtection ?? null,
-          )}
-          presentation={deriveSharedRuntimeState(projection.systemStatus)}
-          recovery={composition.panelRecovery}
-        />
-      ) : null}
+      {projection && run ? <SystemStatusPanel recovery={composition.panelRecovery} /> : null}
     </>
   );
   const connectionGroup = (

@@ -15,8 +15,6 @@ import {
   deriveOutcomePresentationState,
   deriveRunErpOutcomeState,
   deriveRunPresentationState,
-  deriveSharedErpProtectionState,
-  deriveSharedRuntimeState,
   deriveTerminalSummaryPresentation,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
@@ -138,19 +136,6 @@ describe("run presentation state", () => {
     );
   });
 
-  it("derives shared runtime state without a run lifecycle", () => {
-    expect(deriveSharedRuntimeState(systemStatus())).toMatchObject({
-      label: "runtime ready",
-      tone: "ok",
-    });
-    expect(
-      deriveSharedRuntimeState({
-        ...systemStatus(),
-        queue: { ...systemStatus().queue, depth: 1 },
-      }),
-    ).toMatchObject({ label: "runtime busy", tone: "progress" });
-  });
-
   it.each([
     { failedOrders: 0, queuedOrders: 0, expected: ["completed successfully", "ok"] },
     {
@@ -256,17 +241,6 @@ describe("run presentation state", () => {
     expect(deriveRunErpOutcomeState(null, terminalRun)).toMatchObject({
       state: "run-erp-evidence-unavailable",
       label: "ERP evidence unavailable",
-    });
-  });
-
-  it("describes missing shared-runtime evidence as unavailable", () => {
-    expect(deriveSharedRuntimeState(null)).toMatchObject({
-      state: "shared-runtime-unavailable",
-      label: "system status unavailable",
-    });
-    expect(deriveSharedErpProtectionState(null)).toMatchObject({
-      state: "shared-erp-protection-unavailable",
-      label: "protection unavailable",
     });
   });
 });
@@ -410,39 +384,5 @@ function businessOutcome(acceptedReservations: number) {
     failedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: acceptedReservations,
-  };
-}
-
-function systemStatus(): NonNullable<DashboardProjection["systemStatus"]> {
-  return {
-    queue: {
-      name: "orders:process",
-      connectivity: "reachable",
-      depth: 0,
-      counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
-      oldestWaitingAgeSeconds: null,
-      retryPressure: {
-        inspectedJobCount: 0,
-        inspectionLimit: 100,
-        retryingJobCount: 0,
-        retryAttemptCount: 0,
-        inspectionTruncated: false,
-      },
-      failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
-      observedAt: "2026-07-30T12:00:01.000Z",
-    },
-    erpProtection: {
-      status: "healthy",
-      reason: null,
-      circuit: null,
-      retryPressure: {
-        inspectedJobCount: 0,
-        inspectionLimit: 100,
-        retryingJobCount: 0,
-        retryAttemptCount: 0,
-        inspectionTruncated: false,
-      },
-      observedAt: "2026-07-30T12:00:01.000Z",
-    },
   };
 }

@@ -1999,9 +1999,9 @@ describe("watch browser recovery", () => {
     // Run-owned outcome totals stay reachable on the live board: the run's own retrying count (3)
     // is separate from the shared queue's retry pressure (29) in the run context's system status.
     expect(markup).toMatch(/Retrying<\/dt><dd[^>]*>3<\/dd>/);
-    expect(markup).toContain("System status across all runs and visitors");
+    expect(markup).toContain("Physical order queue");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
-    expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(2);
+    expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(1);
     expect(markup).not.toContain("41 waiting · peak 41");
     expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
   });

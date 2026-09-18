@@ -248,27 +248,6 @@ export function circuitStateLabel(state: ErpCircuitState): string {
   }
 }
 
-export function protectionReasonLabel(reason: string | null): string {
-  switch (reason) {
-    case null:
-      return "normal";
-    case "circuit_open":
-      return "Calls paused to protect the ERP";
-    case "circuit_state_unavailable":
-      return "Protection status unavailable";
-    case "circuit_state_missing":
-      return "Protection not yet exercised";
-    case "circuit_half_open":
-      return "Testing recovery";
-    case "retry_pressure_unavailable":
-      return "Retry status unavailable";
-    case "erp_retries_pending":
-      return "ERP retries are pending";
-    default:
-      return "Protection needs attention";
-  }
-}
-
 export function queueConnectivityLabel(connectivity: string): string {
   return connectivity === "reachable" ? "Available" : "Needs attention";
 }

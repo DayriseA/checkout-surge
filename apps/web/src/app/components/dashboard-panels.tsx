@@ -2,11 +2,7 @@ import type { DashboardProjection } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
-import {
-  deriveRunErpStory,
-  deriveSharedErpStory,
-  type ErpStory,
-} from "../lib/presentation/erp-story";
+import { deriveRunErpStory, type ErpStory } from "../lib/presentation/erp-story";
 import {
   formatCount,
   formatDurationMs,
@@ -20,7 +16,6 @@ import {
   erpAttemptStatusLabel,
   liveTrafficMetricWindowSeconds,
   liveTrafficWindowLabel,
-  protectionReasonLabel,
   publicStatusLabel,
   publicVocabulary,
   queueConnectivityLabel,
@@ -767,161 +762,58 @@ export function RunErpOutcomesPanel({
   );
 }
 
-export function SystemStatusPanel({
-  recovery,
-  presentation,
-  erpPresentation,
-}: {
-  recovery: BackendRead<DashboardProjection>;
-  presentation: PresentationState;
-  erpPresentation: PresentationState;
-}) {
+export function SystemStatusPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
   const systemStatus = recoveryData(recovery)?.systemStatus ?? null;
   const queue = systemStatus?.queue ?? null;
-  const protection = systemStatus?.erpProtection ?? null;
 
   return (
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
           <p className={eyebrowClassName}>Shared demo runtime</p>
-          <h2 className={panelTitleClassName}>System status across all runs and visitors</h2>
+          <h2 className={panelTitleClassName}>Physical order queue</h2>
           <p className="m-0 mt-1 text-xs text-muted">
-            Infrastructure readiness and protection below are global technical context, not evidence
-            for the selected run.
+            Live BullMQ counts for the one shared order queue; global technical context, not
+            evidence for the selected run.
           </p>
         </div>
-        <StatusPill status={presentation} />
       </div>
-      {queue && protection ? (
-        <div className="grid grid-cols-2 gap-6 max-[760px]:grid-cols-1">
-          <div>
-            <h3 className="mb-3 mt-0 text-sm font-bold text-ink">
-              Shared order-processing backlog
-            </h3>
+      {queue ? (
+        <>
+          <h3 className="mb-3 mt-0 text-sm font-bold text-ink">Shared order-processing backlog</h3>
+          <dl className={factGridClassName}>
+            <Fact label="Connectivity" value={queueConnectivityLabel(queue.connectivity)} />
+            <Fact label="Depth (all runs)" value={formatNumber(queue.depth)} />
+            <Fact
+              label="Oldest wait"
+              value={formatDurationSeconds(queue.oldestWaitingAgeSeconds)}
+            />
+            <Fact label="Last updated" value={formatExpectedTime(queue.observedAt)} small />
+          </dl>
+          <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
+            <summary className="cursor-pointer font-semibold text-muted-strong">
+              Backlog details
+            </summary>
             <dl className={factGridClassName}>
-              <Fact label="Connectivity" value={queueConnectivityLabel(queue.connectivity)} />
-              <Fact label="Depth (all runs)" value={formatNumber(queue.depth)} />
+              <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
+              <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
+              <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
+              <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
+              <Fact label="Active" value={formatNumber(queue.counts.active)} />
               <Fact
-                label="Oldest wait"
-                value={formatDurationSeconds(queue.oldestWaitingAgeSeconds)}
+                label="Retrying jobs"
+                value={formatNumber(queue.retryPressure.retryingJobCount)}
               />
-              <Fact label="Last updated" value={formatExpectedTime(queue.observedAt)} small />
+              <Fact
+                label="Retry attempts"
+                value={formatNumber(queue.retryPressure.retryAttemptCount)}
+              />
             </dl>
-            <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
-              <summary className="cursor-pointer font-semibold text-muted-strong">
-                Backlog details
-              </summary>
-              <dl className={factGridClassName}>
-                <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
-                <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
-                <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
-                <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
-                <Fact label="Active" value={formatNumber(queue.counts.active)} />
-                <Fact label="Failed" value={formatNumber(queue.failedJobs.totalCount)} />
-                <Fact
-                  label="Retrying jobs"
-                  value={formatNumber(queue.retryPressure.retryingJobCount)}
-                />
-                <Fact
-                  label="Retry attempts"
-                  value={formatNumber(queue.retryPressure.retryAttemptCount)}
-                />
-              </dl>
-            </details>
-            <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              Counts include work from all runs and visitors.
-            </p>
-          </div>
-          <div>
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <h3 className="m-0 text-sm font-bold text-ink">Shared simulated ERP protection</h3>
-              <StatusPill status={erpPresentation} />
-            </div>
-            <ErpStoryLead story={deriveSharedErpStory(protection)} />
-            {/* Retry pressure earns a place in the main view only while it is real. A zero here
-                would read as a fact about the shared runtime rather than as its absence. */}
-            {protection.retryPressure.retryingJobCount > 0 ? (
-              <dl className={factGridClassName}>
-                <Fact
-                  label="Retrying jobs"
-                  value={formatNumber(protection.retryPressure.retryingJobCount)}
-                />
-              </dl>
-            ) : null}
-            <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
-              <summary className="cursor-pointer font-semibold text-muted-strong">
-                Protection details
-              </summary>
-              <dl className={factGridClassName}>
-                <Fact
-                  label="Protection"
-                  value={
-                    protection.circuit
-                      ? circuitStateLabel(protection.circuit.state)
-                      : "not yet available"
-                  }
-                />
-                <Fact
-                  label="Protection note"
-                  value={protectionReasonLabel(protection.reason)}
-                  small
-                />
-                <Fact
-                  label="Failures before protection pauses calls"
-                  value={
-                    protection.circuit
-                      ? formatNumber(protection.circuit.failureThreshold)
-                      : "not yet available"
-                  }
-                />
-                <Fact
-                  label="Current failure streak"
-                  value={
-                    protection.circuit
-                      ? formatNumber(protection.circuit.consecutiveFailureCount)
-                      : "not yet available"
-                  }
-                />
-                <Fact
-                  label="Recovery check delay"
-                  value={formatMilliseconds(
-                    protection.circuit?.resetTimeoutMs,
-                    "not yet available",
-                  )}
-                />
-                <Fact
-                  label={protectionClockLabel.pauseBegan}
-                  value={formatScheduledTime(protection.circuit?.openedAt)}
-                  small
-                />
-                <Fact
-                  label={protectionClockLabel.retryEligibleFrom}
-                  value={formatScheduledTime(protection.circuit?.nextAttemptAt)}
-                  small
-                />
-                <Fact
-                  label={protectionClockLabel.stateChanged}
-                  value={formatExpectedTime(protection.circuit?.lastChangedAt)}
-                  small
-                />
-                <Fact
-                  label={protectionClockLabel.projected}
-                  value={formatExpectedTime(protection.observedAt)}
-                  small
-                />
-                <Fact
-                  label="Retry attempts"
-                  value={formatNumber(protection.retryPressure.retryAttemptCount)}
-                />
-              </dl>
-            </details>
-            <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              Protection changes only when calls pause, recovery is tested, or normal operation
-              resumes.
-            </p>
-          </div>
-        </div>
+          </details>
+          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
+            Counts include work from all runs and visitors.
+          </p>
+        </>
       ) : (
         <EmptyState>Shared demo-runtime status is unavailable.</EmptyState>
       )}

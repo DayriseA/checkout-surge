@@ -221,6 +221,8 @@ Shared-runtime fields:
 | ERP protection verdict | `systemStatus.erpProtection.status` and `reason` derive only from the catalog circuit, circuit-read availability, and shared queue retry pressure. They do not use run attempt failures or timeouts. | `erpProtection.observedAt` is the API observation time. |
 | Catalog circuit | State, threshold, consecutive failures, open/probe times, reset timeout, and probe-in-flight state come from the catalog Redis breaker key shared by the runtime. | `circuit.lastChangedAt` is edge-triggered with no scheduled cadence; it can legitimately be hours older than `erpProtection.observedAt` or projection `recoveredAt`. |
 
+The web application displays only the live physical queue counts and retry pressure from these fields (the public Physical order queue panel). The failed-job total, the ERP protection verdict, and the catalog circuit remain API fields; they are not shown publicly and drive no UI verdict.
+
 There are no public unscoped-legacy queue or ERP values. Rows whose nullable `run_id` is absent are excluded from run evidence, and physical BullMQ values are retained only in the explicitly shared system-status area.
 
 The same shared queue numbers intentionally have a different valid use inside the API: the dirty scheduler uses global depth and active counts to decide whether the runtime may still have work to publish. Browser freshness uses only selected-run work. Infrastructure scheduling and public run evidence must not be forced into one scope.

@@ -5,8 +5,6 @@ import type {
   InventoryStatus,
   RunErpOutcomeSummary,
   RunResult,
-  SharedErpProtectionStatus,
-  SharedRuntimeStatus,
 } from "@checkout-surge/contracts";
 import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
@@ -237,51 +235,6 @@ export function deriveInventoryOutcomeState(
   return state("inventory-ready", "idle", "inventory ready", "Inventory is ready.");
 }
 
-export function deriveSharedRuntimeState(
-  systemStatus: SharedRuntimeStatus | null,
-): PresentationState {
-  if (!systemStatus)
-    return state(
-      "shared-runtime-unavailable",
-      "idle",
-      "system status unavailable",
-      "Shared demo-runtime status could not be loaded.",
-    );
-  if (systemStatus.erpProtection.status === "unavailable") {
-    return state(
-      "shared-runtime-unavailable",
-      "danger",
-      "protection unavailable",
-      "Shared ERP protection is unavailable.",
-    );
-  }
-  if (
-    systemStatus.erpProtection.status === "degraded" ||
-    systemStatus.queue.failedJobs.totalCount > 0
-  ) {
-    return state(
-      "shared-runtime-degraded",
-      "warning",
-      "attention needed",
-      "Shared demo-runtime protection or queue state needs attention.",
-    );
-  }
-  if (systemStatus.queue.depth > 0 || systemStatus.queue.counts.active > 0) {
-    return state(
-      "shared-runtime-busy",
-      "progress",
-      "runtime busy",
-      "The shared physical queue is processing work.",
-    );
-  }
-  return state(
-    "shared-runtime-ready",
-    "ok",
-    "runtime ready",
-    "The shared physical queue and ERP protection are ready.",
-  );
-}
-
 export function deriveFreshnessPresentationState(freshness: Freshness): PresentationState {
   switch (freshness.state) {
     case "connecting":
@@ -451,41 +404,6 @@ export function deriveRunErpOutcomeState(
     "ok",
     "outcomes observed",
     "ERP attempt outcomes for this run are available.",
-  );
-}
-
-export function deriveSharedErpProtectionState(
-  protection: SharedErpProtectionStatus | null,
-): PresentationState {
-  if (!protection) {
-    return state(
-      "shared-erp-protection-unavailable",
-      "idle",
-      "protection unavailable",
-      "Shared ERP protection status could not be loaded.",
-    );
-  }
-  if (protection.status === "healthy") {
-    return state(
-      "shared-erp-protection-healthy",
-      "ok",
-      "healthy",
-      "Shared ERP protection is healthy.",
-    );
-  }
-  if (protection.status === "degraded") {
-    return state(
-      "shared-erp-protection-degraded",
-      "warning",
-      "protection needs attention",
-      "Shared ERP protection needs attention.",
-    );
-  }
-  return state(
-    "shared-erp-protection-unavailable",
-    "danger",
-    "unavailable",
-    "Shared ERP protection is unavailable.",
   );
 }
 

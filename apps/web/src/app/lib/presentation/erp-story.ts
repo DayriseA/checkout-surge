@@ -1,26 +1,16 @@
-import type {
-  DemoRunStatus,
-  RunErpOutcomeSummary,
-  SharedErpProtectionStatus,
-} from "@checkout-surge/contracts";
+import type { DemoRunStatus, RunErpOutcomeSummary } from "@checkout-surge/contracts";
 import { formatInstantUtc } from "./format";
 import { isRunEvidenceSettled } from "./public-vocabulary";
 
 /**
- * The one public sentence each simulated-ERP surface leads with, plus the next meaningful action.
+ * The one public sentence the run-scoped simulated-ERP surface leads with, plus the next
+ * meaningful action.
  *
  * This lives beside `run-presentation-state.ts` rather than inside it because that module derives
  * `PresentationState` for status pills (state name, tone, label, description). The ERP story is a
- * different output: reader-facing panel copy with no tone and an optional second line. Two
- * components consume it — the run-scoped panel and the shared-runtime protection column — so the
- * state-to-copy rules belong in one shared helper rather than in either component.
- *
- * The two sources carry different evidence and deliberately do not share one derivation path; they
- * share the copy, which is the reason this helper exists. `RunErpOutcomeSummary` publishes a raw
- * breaker snapshot plus attempt counts and no interpretation, so the run sentence is derived here.
- * `SharedErpProtectionStatus` is published by a service that has already interpreted the same raw
- * fields into `status`/`reason`; that interpretation is authoritative, so the shared sentence
- * translates it instead of re-deriving health from the fields behind it.
+ * different output: reader-facing panel copy with no tone and an optional second line.
+ * `RunErpOutcomeSummary` publishes a raw breaker snapshot plus attempt counts and no
+ * interpretation, so the sentence is derived here.
  */
 export interface ErpStory {
   /** The leading sentence. Always present; absence is expressed as a sentence, not as `null`. */
@@ -50,11 +40,6 @@ const erpStorySentence = {
   protectionUnreportedPending:
     "Simulated-ERP protection state has not been reported for these calls",
   protectionUnreportedSettled: "No simulated-ERP protection state was retained for this run",
-  protectionUnreportedShared: "Simulated-ERP protection state is not being reported",
-  /** Retry counts fall back to zero when the queue read fails, so zero cannot be read as calm. */
-  retryStatusUnavailable: "Simulated-ERP retry status is unavailable",
-  /** Mirrors the shared protection vocabulary for a degraded state this helper does not recognise. */
-  needsAttention: "Simulated-ERP protection needs attention",
 } as const;
 
 /**
@@ -118,10 +103,9 @@ export function deriveRunErpStory(
 
 /**
  * Whether the run's ERP story expresses waiting or uncertainty rather than settled fact: paused
- * calls, a recovery test in progress, an unreadable protection read, protection state still
- * unreported while the run keeps producing evidence, or an unavailable retry read. False for
- * keeping up, constrained-but-coping, and a genuine no-activity absence — none of those explains
- * a delay a reader might be waiting on.
+ * calls, a recovery test in progress, an unreadable protection read, or protection state still
+ * unreported while the run keeps producing evidence. False for keeping up, constrained-but-coping,
+ * and a genuine no-activity absence — none of those explains a delay a reader might be waiting on.
  */
 export function erpStoryExplainsWaiting(
   erp: RunErpOutcomeSummary | null,
@@ -131,53 +115,8 @@ export function erpStoryExplainsWaiting(
   return (
     story.nextAction !== null ||
     story.sentence === erpStorySentence.protectionUnreadable ||
-    story.sentence === erpStorySentence.protectionUnreportedPending ||
-    story.sentence === erpStorySentence.retryStatusUnavailable
+    story.sentence === erpStorySentence.protectionUnreportedPending
   );
-}
-
-/**
- * Translates the shared protection state the API service publishes. Every `reason` below is a case
- * that service emits; switching on it is what keeps a partial read ("retry pressure could not be
- * counted") from being presented as a calm reading of zero.
- */
-export function deriveSharedErpStory(protection: SharedErpProtectionStatus | null): ErpStory {
-  if (!protection) return sentenceOnly(erpStorySentence.noActivity);
-
-  switch (protection.reason) {
-    case null:
-      return sentenceOnly(
-        protection.status === "healthy"
-          ? erpStorySentence.keepingUp
-          : erpStorySentence.needsAttention,
-      );
-    case "circuit_open":
-      return {
-        sentence: erpStorySentence.paused,
-        nextAction: retryEligibilityAction(protection.circuit?.nextAttemptAt ?? null),
-      };
-    case "circuit_half_open":
-      return {
-        sentence: erpStorySentence.testingRecovery,
-        // Without a snapshot the probe state is unknown, and neither sub-state may be assumed:
-        // omit the action rather than defaulting to one.
-        nextAction: protection.circuit
-          ? recoveryTestingAction(protection.circuit.halfOpenProbeInFlight)
-          : null,
-      };
-    case "circuit_state_unavailable":
-      return sentenceOnly(erpStorySentence.protectionUnreadable);
-    case "circuit_state_missing":
-      return sentenceOnly(erpStorySentence.protectionUnreportedShared);
-    case "retry_pressure_unavailable":
-      return sentenceOnly(erpStorySentence.retryStatusUnavailable);
-    case "erp_retries_pending":
-      // The service has already decided that pending ERP retries are the degradation, so the copy
-      // states coping under strain rather than failure.
-      return sentenceOnly(erpStorySentence.constrained);
-    default:
-      return sentenceOnly(erpStorySentence.needsAttention);
-  }
 }
 
 function normalOperationStory(isStrained: boolean): ErpStory {

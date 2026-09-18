@@ -29,8 +29,6 @@ import {
   deriveOutcomePresentationState,
   deriveRunErpOutcomeState,
   deriveRunPresentationState,
-  deriveSharedErpProtectionState,
-  deriveSharedRuntimeState,
   type PresentationState,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
@@ -203,10 +201,6 @@ describe("Phase 6 projection dashboard", () => {
     const systemMarkup = renderToStaticMarkup(
       createElement(SystemStatusPanel, {
         recovery: available(projectionFixture()),
-        presentation: deriveSharedRuntimeState(projection.systemStatus),
-        erpPresentation: deriveSharedErpProtectionState(
-          projection.systemStatus?.erpProtection ?? null,
-        ),
       }),
     );
 
@@ -215,12 +209,10 @@ describe("Phase 6 projection dashboard", () => {
     expect(runMarkup).toContain("Protection state changed (reported by circuit breaker)");
     expect(runMarkup).not.toContain("Shared demo runtime");
     expect(systemMarkup).toContain("Shared demo runtime");
-    expect(systemMarkup).toContain("across all runs and visitors");
-    expect(systemMarkup).toContain("Protection state changed (reported by circuit breaker)");
-    // The backlog column keeps its own poll clock; the ERP column's is demoted and named.
+    expect(systemMarkup).toContain("Physical order queue");
+    // The queue panel keeps its own poll clock and no run-scoped ERP facts.
     expect(systemMarkup).toContain("Last updated");
-    expect(systemMarkup).toContain("Projected by API at");
-    expect(systemMarkup).not.toContain("no scheduled update cadence");
+    expect(systemMarkup).not.toContain("Protection details");
     expect(systemMarkup).not.toContain("Recent attempts");
   });
 
@@ -489,22 +481,13 @@ describe("Phase 6 projection dashboard", () => {
     expect(durableMarkup).toContain("No checkout outcome evidence yet.");
   });
 
-  it("leads both simulated-ERP surfaces with one sentence and demotes protection configuration", () => {
+  it("leads the run simulated-ERP surface with one sentence and demotes protection configuration", () => {
     const projection = projectionFixture();
     const runMarkup = renderToStaticMarkup(
       createElement(RunErpOutcomesPanel, {
         recovery: available(projection),
         presentation: deriveRunErpOutcomeState(projection.erp),
         freshness: liveFreshness,
-      }),
-    );
-    const sharedMarkup = renderToStaticMarkup(
-      createElement(SystemStatusPanel, {
-        recovery: available(projection),
-        presentation: deriveSharedRuntimeState(projection.systemStatus),
-        erpPresentation: deriveSharedErpProtectionState(
-          projection.systemStatus?.erpProtection ?? null,
-        ),
       }),
     );
 
@@ -536,63 +519,25 @@ describe("Phase 6 projection dashboard", () => {
     }
     // A generic poll clock must not sit among the leading public facts.
     expect(runMainView).not.toContain("Last updated");
-
-    // The shared column tells the same story from shared evidence, under its own framing.
-    expect(sharedMarkup).toContain("Constrained but keeping up");
-    expect(sharedMarkup).toContain("Shared demo runtime");
-    expect(sharedMarkup).not.toContain("This run");
-    const sharedDetails = collapsedDetails(sharedMarkup, "Protection details");
-    const sharedProtectionColumn = visibleErpProtectionColumn(sharedMarkup);
-    for (const demoted of [
-      "Protection note",
-      "Failures before protection pauses calls",
-      "Protection pause began (reported by circuit breaker)",
-      "Protection state changed (reported by circuit breaker)",
-      "Projected by API at",
-    ]) {
-      expect(sharedDetails).toContain(demoted);
-      expect(sharedProtectionColumn).not.toContain(demoted);
-    }
-    expect(sharedProtectionColumn).not.toContain("Last updated");
   });
 
-  it("keeps shared retry pressure in the main view only while it is nonzero", () => {
-    const withPressure = projectionFixture();
-    const withoutPressure = projectionFixture();
-    const systemStatus = withoutPressure.systemStatus;
-    if (!systemStatus) throw new Error("Expected a shared runtime status fixture.");
-    // The status service reports no retry pressure as healthy, so the fixture moves as a pair.
-    withoutPressure.systemStatus = {
-      ...systemStatus,
-      erpProtection: {
-        ...systemStatus.erpProtection,
-        status: "healthy",
-        reason: null,
-        retryPressure: {
-          ...systemStatus.erpProtection.retryPressure,
-          retryingJobCount: 0,
-          retryAttemptCount: 0,
-        },
-      },
-    };
-    const render = (projection: DashboardProjection) =>
-      renderToStaticMarkup(
-        createElement(SystemStatusPanel, {
-          recovery: available(projection),
-          presentation: deriveSharedRuntimeState(projection.systemStatus),
-          erpPresentation: deriveSharedErpProtectionState(
-            projection.systemStatus?.erpProtection ?? null,
-          ),
-        }),
-      );
-
-    // Scoped to the ERP column's visible surface: a document-wide count would also be satisfied by
-    // the fact merely moving into the collapsed details, which is not what "main view" means.
-    expect(visibleErpProtectionColumn(render(withPressure))).toMatch(
-      /Retrying jobs<\/dt><dd[^>]*>1<\/dd>/,
+  it("keeps the live queue facts and renders no verdict, failed total, or status pill", () => {
+    const markup = renderToStaticMarkup(
+      createElement(SystemStatusPanel, {
+        recovery: available(projectionFixture()),
+      }),
     );
-    expect(visibleErpProtectionColumn(render(withoutPressure))).not.toContain("Retrying jobs");
-    expect(visibleErpProtectionColumn(render(withoutPressure))).toContain("Keeping up");
+
+    expect(markup).toContain("Physical order queue");
+    // The live physical queue facts survive the verdict removal, retry pressure included.
+    expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>2<\/dd>/);
+    expect(markup).toMatch(/Retrying jobs<\/dt><dd[^>]*>1<\/dd>/);
+    expect(markup).toMatch(/Retry attempts<\/dt><dd[^>]*>2<\/dd>/);
+    // The retained failed-job total is gone, and the panel issues no verdict: no pill, and no
+    // degraded shared protection column.
+    expect(markup).not.toMatch(/Failed<\/dt>/);
+    expect(markup).not.toContain("rounded-full");
+    expect(markup).not.toContain("Shared simulated ERP protection");
   });
 
   it("states the lag measurement boundary and keeps draining work visible", () => {
@@ -1021,12 +966,6 @@ function panelSection(document: Document, title: string): Element {
   if (!section) throw new Error(`No panel section titled "${title}".`);
 
   return section;
-}
-
-/** The shared ERP protection column with its collapsed details removed: what a reader sees first. */
-function visibleErpProtectionColumn(markup: string): string {
-  const column = markup.slice(markup.indexOf("Shared simulated ERP protection"));
-  return column.replace(collapsedDetails(column, "Protection details"), "");
 }
 
 /**
