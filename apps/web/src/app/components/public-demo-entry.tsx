@@ -40,7 +40,6 @@ import {
 } from "../lib/presentation/run-presentation-state";
 import { inputClassName, primaryButtonClassName } from "./control-styles";
 import { ErrorNotice } from "./error-notice";
-import { AdvancedOnly } from "./page-view";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
@@ -422,9 +421,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             startOptionsAvailable={startOptionsAvailable}
           />
         </div>
-        <AdvancedOnly>
-          <SharedRuntimeDisclosure />
-        </AdvancedOnly>
+        <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
             {curatedPresets.map((preset) => {
@@ -457,34 +454,42 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     />
                     <Fact label="What happens" value={facts.distinguishingBehavior} />
                   </dl>
-                  <AdvancedOnly className="mb-3 grid gap-3">
-                    <p className="m-0 text-sm leading-5 text-muted">{preset.display.description}</p>
-                    <dl className="m-0 grid grid-cols-2 gap-3 text-sm">
-                      <Fact
-                        label="Scenario"
-                        value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
-                      />
-                      <Fact
-                        label="Simulated ERP capacity"
-                        value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
-                      />
-                      <Fact
-                        label="Simulated ERP delay per order"
-                        value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
-                      />
-                      <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
-                      <Fact
-                        label="Expected sold-out rejections"
-                        value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
-                      />
-                      <Fact label="Approximate settling" value={facts.settlingCopy} />
-                      <Fact label="Detailed assumptions" value={facts.outcomeFocus} />
-                    </dl>
-                    <ConditionalCaveat show={facts.hasDuplicateAttempts}>
-                      The API safely replays the same accepted reservation, so accepted responses
-                      can exceed unique reservations in the completed result.
-                    </ConditionalCaveat>
-                  </AdvancedOnly>
+                  <details className="mb-3">
+                    <summary className="cursor-pointer rounded text-sm font-semibold text-accent ring-accent focus-visible:outline-none focus-visible:ring-2">
+                      Technical details
+                      <span className="sr-only"> for {preset.display.name}</span>
+                    </summary>
+                    <div className="mt-3 grid gap-3">
+                      <p className="m-0 text-sm leading-5 text-muted">
+                        {preset.display.description}
+                      </p>
+                      <dl className="m-0 grid grid-cols-2 gap-3 text-sm">
+                        <Fact
+                          label="Scenario"
+                          value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
+                        />
+                        <Fact
+                          label="Simulated ERP capacity"
+                          value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
+                        />
+                        <Fact
+                          label="Simulated ERP delay per order"
+                          value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
+                        />
+                        <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
+                        <Fact
+                          label="Expected sold-out rejections"
+                          value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
+                        />
+                        <Fact label="Approximate settling" value={facts.settlingCopy} />
+                        <Fact label="Detailed assumptions" value={facts.outcomeFocus} />
+                      </dl>
+                      <ConditionalCaveat show={facts.hasDuplicateAttempts}>
+                        The API safely replays the same accepted reservation, so accepted responses
+                        can exceed unique reservations in the completed result.
+                      </ConditionalCaveat>
+                    </div>
+                  </details>
                   <button
                     className={`${primaryButtonClassName} mt-3`}
                     disabled={startDisabled}

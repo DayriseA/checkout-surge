@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("public visitor mental model", () => {
-  it("leads with the chooser and keeps the detailed causal story mounted in Advanced", async () => {
+  it("leads with the chooser and keeps the safety story visible", async () => {
     const markup = renderToStaticMarkup(await DemoDashboardPage());
     const capsuleIndex = markup.indexOf('id="demo-mental-model"');
     const controlsIndex = markup.indexOf('id="public-start-controls"');
@@ -43,17 +43,16 @@ describe("public visitor mental model", () => {
     expect(markup).toContain(
       "Choose a simulation, start it, and watch a simulated flash sale unfold.",
     );
-    const advancedStory = markup.slice(markup.lastIndexOf("data-advanced-only"));
-    expect(advancedStory).toContain('hidden=""');
-    expect(advancedStory).toContain("Simulated buyers compete for limited stock");
-    expect(advancedStory).toContain(
+    const safetyStory = markup.slice(capsuleIndex);
+    expect(safetyStory).not.toContain("data-advanced-only");
+    expect(safetyStory).not.toContain('hidden=""');
+    expect(safetyStory).toContain("Simulated buyers compete for limited stock");
+    expect(safetyStory).toContain(
       "Redis atomically reserves units immediately without overselling",
     );
-    expect(advancedStory).toContain(
-      "every unique reservation reaches a confirmed or failed outcome",
-    );
-    expect(advancedStory).toContain("not universal production evidence");
-    expect(advancedStory).toContain('href="/about"');
+    expect(safetyStory).toContain("every unique reservation reaches a confirmed or failed outcome");
+    expect(safetyStory).toContain("not universal production evidence");
+    expect(safetyStory).toContain('href="/about"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 

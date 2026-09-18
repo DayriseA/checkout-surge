@@ -65,6 +65,7 @@ import {
   publicRunHistoryDetailProxyPath,
 } from "../src/app/lib/control-paths.js";
 import { acceptedRunResultFromRead } from "../src/app/lib/presentation/accepted-run-result.js";
+import { viewModeCookieName } from "../src/app/lib/presentation/view-mode.js";
 import DemoDashboardPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
@@ -903,7 +904,7 @@ describe("public browser starts", () => {
     expect(screen.getByRole("group", { name: "Slow ERP" })).toBeTruthy();
   });
 
-  it("keeps concise preset facts in Basic and reveals detailed assumptions in Advanced", async () => {
+  it("keeps concise preset facts visible and opens preset details independently", async () => {
     const surface = publicDemoSurfaceFixture();
     if (surface.presets.status !== "available") throw new Error("Expected presets.");
     const duplicatePreset = demoPresetFixture("preview-1k");
@@ -912,6 +913,7 @@ describe("public browser starts", () => {
     }
     surface.presets.data.presets = [
       demoPresetFixture("public-custom"),
+      demoPresetFixture("preview-1k"),
       {
         ...duplicatePreset,
         id: "33333333-3333-4333-8333-333333333334",
@@ -928,28 +930,43 @@ describe("public browser starts", () => {
       },
     ];
     const user = userEvent.setup();
-    render(inBasicDemoView(createElement(PublicDemoEntry, { surface })));
+    render(createElement(PublicDemoEntry, { surface }));
 
-    const article = screen.getByText("Duplicate-click storm").closest("article");
-    if (!article) throw new Error("Expected duplicate preset card.");
-    expect(within(article).getByText("Each buyer tries twice")).toBeTruthy();
-    const advancedFacts = within(article)
-      .getByText("Simulated ERP capacity")
-      .closest("[data-advanced-only]") as HTMLElement | null;
-    expect(advancedFacts?.hidden).toBe(true);
+    const duplicateArticle = screen.getByText("Duplicate-click storm").closest("article");
+    const previewArticle = screen.getByText("Preview 1k").closest("article");
+    if (!duplicateArticle || !previewArticle) throw new Error("Expected both preset cards.");
+    expect(within(duplicateArticle).getByText("Each buyer tries twice")).toBeTruthy();
+    expect(
+      within(duplicateArticle).getByRole("button", { name: "Start Duplicate-click storm" }),
+    ).toBeTruthy();
 
-    await user.click(screen.getByRole("switch", { name: "Advanced" }));
-    expect(advancedFacts?.hidden).toBe(false);
-    expect(within(article).getByText("Detailed assumptions")).toBeTruthy();
+    const duplicateDetails = duplicateArticle.querySelector("details");
+    const previewDetails = previewArticle.querySelector("details");
+    const duplicateSummary = duplicateDetails?.querySelector("summary");
+    const previewSummary = previewDetails?.querySelector("summary");
+    if (!duplicateDetails || !previewDetails || !duplicateSummary || !previewSummary) {
+      throw new Error("Expected preset technical disclosures.");
+    }
+    expect(duplicateDetails.open).toBe(false);
+    expect(previewDetails.open).toBe(false);
+    expect(duplicateSummary.textContent).toContain("Technical details for Duplicate-click storm");
+    expect(previewSummary.textContent).toContain("Technical details for Preview 1k");
+
+    await user.click(duplicateSummary);
+    expect(duplicateDetails.open).toBe(true);
+    expect(previewDetails.open).toBe(false);
+    expect(within(duplicateArticle).getByText("Detailed assumptions")).toBeTruthy();
+
+    await user.click(previewSummary);
+    expect(duplicateDetails.open).toBe(true);
+    expect(previewDetails.open).toBe(true);
   });
 
-  it("retains the custom draft, disclosure state, and field errors across collapse and view switches", async () => {
+  it("retains the custom draft, disclosure state, and field errors across collapse", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
-    render(
-      inBasicDemoView(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() })),
-    );
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
 
     const builderSummary = screen.getByText("Customize a scenario");
     const builder = builderSummary.closest("details") as HTMLDetailsElement;
@@ -982,11 +999,6 @@ describe("public browser starts", () => {
     expect(builder.open).toBe(true);
     expect(protection.open).toBe(true);
     expect(screen.getByText(nativeError)).toBeTruthy();
-    const viewSwitch = screen.getByRole("switch", { name: "Advanced" });
-    await user.click(viewSwitch);
-    await user.click(viewSwitch);
-
-    expect(builder.open).toBe(true);
     expect(form.isConnected).toBe(true);
     expect(stock.isConnected).toBe(true);
     expect(protection.isConnected).toBe(true);
@@ -2877,6 +2889,38 @@ describe("watch basic composition", () => {
 });
 
 describe("web page smoke coverage", () => {
+  it.each([
+    "basic",
+    "advanced",
+  ] as const)("keeps Demo compact and independent with a saved %s preference", async (initialMode) => {
+    vi.mocked(getPublicDemoSurface).mockResolvedValue(publicDemoSurfaceFixture());
+    // biome-ignore lint/suspicious/noDocumentCookie: Exercise the existing plain view preference.
+    document.cookie = `${viewModeCookieName}=${initialMode}`;
+    const cookieBefore = document.cookie;
+    const demo = await DemoDashboardPage();
+
+    render(
+      createElement(
+        ViewPreferenceProvider,
+        { initialMode } as React.ComponentProps<typeof ViewPreferenceProvider>,
+        createElement(ViewModeSwitch),
+        demo,
+      ),
+    );
+
+    expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull();
+    expect(
+      screen.getByText(/Starting a bounded run uses the one shared demo runtime/),
+    ).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "How the surge stays safe" })).toBeTruthy();
+    const detailsSummary = screen.getByText("Technical details", { selector: "summary" });
+    const details = detailsSummary.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    await userEvent.setup().click(detailsSummary);
+    expect(details.open).toBe(true);
+    expect(document.cookie).toBe(cookieBefore);
+  });
+
   it("renders the routed page surfaces with stubbed data reads", async () => {
     vi.stubGlobal("EventSource", undefined);
     vi.stubGlobal(
@@ -2938,10 +2982,6 @@ describe("web page smoke coverage", () => {
     expect(getRunHistoryPage).not.toHaveBeenCalled();
   });
 });
-
-function inBasicDemoView(ui: ReactElement) {
-  return inBasicPageView(ui);
-}
 
 function inBasicPageView(ui: ReactElement) {
   return createElement(
