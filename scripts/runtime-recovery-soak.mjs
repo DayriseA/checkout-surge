@@ -64,8 +64,8 @@ export async function runRecoverySoak({
     if (remainingMs > 0) await wait(Math.min(config.probeIntervalMs, remainingMs));
   }
 
-  const rootResponse = await fetchWithTimeout(fetch, `${config.dashboardBaseUrl}/`, 10_000);
-  if (!rootResponse.ok || !(await rootResponse.text()).includes("Checkout-Surge demo")) {
+  const demoResponse = await fetchWithTimeout(fetch, `${config.dashboardBaseUrl}/demo`, 10_000);
+  if (!demoResponse.ok || !(await demoResponse.text()).includes("Checkout-Surge demo")) {
     throw new Error("Public page was not reachable after the recovery soak.");
   }
 

@@ -56,7 +56,7 @@ checkout-surge/
 
 ### `apps/web`
 
-- Owns the public demo picker (`/`), current-run spectator (`/watch`), admin console (`/admin`), run history (`/run-history`), and a static "how it works" explainer (`/about`).
+- Owns the project overview and static "how it works" explainer (`/`), public demo picker (`/demo`), current-run spectator (`/watch`), admin console (`/admin`), and run history (`/run-history`).
 - Exposes public-safe starts and live observation separately from admin preset editing, ERP diagnostics, recovery, and cleanup controls.
 - Must not be treated as the source of high-volume traffic; load generation belongs to `apps/load-orchestrator` and k6.
 - Should keep the frontend dependency strategy intentionally small: Tailwind CSS for utility styling, local React components for the current dashboard controls, and additional component, toast, or icon libraries only when a scoped need justifies the dependency.

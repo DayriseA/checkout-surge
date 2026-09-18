@@ -83,6 +83,7 @@ describe("watch realtime recovery notice", () => {
       vi.fn(async () => jsonResponse(recoveryFixture())),
     );
     render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
+    screen.getByText("Technical details", { selector: "summary" }).click();
 
     exhaustStream();
     expect(InjectedEventSource.instances).toHaveLength(6);

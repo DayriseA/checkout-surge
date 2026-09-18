@@ -169,9 +169,6 @@ export function OperatorDashboard({
             : null
         }
         composition={composition}
-        hideLatestCompletedRun={
-          resultContext !== undefined || incompleteRunId !== null || invalidAcceptedRunContext
-        }
         onAcceptedRetry={() => void accepted.retryNow()}
         onRetry={() => void retryNow()}
         onRevealTechnicalDetails={revealTechnicalDetails}
@@ -230,7 +227,6 @@ const phaseSteps: Record<RunWatchComposition["phase"], number> = {
 export function WatchNarrative({
   accepted = null,
   composition,
-  hideLatestCompletedRun = false,
   onAcceptedRetry,
   onRetry,
   onRevealTechnicalDetails = () => undefined,
@@ -239,7 +235,6 @@ export function WatchNarrative({
 }: {
   accepted?: TrackedAcceptedResult | null;
   composition: WatchComposition;
-  hideLatestCompletedRun?: boolean;
   onAcceptedRetry?: () => void;
   onRetry?: () => void;
   onRevealTechnicalDetails?: (targetId: string) => void;
@@ -270,12 +265,7 @@ export function WatchNarrative({
         </section>
       );
     case "idle":
-      return (
-        <IdleNarrative
-          latestCompletedRun={composition.latestCompletedRun}
-          showLatestCompletedRun={!hideLatestCompletedRun}
-        />
-      );
+      return <IdleNarrative />;
     case "starting":
     case "active":
     case "draining":
@@ -410,9 +400,11 @@ function RunCard({
               Check again
             </button>
           ) : null}
-          <Link className={secondaryActionClassName} href="/">
-            Choose another scenario
-          </Link>
+          {terminal ? (
+            <Link className={secondaryActionClassName} href="/demo">
+              Try another scenario
+            </Link>
+          ) : null}
         </div>
       </div>
     </section>
@@ -690,7 +682,7 @@ function InvalidAcceptedRunContext() {
         <Link className={secondaryActionClassName} href="/run-history">
           Open run history
         </Link>
-        <Link className={secondaryActionClassName} href="/">
+        <Link className={secondaryActionClassName} href="/demo">
           Choose a simulation
         </Link>
       </div>
@@ -770,14 +762,7 @@ function AcceptedResultNarrative({
   );
 }
 
-function IdleNarrative({
-  latestCompletedRun,
-  showLatestCompletedRun,
-}: {
-  latestCompletedRun: BackendRead<RunHistoryListItem | null>;
-  showLatestCompletedRun: boolean;
-}) {
-  const latest = latestCompletedRun.status === "available" ? latestCompletedRun.data : null;
+function IdleNarrative() {
   return (
     <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
       <p className="m-0 text-xs font-bold uppercase text-muted">Ready when you are</p>
@@ -787,22 +772,13 @@ function IdleNarrative({
         result.
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
-        <Link className={actionClassName} href="/">
+        <Link className={actionClassName} href="/demo">
           Choose a simulation
         </Link>
-        {showLatestCompletedRun && latest ? (
-          <Link className={secondaryActionClassName} href={`/run-history/${latest.runId}`}>
-            {latestReportLinkName(latest.presetName, latest.occurredAt)}
-          </Link>
-        ) : null}
+        <Link className={secondaryActionClassName} href="/run-history">
+          See run history
+        </Link>
       </div>
-      {showLatestCompletedRun && !latest ? (
-        <p className="m-0 mt-4 text-sm text-muted">
-          {latestCompletedRun.status === "available"
-            ? "No completed runs yet"
-            : "Latest completed run unavailable"}
-        </p>
-      ) : null}
     </section>
   );
 }
@@ -835,7 +811,11 @@ function TechnicalGroups({
   const run = projection?.currentRun ?? null;
   const outcome = projection?.businessOutcome ?? null;
   return (
-    <details className="col-span-12 rounded-lg border border-border bg-surface" ref={detailsRef}>
+    <details
+      className="col-span-12 rounded-lg border border-border bg-surface"
+      open
+      ref={detailsRef}
+    >
       <summary className="cursor-pointer rounded-lg px-4 py-3 font-bold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
         Technical details
       </summary>
@@ -961,8 +941,4 @@ function TechnicalGroups({
       </div>
     </details>
   );
-}
-
-function latestReportLinkName(scenario: string, time: string): string {
-  return `Latest saved report: ${scenario} (${formatInstantUtc(time) ?? time})`;
 }

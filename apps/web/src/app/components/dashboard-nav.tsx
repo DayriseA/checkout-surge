@@ -6,10 +6,10 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import { publicNarrative } from "../lib/presentation/public-vocabulary";
 
 const dashboardNavItems = [
-  { href: "/", label: "Demo" },
+  { href: "/", label: "Overview" },
+  { href: "/demo", label: "Demo" },
   { href: "/watch", label: "Watch" },
   { href: "/run-history", label: "Run history" },
-  { href: "/about", label: "About" },
   { href: "/admin", label: "Admin" },
 ] as const;
 

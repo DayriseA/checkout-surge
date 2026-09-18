@@ -10,11 +10,11 @@ vi.mock("../src/app/lib/server/admin-reads.js", () => ({
   readAdminRuntimePolicy: vi.fn(),
 }));
 
-import { metadata as aboutMetadata } from "../src/app/about/page.js";
 import { metadata as adminMetadata } from "../src/app/admin/page.js";
+import { metadata as demoMetadata } from "../src/app/demo/page.js";
 import { metadata as rootMetadata } from "../src/app/layout.js";
 import { metadata as notFoundMetadata } from "../src/app/not-found.js";
-import { metadata as demoMetadata } from "../src/app/page.js";
+import { metadata as overviewMetadata } from "../src/app/page.js";
 import { metadata as runDetailMetadata } from "../src/app/run-history/[runId]/page.js";
 import { metadata as runHistoryMetadata } from "../src/app/run-history/page.js";
 import { metadata as watchMetadata } from "../src/app/watch/page.js";
@@ -26,19 +26,19 @@ describe("route metadata", () => {
       default: "Checkout-Surge Dashboard",
     });
     expect({
-      "/": demoMetadata.title,
+      "/": overviewMetadata.title,
+      "/demo": demoMetadata.title,
       "/watch": watchMetadata.title,
       "/run-history": runHistoryMetadata.title,
       "/run-history/[runId]": runDetailMetadata.title,
-      "/about": aboutMetadata.title,
       "/admin": adminMetadata.title,
       "not-found": notFoundMetadata.title,
     }).toEqual({
-      "/": { absolute: "Demo · Checkout-Surge" },
+      "/": { absolute: "Checkout-Surge · Flash-sale checkout demo" },
+      "/demo": "Demo",
       "/watch": "Live watch",
       "/run-history": "Run history",
       "/run-history/[runId]": "Run report",
-      "/about": "About",
       "/admin": "Admin",
       "not-found": "Page not found",
     });

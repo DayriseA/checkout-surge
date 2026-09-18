@@ -252,7 +252,7 @@ describe("run history", () => {
       }),
     );
     expect(empty).toContain("No runs yet");
-    expect(empty).toMatch(/href="\/"[^>]*>Start a simulation<\/a>/);
+    expect(empty).toMatch(/href="\/demo"[^>]*>Start a simulation<\/a>/);
 
     expect(
       renderToStaticMarkup(
@@ -795,7 +795,7 @@ describe("run history", () => {
     expect(markup).toContain("This report is not available");
     expect(markup).toContain("We could not load a saved report from this link");
     expect(markup).toContain('href="/run-history"');
-    expect(markup).toContain('href="/"');
+    expect(markup).toContain('href="/demo"');
     expect(markup).not.toContain("55555555-5555-4555-8555-555555555555");
     expect(markup).not.toContain("public-history-correlation");
     expect(markup).not.toContain("private public-reader diagnostic");

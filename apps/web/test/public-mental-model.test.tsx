@@ -20,10 +20,10 @@ vi.mock("../src/app/components/admin-nav.js", () => ({
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
-import AboutPage from "../src/app/about/page.js";
+import DemoDashboardPage from "../src/app/demo/page.js";
 import RootLayout from "../src/app/layout.js";
 import { publicNarrative } from "../src/app/lib/presentation/public-vocabulary.js";
-import DemoDashboardPage from "../src/app/page.js";
+import OverviewPage from "../src/app/page.js";
 
 afterEach(() => {
   sessionMock.mockResolvedValue(false);
@@ -48,12 +48,23 @@ describe("public visitor mental model", () => {
     );
     expect(safetyStory).toContain("every unique reservation reaches a confirmed or failed outcome");
     expect(safetyStory).toContain("not universal production evidence");
-    expect(safetyStory).toContain('href="/about"');
+    expect(safetyStory).toContain('href="/#failure-story"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
+  it("introduces the project and leads visitors to the demo", async () => {
+    const markup = renderToStaticMarkup(await OverviewPage());
+    const heroMarkup = markup.slice(0, markup.indexOf('id="failure-story"'));
+
+    expect(heroMarkup).toContain("<h1");
+    expect(heroMarkup).toContain("Checkout-Surge");
+    expect(heroMarkup).toContain('href="/demo"');
+    expect(heroMarkup).toContain('href="#failure-story"');
+    expect(markup.match(/href="\/demo"/g)).toHaveLength(2);
+  });
+
   it("shows one technical presentation", async () => {
-    const markup = renderToStaticMarkup(await AboutPage());
+    const markup = renderToStaticMarkup(await OverviewPage());
     const removedSectionIds = [
       "sale-example",
       "reservation-and-confirmation",
@@ -69,7 +80,7 @@ describe("public visitor mental model", () => {
   });
 
   it("keeps the architecture, technical narrative, and glossary visible", async () => {
-    const markup = renderToStaticMarkup(await AboutPage());
+    const markup = renderToStaticMarkup(await OverviewPage());
     const signalSection = markup.slice(
       markup.indexOf('id="gold-signals"'),
       markup.indexOf('id="success"'),
@@ -146,7 +157,7 @@ describe("public visitor mental model", () => {
   });
 
   it("links the repository safely from about and global navigation and supplies B05 copy", async () => {
-    const aboutMarkup = renderToStaticMarkup(await AboutPage());
+    const aboutMarkup = renderToStaticMarkup(await OverviewPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );
@@ -163,7 +174,7 @@ describe("public visitor mental model", () => {
   });
 
   it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
-    const aboutMarkup = renderToStaticMarkup(await AboutPage());
+    const aboutMarkup = renderToStaticMarkup(await OverviewPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );

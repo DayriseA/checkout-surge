@@ -31,7 +31,6 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <div className="mx-auto flex min-h-16 max-w-[1200px] items-center justify-between gap-5 px-6 max-[560px]:px-4 max-[420px]:flex-wrap max-[420px]:gap-1 max-[420px]:py-2">
               <Link className="grid gap-0.5" href="/">
                 <strong className="text-base text-ink">Checkout-Surge</strong>
-                <span className="text-xs font-semibold uppercase text-muted">Dashboard</span>
               </Link>
               <DashboardNav>{authenticated ? <AdminSignOut /> : null}</DashboardNav>
             </div>

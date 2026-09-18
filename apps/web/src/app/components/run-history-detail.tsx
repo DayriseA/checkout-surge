@@ -1296,7 +1296,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         <Link className={neutralLinkButtonClassName} href="/run-history">
           Back to run history
         </Link>
-        <Link className={neutralLinkButtonClassName} href="/">
+        <Link className={neutralLinkButtonClassName} href="/demo">
           Choose another scenario
         </Link>
         <a className={neutralLinkButtonClassName} href="#main-content">

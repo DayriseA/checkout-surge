@@ -24,7 +24,7 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
           Finished runs appear here after their final evidence is recorded.
         </p>
-        <Link className={`${neutralLinkButtonClassName} mt-3`} href="/">
+        <Link className={`${neutralLinkButtonClassName} mt-3`} href="/demo">
           Start a simulation
         </Link>
       </section>

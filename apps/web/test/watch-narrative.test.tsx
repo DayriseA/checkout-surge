@@ -58,12 +58,15 @@ describe("watch narrative", () => {
   it("renders one idle action state with and without latest history", () => {
     const withoutHistory = markup(available(projection(null)));
     expect(withoutHistory).toContain("Choose a simulation");
-    expect(withoutHistory).toContain("No completed runs yet");
+    expect(withoutHistory).toContain("See run history");
+    expect(withoutHistory).toContain('href="/run-history"');
     expect(withoutHistory).not.toContain("data-watch-signals");
 
     const withHistory = markup(available(projection(null)), null, latestRun);
-    expect(withHistory).toContain("Latest saved report: Preview 1k (2026-07-30 12:00:02 UTC)");
-    expect(withHistory).toContain('href="/run-history/11111111-1111-4111-8111-111111111111"');
+    expect(withHistory).toContain("See run history");
+    expect(withHistory).toContain('href="/run-history"');
+    expect(withHistory).not.toContain("Latest saved report:");
+    expect(withHistory).not.toContain('href="/run-history/11111111-1111-4111-8111-111111111111"');
     expect(withHistory).not.toContain("No completed runs yet");
   });
 
@@ -89,6 +92,7 @@ describe("watch narrative", () => {
     const output = markup(available(projection(run("starting"))));
 
     expect(output).toContain("Preparing the flash sale");
+    expect(output).not.toContain("Try another scenario");
     expect(output).toContain("Preview 1k · 1,000 buyers · 250 units");
     expect(output).toContain('aria-label="Run phase"');
     expect(output).toContain("Preparing");
@@ -262,11 +266,12 @@ describe("watch narrative", () => {
           status === "active" ? "The surge is under way" : "Confirming remaining orders",
         );
         expect(verdict).toBeGreaterThan(identity);
-        expect(output.indexOf("Choose another scenario")).toBeGreaterThan(strip);
+        expect(output).not.toContain("Try another scenario");
         expect(output).not.toContain("View run report");
       }
       if (status === "completed" || status === "failed") {
         expect(output.indexOf("View run report")).toBeGreaterThan(strip);
+        expect(output.indexOf("Try another scenario")).toBeGreaterThan(strip);
       }
     }
   });
@@ -285,7 +290,7 @@ describe("watch narrative", () => {
       expect(output).toContain('data-watch-signals=""');
       expect(output).toContain("View run report");
       expect(output).toContain('href="/run-history/11111111-1111-4111-8111-111111111111"');
-      expect(output).toContain("Choose another scenario");
+      expect(output).toContain("Try another scenario");
       expect(output.replace(/<[^>]+>/g, "")).not.toMatch(/\b\d{2}:\d{2}:\d{2}(?! UTC)/);
     }
   });

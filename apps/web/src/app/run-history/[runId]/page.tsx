@@ -198,7 +198,7 @@ export default async function RunHistoryDetailPage({
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
           </Link>
-          <Link className={neutralLinkButtonClassName} href="/">
+          <Link className={neutralLinkButtonClassName} href="/demo">
             Choose a simulation
           </Link>
         </div>

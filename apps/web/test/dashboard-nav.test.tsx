@@ -16,11 +16,11 @@ function renderNavigation(children: React.ReactNode) {
 
 describe("DashboardNav", () => {
   it.each([
-    ["/", "Demo"],
+    ["/", "Overview"],
+    ["/demo", "Demo"],
     ["/watch", "Watch"],
     ["/run-history", "Run history"],
     ["/run-history/some-run-id", "Run history"],
-    ["/about", "About"],
     ["/admin", "Admin"],
   ])("marks the current dashboard route for %s", (currentPathname, expectedName) => {
     pathname.value = currentPathname;
@@ -73,10 +73,10 @@ describe("DashboardNav", () => {
       expect(link.classList).toContain("inline-flex");
     }
     expect(links.map((link) => link.textContent?.trim())).toEqual([
+      "Overview",
       "Demo",
       "Watch",
       "Run history",
-      "About",
       "Admin",
       "Repository (opens in a new tab)",
     ]);

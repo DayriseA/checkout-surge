@@ -43,7 +43,7 @@ test("soaks both health paths, checks root, and recovers idle with distinct visi
     fetch: async (url) => {
       calls.push(url);
       if (url.endsWith("/health")) return Response.json({ service: "web", status: "ok" });
-      if (url === "http://proxy.test/") {
+      if (url === "http://proxy.test/demo") {
         return new Response("<h1>Checkout-Surge demo</h1>");
       }
       recoveryCount += 1;
@@ -57,7 +57,7 @@ test("soaks both health paths, checks root, and recovers idle with distinct visi
   assert.deepEqual(result, { probeRounds: 5 });
   assert.equal(calls.filter((url) => url === "http://web.test/health").length, 5);
   assert.equal(calls.filter((url) => url === "http://proxy.test/health").length, 5);
-  assert.equal(calls.filter((url) => url === "http://proxy.test/").length, 1);
+  assert.equal(calls.filter((url) => url === "http://proxy.test/demo").length, 1);
   assert.equal(calls.filter((url) => url.endsWith("/api/dashboard/recovery")).length, 2);
   assert.match(writes.at(-1), /component test/);
 });
@@ -66,7 +66,7 @@ test("fails clearly when fresh recovery is non-idle", async () => {
   await assert.rejects(
     runOneRound(async (url) => {
       if (url.endsWith("/health")) return Response.json({ service: "web", status: "ok" });
-      if (url === "http://proxy.test/") return new Response("Checkout-Surge demo");
+      if (url === "http://proxy.test/demo") return new Response("Checkout-Surge demo");
       return Response.json(
         { currentRun: { status: "active" }, scope: { runId: "run-1" } },
         { headers: { "set-cookie": "visitor=one; HttpOnly" } },
@@ -80,7 +80,7 @@ test("fails clearly when the recovery BFF omits its visitor cookie", async () =>
   await assert.rejects(
     runOneRound(async (url) => {
       if (url.endsWith("/health")) return Response.json({ service: "web", status: "ok" });
-      if (url === "http://proxy.test/") return new Response("Checkout-Surge demo");
+      if (url === "http://proxy.test/demo") return new Response("Checkout-Surge demo");
       return Response.json({ currentRun: null, scope: null });
     }),
     /did not issue a signed visitor cookie/,

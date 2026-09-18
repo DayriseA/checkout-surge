@@ -491,7 +491,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     </div>
                   </details>
                   <button
-                    className={`${primaryButtonClassName} mt-3`}
+                    className={`${primaryButtonClassName} mt-3 enabled:cursor-pointer enabled:hover:brightness-90 enabled:active:brightness-75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
                     disabled={startDisabled}
                     onClick={() => {
                       void startRun(preset.slug);

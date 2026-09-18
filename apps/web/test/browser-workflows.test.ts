@@ -38,13 +38,13 @@ import userEvent from "@testing-library/user-event";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import AboutPage from "../src/app/about/page.js";
 import AdminPage from "../src/app/admin/page.js";
 import { OperatorDashboard } from "../src/app/components/operator-dashboard.js";
 import { PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import { useAcceptedRunResult } from "../src/app/components/realtime/use-accepted-run-result.js";
 import { RunHistoryAdminControls } from "../src/app/components/run-history-admin-controls.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
+import DemoDashboardPage from "../src/app/demo/page.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api";
 import {
   getPublicDemoSurface,
@@ -59,7 +59,7 @@ import {
   publicRunHistoryDetailProxyPath,
 } from "../src/app/lib/control-paths.js";
 import { acceptedRunResultFromRead } from "../src/app/lib/presentation/accepted-run-result.js";
-import DemoDashboardPage from "../src/app/page.js";
+import OverviewPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 import WatchPage from "../src/app/watch/page.js";
@@ -1864,7 +1864,7 @@ describe("watch browser recovery", () => {
 
     expect(idleMarkup).toContain("No run has started");
     expect(idleMarkup).toContain("Choose a simulation");
-    expect(idleMarkup).toContain("No completed runs yet");
+    expect(idleMarkup).toContain("See run history");
     expect(idleMarkup).toContain("Run availability and updates");
     expect(idleMarkup.toLowerCase()).not.toContain("not yet");
     expect(idleMarkup).not.toContain("Live panels");
@@ -2429,12 +2429,6 @@ describe("watch composition", () => {
     expect(element?.closest("details:not([open])")).toBeNull();
   }
 
-  function expectHidden(container: HTMLElement, needle: string): void {
-    const element = innermostByText(container, needle);
-    expect(element).not.toBeNull();
-    expect(element?.closest("details:not([open])")).not.toBeNull();
-  }
-
   const watchSurface = (ui: ReactElement) => ui;
 
   function activeProjectionFixture(): DashboardProjection {
@@ -2588,7 +2582,7 @@ describe("watch composition", () => {
     expect(screen.getAllByText("Final result")).toHaveLength(1);
   });
 
-  it("separates an ID-only accepted run from the shared demo run without exposing UUIDs", () => {
+  it("separates an ID-only accepted run from the shared demo run with UUIDs in technical details", () => {
     const idOnlyAcceptedRunId = "88888888-8888-4888-8888-888888888888";
     const { container } = render(
       watchSurface(
@@ -2605,7 +2599,7 @@ describe("watch composition", () => {
 
     expectVisible(container, "Your result");
     expectVisible(container, "The saved result for this run is being checked");
-    expectHidden(container, idOnlyAcceptedRunId);
+    expect(innermostByText(container, idOnlyAcceptedRunId)?.closest("details")).not.toBeNull();
     // A's card carries neither fabricated metadata nor B's counts.
     const acceptedCard = container.querySelector('[data-accepted-result=""]');
     expect(acceptedCard?.textContent).not.toContain("Preview 1k");
@@ -2888,7 +2882,7 @@ describe("web page smoke coverage", () => {
     expect(details.open).toBe(true);
   });
 
-  it("keeps Watch technical details local and collapsed", async () => {
+  it("opens Watch technical details by default and allows collapsing them", async () => {
     vi.mocked(getRunHistoryPage).mockResolvedValue(available(runHistoryListFixture()));
     const watch = await WatchPage();
 
@@ -2897,9 +2891,9 @@ describe("web page smoke coverage", () => {
     const details = screen
       .getByText("Technical details", { selector: "summary" })
       .closest("details") as HTMLDetailsElement;
-    expect(details.open).toBe(false);
-    await userEvent.setup().click(details.querySelector("summary") as HTMLElement);
     expect(details.open).toBe(true);
+    await userEvent.setup().click(details.querySelector("summary") as HTMLElement);
+    expect(details.open).toBe(false);
   });
 
   it("renders the routed page surfaces with stubbed data reads", async () => {
@@ -2941,10 +2935,10 @@ describe("web page smoke coverage", () => {
     expect(screen.getByRole("heading", { name: "Preview 1k" })).toBeTruthy();
     cleanup();
 
-    const aboutMarkup = renderToStaticMarkup(await AboutPage());
-    expect(aboutMarkup.match(/k6/g)).toHaveLength(1);
-    render(await AboutPage());
-    expect(screen.getByRole("heading", { name: "About" })).toBeTruthy();
+    const overviewMarkup = renderToStaticMarkup(await OverviewPage());
+    expect(overviewMarkup.match(/k6/g)).toHaveLength(1);
+    render(await OverviewPage());
+    expect(screen.getByRole("heading", { name: "Checkout-Surge" })).toBeTruthy();
   });
 
   it("rejects a malformed accepted run query at the Watch page boundary", async () => {

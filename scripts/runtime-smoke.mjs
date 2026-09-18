@@ -331,14 +331,14 @@ export async function assertDashboardReachability(dashboardBaseUrl, fetchImpl) {
     );
   }
 
-  const { response: rootResponse, body: root } = await readHttpResponse(
-    `${dashboardBaseUrl}/`,
+  const { response: demoResponse, body: demo } = await readHttpResponse(
+    `${dashboardBaseUrl}/demo`,
     { headers: { accept: "text/html" } },
     fetchImpl,
   );
-  if (!rootResponse.ok || typeof root !== "string" || !root.includes("Checkout-Surge demo")) {
+  if (!demoResponse.ok || typeof demo !== "string" || !demo.includes("Checkout-Surge demo")) {
     throw new Error(
-      `${dashboardBaseUrl}/ returned HTTP ${rootResponse.status} without the demo page marker.`,
+      `${dashboardBaseUrl}/demo returned HTTP ${demoResponse.status} without the demo page marker.`,
     );
   }
 }

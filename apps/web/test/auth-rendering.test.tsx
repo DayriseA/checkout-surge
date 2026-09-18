@@ -66,6 +66,9 @@ describe("server-decided admin presentation", () => {
     expectSkipNavigation(markup);
     expect(markup).toContain("public content");
     expect(markup).toContain('href="/admin"');
+    expect(parseMarkup(markup).querySelector('header a[href="/"]')?.textContent).toBe(
+      "Checkout-Surge",
+    );
     expect(markup).not.toContain("Sign out");
   });
 
