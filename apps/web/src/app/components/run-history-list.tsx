@@ -8,7 +8,6 @@ import {
 } from "../lib/presentation/public-vocabulary";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import { neutralLinkButtonClassName } from "./control-styles";
-import { AdvancedOnly } from "./page-view";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
@@ -35,12 +34,12 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
   const hasMultiplePages = history.totalCount > history.pageSize;
   return (
     <div className="grid gap-3">
-      <AdvancedOnly className="rounded-lg border border-border bg-surface p-4">
+      <div className="rounded-lg border border-border bg-surface p-4">
         <p className="m-0 text-sm leading-6 text-muted">
           Convergence measures from the end of traffic dispatch until every reserved order reached a
           confirmed or failed outcome. Overall duration covers the entire run.
         </p>
-      </AdvancedOnly>
+      </div>
       {history.summaries.map((summary) => (
         <RunHistoryRow key={summary.runId} summary={summary} />
       ))}
@@ -97,7 +96,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
         />
       </div>
-      <AdvancedOnly className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
+      <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
         <Fact
           label={publicVocabulary.uniqueReservationsSecured}
           value={number(summary.uniqueReservations)}
@@ -111,7 +110,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
               : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
           }
         />
-      </AdvancedOnly>
+      </div>
     </article>
   );
 }

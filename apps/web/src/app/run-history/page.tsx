@@ -1,7 +1,6 @@
 import type { RunHistoryListResponse } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import { ErrorNotice } from "../components/error-notice";
-import { PageView } from "../components/page-view";
 import { RunHistoryAdminControls } from "../components/run-history-admin-controls";
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
@@ -29,7 +28,7 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
     history.status === "available"
       ? formatRunCount(history.data.totalCount, "an unknown number of")
       : "unavailable";
-  const content = (
+  return (
     <>
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
@@ -63,12 +62,6 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
       )}
     </>
   );
-
-  if (authenticated) {
-    return content;
-  }
-
-  return <PageView>{content}</PageView>;
 }
 
 /** Admin sessions get the deletion provider wrapped around the same public list. */

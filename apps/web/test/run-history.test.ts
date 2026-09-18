@@ -10,7 +10,7 @@ import {
   type RunHistoryListResponse,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { type ComponentProps, createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,6 +22,7 @@ import {
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import { buildRunHistoryTrace } from "../src/app/lib/presentation/run-history-trace.js";
+import { viewModeCookieName } from "../src/app/lib/presentation/view-mode.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 
@@ -57,10 +58,6 @@ function inViewMode(initialMode: "basic" | "advanced", child: ReactNode) {
 
 function publicReportInBasic(detail: PublicRunHistoryDetailResponse) {
   return inViewMode("basic", createElement(PublicRunHistoryDetail, { detail }));
-}
-
-function historyInMode(initialMode: "basic" | "advanced", history = listFixture()) {
-  return inViewMode(initialMode, createElement(RunHistoryList, { history }));
 }
 
 describe("run history", () => {
@@ -129,7 +126,13 @@ describe("run history", () => {
     }
   });
 
-  it("renders compact Basic rows and reveals the existing comparisons in Advanced", () => {
+  it.each([
+    "basic",
+    "advanced",
+  ] as const)("renders the complete list without a view switch for the saved %s preference", async (initialMode) => {
+    // biome-ignore lint/suspicious/noDocumentCookie: jsdom has no Cookie Store API.
+    document.cookie = `${viewModeCookieName}=${initialMode}; Path=/`;
+    const savedPreference = document.cookie;
     const history = listFixture();
     const first = history.summaries[0];
     if (!first) throw new Error("Expected a run summary fixture.");
@@ -155,13 +158,22 @@ describe("run history", () => {
         resultOutcome: "outcome-indeterminate",
       },
     );
-    const { container } = render(historyInMode("basic", history));
+    getRunHistoryPage.mockResolvedValue({ status: "available", data: history });
+    const page = await RunHistoryPage({});
+    const { container } = render(
+      createElement(
+        PageViewComponents.ViewPreferenceProvider,
+        { initialMode } as ComponentProps<typeof PageViewComponents.ViewPreferenceProvider>,
+        createElement(PageViewComponents.ViewModeSwitch),
+        page,
+      ),
+    );
 
     const completedRow = screen.getByRole("heading", { name: "Preview 1k" }).closest("article");
     const warningRow = screen
       .getByRole("heading", { name: "Order failure warning scenario" })
       .closest("article");
-    if (!completedRow || !warningRow) throw new Error("Expected Basic history rows.");
+    if (!completedRow || !warningRow) throw new Error("Expected complete history rows.");
     const expectVisibleFact = (row: HTMLElement, label: string, value: string) => {
       const labelElement = within(row).getByText(label, { selector: "p" });
       expect(labelElement.closest("[hidden]")).toBeNull();
@@ -195,19 +207,12 @@ describe("run history", () => {
     for (const row of container.querySelectorAll("article")) {
       expect(within(row as HTMLElement).getAllByRole("link")).toHaveLength(1);
     }
-    expect(container.querySelectorAll('[data-advanced-only="true"]')).toHaveLength(4);
-    for (const advanced of container.querySelectorAll('[data-advanced-only="true"]')) {
-      expect(advanced.hasAttribute("hidden")).toBe(true);
-    }
+    expect(container.querySelectorAll('[data-advanced-only="true"]')).toHaveLength(0);
     expect(screen.getAllByText("Unique reservations secured", { selector: "p" })).toHaveLength(3);
     expect(screen.getAllByText("Sold-out rejections")).toHaveLength(3);
     expect(screen.getAllByText("Convergence duration")).toHaveLength(3);
     expect(screen.getByText(/Convergence measures from the end of traffic dispatch/)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("switch", { name: "Advanced" }));
-    for (const advanced of container.querySelectorAll('[data-advanced-only="true"]')) {
-      expect(advanced.hasAttribute("hidden")).toBe(false);
-    }
     expectVisibleFact(completedRow, "Unique reservations secured", "10");
     expectVisibleFact(completedRow, "Sold-out rejections", "10");
     expectVisibleFact(completedRow, "Convergence duration", "2 s");
@@ -217,6 +222,8 @@ describe("run history", () => {
     expect(container.textContent).not.toContain("Traffic delivery");
     expect(container.textContent).not.toContain("Final inventory");
     expect(container.textContent).not.toContain("55555555-5555-4555-8555-555555555555");
+    await waitFor(() => expect(screen.queryByRole("switch", { name: "Advanced" })).toBeNull());
+    expect(document.cookie).toBe(savedPreference);
   });
 
   it("names detail links and keeps destructive controls outside named pagination", () => {
@@ -271,7 +278,9 @@ describe("run history", () => {
 
   it("handles empty, multiple-page, and out-of-range run states", () => {
     const empty = renderToStaticMarkup(
-      historyInMode("basic", { ...listFixture(), summaries: [], totalCount: 0 }),
+      createElement(RunHistoryList, {
+        history: { ...listFixture(), summaries: [], totalCount: 0 },
+      }),
     );
     expect(empty).toContain("No runs yet");
     expect(empty).toMatch(/href="\/"[^>]*>Start a simulation<\/a>/);
