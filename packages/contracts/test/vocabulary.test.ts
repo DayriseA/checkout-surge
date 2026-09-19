@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  administrativeOrderFailureCodeSchema,
+  administrativeOrderFailureCodeValues,
   demoPresetVisibilitySchema,
   demoPresetVisibilityValues,
   demoRunStatusSchema,
@@ -10,8 +12,12 @@ import {
   operatorModeValues,
   orderEventNameSchema,
   orderEventNameValues,
+  orderFailureCategorySchema,
+  orderFailureCategoryValues,
   orderStatusSchema,
   orderStatusValues,
+  orderWaitingReasonSchema,
+  orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
   saleOfferPurposeValues,
@@ -53,6 +59,15 @@ describe("shared PostgreSQL vocabulary", () => {
       "reconciled",
       "exhausted",
     ]);
+    expect(orderWaitingReasonValues).toEqual([
+      "local_admission",
+      "erp_capacity",
+      "erp_unavailable",
+      "uncertain_result",
+      "intervention_required",
+    ]);
+    expect(orderFailureCategoryValues).toEqual(["business_rejection", "administrative"]);
+    expect(administrativeOrderFailureCodeValues).toEqual(["admin_reset"]);
   });
 
   it.each([
@@ -63,6 +78,9 @@ describe("shared PostgreSQL vocabulary", () => {
     [operatorModeSchema, operatorModeValues],
     [demoRunStatusSchema, demoRunStatusValues],
     [trafficExecutionStatusSchema, trafficExecutionStatusValues],
+    [orderWaitingReasonSchema, orderWaitingReasonValues],
+    [orderFailureCategorySchema, orderFailureCategoryValues],
+    [administrativeOrderFailureCodeSchema, administrativeOrderFailureCodeValues],
   ] as const)("derives schema %# from its tuple", (schema, values) => {
     expect(schema.options).toEqual(values);
     for (const value of values) expect(schema.parse(value)).toBe(value);

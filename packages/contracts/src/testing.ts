@@ -1,5 +1,7 @@
 import type { AcceptedRunConfigSnapshot } from "./load.js";
 
+export * from "./acceptance-fixtures.js";
+
 /**
  * Shared contract-valid configuration for tests that specifically model the
  * public Preview 1k preset across application package boundaries.

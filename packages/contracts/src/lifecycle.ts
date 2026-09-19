@@ -23,6 +23,33 @@ export const erpAttemptStatusValues = ["succeeded", "failed", "timed_out"] as co
 export const erpAttemptStatusSchema = z.enum(erpAttemptStatusValues);
 export type ErpAttemptStatus = z.infer<typeof erpAttemptStatusSchema>;
 
+/**
+ * Operational waiting dimension (D01/D03). A waiting reason is carried by the
+ * order's durable control record; the absence of a reason is "not waiting" and
+ * is therefore not a vocabulary member.
+ */
+export const orderWaitingReasonValues = [
+  "local_admission",
+  "erp_capacity",
+  "erp_unavailable",
+  "uncertain_result",
+  "intervention_required",
+] as const;
+export const orderWaitingReasonSchema = z.enum(orderWaitingReasonValues);
+export type OrderWaitingReason = z.infer<typeof orderWaitingReasonSchema>;
+
+/**
+ * Terminal order failure categories (D01/D03). Technical problems never
+ * terminalize an order and are not part of this closed vocabulary.
+ */
+export const orderFailureCategoryValues = ["business_rejection", "administrative"] as const;
+export const orderFailureCategorySchema = z.enum(orderFailureCategoryValues);
+export type OrderFailureCategory = z.infer<typeof orderFailureCategorySchema>;
+
+export const administrativeOrderFailureCodeValues = ["admin_reset"] as const;
+export const administrativeOrderFailureCodeSchema = z.enum(administrativeOrderFailureCodeValues);
+export type AdministrativeOrderFailureCode = z.infer<typeof administrativeOrderFailureCodeSchema>;
+
 export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
 
 export const orderEventNameValues = [
