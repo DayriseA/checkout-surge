@@ -500,17 +500,6 @@ Do not run `pnpm test:composition` or `pnpm test:characterization` unless explic
 
 Schema work must follow the repository's pre-release baseline policy in [local development](../docs/local_development.md): regenerate and review the baseline artifacts together, preserve required custom SQL, and validate the isolated test migration. Do not add a compatibility migration or silently wipe the user's reference data.
 
-On Windows, before project commands in each new PowerShell process:
-
-```powershell
-$taskSavedPath = $env:PATH
-Remove-Item Env:PATH -ErrorAction SilentlyContinue
-Remove-Item Env:Path -ErrorAction SilentlyContinue
-$env:Path = $taskSavedPath
-```
-
-Verify command resolution before reporting a missing dependency. Do not modify persistent environment variables.
-
 ### 13. Completion checklist
 
 - [ ] The incident configuration succeeds through notifications with the corrected engine and remains admissible.
