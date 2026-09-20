@@ -28,13 +28,13 @@ Worker application files: `order-process-job-handler.ts`, `order-recovery-scanne
 - [x] Remove recovery publication limits as silent business-abandonment budgets. Bound batches, retry frequency and concurrent work; retain visible escalation/intervention for actual defects. A historical attempt counter may remain diagnostic but cannot erase an obligation.
 - [x] Resolve eligibility in SQL before limiting: next eligible time then order creation time, no new-buy priority. Execution rechecks claims; terminal/ineligible rows cannot starve later eligible work.
 - [x] Preserve canonical accepted results across local transition failure and enqueue/repair exactly one notification obligation per confirmed order. Missing accepted run snapshot is intervention on that job, never catalog fallback. Scope auth failures block that scope, not the entire worker.
-- [x] Persist the scope-level intervention (user decision, 2026-09-20): add an intervention reason and timestamp to the existing `erp_scope_resilience_state` table through this task's incremental migration, reusing task 02's adapter. A `401`/`403` marks the `run:<id>` or `catalog` scope once; the handler and scanner dispatch nothing for a marked scope and open no per-order intervention for the same cause. Task 09 restores the marker at startup and task 11 owns resume.
+- [x] Persist the scope-level intervention (user decision, 2026-09-20): add an intervention reason and timestamp to the existing `erp_scope_resilience_state` table through this task's incremental migration, reusing task 02's adapter. A `401`/`403` marks the `run:<id>` or `catalog` scope once; the handler and scanner dispatch nothing for a marked scope and open no per-order intervention for the same cause. Task 09 restores the marker at startup; task 11 replaces the marker with a terminal technical failure of each affected order.
 - [x] Source deferral delays for capacity, unavailability and timeout from a worker-internal capped exponential backoff with jitter (user decision, 2026-09-20), not from the snapshot's `retryPolicy`. Declare it an explicit temporary adapter in the completion handoff; task 09 replaces it with the engine policy.
 - [x] Update tests that currently require temporary retry exhaustion to fail; replace their asserted policy rather than weakening assertions. Keep unknown payload/identity defects attributable and correlation intact.
 
 ## Non-goals
 
-Adaptive rate control is not activated here; existing conservative concurrency protection remains until task 09. Do not bypass terminal publication fencing, add another scanner, turn arbitrary permanent errors into endless retries, or remove all retired form/config fields ahead of the coordinated task 12 cleanup.
+Adaptive rate control is not activated here; existing conservative concurrency protection remains until task 09. Do not bypass terminal publication fencing, add another scanner, turn arbitrary permanent errors into endless retries, or remove all retired form/config fields ahead of the coordinated task 14 cleanup.
 
 ## Acceptance and validation
 
@@ -60,7 +60,7 @@ The repaired windows are: durable deferral before wake-up publication; publicati
 
 Removed paths: BullMQ delivery budgets derived from snapshot retry policy, API/pending-persistence retry-policy resolution for order publication, delivery-counter ERP-call ownership, `HttpErpOrderConfirmation.confirm`, `isTemporaryErpConfirmationError`, `shouldRetainOrderForErpOutcome`, handler thrown-outcome classification, BullMQ circuit-open delay, and recovery-attempt exhaustion escalation. All order-process producers use `attempts: 1`.
 
-Migration `0007_fat_captain_universe` adds the scope intervention reason and opening timestamp. A scope `401`/`403` marker blocks handler claims and scanner selection without opening per-order intervention. Startup restore remains task 09 and resume remains task 11.
+Migration `0007_fat_captain_universe` adds the scope intervention reason and opening timestamp. A scope `401`/`403` marker blocks handler claims and scanner selection without opening per-order intervention. Startup restore remains task 09; task 11 replaces the marker with a terminal technical failure of each affected order.
 
 Temporary adapter: `ScheduledErpOrderConfirmation.defer` uses worker-local capped exponential backoff with jitter (1 second base, exponent capped at 6, total delay capped at 60 seconds, and `Retry-After` as a minimum). Task 09 replaces this function with the engine policy. The existing 1-second/60-second Retry-After parsing policy in the worker composition root is unchanged.
 

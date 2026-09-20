@@ -33,7 +33,7 @@ Inspect `packages/contracts/src/{erp,lifecycle,entities,queue,demo,run-result,ru
 
 ## Runnable boundary and non-goals
 
-Introduce contracts additively where later consumers are not ready. Do not make a new field required across a live boundary until its producer and readers are updated in the same runnable slice. Do not activate the scheduler, remove working controls piecemeal, add a migration for historic incident data, or advertise the final guarantee. Task 12 owns final retirement of scenario-level engine knobs.
+Introduce contracts additively where later consumers are not ready. Do not make a new field required across a live boundary until its producer and readers are updated in the same runnable slice. Do not activate the scheduler, remove working controls piecemeal, add a migration for historic incident data, or advertise the final guarantee. Task 14 owns final retirement of scenario-level engine knobs.
 
 ## Acceptance and validation
 
@@ -78,7 +78,7 @@ D14 calibration criteria, the sanity envelopes (`60 + 888/10 = 148.8 s`, `120 + 
 
 ### Snapshot compatibility strategy (D13)
 
-History readers accept and ignore retired fields; nothing is migrated or rewritten. This slice adds no field to any existing schema, so no reader changed. Contract test `packages/contracts/test/acceptance-fixtures.test.ts` ("still parses the legacy accepted snapshot shape with retired engine fields") proves that an accepted snapshot carrying `retryPolicy`, `drainTimeoutSeconds`, `circuitBreakerFailureThreshold`/`circuitBreakerResetTimeoutMs`, and `erpConfig.requestTimeoutMs` (and no new field) still parses with `acceptedRunConfigSnapshotSchema`. Task 12 must keep readers tolerant when it removes those fields from new snapshots.
+History readers accept and ignore retired fields; nothing is migrated or rewritten. This slice adds no field to any existing schema, so no reader changed. Contract test `packages/contracts/test/acceptance-fixtures.test.ts` ("still parses the legacy accepted snapshot shape with retired engine fields") proves that an accepted snapshot carrying `retryPolicy`, `drainTimeoutSeconds`, `circuitBreakerFailureThreshold`/`circuitBreakerResetTimeoutMs`, and `erpConfig.requestTimeoutMs` (and no new field) still parses with `acceptedRunConfigSnapshotSchema`. Task 14 must keep readers tolerant when it removes those fields from new snapshots.
 
 ### `idempotency_conflict` naming gap
 
@@ -87,7 +87,7 @@ The mock ERP emits the literal `idempotency_conflict` without the `erp_` prefix 
 ### Temporary compatibility code for later tasks to remove
 
 - No shim, alias, or dual-read path was introduced; all exports are purely additive.
-- The fixture configs in `acceptance-fixtures.ts` (`backpressureConfig()` and `erpConfig.requestTimeoutMs`) still carry the retired engine knobs with their current seed values, only because `acceptedRunConfigSnapshotSchema` requires them today. Task 12 must drop them from the fixtures when it retires those fields.
+- The fixture configs in `acceptance-fixtures.ts` (`backpressureConfig()` and `erpConfig.requestTimeoutMs`) still carry the retired engine knobs with their current seed values, only because `acceptedRunConfigSnapshotSchema` requires them today. Task 14 must drop them from the fixtures when it retires those fields.
 - The declared-empty `erpPermanentRejectionCodeValues` list is the intended mechanism (not a placeholder to delete): task 03/04 adds a member there before any rejection code acquires business-rejection meaning.
 
 ### Checks actually run (Linux/Dev Container, repo root)

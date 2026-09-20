@@ -67,7 +67,6 @@ Successful presets did not establish the missing guarantee: the public surge pre
 | [Finalization](../apps/api/src/services/demo-run-finalization-service.ts) | Can finalize while business work remains after a timeout | Separate elapsed-time warnings from actual business completion |
 | [Publication fence](../apps/worker/src/persistence/postgres-generated-run-publication-fence.ts) | Rejects publication for terminal runs | Preserve this protection while preventing premature terminalization |
 | [Mock ERP confirmation](../apps/mock-erp/src/application/confirmation-service.ts) | Successful idempotency ledger is process-local | Persist external confirmation identity for restart and lost-response verification |
-| [Run configuration](../apps/worker/src/application/run-config.ts) | Sends frozen ERP behavior with each confirmation | Let the mock apply a reproducible changing environment independently of worker adaptation |
 | [Run start service](../apps/api/src/services/demo-run-service.ts) | Validates parameter bounds and run budgets | Add an authoritative estimated-duration admission decision |
 
 Some existing tests explicitly require temporary retry exhaustion to fail an order. Those tests encode the old policy and must change with the specification. Passing them is not evidence that the desired resilience property holds.
@@ -77,15 +76,15 @@ Some existing tests explicitly require temporary retry exhaustion to fail an ord
 For a finite set of valid accepted orders, provided infrastructure remains recoverable and the ERP eventually provides enough successful processing opportunities:
 
 1. Reservations never exceed allocated stock.
-2. Every accepted order remains durably accounted for until confirmation, explicit permanent rejection, or an explicit administrative disposition.
+2. Every accepted order remains durably accounted for until confirmation or an explicit terminal failure (permanent rejection or non-transient technical error). The only other exit is a reset, which deliberately discards the whole experiment (D02, D10).
 3. Temporary saturation, increased latency, and finite outages do not by themselves cause terminal business failure.
 4. More worker capacity does not bypass ERP admission or worsen the business outcome through overload-induced abandonment.
 5. Retries do not create duplicate external confirmations or duplicate notifications.
 6. A run is not presented as business-complete while orders, uncertain confirmations, required recovery, or notifications remain unresolved.
 7. Restarting a supported service preserves outstanding work and does not trigger an uncontrolled retry burst.
-8. Capacity adaptation and waiting are visible, including the reason for waiting and the age of outstanding work.
+8. A slow run is visibly still progressing: outstanding work, its age, the observed confirmation rate, and one downstream status are shown.
 
-Occasional capacity responses during adaptation remain possible. The guarantee concerns retained work and business outcomes, not the elimination of every transient HTTP error. A permanent ERP rejection, inconsistent identity, or genuine software defect must remain distinguishable and actionable.
+Occasional capacity responses during adaptation remain possible. The guarantee concerns retained work and business outcomes, not the elimination of every transient HTTP error. A permanent ERP rejection, inconsistent identity, or other non-transient error terminally fails the affected order with an attributable reason; it never blocks the run.
 
 ### 5. Separate processing resilience from demonstration limits
 
@@ -95,13 +94,13 @@ Occasional capacity responses during adaptation remain possible. The guarantee c
 | Retains orders across temporary constraints | Rejects experiments expected to occupy the demo too long |
 | Uses bounded individual calls and spaced retries | Limits admitted traffic, stock, and accessible chaos controls |
 | Completes according to business evidence | Explains the estimated bottleneck and duration before launch |
-| Reports a prolonged or blocked workflow | Never injects an arbitrary order-failure deadline |
+| Reports a prolonged workflow | Never injects an arbitrary order-failure deadline; frees the demo with a whole-run automatic reset |
 
-Use **600 seconds as the initial estimated demo-occupancy ceiling**. Measure occupancy from run acceptance through expected business settlement, including start delay and notifications, rather than only k6 execution. Keep this setting in the effective demo policy with a deployment ceiling, not in worker business logic. Apply it to dashboard-launched presets and custom runs in both public and admin modes. Exceptional diagnostic execution belongs to a protected test/runtime path with explicit isolation; do not add a routine dashboard bypass.
+Use **600 seconds as the initial estimated demo-occupancy ceiling**. Measure occupancy from run acceptance through expected business settlement, including start delay and notifications, rather than only k6 execution. Keep this setting in the effective demo policy with a deployment ceiling, not in worker business logic. Apply it to dashboard-launched presets and custom runs in both public and admin modes, with no bypass. The estimate is an internal admission mechanism: the dashboard says whether a configuration is allowed and why not, and shows nothing about it once the run is accepted.
 
-The ten-minute check is a conservative admission estimate, not a promise or an automatic runtime cancellation. An admitted run can exceed it because actual conditions differ. Such a run stays visible and recoverable, with an over-budget indication. Retain the supported one-nonterminal-run rule. Explicit admin reset/cancellation remains the way to release an experiment that cannot complete; its semantics must be truthful about work already accepted externally.
+The ten-minute check is a conservative admission estimate, and an admitted run can exceed it because actual conditions differ. The hard limit is separate: a run still nonterminal 900 seconds after acceptance is reset automatically to free the demo (D10). Between 600 and 900 seconds the run is in a grace period, and only then does the dashboard warn that the reset is coming. Retain the supported one-nonterminal-run rule. Reset, whether automatic or triggered by an admin, is destructive by design: it stops everything, discards the run's internal data, and returns the demo to a ready state as fast as possible (D02).
 
-A hard wall-clock termination feature is outside this implementation unless separately specified. It must not be introduced implicitly through a cleanup timer or retry limit.
+The automatic reset is the only wall-clock termination. It acts on the whole run, never on individual orders, and no other deadline may be introduced implicitly through a cleanup timer or retry limit.
 
 ### 6. Target processing design
 
@@ -126,14 +125,14 @@ The supported runtime still has one worker process. Use that single authority fo
 | Temporary dependency unavailability | Capped backoff with jitter; circuit protection and sparse probes |
 | Timeout or response lost after dispatch | Uncertain external outcome; reconcile using the stable business idempotency key |
 | Known permanent business rejection | Terminal business failure with an attributable reason |
-| Authentication/configuration failure, malformed protocol, or contradictory identity | Visible intervention state; avoid endless hot retries or invented business rejection |
+| Authentication/configuration failure, malformed protocol, contradictory identity, or unrecognized response | Terminal technical failure of the order with an attributable reason; no retry and no blocked run (D03) |
 | ERP success followed by local persistence failure | Retain accepted-result recovery ownership and finish local transitions |
 
 Separate three identities: the stable order/ERP idempotency key, queue delivery identity, and individual ERP-call identity. Actual calls must remain auditable even when capacity deferrals do not consume an error budget. Record dispatch intent before an external call so a crash cannot erase the existence of an uncertain attempt.
 
 Extend the existing worker recovery workflow to own deferred downstream work instead of introducing another independent recovery scanner. Persist the next eligible attempt time, waiting reason, and publication ownership. BullMQ supplies wake-ups; PostgreSQL retains the business obligation and recovery intent. Define one scheduling owner per order at each handoff, including initial dispatch, delayed delivery, and recovery publication. Repeated scans or duplicate deliveries must not create overlapping logical work or starve older orders.
 
-Replace order-abandonment limits for transient ERP conditions with operational alerts and durable intervention where necessary. Bound individual work, scan batches, retry frequency, and diagnostic retention. Do not require unbounded memory or unbounded attempt-history growth to retain an unresolved order and its canonical external-success evidence.
+Remove order-abandonment limits for transient ERP conditions only; non-transient errors fail the order at once (D03). Bound individual work, scan batches, retry frequency, and diagnostic retention. Do not require unbounded memory or unbounded attempt-history growth to retain an unresolved order and its canonical external-success evidence.
 
 #### 6.3 Latency and external idempotency
 
@@ -147,9 +146,9 @@ For a future real connector, durable idempotency or an authoritative status look
 
 #### 6.4 Truthful lifecycle and inventory retention
 
-Traffic completion closes new experiment traffic and starts draining; it does not close outstanding processing. An elapsed processing target sets an operational warning. Finalization waits for durable business and notification settlement, or an explicitly defined administrative disposition.
+Traffic completion closes new experiment traffic and starts draining; it does not close outstanding processing. An elapsed processing target sets an operational warning. Finalization waits for durable business and notification settlement. A reset is the only path that ends a run without settlement (D02, D10).
 
-Retain terminal publication/cleanup fencing. Change when terminality is reached rather than bypassing the fence to repair notifications. Active, waiting, and intervention-required work must remain protected from automatic deletion. Recovery queries must not repeatedly select ineligible terminal rows and thereby starve later recoverable work.
+Retain terminal publication/cleanup fencing. Change when terminality is reached rather than bypassing the fence to repair notifications. Active and waiting work must remain protected from retention cleanup and exact teardown; only a reset (D02, D10) discards it. Recovery queries must not repeatedly select ineligible terminal rows and thereby starve later recoverable work.
 
 Review all time assumptions together: request deadlines, retry/recovery leases, reservation visibility expiry, run-sale eligibility TTL, idempotency retention, maintenance, and finalization. The current seven-day eligibility assumption is coupled to a bounded drain duration. Make long-lived processing independent of an admission-marker expiry; missing/expired markers must remain fail-closed for new buys. Do not reopen a sale when restoring processing state.
 
@@ -159,7 +158,7 @@ The current demo retains expired holds instead of automatically releasing them. 
 
 The estimator belongs to an API application service. Shared contracts describe its inputs, result, and rejection details. The web app consumes the API estimate; do not duplicate a second authoritative formula in React or place application estimation logic in the contracts package.
 
-Inputs include traffic shape and start delay, unique planned checkouts, stock and quantity, effective worker concurrency, declared ERP capacity and latency, finite outage/profile segments, error assumptions, and calibrated overhead for adaptation, persistence, and notifications.
+Inputs include traffic shape and start delay, unique planned checkouts, stock and quantity, effective worker concurrency, declared ERP capacity and latency, error assumptions, and calibrated overhead for adaptation, persistence, and notifications.
 
 For the elementary no-error, constant-capacity case:
 
@@ -176,11 +175,11 @@ The overlap formula is an explanatory approximation for burst/regular arrivals, 
 
 Compute `N` from unique checkout intent, quantity, and available stock, not emitted HTTP count: duplicate/idempotency scenarios do not create one ERP confirmation per HTTP response. Account for partial stock quantities, zero accepted orders, zero configured latency, and the worker's actual deployment ceiling.
 
-For changing ERP profiles, integrate an explicit backlog against the declared service-capacity segments or use a documented conservative envelope. Include scheduled downtime once, at its defined place in the timeline. For independent transient errors, `1 / (1 - p)` can inform expected attempt demand, but is not a worst-case duration or a calibrated percentile. Include retry/cooldown costs and measured overhead; do not label a margin a confidence interval without evidence. Permanent outage, 100% permanent transient failure, or a profile with no supported recovery horizon has no admissible finite estimate.
+For independent transient errors, `1 / (1 - p)` can inform expected attempt demand, but is not a worst-case duration or a calibrated percentile. Include retry/cooldown costs and measured overhead; do not label a margin a confidence interval without evidence. A forced outage or 100% permanent transient failure has no admissible finite estimate.
 
 Return an explanatory estimate and a conservative admission value, bottleneck, assumptions, policy/estimator version, ceiling, and allowed/rejected decision. Specify the exact boundary: admit when the conservative value is at most 600 seconds; reject above it. Reject unsupported/unestimable public scenarios with an actionable explanation rather than treating them as zero duration.
 
-At actual start, resolve the authoritative preset/custom snapshot and effective policy and recompute the decision. Do not trust a browser-submitted estimate or stale preview. Reject before creating a run, allocating inventory, starting k6, or consuming the public visitor budget. Persist the accepted estimate and policy identity with the run for later comparison with actual timing. Preserve existing authentication, CSRF protection, hard caps, and one-run admission serialization.
+At actual start, resolve the authoritative preset/custom snapshot and effective policy and recompute the decision. That recomputation is the only authority; a preview is advisory and nothing the browser submits about it is trusted (D12). Reject before creating a run, allocating inventory, starting k6, or consuming the public visitor budget. The estimate is not persisted with the run. Preserve existing authentication, CSRF protection, hard caps, and one-run admission serialization.
 
 For the incident, `min(10, 5 / 0.25) = 10` confirmations/second and `888 / 10 = 88.8` seconds of ideal service. The corrected scenario should remain admissible under ten minutes. Rejecting it to hide the worker defect is not an acceptable resolution.
 
@@ -189,9 +188,9 @@ For the incident, `min(10, 5 / 0.25) = 10` confirmations/second and `888 / 10 = 
 - Keep the existing service topology and queue technology. No new orchestration service or multi-worker deployment is required.
 - Preserve the public 10,000-buyer burst target; do not lower traffic to make resilience checks pass.
 - Keep the experiment finite and resource-bounded at admission. Indefinite recovery support is not unlimited intake.
-- Add only the dynamic ERP profiles needed to prove degradation and recovery. A general chaos platform and public forced-outage controls are out of scope.
+- Add no dynamic ERP profile feature. Tests that need degradation and recovery change the mock's conditions through its existing chaos controls. A general chaos platform and public forced-outage controls are out of scope.
 - Do not turn this into real payments, customer messaging, stock-release business logic, or a production-readiness claim.
-- Preserve legitimate permanent failures and operator intervention. Do not make every error retry forever.
+- Preserve legitimate terminal failures. Only the transient classes of D03 are retried; do not make every error retry forever, and do not park orders for an operator.
 - Do not change or delete the incident's historical records as part of implementing the fix.
 
 ## Part II — Locked design decisions
@@ -202,44 +201,44 @@ The choices below resolve the questions Part I left open. They are binding for P
 
 #### D01 — Keep the existing lifecycles; add an operational dimension
 
-**Decision.** Orders keep `queued | processing | confirmed | failed`; runs keep `starting | active | draining | completed | failed`. No lifecycle status is added for waiting, uncertainty, or intervention.
+**Decision.** Orders keep `queued | processing | confirmed | failed`; runs keep `starting | active | draining | completed | failed`. No lifecycle status is added for waiting or uncertainty.
 
-- Every order under downstream processing has exactly one durable control record (D04). It carries the operational situation: waiting reason (`local_admission`, `erp_capacity`, `erp_unavailable`, `uncertain_result`, `intervention_required`, or none), next eligible time, the identity of a dispatched call whose outcome is unknown, and the intervention reason when one applies.
-- Run-level views derive from those records: counts of orders waiting by reason, uncertain calls, interventions, oldest outstanding age, plus the elapsed-time indications of D13. The run status itself does not encode them.
-- A terminal order failure keeps status `failed` with a closed failure-code vocabulary grouped into two categories: `business_rejection` (a permanent ERP rejection recognized under D03) and `administrative` (D02). Technical problems never terminalize an order; they are intervention situations on a nonterminal order.
-- Normal run completion requires: no order in `queued` or `processing`, no unresolved uncertain call, no open intervention, and one notification record per confirmed order. An intervention never counts as "finished enough".
-- Reports show confirmed, business-rejected, and administratively disposed orders as separate totals. "Processing finished" does not mean "all orders confirmed".
+- Every order under downstream processing has exactly one durable control record (D04). It carries the operational situation: waiting reason (`local_admission`, `erp_capacity`, `erp_unavailable`, `uncertain_result`, or none), next eligible time, and the identity of a dispatched call whose outcome is unknown.
+- Run-level views derive from those records: outstanding orders, oldest outstanding age, and one downstream status (D13). The run status itself does not encode them.
+- A terminal order failure keeps status `failed` with a closed failure-code vocabulary grouped into two categories: `business_rejection` (a permanent ERP rejection recognized under D03) and `technical` (a non-transient error under D03). Transient conditions never terminalize an order. A reset does not terminalize orders either; it deletes them (D02).
+- Normal run completion requires: no order in `queued` or `processing`, no unresolved uncertain call, and one notification record per confirmed order. A failed order, whatever its category, never blocks completion.
+- Reports show confirmed, business-rejected, and technically failed orders as separate totals. "Processing finished" does not mean "all orders confirmed". A reset run keeps status `failed` with reason `admin_reset` or `auto_reset`; "cancelled" is a presentation label, not a lifecycle status.
 
-#### D02 — Reset stops the experiment; it does not undo external effects
+#### D02 — Reset is destructive and fast
 
-**Decision.** Option B. Reset closes buying and traffic, forbids new ERP dispatch, disposes orders that provably have no ERP effect, keeps acquired confirmations and notifications, and reconciles already-dispatched calls before releasing the run.
+**Decision.** Reset stops everything and returns the demo to a ready state as fast as possible. It does not reconcile, preserve, or settle the interrupted run's work. It deletes the run's internal data and keeps one basic history line.
 
-- Contract statement: *Reset stops the experiment. It does not retroactively cancel its external effects and it does not release reserved stock.*
-- Sequence: (1) persist an administrative-stop marker on the nonterminal run and move it to `draining` with traffic status `failed` when traffic had to be aborted; (2) close sale eligibility, abort traffic, and fence dashboard ingestion as today; (3) terminalize every order without a dispatched ERP call and without a recorded ERP outcome as `failed` with an administrative failure code; (4) let the worker's normal recovery path resolve dispatched-but-uncertain calls through D05 without any new business dispatch, and let confirmed outcomes still produce their notification record; (5) once no uncertain call remains, finalization writes `failed` / `admin_reset` with the settled counts.
-- The run is not terminal before step 5. The terminal publication fence therefore still admits late notifications of reconciled successes. The one-nonterminal-run rule keeps a successor blocked until step 5.
-- The reset HTTP request stays bounded as today. When step 5 is not reached within the request, the response says the reset is in progress and reports disposed, confirmed, and still-uncertain counts; calling reset again resumes the workflow through the existing incomplete-reset pattern.
-- The set of calls to reconcile is exactly the set recorded as dispatched without terminal outcome (D04). Reset never guesses.
-- Accepted limit: when the ERP cannot answer lookups, reset stays incomplete and visibly so. That is preferred to a reset that looks clean but is not. Option C (moving uncertain obligations into a separate post-closure case file) is rejected for scope.
+- Contract statement: *Reset discards the experiment. Whatever the run had in flight is lost on purpose.* This is a demonstration against a mock ERP; no external effect deserves protection from a reset, and a reset never waits on the ERP.
+- Sequence: (1) claim the nonterminal run as terminal `failed` with reason `admin_reset` (or `auto_reset` when triggered by D10) and traffic status `failed`; the existing terminal-run exclusions then fence worker dispatch, recovery, and publication; (2) close sale eligibility, abort traffic, and fence dashboard ingestion as today; (3) clean the run's queue jobs within the existing bounded wait; (4) write the run's history summary from a plain count of the durable rows as they stand; (5) delete the run's internal data: orders, reservations, pending persistence, order events, control records, dispatched-call intents, ERP attempts, mock ERP ledger rows, notifications, sold-out counts, finalization evidence, run-scoped resilience state, and the run's Redis state; (6) clear shared dashboard and ERP resilience state as today.
+- What remains is the run row, its summary row, and its closed generated sale offer, which stays as one inert row so existing references remain valid. History lists the run with its id, preset, dates, and the counts captured at step 4, labelled as cancelled by admin reset or by automatic reset. Its detail view states that the run's data was discarded.
+- The terminal claim is the stop. There is no separate stop marker, no in-progress reset state, no disposition counts, and no administrative terminalization of individual orders.
+- Outstanding work never blocks a reset: queued or processing orders, unresolved dispatched calls, and missing notifications are deleted with everything else. The guard that protects outstanding work applies to retention and exact teardown only (section 6.4), never to reset.
+- A worker call still in flight when the rows disappear fails cleanly: it recreates no row and records no notification. The terminal fence stays intact.
+- The reset HTTP request stays bounded as today and is idempotent. A reset interrupted by an infrastructure failure is finished by calling reset again through the existing incomplete-reset pattern. A successor run can start as soon as reset returns.
 
-#### D03 — Explicit resume after intervention; automatic recovery for transient conditions
+#### D03 — Automatic recovery for transient conditions; any other error fails the order
 
-**Decision.** Option B.
+**Decision.** Transient conditions recover without human action. Any other error terminally fails the affected order at once, as a real integration would, and the run carries on. No order is parked for an operator; there is no intervention state and no resume control.
 
-- Automatic recovery classes, no human action: capacity (`429` / `erp_capacity_exceeded`), recognized unavailability (`503` with a recognized code such as `erp_forced_outage` or `erp_injected_error`, connection errors), and request timeouts.
-- Intervention classes: authentication or authorization responses (`401`, `403`), malformed protocol (a response body that fails the contract), identity contradiction (`409 erp_idempotency_conflict` from the ERP, or a local `ErpAttemptContradictionError`), and any response code outside the recognized vocabulary. An unknown `4xx` is not a business rejection. An opaque `5xx` after dispatch is not proof of absence of effect.
-- Blocking scope: identity contradiction and malformed protocol block only the affected order. Authentication or authorization failure blocks the affected downstream scope (one run, or the catalog). Nothing blocks the whole worker.
+- Automatic recovery classes, no human action: capacity (`429` / `erp_capacity_exceeded`), recognized unavailability (`503` with a recognized code such as `erp_forced_outage` or `erp_injected_error`, connection errors), request timeouts, and an opaque `5xx` after dispatch, which is an uncertain result (D05) rather than proof of absence of effect.
+- Technical failure classes: authentication or authorization responses (`401`, `403`), malformed protocol (a response body that fails the contract), identity contradiction (`409 erp_idempotency_conflict` from the ERP, or a local `ErpAttemptContradictionError`), a missing accepted run snapshot, and any `4xx` outside the recognized vocabulary. The order becomes `failed` with category `technical` and a code naming the cause. An unknown `4xx` is not a business rejection.
+- Scope: a technical failure affects only the order that met it. Nothing blocks a scope, a run, or the worker, and these failures feed neither pacing nor the availability circuit.
 - Only a permanent business rejection listed in the shared ERP error vocabulary can terminalize an order as `business_rejection`. The current mock emits none; adding one requires the contract entry first.
 - Before any terminal conclusion, the worker resolves an earlier uncertain call for the same order (D05).
-- Resume is an authenticated admin control on one order or one scope. It clears the intervention marker and reschedules the existing control record. It never rewrites order identity or the accepted snapshot.
 
 #### D04 — One durable owner per order from the first ERP call
 
 **Decision.** Option B.
 
 - Before its first ERP call, the worker creates or claims the order's single control record, an extension of the existing recovery row with one row per order, in the same transaction as the `queued -> processing` transition. There is no ownerless initial path.
-- Control record fields: processing generation, lease expiry, next eligible time, waiting reason, publication ownership, intervention reason, and the identity of the dispatched call, written before the HTTP request is sent.
+- Control record fields: processing generation, lease expiry, next eligible time, waiting reason, publication ownership, and the identity of the dispatched call, written before the HTTP request is sent.
 - BullMQ deliveries (initial, delayed, recovery) are wake-ups only. A delivery whose generation does not match the control record is acknowledged without work. BullMQ `attempts` is 1 for order-process jobs; delivery retries are no longer an error budget.
-- The claim is atomic (`SELECT ... FOR UPDATE SKIP LOCKED` or one conditional update). Eligibility (next eligible time reached, lease free or expired, no open intervention) is checked in the selection query and again at execution time before dispatch.
+- The claim is atomic (`SELECT ... FOR UPDATE SKIP LOCKED` or one conditional update). Eligibility (next eligible time reached, lease free or expired) is checked in the selection query and again at execution time before dispatch.
 - Selection orders eligible work by next eligible time, then by order creation time, and applies the batch limit after eligibility filtering. New buys get no priority over retries. This replaces the current selection, which ignores `nextAttemptAt` for `pending` rows.
 - An expired lease permits a new claim; it does not mean the earlier call had no effect. The new owner first resolves any recorded dispatched call (D05).
 
@@ -265,15 +264,15 @@ The choices below resolve the questions Part I left open. They are binding for P
 - `Retry-After` on `429` and `503`: both delay-seconds and HTTP-date forms are parsed. An invalid value falls back to local backoff. A value above the policy maximum sets a capped cooldown and is logged. The mock sends `Retry-After` in delay-seconds form.
 - Capacity responses feed pacing only. Recognized unavailability, connection errors, and timeouts feed the availability circuit only. Circuit probes are the only traffic during an outage; probe cadence is a policy constant.
 - A locally reused success (local record or D05 lookup) is not evidence of ERP health: it neither closes the circuit nor raises the rate. Feedback from a call dispatched before the latest reduction cannot undo that reduction.
-- The controller never reads the run's declared capacity or the profile's future segments. It observes responses only.
+- The controller never reads the run's declared capacity. It observes responses only.
 
 #### D07 — Restore safety state after restart; relearn throughput
 
 **Decision.** Option B.
 
-- Persisted: dispatched-call intents (D04), cooldown and circuit-open expiries per scope, next eligible times, intervention markers. Not persisted: learned rate, observation windows, latency samples.
+- Persisted: dispatched-call intents (D04), cooldown and circuit-open expiries per scope, next eligible times. Not persisted: learned rate, observation windows, latency samples.
 - Startup order: reconcile dispatched calls first (D05), then resume from the initial conservative rate. A still-running persisted cooldown or circuit-open expiry is honored; otherwise the circuit starts closed at the initial rate.
-- A missing accepted run snapshot for a run-scoped job is an intervention on that job, never a silent fallback to the catalog scope.
+- A missing accepted run snapshot for a run-scoped job is a technical failure of that order (D03), never a silent fallback to the catalog scope.
 - One authority per real quota: `run:<id>` and `catalog`. A worker-wide in-flight cap applies on top.
 
 #### D08 — Bounded adaptive deadline from an observed latency window
@@ -293,43 +292,43 @@ The choices below resolve the questions Part I left open. They are binding for P
 - Per-order counters by category (capacity, unavailable, timeout, permanent) update idempotently per attempt identity, so a redelivery never counts twice.
 - Final deletion stays with the existing generated-run cleanup. There is no time-based purge of unresolved work.
 
-#### D10 — Predefined versioned profiles anchored at planned traffic start
+#### D10 — Automatic reset 900 seconds after acceptance
 
-**Decision.** Anchor = run acceptance time + configured start delay, both taken from the durable accepted snapshot. Profiles are predefined admin presets, versioned in contracts. No free segment editor.
+**Decision.** A run that is still nonterminal 900 seconds after its durable acceptance time is reset automatically, so no run can monopolize the shared demo. Admission still uses the 600-second estimate (D11); the 300 seconds between the two are a grace period.
 
-- A profile is: identity, version, base `erpConfig`, an ordered finite list of segments (offset from anchor, duration, latency / capacity / outage override), and a recovery tail equal to the base.
-- The accepted snapshot stores the profile identity (none means constant conditions). The worker transports profile identity, base config, and anchor with each confirmation. The mock resolves the effective conditions when it admits the request, and those conditions stick to that request. The mock persists nothing for profiles; a restart cannot restart the timeline because the anchor is durable in the run snapshot.
-- Initial profiles: capacity drop then recovery; finite outage; latency increase then recovery. Admin visibility only; the same profiles serve the acceptance tests. Public presets keep constant conditions and no outage.
-- Tests that inject errors use the mock's injectable random source with a fixed seed.
-- The worker's controller never receives the segment list.
+- The automatic reset runs the same destructive workflow as the admin reset (D02), with reason `auto_reset`. It needs no admin session and applies to public and admin runs alike.
+- The deadline derives from the durable acceptance timestamp, so it survives an API restart. A run already past its deadline at startup is reset then. The check is a small periodic API application service wired in the composition root; it holds no timer per run.
+- The 900-second limit is one exported constant next to the occupancy ceiling. It is not editable from the dashboard and is not a worker concern.
+- From 600 seconds after acceptance, and only then, the dashboard tells the viewer that the run is in its grace period and will be reset at the deadline to free the demo, with the remaining time. Nothing about the deadline is shown before that.
+- The deadline acts on the whole run. It never fails individual orders and adds no retry limit.
 
 #### D11 — Conservative admission envelope
 
 **Decision.** Option B for the first version.
 
 - Conservative value = start delay + traffic budget + ERP processing envelope + notification cost + calibrated margins. Traffic budget is `durationSeconds` for constant arrival and `maxDurationSeconds` for buyer spike. ERP envelope = N / r with N = unique acceptable orders (stock, quantity, unique buyers, not duplicated HTTP attempts) and r = min(declared capacity, C / L), L including the overhead floor.
-- Profiles: integrate N against the capacity segments from the anchor; downtime is counted once at its place in the timeline.
 - Error rate p: expected demand factor 1 / (1 − p) with a policy margin. A p above the policy maximum is unestimable and rejected.
 - Sanity check with seeded presets before margins: incident fixture `60 + 888 / 10 = 148.8 s`; `surge-10k` `120 + 1000 / 250 = 124 s`. Both stay admissible with margins.
 - The explanatory estimate may show the overlapped ideal; the admission decision uses the conservative value only.
 
-#### D12 — Preview fingerprint with explicit re-confirmation
+#### D12 — The start-time recomputation is the only authority
 
-**Decision.** Option B.
+**Decision.** The API recomputes the estimate at start and that result alone decides. A preview is advisory.
 
-- The preview response carries a fingerprint: a hash of the resolved snapshot, policy version, estimator version, and effective ceiling. The dashboard sends back the fingerprint it displayed.
-- At start, after admission serialization, the API recomputes. A fingerprint mismatch returns a structured `estimate_stale` rejection carrying the fresh preview, before any side effect. A start request without a fingerprint (tooling, tests) gets no stale check; the recomputation alone decides.
-- Web: only a preview matching the current inputs is rendered; the start button is disabled while a preview is pending. The preview endpoint uses the existing bounded public/admin access model, is rate limited like other reads, and creates no state, run slot, or budget consumption.
+- The preview endpoint resolves the same scenario and policy as start, uses the existing bounded public/admin access model, is rate limited like other reads, and creates no state, run slot, or budget consumption.
+- At start, after admission serialization, the API resolves the authoritative snapshot and effective policy and recomputes. Above the ceiling or unestimable, it rejects before any side effect with the structured reason. There is no preview fingerprint, no stale-preview rejection, and no re-confirmation step; nothing the browser submits about an estimate is read.
+- Web: only a preview matching the current inputs is rendered, and the start button is disabled while a preview is pending or rejected. The dashboard shows whether the configuration is allowed and, when it is not, the estimated duration, the bottleneck, the limit, and what to adjust.
+- The estimate is not persisted with the run and is not shown during the run or in history.
 
 #### D13 — Versioned engine policy; presets keep scenario parameters only
 
 **Decision.** Option B.
 
 - Removed from presets, accepted snapshots, forms, readers, and the load-orchestrator journal: `retryPolicy` (`maxAttempts`, `initialBackoffMs`), `drainTimeoutSeconds`, `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and `erpConfig.requestTimeoutMs`.
-- Kept: traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency, capacity, error rate, forced outage (admin), profile identity, `orderProcessConcurrency`, and `pendingPersistenceRetryAfterSeconds`, which belongs to reservation persistence and is unrelated to this work.
+- Kept: traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency, capacity, error rate, forced outage (admin), `orderProcessConcurrency`, and `pendingPersistenceRetryAfterSeconds`, which belongs to reservation persistence and is unrelated to this work.
 - Engine constants live in a versioned worker policy; its version is persisted with each run. None of them is editable from the dashboard.
 - Persisted snapshots of earlier runs may still contain retired fields. History readers accept and ignore them; the incident's records are neither migrated nor rewritten.
-- Run timing indications: *over accepted estimate* and *over occupancy ceiling*. Neither terminalizes the run. The 300-second drain timeout and `business_drain_timeout` disappear entirely.
+- Runtime view: outstanding orders, oldest outstanding age, observed confirmation rate, and one downstream status (`nominal`, `erp_limiting`, or `erp_unavailable`). Controller internals (target rate, in-flight ceiling, cooldown, probes) and per-reason waiting counts are not projected. The only run timing indication is the grace-period notice of D10. The 300-second drain timeout and `business_drain_timeout` disappear entirely.
 
 #### D14 — Bounded calibration against pre-approved criteria
 
@@ -345,7 +344,7 @@ The choices below resolve the questions Part I left open. They are binding for P
 | Estimator | Public presets and incident admissible; estimate error measured on fixtures and reported without a confidence-interval claim |
 
 - Calibration may adjust policy constants only. It may not change the algorithm, weaken a target, or suppress errors to pass.
-- Deliverable: a calibration report with environment, fixture, measured value per target, chosen constants, and policy/estimator versions. The user approves the frozen constants before Phase 8 closes and before documentation advertises the guarantee.
+- Deliverable: a calibration report with environment, fixture, measured value per target, chosen constants, and policy/estimator versions. The user approves the frozen constants before Phase 7 closes and before documentation advertises the guarantee.
 - The throughput and pressure targets pull in opposite directions by design; the report explains the chosen trade-off rather than silently favoring one.
 
 ## Part III — Implementation plan
@@ -362,12 +361,12 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 
 **Ownership:** shared contracts and the application-service boundaries that consume them.
 
-- [ ] Record the target outcome classification, durable scheduling ownership, and traffic/business/administrative completion semantics.
-- [ ] Specify waiting/intervention reasons and distinguish observed ERP failures from terminal order outcomes. Prefer existing lifecycle states plus explicit operational reasons where sufficient.
+- [ ] Record the target outcome classification, durable scheduling ownership, and traffic and business completion semantics, plus the destructive reset contract.
+- [ ] Specify waiting reasons and the two terminal failure categories, and distinguish observed transient ERP failures from terminal order outcomes. Prefer existing lifecycle states plus explicit operational reasons where sufficient.
 - [ ] Define the ERP-call identity and uncertain-result lifecycle separately from BullMQ delivery counters.
-- [ ] Define the estimator response, admission rejection, effective 600-second policy, accepted estimate snapshot, and over-budget observation.
+- [ ] Define the estimator response, admission rejection, effective 600-second policy, and the 900-second automatic reset deadline.
 - [ ] Inventory uses of `maxAttempts`, `drainTimeoutSeconds`, `requestTimeoutMs`, recovery attempt limits, run status, and terminal publication guards; identify every consumer requiring coordinated changes.
-- [ ] Add a named fixture reproducing the incident configuration and small deterministic fixtures for low capacity, latency change, and finite outage.
+- [ ] Add a named fixture reproducing the incident configuration and small deterministic fixtures for low capacity, latency change, and finite outage driven through the mock's existing chaos controls.
 - [ ] Document the policy defaults to calibrate and their measurable acceptance criteria before selecting constants.
 
 **Validation / exit:** contract tests cover valid public/API-reachable states and the new distinctions; existing seeded scenario contracts still parse. An implementation checklist maps every changed behavior to an owning service and test. No public capability expansion is accidentally introduced.
@@ -377,12 +376,12 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 **Depends on:** Phase 1. **Ownership:** worker application services/persistence, mock ERP application/persistence, DB schema.
 
 - [ ] Introduce durable per-call identities and dispatch intent; update ERP attempt persistence and diagnostics so multiple calls cannot collide after a non-budget-consuming deferral.
-- [ ] Implement explicit capacity, availability, uncertain, permanent-rejection, and intervention dispositions in the client/handler boundary.
+- [ ] Implement explicit capacity, availability, uncertain, permanent-rejection, and technical-failure dispositions in the client/handler boundary.
 - [ ] Extend the existing recovery workflow to retain deferred ERP work, due time, and reason. Eliminate exhaustion-to-business-failure for the specified transient classes.
 - [ ] Specify and implement atomic ownership transfer between an ordinary delivery and recovery; reconcile crashes before/after durable scheduling and before/after queue publication.
 - [ ] Preserve accepted ERP results across local persistence failure. Reconcile uncertainty before concluding failure or issuing unsafe duplicate work.
 - [ ] Persist the mock ERP's canonical confirmation ledger and request identity. Ensure concurrent duplicate requests and process restarts return the same confirmation.
-- [ ] Ensure recovery publication limits cannot silently become a second ERP failure budget. Retain operational escalation for actual persistence/identity defects.
+- [ ] Ensure recovery publication limits cannot silently become a second ERP failure budget. Identity defects fail the order as a technical failure (D03).
 - [ ] Preserve correlation lineage and keep canonical success/idempotency evidence for as long as unresolved work can reference it.
 
 **Validation / exit:** more transient failures than the former four-attempt limit still converge after recovery; permanent rejection remains terminal; delayed replay does not produce an attempt-identity contradiction. Integration tests cover queue redelivery, crash windows, ERP success followed by lost response, worker restart, and mock ERP restart without duplicate effects.
@@ -406,61 +405,50 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 **Depends on:** Phases 1–3. **Ownership:** API finalization/maintenance services, worker recovery adapters, DB/Redis lifecycle helpers.
 
 - [ ] Replace automatic business-drain failure with an elapsed-target warning while work remains recoverable.
-- [ ] Keep traffic outcome evidence distinct from business settlement; retain final reports only at genuine settlement or explicit administrative disposition.
+- [ ] Keep traffic outcome evidence distinct from business settlement; retain final reports only at genuine settlement. An admin reset writes only its basic history line (D02).
 - [ ] Keep order, accepted-result, and notification recovery enabled throughout draining. Require one notification record per confirmed order before normal completion.
 - [ ] Preserve terminal publication locks and exact cleanup fencing. Ensure normal finalization cannot race a still-required publication.
-- [ ] Update admin reset/cancellation to describe partial external effects truthfully and settle or explicitly retain uncertain active calls. Never reopen buying or report undone ERP success without a compensation mechanism.
-- [ ] Exclude permanently ineligible terminal work from repeated recovery selection without hiding unresolved active/intervention work.
+- [ ] Make reset destructive and fast (D02): stop the run, keep one basic history line, delete the run's internal data regardless of outstanding work, and never wait on the ERP. Never reopen buying.
+- [ ] Reset automatically any run still nonterminal 900 seconds after acceptance, through the same workflow (D10).
+- [ ] Exclude permanently ineligible terminal work from repeated recovery selection without hiding unresolved active work.
 - [ ] Remove lifecycle dependence on the fixed drain timeout and audit eligibility TTL, inventory/idempotency retention, recovery leases, and cleanup selection. Keep expired admission state fail-closed.
-- [ ] Retain one-nonterminal-run admission, expose prolonged/intervention state, and prevent retention cleanup from deleting unfinished obligations.
+- [ ] Retain one-nonterminal-run admission and prevent retention cleanup and exact teardown from deleting unfinished obligations. Only a reset discards them.
 
-**Validation / exit:** advancing beyond the former 300-second deadline leaves an unfinished run recoverable; completing late orders records all notifications before finalization. Tests cover finalization/publication races, reset with in-flight work, retention exclusion, and long-lived state/expiry boundaries. The immutable final report matches settled durable records.
+**Validation / exit:** advancing beyond the former 300-second deadline leaves an unfinished run recoverable; completing late orders records all notifications before finalization. Tests cover finalization/publication races, destructive reset with in-flight work, the automatic reset deadline under an injected clock, retention exclusion, and long-lived state/expiry boundaries. The immutable final report matches settled durable records.
 
-### Phase 5 — Add reproducible changing ERP conditions
+### Phase 5 — Enforce estimated-duration admission
 
-**Depends on:** Phases 2–4. **Ownership:** mock ERP application services, scenario contracts and runtime test setup.
-
-- [ ] Add a minimal finite profile of timed latency/capacity/outage segments, with a defined initial state and recovery tail.
-- [ ] Persist the scenario identity and time anchor so a service restart does not restart the experiment's timeline accidentally.
-- [ ] Have the mock resolve effective conditions from that profile. Workers may transport scenario identity/setup data but must not read the future profile to choose live admission rates.
-- [ ] Preserve constant-scenario behavior and existing public control restrictions. Keep outage profiles in protected verification/admin scope as appropriate.
-- [ ] Expose enough scenario evidence to correlate observed adaptation with the injected change without exposing hidden future conditions to the controller.
-
-**Validation / exit:** a declared capacity decrease and recovery change the mock during the same run; adaptation works without a worker configuration change. Profile boundaries and restart behavior are deterministic under test. Baseline preset behavior remains unchanged.
-
-### Phase 6 — Enforce estimated-duration admission
-
-**Depends on:** Phases 3–5 and their initial measurements. **Ownership:** API estimation/run-start/policy services and shared contracts.
+**Depends on:** Phases 3–4 and their initial measurements. **Ownership:** API estimation/run-start/policy services and shared contracts.
 
 - [ ] Implement the small pure estimation model described in Section 7, behind the API-owned estimator service.
-- [ ] Handle both current traffic modes, duplicates, stock/quantity, latency floor, effective concurrency, finite profiles, transient-error assumptions, and notification/adaptation overhead.
+- [ ] Handle both current traffic modes, duplicates, stock/quantity, latency floor, effective concurrency, transient-error assumptions, and notification/adaptation overhead.
 - [ ] Calibrate a conservative admission margin against observed corrected-runtime scenarios. Record assumptions and limitations; do not claim unsupported probabilistic guarantees.
-- [ ] Add the 600-second initial policy and its deployment ceiling through the existing effective-policy boundary; keep unrelated run-start and parameter budgets intact.
+- [ ] Add the 600-second initial policy and its deployment ceiling through the existing effective-policy boundary, for public and admin modes alike; keep unrelated run-start and parameter budgets intact.
 - [ ] Expose an authenticated/bounded estimate preview using the existing public/admin access model. Prevent previews from reserving visitor starts or creating runtime state.
-- [ ] Recompute against authoritative configuration at start, reject before side effects, and persist the accepted estimate/version with successful starts.
-- [ ] Add structured rejections with estimated duration, ceiling, bottleneck, and useful adjustment guidance. Define stale-preview behavior explicitly.
+- [ ] Recompute against authoritative configuration at start and reject before side effects (D12). Do not persist the estimate.
+- [ ] Add structured rejections with estimated duration, ceiling, bottleneck, and useful adjustment guidance.
 
-**Validation / exit:** test just-below/equal/just-above policy boundaries, unestimable profiles, duplicate attempts, zero accepted stock, and changed policy/preset between preview and start. Rejected starts create no run/inventory/k6 work and consume no public start budget. The incident fixture remains admissible. Existing public surge presets remain available with supported calibrated estimates.
+**Validation / exit:** test just-below/equal/just-above policy boundaries, unestimable scenarios, duplicate attempts, zero accepted stock, and a preset changed between preview and start. Rejected starts create no run/inventory/k6 work and consume no public start budget. The incident fixture remains admissible. Existing public surge presets remain available with supported calibrated estimates.
 
-### Phase 7 — Explain admission and runtime progression in the dashboard
+### Phase 6 — Explain admission and runtime progression in the dashboard
 
-**Depends on:** Phases 4 and 6. **Ownership:** web presentation/components, API projection services and contracts.
+**Depends on:** Phases 4 and 5. **Ownership:** web presentation/components, API projection services and contracts.
 
-- [ ] Show estimated duration, identified bottleneck, and the demo limit before launch; make rejected configurations actionable.
-- [ ] Handle asynchronous preview results without allowing stale responses to overwrite newer inputs. Retain authoritative API rejection handling even when the button was enabled.
-- [ ] Show observed confirmation rate, controller pacing, bounded in-flight work, outstanding work, oldest outstanding age, waiting reason, and cooldown/probe state.
-- [ ] Present over-budget draining as continued processing, with last progress and administrative recovery access where authorized.
-- [ ] Distinguish traffic finished, business processing ongoing, intervention required, administrative cancellation, and actual settled result.
-- [ ] Store/display estimated versus actual completion timing in history. Keep final notification/order counts coherent and preserve existing bounded public reads and SSE recovery.
+- [ ] Before launch, show whether the configuration is allowed; when it is rejected, show the estimated duration, bottleneck, limit, and what to adjust.
+- [ ] Handle asynchronous preview results without allowing a late response for older inputs to overwrite newer ones. Retain authoritative API rejection handling even when the button was enabled.
+- [ ] Show outstanding work, oldest outstanding age, observed confirmation rate, and one downstream status (D13). Do not project controller internals or per-reason counts.
+- [ ] From 600 seconds after acceptance only, show the grace-period notice with the time left before the automatic reset (D10).
+- [ ] Distinguish traffic finished, business processing ongoing, a run cancelled by admin or automatic reset, and actual settled result. Show confirmed, business-rejected, and technically failed totals separately.
+- [ ] Keep final notification/order counts coherent and preserve existing bounded public reads and SSE recovery.
 
-**Validation / exit:** component/API tests cover allowed/rejected/stale preview, slow progress, finite outage, intervention, and late completion. Browser verification demonstrates one accepted low-capacity run and one budget rejection. No customer storefront or per-order public feed is added.
+**Validation / exit:** component/API tests cover allowed/rejected preview, out-of-order preview responses, slow progress, finite outage, the grace notice appearing only after 600 seconds, and late completion. Browser verification demonstrates one accepted low-capacity run and one budget rejection. No customer storefront or per-order public feed is added.
 
-### Phase 8 — Prove the narrative and update authoritative documentation
+### Phase 7 — Prove the narrative and update authoritative documentation
 
-**Depends on:** Phases 1–7. **Ownership:** boundary tests, runtime verification tooling, documentation.
+**Depends on:** Phases 1–6. **Ownership:** boundary tests, runtime verification tooling, documentation.
 
 - [ ] Implement the acceptance matrix below with deterministic tests for policy/timing and isolated infrastructure tests for durable boundaries.
-- [ ] Add focused runtime verification for the original incident and changing conditions; retain exact generated-run cleanup and attributable failures.
+- [ ] Add focused runtime verification for the original incident and for conditions changed during a run through the mock's existing chaos controls; retain exact generated-run cleanup and attributable failures.
 - [ ] Keep routine verification short. Separate explicitly invoked long-running resilience experiments from the ordinary smoke path; do not silently enlarge composition/characterization suites.
 - [ ] Measure completion, progress, pacing, 429 pressure, restart behavior, and estimate error. A run that eventually finishes by hammering the ERP does not pass.
 - [ ] Update README, architecture, lifecycle/entity documentation, scope/caveats, local configuration reference, project description, and delivery constraints to describe the implemented guarantee and its limits.
@@ -480,11 +468,12 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 | Finite ERP outage | Sparse probes/backoff during outage, automatic resumed processing, no invented permanent rejection |
 | ERP accepts but response is lost; ERP and worker restart | One canonical confirmation, one confirmed order, one notification |
 | Persistence or queue publication fails around retry handoff | Durable recovery intent survives; no lost obligation or competing schedule owners |
-| Work exceeds the old drain deadline or accepted estimate | Visible nonterminal processing/over-budget status; late notifications remain possible; final report produced at settlement |
-| Actual permanent rejection or invalid identity | Explicit terminal rejection or retained intervention as classified; no blind endless retry |
+| Work exceeds the old drain deadline | Visible nonterminal processing; late notifications remain possible; final report produced at settlement |
+| Run still nonterminal 900 seconds after acceptance | Grace notice shown from 600 seconds only; automatic destructive reset at the deadline, including after an API restart; one basic `auto_reset` history line; a successor can start |
+| Permanent rejection, authentication failure, malformed response, or invalid identity | The order fails terminally with the right category and code; no retry; other orders and the run carry on to normal completion |
 | Estimate exceeds 600 seconds or is unsupported | Actionable start rejection, no run/stock allocation/traffic, no burned visitor budget |
 | Duplicate-attempt scenario | Estimator uses unique possible orders; downstream effects and notifications are unique |
-| Admin reset/cleanup races with a call or publication | Truthful disposition; terminal fence preserved; no deleted active obligation or false rollback of ERP success |
+| Admin reset or cleanup races with a call or publication | Reset completes without waiting on the ERP, purges the run's data, keeps one basic `admin_reset` history line, and a late worker write recreates nothing; retention and exact teardown never delete unfinished obligations; terminal fence preserved |
 | Long-lived run crosses cached eligibility/hold timing | No accidental reopening or stock release; accepted work remains attributable and recoverable |
 | Standard presets and zero-chaos smoke | Existing accounting, API responsiveness, stock invariants, history, notification, and SSE behavior preserved |
 
@@ -506,9 +495,9 @@ Schema work must follow the repository's pre-release baseline policy in [local d
 - [ ] Temporary ERP constraints extend waiting rather than deterministically abandon valid accepted orders.
 - [ ] More supported worker concurrency preserves business correctness and downstream protection.
 - [ ] External success, uncertainty, scheduling, and restart behavior have durable, tested ownership.
-- [ ] Ten-minute admission is enforced by the API; a runtime overrun is not a business failure.
+- [ ] Ten-minute admission is enforced by the API; a runtime overrun fails no order, and the automatic reset frees the demo at 900 seconds.
 - [ ] Run settlement, history, publication fencing, and cleanup agree about outstanding work.
 - [ ] The estimator is calibrated, explainable, versioned, and separate from live worker adaptation.
-- [ ] Dynamic conditions and restart scenarios demonstrate the claim beyond favorable presets.
+- [ ] Conditions changed during a run and restart scenarios demonstrate the claim beyond favorable presets.
 - [ ] Resource/retention bounds preserve unresolved obligations and required idempotency evidence.
 - [ ] All project artifacts are in English, relevant checks are reported, and the final quality checklist is satisfied.

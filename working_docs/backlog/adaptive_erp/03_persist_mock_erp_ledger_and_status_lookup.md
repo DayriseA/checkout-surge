@@ -31,7 +31,7 @@ Persist terminal outcomes only: canonical success or an explicitly recognized pe
 
 ## Non-goals
 
-No distributed worker/ERP transaction, separate orchestration service, durable profile timeline, public lookup feed, payment compensation, or persisted running-promise state. Profiles are task 13. The ledger supplies evidence; worker scheduling and reconciliation remain tasks 04–05.
+No distributed worker/ERP transaction, separate orchestration service, durable profile timeline, public lookup feed, payment compensation, or persisted running-promise state. The ledger supplies evidence; worker scheduling and reconciliation remain tasks 04–05.
 
 ## Acceptance and validation
 

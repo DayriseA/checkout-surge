@@ -1,10 +1,10 @@
-# 12 — Retire scenario-level engine controls coherently
+# 14 — Retire scenario-level engine controls coherently
 
 ## Handoff
 
 - Status: Pending.
 - Branch: `feat/adaptive-erp-and-admission`.
-- Sequence: 12 of 21. Execute after [11](11_implement_truthful_reset_and_intervention_resume.md); the worker and lifecycle no longer depend on the legacy retry/drain policy.
+- Sequence: 14 of 21. Execute after [13](13_add_automatic_run_reset.md); the worker and lifecycle no longer depend on the legacy retry/drain policy.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), Phases 1 and 4, D07, D08 and D13. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.
 - Ownership: shared configuration contracts and coordinated API, worker, load-orchestrator, seed and web consumers.
 
@@ -14,7 +14,7 @@ Presets describe the experiment; a versioned internal worker policy describes pr
 
 Remove `retryPolicy` (`maxAttempts`, `initialBackoffMs`), `drainTimeoutSeconds`, `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and `erpConfig.requestTimeoutMs` from new presets, accepted scenario snapshots, forms, active readers and the load-orchestrator journal. No new run uses the old 300-second drain failure or emits `business_drain_timeout`.
 
-Keep traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency/capacity/error rate, admin-only forced outage/profile identity, and `orderProcessConcurrency`. Keep `pendingPersistenceRetryAfterSeconds`: it controls reservation persistence, not ERP abandonment.
+Keep traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency/capacity/error rate, admin-only forced outage, and `orderProcessConcurrency`. Keep `pendingPersistenceRetryAfterSeconds`: it controls reservation persistence, not ERP abandonment.
 
 ## Repository entry points
 
@@ -25,11 +25,13 @@ Use task 01's consumer inventory. Start with `packages/contracts/src/{demo,erp,q
 - [ ] Remove retired fields from current input schemas, seeded preset definitions, snapshot producers, serialization and journal writers in the same slice. Update all affected consumers/tests rather than leaving hidden default fallbacks.
 - [ ] Persist the engine-policy version with each newly accepted run. Ensure the worker's actual policy/version agrees with that evidence; no browser-supplied internal constants or scenario overrides may change pacing, retries or deadlines.
 - [ ] Keep a narrow historical read path that accepts and ignores retired fields in old snapshots. Preserve original stored content and incident history; do not use historical compatibility as permission for new input to configure retired behavior.
-- [ ] Remove obsolete form inputs, validation hints, summaries and translations/copy that imply users control retry exhaustion or drain expiry. Keep new estimate/runtime UI work for tasks 17–18; this task only removes now-invalid controls and keeps the dashboard runnable.
+- [ ] Remove obsolete form inputs, validation hints, summaries and translations/copy that imply users control retry exhaustion or drain expiry. Keep new admission/runtime UI work for tasks 17–18; this task only removes now-invalid controls and keeps the dashboard runnable.
 - [ ] Remove temporary adapters explicitly recorded by earlier tasks, unused ERP retry resolvers and dead imports caused by this work. Preserve unrelated reservation persistence and notification policies. Do not globally delete every symbol called `maxAttempts` without checking ownership.
+- [ ] Retire the recovery-attempt ceiling that task 05 stranded when it removed recovery-attempt exhaustion escalation: `ORDER_RECOVERY_MAX_ATTEMPTS` and `orderRecoveryMaxAttempts` in `apps/worker/src/runtime/config.ts`, the `maxRecoveryAttempts` dependency option in `apps/worker/src/application/order-recovery-scanner.ts`, its wiring in `apps/worker/src/index.ts`, the entries in `apps/worker/.env.example` and `docs/local_development.md`, and the unit fixture that still supplies it. The value is parsed and passed but never read. The same scanner's summary also still declares and logs `escalated` as a hardcoded `0`: either remove the field or restore a real count. It is worker-internal with no API or dashboard consumer, so neither change touches a contract.
+- [ ] Drop the queue parameters that task 05's `attempts: 1` cutover made inert: the ignored `_options` argument and its meaningless `backoff` option in `apps/api/src/queue/bullmq-order-process-job-publisher.ts`, and the unused `_token` parameter in `apps/worker/src/queue/bullmq-order-process-consumer.ts`. Confirm no remaining caller depends on their shape before changing the signatures.
 - [ ] Separate network deadline bounds, recovery/publication leases and operational warnings. No removed knob may return as an order-failure default, environment-only deadline or maintenance cancellation.
 - [ ] Update load-orchestrator accepted configuration/journal parsing and restart tests so a journal does not resurrect retired settings. Current writers use the new format; prior persisted evidence remains readable where the repository supports it.
-- [ ] Record over-accepted-estimate and over-occupancy-ceiling as observations only. Absent legacy estimate/version metadata stays explicitly unavailable rather than synthesized as a promise.
+- [ ] Remove the contract scaffolding prepared for features the plan does not contain, with its tests and re-exports: the ERP condition profile schemas in `packages/contracts/src/erp-profile.ts` and every reference to them in `acceptance-fixtures.ts`, `estimate.ts`, `index.ts` and the contract tests. The `finite-outage`, `latency-increase` and low-capacity fixtures keep their scenario and expected counts; they describe a condition change that a test applies through the mock's existing chaos controls, not a profile. Confirm with a repository search that nothing else consumes the removed symbols.
 
 ## Acceptance and validation
 
@@ -43,4 +45,4 @@ Read [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality
 
 ## Completion handoff
 
-Deliver the coordinated retirement with a list of removed and intentionally retained references. Record engine-version persistence and historical parsing behavior. Next: [13 — changing ERP profiles](13_add_reproducible_admin_erp_profiles.md).
+Deliver the coordinated retirement with a list of removed and intentionally retained references. Record engine-version persistence and historical parsing behavior. Next: [15 — conservative duration estimator](15_implement_conservative_duration_estimator.md).

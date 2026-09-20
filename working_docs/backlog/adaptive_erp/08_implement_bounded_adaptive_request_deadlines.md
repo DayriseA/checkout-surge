@@ -31,7 +31,7 @@ A timeout remains an uncertain external result, including at the maximum deadlin
 
 ## Runnable boundary and non-goals
 
-Deliver the calculator, client integration seam and startup checks without a partial adaptive-dispatch switch; task 09 activates pacing/deadlines together for initial calls and replays. Keep any temporary old timeout input adapter explicit and remove it during task 12's final configuration cleanup. No business expiration, timeout-to-failure fallback or direct reading of the mock's future latency profile.
+Deliver the calculator, client integration seam and startup checks without a partial adaptive-dispatch switch; task 09 activates pacing/deadlines together for initial calls and replays. Keep any temporary old timeout input adapter explicit and remove it during task 14's final configuration cleanup. No business expiration, timeout-to-failure fallback or direct reading of the mock's future latency profile.
 
 ## Acceptance and validation
 
@@ -55,7 +55,7 @@ The exported provisional deployment limit is 5000 ms. Dedicated write/acceptance
 
 Startup requires the 6000 ms maximum deadline to be at least the 5000 ms deployment limit plus the 500 ms policy margin. The complete ownership audit covers claim, admission, durable-intent persistence, HTTP deadline and outcome persistence. There is no lease heartbeat or renewal during that interval, and an expired owner can reconcile `unknown` and authorize a same-key replay. Startup therefore also requires `ORDER_RECOVERY_LEASE_MS` to cover the 6000 ms maximum deadline plus 5000 ms of versioned ownership headroom, for an 11000 ms minimum. The existing 30000 ms default and example satisfy it. Durable intent still fences an immediate second dispatch; cancellation stays uncertain; after the supported late response settles, an expired lease retains the prior intent and lookup adopts the single canonical confirmation without replay. Fake-timer tests prove cancellation at the selected deadline, and the worker DB/HTTP reconciliation fixture proves one POST across timeout, late canonical completion and subsequent lease recovery. No heartbeat, persistence-schema or recovery-selection change was needed.
 
-The temporary adapter remains explicit: task 09 will pass the adaptive deadline, while unwired runtime calls still fall back to the accepted snapshot `requestTimeoutMs` and then `ERP_REQUEST_TIMEOUT_MS`; task 12 removes those legacy inputs. No form exposes the policy constants.
+The temporary adapter remains explicit: task 09 will pass the adaptive deadline, while unwired runtime calls still fall back to the accepted snapshot `requestTimeoutMs` and then `ERP_REQUEST_TIMEOUT_MS`; task 14 removes those legacy inputs. No form exposes the policy constants.
 
 Validation completed:
 
