@@ -23,12 +23,12 @@ Durably retain dispatched-call intents, next eligibility, interventions, cooldow
 - [ ] Compose the policy and deadline services once per real quota scope, with a worker-wide in-flight cap. Scope keys are `run:<id>` and `catalog`; a missing accepted run snapshot creates an intervention on that job, never a catalog fallback.
 - [ ] Route all confirmation POST paths through claim -> admission -> durable dispatch intent -> HTTP -> classified feedback/settlement. Include replay and accepted-result recovery distinctions. No queue retry shortcut may bypass admission.
 - [ ] When denied, persist reason/due time using the single control record and release the worker slot/DB resources. Queue wake-ups and scanner publication remain bounded; duplicate/stale delivery has no side effect or permit consumption.
-- [ ] Persist safety changes atomically enough to prevent an acknowledged cooldown/open circuit from disappearing on supported restart. Restore persisted expiries before admitting fresh traffic. Lost cache data cannot falsely mean healthy or erase a PostgreSQL obligation.
+- [ ] Persist safety changes atomically enough to prevent an acknowledged cooldown/open circuit from disappearing on supported restart. Restore persisted expiries and the scope-level intervention marker (`erp_scope_resilience_state`, added in task 05) before admitting fresh traffic. Lost cache data cannot falsely mean healthy or erase a PostgreSQL obligation.
 - [ ] At startup prioritize resolution of recorded dispatched calls, bounded by their lookup/availability rules; start ordinary learning conservatively. Do not let an unavailable scope block unrelated scopes or turn startup into an unbounded synchronous wait.
 - [ ] Feed only eligible real response observations into adaptation. A local/lookup/replayed success cannot close the circuit or undo a recent reduction. HTTP-date/delay-seconds retry guidance remains bounded.
 - [ ] Ensure shutdown/cancellation releases resource permits without erasing unresolved intent. No permit leak, double release, or open connection should survive a completed handler.
 - [ ] Expose bounded live controller state and progress counters for later API projections. Keep sensor failures explicit; do not invent a zero queue/rate value to mean unavailable.
-- [ ] Remove superseded concurrency-only dispatch shortcuts and temporary runtime adapters made obsolete by this cutover, without deleting unrelated reservation-persistence behavior.
+- [ ] Remove superseded concurrency-only dispatch shortcuts and temporary runtime adapters made obsolete by this cutover, including task 05's worker-internal deferral backoff (replaced by the engine policy), without deleting unrelated reservation-persistence behavior.
 
 ## Acceptance and validation
 

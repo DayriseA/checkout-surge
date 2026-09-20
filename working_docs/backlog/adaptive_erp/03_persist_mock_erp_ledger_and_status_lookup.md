@@ -27,7 +27,7 @@ Persist terminal outcomes only: canonical success or an explicitly recognized pe
 - [ ] Keep lookup outside the mock TPS quota, chaos latency and injected-error mechanisms. Retain existing service access controls, contract validation and correlation handling. Routes delegate to application services.
 - [ ] Keep ordinary confirmation capacity/outage behavior intact. The current mock has no permanent business-rejection emitter; do not reinterpret an arbitrary error as one or introduce a public chaos control. Ledger support uses only the shared explicit vocabulary.
 - [ ] Include ledger tables in isolated setup and exact generated-run cleanup without permitting deletion of unresolved obligations. Preserve catalog records appropriately; never clear the entire ledger during a normal run reset.
-- [ ] Update baseline SQL/metadata under the repository's pre-release policy and test setup. Do not migrate or erase historical reference data as an implementation shortcut.
+- [ ] Follow the repository's incremental migration practice (user decision, 2026-09-19; see the [index](index.md) guardrails): add one new generated migration (`0006_*`) with its snapshot and journal entry, update the entry count asserted by `packages/db/test/unit/migration-metadata.test.ts`, and leave `0000`–`0005` untouched. The migration must apply to a populated database. Do not erase historical reference data as an implementation shortcut.
 
 ## Non-goals
 

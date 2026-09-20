@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: implementation backlog prepared; task 01 is completed (uncommitted at handoff); tasks 02–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
+Status: implementation backlog prepared; tasks 01 to 02 are completed and committed; tasks 03–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -118,6 +118,6 @@ Read [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality
 
 Run focused tests, `pnpm type-check` and affected unit/API/integration lanes for code changes. Use `pnpm test:infra:up` for isolated DB/Redis resources. Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly asked. Long resilience experiments are explicit and isolated, not hidden inside routine smoke. Report every executed/skipped check honestly.
 
-Schema changes follow the pre-release baseline policy: regenerate/review SQL and metadata together, preserve required custom SQL and validate an isolated migration. No compatibility migration or silent reference-data wipe. Preserve the historic incident and do not use the user's active runtime for unannounced smoke/reset.
+Schema changes follow the repository's incremental migration practice (user decision, 2026-09-19): each schema-changing task adds one new generated migration (`0006_*`, ...) with its snapshot and journal entry, leaves earlier migrations and the baseline's custom SQL untouched, updates the entry count in `packages/db/test/unit/migration-metadata.test.ts`, and validates an isolated migration that applies to a populated database. This supersedes the single-baseline wording of the source plan's section 12. No silent reference-data wipe. Preserve the historic incident and do not use the user's active runtime for unannounced smoke/reset.
 
 A completed task handoff should identify its commit, actual changed interfaces/files, acceptance evidence, commands/results, intentionally temporary adapters and any blocker. A deviation from D01–D14 requires explicit user approval, not a convenient local reinterpretation. The existence of this backlog does not itself satisfy task 20's approval gate.

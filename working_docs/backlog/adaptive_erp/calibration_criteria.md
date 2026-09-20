@@ -24,6 +24,7 @@ Sanity envelopes before margins (documentation only, not estimator logic): incid
 | `Retry-After` policy maximum and capped-cooldown value | Capacity/unavailability cooldowns | D06 | To be calibrated in task 07; provisional until task 20. |
 | Outage probe cadence (criterion: at most one per scope per 5 s) | Availability circuit | D06/D14 | Provisional until task 20. |
 | Initial, minimum, and maximum request deadline; window size; percentile; factor; margin | Bounded adaptive deadlines | D08 | To be calibrated in task 08; provisional until task 20. |
+| 5000 ms deployment ERP latency ceiling (contracts constant bounding accepted latency; the maximum request deadline must cover it plus the margin) | Bounded adaptive deadlines | D08 | Initial value (user decision, 2026-09-20), introduced in task 08; provisional until task 20. |
 | 32 retained ERP attempts per order | Bounded attempt history | D09 | Initial constant; provisional until task 20. |
 | 600-second inclusive demo-occupancy ceiling (`estimatedDemoOccupancyCeilingSeconds` in `packages/contracts/src/estimate.ts`) | Admission envelope | D11 | Initial value; provisional until task 20. |
 | Latency overhead floor; conservative margins for adaptation, persistence, and notification overhead | Estimator envelope | D11 | To be measured in task 14; provisional until task 20. |
