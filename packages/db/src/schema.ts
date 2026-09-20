@@ -1,8 +1,10 @@
 import type {
   AcceptedRunConfigSnapshot,
+  AdministrativeStopEvidence,
   BackpressureConfig,
   BusinessOutcomeSummary,
   DemoPresetDisplay,
+  ErpOutcomeDisposition,
   ErpRunConfig,
   HttpTimingBreakdownSummary,
   InventoryConfig,
@@ -23,7 +25,9 @@ import {
   erpAttemptStatusValues,
   operatorModeValues,
   orderEventNameValues,
+  orderFailureCategoryValues,
   orderStatusValues,
+  orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
   saleOfferPurposeValues,
@@ -56,6 +60,13 @@ export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | n
 export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurposeValues);
 
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
+
+export const orderWaitingReasonEnum = pgEnum("order_waiting_reason", orderWaitingReasonValues);
+
+export const orderFailureCategoryEnum = pgEnum(
+  "order_failure_category",
+  orderFailureCategoryValues,
+);
 
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
 
@@ -182,6 +193,7 @@ export const demoRuns = pgTable(
     trafficEndedAt: timestamp("traffic_ended_at", { withTimezone: true }),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     adminResetCompletedAt: timestamp("admin_reset_completed_at", { withTimezone: true }),
+    administrativeStop: jsonb("administrative_stop").$type<AdministrativeStopEvidence>(),
     failureReason: text("failure_reason"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -269,6 +281,7 @@ export const orders = pgTable(
     runId: uuid("run_id"),
     quantity: integer("quantity").default(1).notNull(),
     status: orderStatusEnum("status").default("queued").notNull(),
+    failureCategory: orderFailureCategoryEnum("failure_category"),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
     queuedAt: timestamp("queued_at", { withTimezone: true }).notNull(),
@@ -332,6 +345,44 @@ export const orders = pgTable(
   ],
 );
 
+/**
+ * Durable identity of one actual confirmation POST (D04/D05). The row is
+ * written before the HTTP request is sent and keeps the immutable
+ * order/reservation/sale/run/quantity/idempotency identity plus correlation
+ * lineage, independently of queue delivery identity or BullMQ attempt budgets.
+ */
+export const erpDispatchCalls = pgTable(
+  "erp_dispatch_calls",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    orderId: uuid("order_id").notNull(),
+    processingGeneration: integer("processing_generation").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    publicOrderId: text("public_order_id").notNull(),
+    reservationId: uuid("reservation_id").notNull(),
+    saleOfferId: uuid("sale_offer_id").notNull(),
+    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    quantity: integer("quantity").notNull(),
+    correlationId: text("correlation_id").notNull(),
+    dispatchedAt: timestamp("dispatched_at", { withTimezone: true }).notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    check("erp_dispatch_calls_quantity_positive", sql`${table.quantity} > 0`),
+    check("erp_dispatch_calls_generation_nonnegative", sql`${table.processingGeneration} >= 0`),
+    foreignKey({
+      name: "erp_dispatch_calls_order_correlation_fk",
+      columns: [table.orderId, table.correlationId],
+      foreignColumns: [orders.id, orders.correlationId],
+    }).onDelete("cascade"),
+    index("erp_dispatch_calls_order_id_idx").on(table.orderId),
+    index("erp_dispatch_calls_run_id_idx").on(table.runId),
+    index("erp_dispatch_calls_idempotency_key_idx").on(table.idempotencyKey),
+  ],
+);
+
 export const erpAttempts = pgTable(
   "erp_attempts",
   {
@@ -340,6 +391,9 @@ export const erpAttempts = pgTable(
     deliveryId: text("delivery_id").notNull(),
     correlationId: text("correlation_id").notNull(),
     runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    erpCallId: uuid("erp_call_id").references(() => erpDispatchCalls.id, {
+      onDelete: "restrict",
+    }),
     attemptNumber: integer("attempt_number").notNull(),
     status: erpAttemptStatusEnum("status").notNull(),
     terminal: boolean("terminal").default(false).notNull(),
@@ -355,11 +409,10 @@ export const erpAttempts = pgTable(
     createdAt: createdAt(),
   },
   (table) => [
-    uniqueIndex("erp_attempts_order_delivery_attempt_unique").on(
-      table.orderId,
-      table.deliveryId,
-      table.attemptNumber,
-    ),
+    uniqueIndex("erp_attempts_order_delivery_attempt_unique")
+      .on(table.orderId, table.deliveryId, table.attemptNumber)
+      .where(sql`${table.erpCallId} is null`),
+    uniqueIndex("erp_attempts_erp_call_id_unique").on(table.erpCallId),
     uniqueIndex("erp_attempts_success_idempotency_key_unique").on(table.idempotencyKey),
     check("erp_attempts_attempt_number_positive", sql`${table.attemptNumber} > 0`),
     check("erp_attempts_latency_nonnegative", sql`${table.latencyMs} >= 0`),
@@ -407,13 +460,42 @@ export const orderRecoveryJobs = pgTable(
     escalatedAt: timestamp("escalated_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
+    // Durable per-order processing-control fields (D01/D04/D07).
+    processingGeneration: integer("processing_generation").default(0).notNull(),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    waitingReason: orderWaitingReasonEnum("waiting_reason"),
+    publicationOwner: text("publication_owner"),
+    interventionReason: text("intervention_reason"),
+    unresolvedErpCallId: uuid("unresolved_erp_call_id"),
+    attemptCounts: jsonb("attempt_counts")
+      .$type<Partial<Record<ErpOutcomeDisposition, number>>>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
   },
   (table) => [
     uniqueIndex("order_recovery_jobs_recovery_key_unique").on(table.recoveryKey),
     index("order_recovery_jobs_status_next_attempt_idx").on(table.status, table.nextAttemptAt),
     index("order_recovery_jobs_order_id_idx").on(table.orderId),
+    check("order_recovery_jobs_generation_nonnegative", sql`${table.processingGeneration} >= 0`),
+    foreignKey({
+      name: "order_recovery_jobs_unresolved_erp_call_fk",
+      columns: [table.unresolvedErpCallId],
+      foreignColumns: [erpDispatchCalls.id],
+    }).onDelete("set null"),
   ],
 );
+
+/**
+ * Restart-safety state per downstream capacity scope (`catalog` or `run:<id>`)
+ * (D07). Learned rates and latency samples stay unpersisted; only the durable
+ * cooldown and circuit-open expiries survive a restart.
+ */
+export const erpScopeResilienceState = pgTable("erp_scope_resilience_state", {
+  scope: text("scope").primaryKey(),
+  cooldownExpiresAt: timestamp("cooldown_expires_at", { withTimezone: true }),
+  circuitOpenExpiresAt: timestamp("circuit_open_expires_at", { withTimezone: true }),
+  updatedAt: updatedAt(),
+});
 
 export const orderDeadLetters = pgTable(
   "order_dead_letters",

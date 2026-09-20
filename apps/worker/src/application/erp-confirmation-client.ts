@@ -1,4 +1,5 @@
 import {
+  type ErpCallReference,
   type ErpConfirmationResponse,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
@@ -16,6 +17,8 @@ import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
 export interface ErpAttemptRecord {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
+  /** Durable identity of the actual ERP call this attempt result belongs to. */
+  call?: ErpCallReference;
   status: "succeeded" | "failed" | "timed_out";
   terminal: boolean;
   httpStatus?: number;
@@ -36,6 +39,17 @@ export interface ReusableErpConfirmationAttempt {
 
 export interface ErpAttemptPersistence {
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
+  /**
+   * Records the durable identity of one actual confirmation POST before the
+   * HTTP request is sent (D04/D05), so a crash cannot erase the existence of
+   * an uncertain attempt.
+   */
+  recordDispatchIntent(input: {
+    job: OrderProcessJob;
+    idempotencyKey: string;
+    dispatchedAt: Date;
+    expectedProcessingGeneration: number;
+  }): Promise<ErpCallReference>;
   recordAttempt(record: ErpAttemptRecord): Promise<boolean>;
 }
 
@@ -173,6 +187,14 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     const runConfig = job.runId ? await this.runConfigReader?.read(job.runId) : null;
     const requestTimeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.requestTimeoutMs;
     const startedAt = this.now();
+    // Dispatch intent precedes the HTTP request: the durable per-call identity
+    // exists even if this process dies before a response arrives.
+    const call = await this.recordDispatchIntent({
+      job,
+      idempotencyKey: toConfirmationIdempotencyKey(job),
+      dispatchedAt: startedAt,
+      expectedProcessingGeneration: requireProcessingGeneration(delivery),
+    });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
 
@@ -191,6 +213,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       const record = toAttemptRecord({
         job,
         delivery,
+        call,
         response: parsed,
         fallbackHttpStatus: response.status,
         startedAt,
@@ -212,6 +235,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         const attemptRecorded = await this.recordAttempt({
           job,
           delivery,
+          call,
           status: "timed_out",
           terminal: !hasRemainingAttempts(delivery),
           errorCode: "erp_request_timeout",
@@ -235,6 +259,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         const attemptRecorded = await this.recordAttempt({
           job,
           delivery,
+          call,
           status: "failed",
           terminal: !hasRemainingAttempts(delivery),
           httpStatus: error.httpStatus,
@@ -252,6 +277,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       const attemptRecorded = await this.recordAttempt({
         job,
         delivery,
+        call,
         status: "failed",
         terminal: !hasRemainingAttempts(delivery),
         errorCode: "erp_request_failed",
@@ -265,6 +291,22 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       throw requestError;
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  private async recordDispatchIntent(input: {
+    job: OrderProcessJob;
+    idempotencyKey: string;
+    dispatchedAt: Date;
+    expectedProcessingGeneration: number;
+  }): Promise<ErpCallReference> {
+    try {
+      return await this.attemptPersistence.recordDispatchIntent(input);
+    } catch (error) {
+      throw new ErpAttemptPersistenceError(
+        error,
+        "The ERP dispatch intent could not be persisted before the confirmation request.",
+      );
     }
   }
 
@@ -288,6 +330,16 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       throw new ErpAttemptPersistenceError(error);
     }
   }
+}
+
+function requireProcessingGeneration(delivery: OrderProcessDeliveryMetadata): number {
+  if (delivery.processingGeneration === undefined) {
+    throw new ErpAttemptPersistenceError(
+      new Error("The delivery has no processing generation."),
+      "The ERP dispatch intent could not be persisted before the confirmation request.",
+    );
+  }
+  return delivery.processingGeneration;
 }
 
 function toConfirmationRequest(
@@ -325,6 +377,7 @@ async function parseConfirmationResponse(response: Response): Promise<ErpConfirm
 function toAttemptRecord(options: {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
+  call: ErpCallReference;
   response: ErpConfirmationResponse;
   fallbackHttpStatus: number;
   startedAt: Date;
@@ -339,6 +392,7 @@ function toAttemptRecord(options: {
   return {
     job: options.job,
     delivery: options.delivery,
+    call: options.call,
     status,
     terminal,
     httpStatus: options.response.httpStatus ?? options.fallbackHttpStatus,

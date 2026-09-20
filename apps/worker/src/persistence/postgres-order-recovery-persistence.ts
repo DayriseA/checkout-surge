@@ -1,15 +1,17 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderProcessJob, OrderWaitingReason } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  erpDispatchCalls,
   type JsonValue,
   orderDeadLetters,
   orderRecoveryJobs,
   orders,
 } from "@checkout-surge/db";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { RecoverableOrderHandoff } from "../application/order-process-job-handler.js";
 import type {
   DeadLetterRecord,
+  OrderControlRecord,
   OrderRecoveryPersistence,
   RecoverableOrderJob,
 } from "../application/order-recovery-scanner.js";
@@ -81,28 +83,33 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
   }
 
   async findRecoverable(input: { limit: number; now: Date }): Promise<RecoverableOrderJob[]> {
+    // Eligibility is fully filtered before the batch limit: pending rows must
+    // also respect the next eligible time, leased rows wait for expiry, and
+    // open interventions or terminal orders never occupy the front of a batch.
+    // Ordering by next eligible time, then order creation time, keeps older
+    // retries from being starved by new orders.
     const rows = await this.db
-      .select()
+      .select({ job: orderRecoveryJobs })
       .from(orderRecoveryJobs)
       .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
       .where(
         and(
-          inArray(orders.status, ["queued", "processing"]),
+          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+          isNull(orderRecoveryJobs.interventionReason),
           or(
-            and(
-              eq(orderRecoveryJobs.status, "enqueued"),
-              or(
-                isNull(orderRecoveryJobs.nextAttemptAt),
-                lte(orderRecoveryJobs.nextAttemptAt, input.now),
-              ),
-            ),
-            eq(orderRecoveryJobs.status, "pending"),
+            isNull(orderRecoveryJobs.nextAttemptAt),
+            lte(orderRecoveryJobs.nextAttemptAt, input.now),
           ),
+          or(
+            isNull(orderRecoveryJobs.leaseExpiresAt),
+            lte(orderRecoveryJobs.leaseExpiresAt, input.now),
+          ),
+          inArray(orders.status, ["queued", "processing"]),
         ),
       )
-      .orderBy(orderRecoveryJobs.createdAt)
+      .orderBy(sql`${orderRecoveryJobs.nextAttemptAt} asc nulls first`, asc(orders.createdAt))
       .limit(input.limit);
-    return rows.map(({ order_recovery_jobs: row }) => ({
+    return rows.map(({ job: row }) => ({
       recoveryKey: row.recoveryKey,
       job: row.payload as unknown as OrderProcessJob,
       reason: row.reason,
@@ -113,69 +120,109 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
     }));
   }
 
+  async readControlRecord(input: { orderId: string }): Promise<OrderControlRecord | null> {
+    const [row] = await this.db
+      .select()
+      .from(orderRecoveryJobs)
+      .where(eq(orderRecoveryJobs.orderId, input.orderId))
+      .limit(1);
+    if (!row) return null;
+    return {
+      orderId: row.orderId,
+      recoveryKey: row.recoveryKey,
+      status: row.status,
+      processingGeneration: row.processingGeneration,
+      attempts: row.attempts,
+      leaseExpiresAt: row.leaseExpiresAt,
+      nextAttemptAt: row.nextAttemptAt,
+      waitingReason: row.waitingReason,
+      publicationOwner: row.publicationOwner,
+      interventionReason: row.interventionReason,
+      unresolvedErpCallId: row.unresolvedErpCallId,
+    };
+  }
+
   async claimForPublication(input: {
     recoveryKey: string;
     now: Date;
     leaseMs: number;
-  }): Promise<{ attempt: number } | null> {
-    return this.db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(orderRecoveryJobs)
-        .where(
-          and(
-            eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
-            or(
-              eq(orderRecoveryJobs.status, "pending"),
-              and(
-                eq(orderRecoveryJobs.status, "enqueued"),
-                or(
-                  isNull(orderRecoveryJobs.nextAttemptAt),
-                  lte(orderRecoveryJobs.nextAttemptAt, input.now),
-                ),
-              ),
-            ),
+  }): Promise<{ attempt: number; processingGeneration: number; jobId: string } | null> {
+    // One conditional update is the atomic claim: eligibility is re-checked in
+    // the WHERE clause, so only one concurrent claimer can take ownership and
+    // move the generation forward.
+    const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
+    const [claimed] = await this.db
+      .update(orderRecoveryJobs)
+      .set({
+        status: "enqueued",
+        attempts: sql`${orderRecoveryJobs.attempts} + 1`,
+        claimedAt: input.now,
+        processingGeneration: sql`${orderRecoveryJobs.processingGeneration} + 1`,
+        leaseExpiresAt,
+        publicationOwner: sql`'recovery-' || ${orderRecoveryJobs.orderId} || '-' || (${orderRecoveryJobs.attempts} + 1)`,
+        updatedAt: input.now,
+      })
+      .where(
+        and(
+          eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
+          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+          isNull(orderRecoveryJobs.interventionReason),
+          or(
+            isNull(orderRecoveryJobs.nextAttemptAt),
+            lte(orderRecoveryJobs.nextAttemptAt, input.now),
           ),
-        )
-        .limit(1)
-        .for("update");
-      if (!row) return null;
-      const attempt = row.attempts + 1;
-      await tx
-        .update(orderRecoveryJobs)
-        .set({
-          status: "enqueued",
-          attempts: attempt,
-          claimedAt: input.now,
-          nextAttemptAt: new Date(input.now.getTime() + input.leaseMs),
-          updatedAt: input.now,
-        })
-        .where(eq(orderRecoveryJobs.recoveryKey, input.recoveryKey));
-      return { attempt };
-    });
+          or(
+            isNull(orderRecoveryJobs.leaseExpiresAt),
+            lte(orderRecoveryJobs.leaseExpiresAt, input.now),
+          ),
+        ),
+      )
+      .returning({
+        jobId: sql<string>`${orderRecoveryJobs.publicationOwner}`,
+        attempt: orderRecoveryJobs.attempts,
+        processingGeneration: orderRecoveryJobs.processingGeneration,
+      });
+    return claimed ?? null;
   }
 
   async markPublicationFailed(input: {
     recoveryKey: string;
     error: string;
     nextAttemptAt: Date;
+    processingGeneration: number;
   }): Promise<void> {
+    const now = this.now();
     await this.db
       .update(orderRecoveryJobs)
       .set({
         status: "pending",
         lastError: input.error,
         nextAttemptAt: input.nextAttemptAt,
-        updatedAt: this.now(),
+        leaseExpiresAt: null,
+        publicationOwner: null,
+        updatedAt: now,
       })
-      .where(eq(orderRecoveryJobs.recoveryKey, input.recoveryKey));
+      .where(
+        and(
+          eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
+          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+          eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
+        ),
+      );
   }
 
   async markResolved(input: { recoveryKey: string }): Promise<void> {
     const now = this.now();
     await this.db
       .update(orderRecoveryJobs)
-      .set({ status: "resolved", resolvedAt: now, nextAttemptAt: null, updatedAt: now })
+      .set({
+        status: "resolved",
+        resolvedAt: now,
+        nextAttemptAt: null,
+        leaseExpiresAt: null,
+        publicationOwner: null,
+        updatedAt: now,
+      })
       .where(eq(orderRecoveryJobs.recoveryKey, input.recoveryKey));
   }
 
@@ -200,6 +247,136 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
       .update(orderRecoveryJobs)
       .set({ status: "escalated", lastError: input.error, escalatedAt: now, updatedAt: now })
       .where(eq(orderRecoveryJobs.recoveryKey, input.recoveryKey));
+  }
+
+  async defer(input: {
+    orderId: string;
+    waitingReason: OrderWaitingReason;
+    nextEligibleAt: Date;
+    processingGeneration: number;
+  }): Promise<boolean> {
+    const now = this.now();
+    const [deferred] = await this.db
+      .update(orderRecoveryJobs)
+      .set({
+        waitingReason: input.waitingReason,
+        nextAttemptAt: input.nextEligibleAt,
+        leaseExpiresAt: null,
+        publicationOwner: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(orderRecoveryJobs.orderId, input.orderId),
+          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+          isNull(orderRecoveryJobs.interventionReason),
+          eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
+        ),
+      )
+      .returning({ id: orderRecoveryJobs.id });
+    return deferred !== undefined;
+  }
+
+  async openIntervention(input: {
+    orderId: string;
+    reason: string;
+    processingGeneration: number;
+  }): Promise<boolean> {
+    const now = this.now();
+    const [opened] = await this.db
+      .update(orderRecoveryJobs)
+      .set({
+        interventionReason: input.reason,
+        waitingReason: "intervention_required",
+        leaseExpiresAt: null,
+        publicationOwner: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(orderRecoveryJobs.orderId, input.orderId),
+          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+          eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
+        ),
+      )
+      .returning({ id: orderRecoveryJobs.id });
+    return opened !== undefined;
+  }
+
+  async resumeFromIntervention(input: {
+    orderId: string;
+    nextEligibleAt: Date;
+    processingGeneration?: number;
+  }): Promise<boolean> {
+    const now = this.now();
+    const [resumed] = await this.db
+      .update(orderRecoveryJobs)
+      .set({
+        interventionReason: null,
+        waitingReason: null,
+        nextAttemptAt: input.nextEligibleAt,
+        leaseExpiresAt: null,
+        publicationOwner: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(orderRecoveryJobs.orderId, input.orderId),
+          isNotNull(orderRecoveryJobs.interventionReason),
+          ...(input.processingGeneration === undefined
+            ? []
+            : [eq(orderRecoveryJobs.processingGeneration, input.processingGeneration)]),
+        ),
+      )
+      .returning({ id: orderRecoveryJobs.id });
+    return resumed !== undefined;
+  }
+
+  async resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean> {
+    const now = this.now();
+    return this.db.transaction(async (tx) => {
+      await tx
+        .select({ id: orders.id })
+        .from(orders)
+        .where(eq(orders.id, input.orderId))
+        .for("update")
+        .limit(1);
+      await tx
+        .select({ id: orderRecoveryJobs.id })
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, input.orderId))
+        .for("update")
+        .limit(1);
+      const [resolved] = await tx
+        .update(erpDispatchCalls)
+        .set({ resolvedAt: now, updatedAt: now })
+        .where(
+          and(
+            eq(erpDispatchCalls.id, input.erpCallId),
+            eq(erpDispatchCalls.orderId, input.orderId),
+            isNull(erpDispatchCalls.resolvedAt),
+          ),
+        )
+        .returning({ id: erpDispatchCalls.id });
+      if (!resolved) return false;
+      await tx
+        .update(orderRecoveryJobs)
+        .set({
+          unresolvedErpCallId: null,
+          waitingReason: sql`CASE
+            WHEN ${orderRecoveryJobs.waitingReason} = 'uncertain_result' THEN NULL
+            ELSE ${orderRecoveryJobs.waitingReason}
+          END`,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(orderRecoveryJobs.orderId, input.orderId),
+            eq(orderRecoveryJobs.unresolvedErpCallId, input.erpCallId),
+          ),
+        );
+      return true;
+    });
   }
 
   async recordDeadLetter(input: DeadLetterRecord): Promise<void> {

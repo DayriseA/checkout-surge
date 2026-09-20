@@ -179,7 +179,11 @@ export async function startWorker(): Promise<void> {
           );
         },
       }),
-      persistence: new PostgresOrderTransitionPersistence(database.db),
+      persistence: new PostgresOrderTransitionPersistence(
+        database.db,
+        undefined,
+        config.orderRecoveryLeaseMs,
+      ),
       logger,
       recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
       isTemporaryConfirmationFailure,

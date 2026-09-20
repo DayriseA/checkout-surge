@@ -131,16 +131,20 @@ export class GeneratedRunTeardownService
   }
 }
 
-function teardownConflict(outcome: "absent" | "non_terminal" | "ownership_mismatch"): ApiHttpError {
+function teardownConflict(
+  outcome: "absent" | "non_terminal" | "outstanding_work" | "ownership_mismatch",
+): ApiHttpError {
   return new ApiHttpError({
     statusCode: 409,
     code: "run_cleanup_conflict",
     message:
       outcome === "non_terminal"
         ? "The generated run must be terminal before teardown."
-        : outcome === "ownership_mismatch"
-          ? "The run is not owned by a matching generated sale offer."
-          : "The generated run disappeared before durable teardown completed.",
+        : outcome === "outstanding_work"
+          ? "The generated run still has unresolved processing work."
+          : outcome === "ownership_mismatch"
+            ? "The run is not owned by a matching generated sale offer."
+            : "The generated run disappeared before durable teardown completed.",
     details: { conflictReason: outcome },
   });
 }

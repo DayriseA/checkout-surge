@@ -51,6 +51,9 @@ describe("worker and Mock ERP precedence", () => {
     };
     const attemptPersistence: ErpAttemptPersistence = {
       findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
+      recordDispatchIntent: vi
+        .fn()
+        .mockResolvedValue({ erpCallId: "99999999-9999-4999-8999-999999999999" }),
       recordAttempt: vi.fn().mockResolvedValue(true),
     };
     const confirmation = new HttpErpOrderConfirmation({
@@ -84,7 +87,7 @@ describe("worker and Mock ERP precedence", () => {
           quantity: 1,
           queuedAt: "2026-08-07T00:00:00.000Z",
         },
-        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 },
       ),
     ).resolves.toMatchObject({ status: "succeeded" });
   });

@@ -1,5 +1,5 @@
 import { uuidSchema } from "@checkout-surge/contracts";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunFinalizations,
@@ -8,7 +8,10 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  erpDispatchCalls,
+  erpScopeResilienceState,
   orderEvents,
+  orderRecoveryJobs,
   orders,
   reservationPendingPersistence,
   reservations,
@@ -24,6 +27,7 @@ export interface GeneratedRunIdentity {
 export type InspectGeneratedRunTeardownResult =
   | { outcome: "absent" }
   | { outcome: "non_terminal" }
+  | { outcome: "outstanding_work" }
   | { outcome: "ownership_mismatch" }
   | {
       outcome: "ready";
@@ -105,6 +109,9 @@ async function inspectLockedGeneratedRunTeardown(
   ) {
     return { outcome: "ownership_mismatch" };
   }
+  if (await hasOutstandingGeneratedRunWork(db, runId)) {
+    return { outcome: "outstanding_work" };
+  }
 
   return {
     outcome: "ready",
@@ -120,6 +127,7 @@ async function deleteGeneratedRunRows(
   const { runId, saleOfferId } = identity;
   await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
   await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
+  await tx.delete(erpDispatchCalls).where(eq(erpDispatchCalls.runId, runId));
   await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
   await tx.delete(orders).where(eq(orders.runId, runId));
   await tx.delete(reservations).where(eq(reservations.runId, runId));
@@ -130,6 +138,7 @@ async function deleteGeneratedRunRows(
   await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
   await tx.delete(demoRunSummaries).where(eq(demoRunSummaries.runId, runId));
   await tx.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, runId));
+  await tx.delete(erpScopeResilienceState).where(eq(erpScopeResilienceState.scope, `run:${runId}`));
 
   const deletedRuns = await tx
     .delete(demoRuns)
@@ -152,4 +161,27 @@ async function deleteGeneratedRunRows(
   if (deletedSaleOffers.length !== 1) {
     throw new Error(`Generated sale offer ${saleOfferId} changed during durable deletion.`);
   }
+}
+
+async function hasOutstandingGeneratedRunWork(
+  db: CheckoutSurgeDatabase,
+  runId: string,
+): Promise<boolean> {
+  const [outstanding] = await db
+    .select({ orderId: orders.id })
+    .from(orders)
+    .leftJoin(orderRecoveryJobs, eq(orderRecoveryJobs.orderId, orders.id))
+    .leftJoin(erpDispatchCalls, eq(erpDispatchCalls.orderId, orders.id))
+    .where(
+      and(
+        eq(orders.runId, runId),
+        or(
+          inArray(orders.status, ["queued", "processing"]),
+          isNotNull(orderRecoveryJobs.interventionReason),
+          and(isNotNull(erpDispatchCalls.id), isNull(erpDispatchCalls.resolvedAt)),
+        ),
+      ),
+    )
+    .limit(1);
+  return outstanding !== undefined;
 }

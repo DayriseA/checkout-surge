@@ -8,6 +8,8 @@ export interface OrderProcessDeliveryMetadata {
   recoveryKey?: string;
   /** Stable BullMQ/durable publication identity for this delivery. */
   deliveryId?: string;
+  /** Durable processing ownership generation, when the delivery carries one. */
+  processingGeneration?: number;
 }
 
 export interface OrderProcessJobHandler {
@@ -15,8 +17,18 @@ export interface OrderProcessJobHandler {
 }
 
 export type ProcessingTransitionResult =
-  | { changed: false; status: "processing" | "confirmed" | "failed" }
-  | { changed: true; status: "processing" };
+  | {
+      changed: false;
+      status: "processing" | "confirmed" | "failed";
+      processingGeneration?: number;
+      executionClaimed?: boolean;
+    }
+  | {
+      changed: true;
+      status: "processing";
+      processingGeneration?: number;
+      executionClaimed?: boolean;
+    };
 export type FailedTransitionResult =
   | { changed: false; status: "failed" }
   | { changed: true; status: "failed" };
@@ -167,6 +179,21 @@ export function createOrderProcessJobHandler(dependencies: {
           "Terminal order delivery acknowledged without reprocessing.",
         );
         return;
+      }
+
+      if (transition.executionClaimed === false) {
+        logger.info(
+          logContext,
+          "Order delivery acknowledged because another owner holds the lease.",
+        );
+        return;
+      }
+
+      if (
+        delivery.processingGeneration === undefined &&
+        transition.processingGeneration !== undefined
+      ) {
+        delivery = { ...delivery, processingGeneration: transition.processingGeneration };
       }
 
       if (transition.changed) {

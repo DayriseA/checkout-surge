@@ -1,4 +1,8 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type {
+  OrderProcessJob,
+  OrderWaitingReason,
+  recoveryJobStatusValues,
+} from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { OrderJobPublisher } from "./order-job-publisher.js";
 import type { OrderRecoveryHandoff, RecoverableOrderHandoff } from "./order-process-job-handler.js";
@@ -15,23 +19,69 @@ export interface RecoverableOrderJob {
   sourceDisposition?: string;
 }
 
+/**
+ * Durable per-order processing-control record (D01/D04). One row per order in
+ * `order_recovery_jobs`; it carries the operational situation of the order
+ * independent of queue deliveries.
+ */
+export interface OrderControlRecord {
+  orderId: string;
+  recoveryKey: string;
+  status: (typeof recoveryJobStatusValues)[number];
+  processingGeneration: number;
+  attempts: number;
+  leaseExpiresAt: Date | null;
+  nextAttemptAt: Date | null;
+  waitingReason: OrderWaitingReason | null;
+  publicationOwner: string | null;
+  interventionReason: string | null;
+  unresolvedErpCallId: string | null;
+}
+
 export interface OrderRecoveryPersistence {
   recordRecoverable(input: RecoverableOrderHandoff): Promise<void>;
   findRecoverable(input: { limit: number; now: Date }): Promise<RecoverableOrderJob[]>;
+  readControlRecord(input: { orderId: string }): Promise<OrderControlRecord | null>;
   markEscalated(input: { recoveryKey: string; error: string }): Promise<void>;
   recordDeadLetter(input: DeadLetterRecord): Promise<void>;
   claimForPublication(input: {
     recoveryKey: string;
     now: Date;
     leaseMs: number;
-  }): Promise<{ attempt: number } | null>;
+  }): Promise<{ attempt: number; processingGeneration: number; jobId: string } | null>;
   markPublicationFailed(input: {
     recoveryKey: string;
     error: string;
     nextAttemptAt: Date;
+    processingGeneration: number;
   }): Promise<void>;
   markResolved(input: { recoveryKey: string }): Promise<void>;
   reconcileTerminal(): Promise<number>;
+  /**
+   * Durably defers the order: stores the waiting reason and the next eligible
+   * time and releases the current lease. A stale generation is rejected
+   * without overwriting a newer owner.
+   */
+  defer(input: {
+    orderId: string;
+    waitingReason: OrderWaitingReason;
+    nextEligibleAt: Date;
+    processingGeneration: number;
+  }): Promise<boolean>;
+  /** Opens a visible intervention and releases the current lease. */
+  openIntervention(input: {
+    orderId: string;
+    reason: string;
+    processingGeneration: number;
+  }): Promise<boolean>;
+  /** Clears an open intervention and reschedules the existing control record. */
+  resumeFromIntervention(input: {
+    orderId: string;
+    nextEligibleAt: Date;
+    processingGeneration?: number;
+  }): Promise<boolean>;
+  /** Clears the unresolved dispatched-call identity once its outcome is known. */
+  resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean>;
 }
 
 export interface DeadLetterRecord {
@@ -187,10 +237,9 @@ export function createOrderRecoveryScanner(dependencies: {
         leaseMs: recoveryLeaseMs,
       });
       if (!claim) continue;
-      const publicationAttempt = claim.attempt;
       try {
         await dependencies.publisher.enqueue(candidate.job, {
-          jobId: `recovery-${candidate.job.orderId}-${publicationAttempt}`,
+          jobId: claim.jobId,
           // Recovery is deliberately not constrained by the normal delivery budget.
           attempts: 1,
         });
@@ -201,6 +250,7 @@ export function createOrderRecoveryScanner(dependencies: {
           recoveryKey: candidate.recoveryKey,
           error: error instanceof Error ? error.message : String(error),
           nextAttemptAt: new Date(now.getTime() + 1_000),
+          processingGeneration: claim.processingGeneration,
         });
         dependencies.logger.error(
           { err: error, recoveryKey: candidate.recoveryKey, orderId: candidate.job.orderId },

@@ -28,12 +28,17 @@ function persistence(overrides: Partial<OrderRecoveryPersistence> = {}): OrderRe
         createdAt: new Date("2026-06-21T00:00:00.000Z"),
       },
     ]),
+    readControlRecord: vi.fn().mockResolvedValue(null),
     markEscalated: vi.fn(),
     recordDeadLetter: vi.fn(),
     claimForPublication: vi.fn().mockResolvedValue(null),
     markPublicationFailed: vi.fn(),
     markResolved: vi.fn(),
     reconcileTerminal: vi.fn().mockResolvedValue(0),
+    defer: vi.fn().mockResolvedValue(true),
+    openIntervention: vi.fn().mockResolvedValue(true),
+    resumeFromIntervention: vi.fn().mockResolvedValue(true),
+    resolveDispatchedCall: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
 }
@@ -41,7 +46,11 @@ function persistence(overrides: Partial<OrderRecoveryPersistence> = {}): OrderRe
 describe("order recovery scanner", () => {
   it("publishes attempt-scoped deterministic IDs and claims durable attempts", async () => {
     const store = persistence({
-      claimForPublication: vi.fn().mockResolvedValue({ attempt: 2 }),
+      claimForPublication: vi.fn().mockResolvedValue({
+        attempt: 2,
+        processingGeneration: 7,
+        jobId: `recovery-${job.orderId}-2`,
+      }),
       markPublicationFailed: vi.fn(),
     });
     const publisher = { enqueue: vi.fn().mockResolvedValue(undefined) };
@@ -61,6 +70,39 @@ describe("order recovery scanner", () => {
       attempts: 1,
     });
     expect(store.claimForPublication).toHaveBeenCalledOnce();
+    expect(store.claimForPublication).toHaveBeenCalledWith({
+      recoveryKey: "order:11111111-1111-4111-8111-111111111111",
+      now: new Date("2026-06-22T00:00:10.000Z"),
+      leaseMs: 30_000,
+    });
+  });
+
+  it("fences publication failure with the claimed processing generation", async () => {
+    const store = persistence({
+      claimForPublication: vi.fn().mockResolvedValue({
+        attempt: 2,
+        processingGeneration: 7,
+        jobId: `recovery-${job.orderId}-2`,
+      }),
+      markPublicationFailed: vi.fn(),
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: store,
+      publisher: { enqueue: vi.fn().mockRejectedValue(new Error("queue unavailable")) },
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => new Date("2026-06-22T00:00:10.000Z"),
+    });
+
+    await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, failed: 1 });
+    expect(store.markPublicationFailed).toHaveBeenCalledWith({
+      recoveryKey: "order:11111111-1111-4111-8111-111111111111",
+      error: "queue unavailable",
+      nextAttemptAt: new Date("2026-06-22T00:00:11.000Z"),
+      processingGeneration: 7,
+    });
   });
 
   it("escalates instead of publishing after the recovery budget", async () => {
@@ -97,7 +139,11 @@ describe("order recovery scanner", () => {
   it("ingests one failed BullMQ disposition without resetting an active claim on rescans", async () => {
     const claimForPublication = vi
       .fn()
-      .mockResolvedValueOnce({ attempt: 1 })
+      .mockResolvedValueOnce({
+        attempt: 1,
+        processingGeneration: 1,
+        jobId: `recovery-${job.orderId}-1`,
+      })
       .mockResolvedValueOnce(null);
     const store = persistence({ claimForPublication, markPublicationFailed: vi.fn() });
     const publisher = { enqueue: vi.fn().mockResolvedValue(undefined) };

@@ -1,3 +1,4 @@
+import type { ErpCallReference } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
@@ -31,6 +32,7 @@ const delivery: OrderProcessDeliveryMetadata = {
   attemptNumber: 2,
   attemptsMade: 1,
   maxAttempts: 3,
+  processingGeneration: 0,
 };
 
 describe("HTTP ERP order confirmation", () => {
@@ -78,9 +80,17 @@ describe("HTTP ERP order confirmation", () => {
       idempotencyKey: `erp-confirmation:${job.orderId}`,
       correlationId: job.correlationId,
     });
+    expect(attemptPersistence.recordDispatchIntent).toHaveBeenCalledOnce();
+    expect(attemptPersistence.recordDispatchIntent).toHaveBeenCalledWith({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: new Date("2026-06-22T00:00:00.000Z"),
+      expectedProcessingGeneration: 0,
+    });
     expect(attemptPersistence.recordAttempt).toHaveBeenCalledWith({
       job,
       delivery,
+      call: dispatchCall,
       status: "succeeded",
       terminal: true,
       httpStatus: 200,
@@ -462,7 +472,7 @@ describe("HTTP ERP order confirmation", () => {
   it.each([
     {
       name: "exhausted retryable",
-      delivery: { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 },
+      delivery: { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2, processingGeneration: 0 },
       response: {
         status: "failed" as const,
         httpStatus: 503,
@@ -474,7 +484,7 @@ describe("HTTP ERP order confirmation", () => {
     },
     {
       name: "non-retryable",
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
+      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2, processingGeneration: 0 },
       response: {
         status: "failed" as const,
         httpStatus: 400,
@@ -507,9 +517,18 @@ describe("HTTP ERP order confirmation", () => {
   });
 });
 
+const dispatchCall: ErpCallReference = {
+  erpCallId: "99999999-9999-4999-8999-999999999999",
+  orderId: job.orderId,
+  idempotencyKey: `erp-confirmation:${job.orderId}`,
+  processingGeneration: 0,
+  dispatchedAt: "2026-06-22T00:00:00.000Z",
+};
+
 function createAttemptPersistence(): ErpAttemptPersistence {
   return {
     findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
+    recordDispatchIntent: vi.fn().mockResolvedValue(dispatchCall),
     recordAttempt: vi.fn().mockResolvedValue(true),
   };
 }

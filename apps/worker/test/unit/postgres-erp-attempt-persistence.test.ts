@@ -33,6 +33,7 @@ function chain<T>(value: T) {
   return {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
+    for: vi.fn().mockReturnThis(),
     limit: vi.fn().mockResolvedValue(value),
   };
 }
@@ -71,7 +72,7 @@ describe("Postgres ERP attempt persistence", () => {
       },
     };
     const tx = {
-      select: vi.fn(() => chain(selectCalls++ < 2 ? [] : [existing])),
+      select: vi.fn(() => chain(selectCalls++ < 6 ? [] : [existing])),
       insert: vi.fn().mockReturnValueOnce(attemptInsert).mockReturnValueOnce(eventInsert),
     };
     const db = databaseWithTransaction(tx);

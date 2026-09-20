@@ -59,7 +59,9 @@ run("PostgreSQL ERP attempt recovery", () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
     return connection;
   };
-  const persistence = connection ? new PostgresErpAttemptPersistence(connection.db) : null;
+  const persistence = connection
+    ? new PostgresErpAttemptPersistence(connection.db, () => new Date("2026-06-22T00:00:01.000Z"))
+    : null;
   const requirePersistence = () => {
     if (!persistence) throw new Error("TEST_DATABASE_URL is required for integration tests.");
     return persistence;
@@ -211,7 +213,11 @@ run("PostgreSQL ERP attempt recovery", () => {
   it("replays a durably accepted ERP result after the ERP is replaced", async () => {
     const transitionPersistence = new PostgresOrderTransitionPersistence(
       requireConnection().db,
-      sequenceClock(new Date("2026-06-22T00:00:01.000Z"), new Date("2026-06-22T00:00:03.000Z")),
+      sequenceClock(
+        new Date("2026-06-22T00:00:01.000Z"),
+        new Date("2026-06-22T00:00:32.000Z"),
+        new Date("2026-06-22T00:00:33.000Z"),
+      ),
     );
     const confirmedPersistenceError = new Error(
       "interrupted before the confirmed order transition",

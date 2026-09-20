@@ -110,7 +110,7 @@ run("PostgreSQL durable order recovery boundary", () => {
         now,
         leaseMs: 30_000,
       }),
-    ).resolves.toEqual({ attempt: 1 });
+    ).resolves.toMatchObject({ attempt: 1, processingGeneration: 1 });
     now = new Date("2026-06-22T00:00:31.000Z");
     await requirePersistence().recordRecoverable({
       job,
@@ -131,7 +131,7 @@ run("PostgreSQL durable order recovery boundary", () => {
         now,
         leaseMs: 30_000,
       }),
-    ).resolves.toEqual({ attempt: 2 });
+    ).resolves.toMatchObject({ attempt: 2, processingGeneration: 2 });
     await requirePersistence().markResolved({ recoveryKey: `order:${ids.order}` });
     await expect(requirePersistence().findRecoverable({ limit: 10, now })).resolves.toHaveLength(0);
     const [row] = await requireConnection()

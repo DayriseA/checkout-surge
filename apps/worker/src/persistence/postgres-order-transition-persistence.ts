@@ -1,6 +1,11 @@
 import type { OrderProcessJob, OrderStatus } from "@checkout-surge/contracts";
-import { type CheckoutSurgeDatabase, orderEvents, orders } from "@checkout-surge/db";
-import { eq } from "drizzle-orm";
+import {
+  type CheckoutSurgeDatabase,
+  orderEvents,
+  orderRecoveryJobs,
+  orders,
+} from "@checkout-surge/db";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type {
   ConfirmedTransitionResult,
   FailedTransitionResult,
@@ -46,6 +51,12 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
   constructor(
     private readonly db: CheckoutSurgeDatabase,
     private readonly now: () => Date = () => new Date(),
+    /**
+     * Lease taken by the initial delivery when it claims the order's control
+     * record; keeps the recovery scanner from reclaiming while the first
+     * dispatch is still in flight.
+     */
+    private readonly controlLeaseMs: number = 30_000,
   ) {}
 
   transitionToProcessing(
@@ -59,11 +70,42 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         return { changed: false, status: order.status };
       }
 
+      const occurredAt = this.now();
       if (order.status === "processing") {
-        return { changed: false, status: "processing" };
+        // Pre-migration in-flight orders may not have a recovery/control row yet.
+        await ensureProcessingOwnership(tx, job, delivery, occurredAt, this.controlLeaseMs);
+        const processingGeneration = await claimExecutionOwnership(
+          tx,
+          job,
+          delivery,
+          occurredAt,
+          this.controlLeaseMs,
+        );
+        return {
+          changed: false,
+          status: "processing",
+          executionClaimed: processingGeneration !== null,
+          ...(processingGeneration === null ? {} : { processingGeneration }),
+        };
       }
 
-      const occurredAt = this.now();
+      // Creation/claim of the single per-order control record shares the
+      // transaction with the queued -> processing transition, so there is no
+      // ownerless initial path: a rolled-back transition cannot leave a
+      // processing order without a control record, and a claimed record cannot
+      // outlive a rolled-back transition.
+      await ensureProcessingOwnership(tx, job, delivery, occurredAt, this.controlLeaseMs);
+      const processingGeneration = await claimExecutionOwnership(
+        tx,
+        job,
+        delivery,
+        occurredAt,
+        this.controlLeaseMs,
+      );
+      if (processingGeneration === null) {
+        return { changed: false, status: "processing", executionClaimed: false };
+      }
+
       await tx
         .update(orders)
         .set({ status: "processing", processingAt: occurredAt, updatedAt: occurredAt })
@@ -73,6 +115,8 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
       return {
         changed: true,
         status: "processing",
+        processingGeneration,
+        executionClaimed: true,
       };
     });
   }
@@ -97,6 +141,7 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .set({ status: "confirmed", confirmedAt: occurredAt, updatedAt: occurredAt })
         .where(eq(orders.id, order.id));
       await appendTransitionEvent(tx, order, "order.confirmed", occurredAt, delivery);
+      await closeControlRecordForTerminalOrder(tx, order.id, occurredAt);
       return {
         changed: true,
         status: "confirmed",
@@ -132,6 +177,7 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         })
         .where(eq(orders.id, order.id));
       await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
+      await closeControlRecordForTerminalOrder(tx, order.id, occurredAt);
       return {
         changed: true,
         status: "failed",
@@ -158,6 +204,104 @@ async function lockAndValidateOrder(tx: Transaction, job: OrderProcessJob): Prom
   }
 
   return order;
+}
+
+/**
+ * Closes the order's control record inside the terminal transition
+ * transaction, whatever delivery path reached the terminal state. Scheduling
+ * duty ends with the business settlement; the recovery scanner's terminal
+ * reconciliation remains a backstop.
+ */
+async function closeControlRecordForTerminalOrder(
+  tx: Transaction,
+  orderId: string,
+  occurredAt: Date,
+): Promise<void> {
+  await tx
+    .update(orderRecoveryJobs)
+    .set({
+      status: "resolved",
+      resolvedAt: occurredAt,
+      nextAttemptAt: null,
+      leaseExpiresAt: null,
+      publicationOwner: null,
+      updatedAt: occurredAt,
+    })
+    .where(eq(orderRecoveryJobs.recoveryKey, `order:${orderId}`));
+}
+
+/**
+ * Creates or claims the order's single durable control record (D04). The
+ * insert is a no-op when the record already exists; an existing record keeps
+ * its generation, lease, and owner so later deliveries can be compared against
+ * the current processing generation.
+ */
+export async function ensureProcessingOwnership(
+  tx: Transaction,
+  job: OrderProcessJob,
+  delivery: OrderProcessDeliveryMetadata,
+  now: Date,
+  controlLeaseMs: number,
+): Promise<void> {
+  const deliveryId = delivery.deliveryId ?? job.orderId;
+  await tx
+    .insert(orderRecoveryJobs)
+    .values({
+      recoveryKey: `order:${job.orderId}`,
+      jobId: deliveryId,
+      sourceJobId: deliveryId,
+      sourceDisposition: `${deliveryId}:${delivery.attemptNumber}`,
+      orderId: job.orderId,
+      payload: job as unknown as Record<string, unknown>,
+      reason: "initial_dispatch_ownership",
+      status: "enqueued",
+      attempts: 0,
+      processingGeneration: 0,
+      nextAttemptAt: now,
+      claimedAt: now,
+      leaseExpiresAt: new Date(now.getTime() + controlLeaseMs),
+      publicationOwner: deliveryId,
+    })
+    .onConflictDoNothing({ target: orderRecoveryJobs.recoveryKey });
+}
+
+async function claimExecutionOwnership(
+  tx: Transaction,
+  job: OrderProcessJob,
+  delivery: OrderProcessDeliveryMetadata,
+  now: Date,
+  controlLeaseMs: number,
+): Promise<number | null> {
+  const deliveryId = delivery.deliveryId ?? job.orderId;
+  const [claimed] = await tx
+    .update(orderRecoveryJobs)
+    .set({
+      status: "enqueued",
+      processingGeneration: sql`CASE
+        WHEN ${orderRecoveryJobs.publicationOwner} = ${deliveryId}
+          THEN ${orderRecoveryJobs.processingGeneration}
+        ELSE ${orderRecoveryJobs.processingGeneration} + 1
+      END`,
+      claimedAt: now,
+      leaseExpiresAt: new Date(now.getTime() + controlLeaseMs),
+      publicationOwner: deliveryId,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(orderRecoveryJobs.orderId, job.orderId),
+        inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
+        isNull(orderRecoveryJobs.interventionReason),
+        or(isNull(orderRecoveryJobs.nextAttemptAt), lte(orderRecoveryJobs.nextAttemptAt, now)),
+        or(
+          eq(orderRecoveryJobs.publicationOwner, deliveryId),
+          isNull(orderRecoveryJobs.leaseExpiresAt),
+          lte(orderRecoveryJobs.leaseExpiresAt, now),
+        ),
+      ),
+    )
+    .returning({ processingGeneration: orderRecoveryJobs.processingGeneration });
+  return claimed?.processingGeneration ?? null;
 }
 
 function findMismatchedIdentityFields(order: DurableOrder, job: OrderProcessJob): string[] {

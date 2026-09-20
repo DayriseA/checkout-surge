@@ -463,6 +463,34 @@ describe("focused demo maintenance workflows", () => {
       expect(cleanRuns).not.toHaveBeenCalled();
     });
 
+    it("rejects outstanding work before queue or Redis cleanup", async () => {
+      const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
+      const deleteRedisState = vi.fn(async () => ({ deletedKeyCount: 0 }));
+      const deleteDurable = vi.fn(async () => ({ outcome: "deleted" as const }));
+      const service = createTeardownService({
+        db: requireConnection(connection).db,
+        redis: requireRedis(redis),
+        queueMaintenance: { cleanRuns },
+        inspectGeneratedRunTeardown: async () => ({ outcome: "outstanding_work" }),
+        deleteGeneratedRunRedisState: deleteRedisState,
+        deleteGeneratedRunDurable: deleteDurable,
+        logger: createSilentLogger("api"),
+      });
+
+      await expect(
+        service.teardownGeneratedRun({
+          runId: ids.completedRun,
+          correlationId: "corr-outstanding-work",
+        }),
+      ).rejects.toMatchObject({
+        statusCode: 409,
+        details: { conflictReason: "outstanding_work" },
+      });
+      expect(cleanRuns).not.toHaveBeenCalled();
+      expect(deleteRedisState).not.toHaveBeenCalled();
+      expect(deleteDurable).not.toHaveBeenCalled();
+    });
+
     it("rejects catalog ownership without queue, Redis, or durable mutation", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);

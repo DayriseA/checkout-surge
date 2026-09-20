@@ -53,6 +53,7 @@ describe("demo-run projections", () => {
       trafficEndedAt: new Date("2026-07-21T10:00:02.000Z"),
       finalizedAt: new Date("2026-07-21T10:00:03.000Z"),
       adminResetCompletedAt: null,
+      administrativeStop: null,
       failureReason: "traffic_failed",
       createdAt: new Date("2026-07-21T09:59:59.000Z"),
       updatedAt: new Date("2026-07-21T10:00:03.000Z"),

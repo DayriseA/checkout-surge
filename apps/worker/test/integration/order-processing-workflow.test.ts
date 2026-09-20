@@ -292,6 +292,8 @@ describe("PostgreSQL worker order transitions", () => {
     expect(processingResults.find((result) => !result.changed)).toEqual({
       changed: false,
       status: "processing",
+      processingGeneration: 0,
+      executionClaimed: true,
     });
     expect(confirmationResults.map((result) => result.changed).sort()).toEqual([false, true]);
     expect(events.filter((event) => event.eventName === "order.processing")).toHaveLength(1);
