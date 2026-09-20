@@ -752,6 +752,7 @@ describe("focused demo maintenance workflows", () => {
           correlationId: "corr-active-business",
           quantity: 1,
           queuedAt: "2026-06-20T00:00:03.000Z",
+          processingGeneration: 0,
         });
         await boundedResetBarrier(processing.promise);
         await expect(service.reset("held-timeout")).rejects.toMatchObject({

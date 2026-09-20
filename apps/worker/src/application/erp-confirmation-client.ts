@@ -15,10 +15,7 @@ import {
   recognizedErpErrorCodeDispositions,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
-import type {
-  OrderConfirmation,
-  OrderProcessDeliveryMetadata,
-} from "./order-process-job-handler.js";
+import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
 import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
 
 export type ErpOperationKind = "dispatched_confirmation" | "status_lookup" | "non_call_deferral";
@@ -60,8 +57,10 @@ export interface ErpAttemptPersistence {
     idempotencyKey: string;
     dispatchedAt: Date;
     expectedProcessingGeneration: number;
+    supersedesErpCallId?: string;
   }): Promise<ErpCallReference>;
   recordAttempt(record: ErpAttemptRecord): Promise<boolean>;
+  findUnresolvedCall?(orderId: string): Promise<ErpCallReference | null>;
 }
 
 export type ErpConfirmationOutcome = {
@@ -177,27 +176,20 @@ export function isAcceptedErpConfirmationPersistenceError(
   return error instanceof ErpAcceptedConfirmationPersistenceError;
 }
 
-/** Temporary task-04 adapter classification; task 05 removes delivery retry ownership. */
-export function isTemporaryErpConfirmationError(error: unknown): boolean {
-  if (isErpAttemptPersistenceError(error)) return true;
-  const disposition = confirmationErrorOutcome(error)?.disposition;
-  return (
-    disposition === "capacity_rejected" ||
-    disposition === "temporarily_unavailable" ||
-    disposition === "uncertain_result"
-  );
-}
-
 export function isTemporaryErpDependencyError(error: unknown): boolean {
   if (isErpAttemptPersistenceError(error)) return false;
-  const disposition = confirmationErrorOutcome(error)?.disposition;
-  return disposition === "temporarily_unavailable" || disposition === "uncertain_result";
-}
-
-/** Temporary adapter guard: only a shared permanent rejection may terminalize an order. */
-export function shouldRetainOrderForErpOutcome(error: unknown): boolean {
-  const outcome = confirmationErrorOutcome(error);
-  return outcome !== undefined && outcome.disposition !== "permanent_rejection";
+  if (
+    error instanceof ErpConfirmationFailedError ||
+    error instanceof ErpConfirmationInvalidResponseError ||
+    error instanceof ErpConfirmationRequestError ||
+    error instanceof ErpConfirmationTimeoutError
+  ) {
+    return (
+      error.outcome?.disposition === "temporarily_unavailable" ||
+      error.outcome?.disposition === "uncertain_result"
+    );
+  }
+  return false;
 }
 
 export interface HttpErpOrderConfirmationOptions {
@@ -211,7 +203,7 @@ export interface HttpErpOrderConfirmationOptions {
   logger?: Pick<CheckoutSurgeLogger, "warn">;
 }
 
-export class HttpErpOrderConfirmation implements OrderConfirmation {
+export class HttpErpOrderConfirmation {
   private readonly confirmationUrl: URL;
   private readonly lookupUrl: URL;
   private readonly fetch: typeof fetch;
@@ -222,22 +214,6 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     this.lookupUrl = new URL(erpConfirmationLookupPath, options.baseUrl);
     this.fetch = options.fetch ?? fetch;
     this.now = options.now ?? (() => new Date());
-  }
-
-  /** Temporary adapter until task 05 moves the live handler to explicit outcomes. */
-  async confirm(
-    job: OrderProcessJob,
-    delivery: OrderProcessDeliveryMetadata,
-  ): Promise<ErpHealthLearningResult> {
-    if (await this.findSuccessfulAttempt(job)) return { erpHealthLearningEligible: false };
-    const outcome = await this.dispatch(job, delivery);
-    if (outcome.disposition === "succeeded") {
-      return {
-        erpHealthLearningEligible: !outcome.replayed,
-        ...(outcome.response ? { response: outcome.response } : {}),
-      };
-    }
-    throw outcomeToLegacyError(outcome, this.options.requestTimeoutMs);
   }
 
   async dispatch(
@@ -252,6 +228,9 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       idempotencyKey: toConfirmationIdempotencyKey(job),
       dispatchedAt: startedAt,
       expectedProcessingGeneration: requireProcessingGeneration(delivery),
+      ...(delivery.supersedesErpCallId
+        ? { supersedesErpCallId: delivery.supersedesErpCallId }
+        : {}),
     });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -384,6 +363,10 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     return this.recordAttempt(record);
   }
 
+  findUnresolvedCall(orderId: string): Promise<ErpCallReference | null> {
+    return this.options.attemptPersistence.findUnresolvedCall?.(orderId) ?? Promise.resolve(null);
+  }
+
   private retryAfterMs(value: string | null, now: Date): number | undefined {
     if (value === null) return undefined;
     const parsed = parseRetryAfter(value, now);
@@ -405,6 +388,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     idempotencyKey: string;
     dispatchedAt: Date;
     expectedProcessingGeneration: number;
+    supersedesErpCallId?: string;
   }): Promise<ErpCallReference> {
     try {
       return await this.options.attemptPersistence.recordDispatchIntent(input);
@@ -556,29 +540,6 @@ function toAttemptRecord(
     finishedAt: outcome.finishedAt,
     ...(outcome.response ? { response: outcome.response } : {}),
   };
-}
-
-function outcomeToLegacyError(outcome: ErpConfirmationOutcome, timeoutMs: number): Error {
-  if (outcome.disposition === "uncertain_result") {
-    return new ErpConfirmationTimeoutError(timeoutMs, true, outcome);
-  }
-  if (outcome.disposition === "temporarily_unavailable" && !outcome.response) {
-    return new ErpConfirmationRequestError(outcome.cause, true, outcome);
-  }
-  if (outcome.response) return new ErpConfirmationFailedError(outcome.response, true, outcome);
-  return new ErpConfirmationInvalidResponseError(outcome.httpStatus ?? 500, true, outcome);
-}
-
-function confirmationErrorOutcome(error: unknown): ErpConfirmationOutcome | undefined {
-  if (
-    error instanceof ErpConfirmationFailedError ||
-    error instanceof ErpConfirmationInvalidResponseError ||
-    error instanceof ErpConfirmationRequestError ||
-    error instanceof ErpConfirmationTimeoutError
-  ) {
-    return error.outcome;
-  }
-  return undefined;
 }
 
 function recognizedStatusMatches(code: string, status: number): boolean {

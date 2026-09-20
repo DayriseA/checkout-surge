@@ -6,6 +6,7 @@ import type {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { OrderJobPublisher } from "./order-job-publisher.js";
 import type { OrderRecoveryHandoff, RecoverableOrderHandoff } from "./order-process-job-handler.js";
+import { acceptedRunSnapshotInterventionReason } from "./run-backpressure.js";
 
 export type { RecoverableOrderHandoff } from "./order-process-job-handler.js";
 
@@ -157,7 +158,6 @@ export function createOrderRecoveryScanner(dependencies: {
   let timer: NodeJS.Timeout | null = null;
   let running: Promise<void> | null = null;
   let closed = false;
-  const maxRecoveryAttempts = dependencies.maxRecoveryAttempts ?? 100;
   // ERP request timeout defaults to 2s; this lease leaves room for DB writes,
   // BullMQ scheduling and transient latency before another scanner can reclaim.
   const recoveryLeaseMs = dependencies.recoveryLeaseMs ?? 30_000;
@@ -209,7 +209,7 @@ export function createOrderRecoveryScanner(dependencies: {
     });
     let enqueued = 0;
     let failed = 0;
-    let escalated = 0;
+    const escalated = 0;
     const oldestAgeMs =
       candidates.length > 0
         ? Math.max(
@@ -223,14 +223,6 @@ export function createOrderRecoveryScanner(dependencies: {
       0,
     );
     for (const candidate of candidates) {
-      if (candidate.attempts >= maxRecoveryAttempts) {
-        await dependencies.persistence.markEscalated({
-          recoveryKey: candidate.recoveryKey,
-          error: "recovery_attempt_limit_exceeded",
-        });
-        escalated += 1;
-        continue;
-      }
       const claim = await dependencies.persistence.claimForPublication({
         recoveryKey: candidate.recoveryKey,
         now,
@@ -238,13 +230,21 @@ export function createOrderRecoveryScanner(dependencies: {
       });
       if (!claim) continue;
       try {
-        await dependencies.publisher.enqueue(candidate.job, {
-          jobId: claim.jobId,
-          // Recovery is deliberately not constrained by the normal delivery budget.
-          attempts: 1,
-        });
+        await dependencies.publisher.enqueue(
+          { ...candidate.job, processingGeneration: claim.processingGeneration },
+          { jobId: claim.jobId, attempts: 1 },
+        );
         enqueued += 1;
       } catch (error) {
+        const snapshotReason = acceptedRunSnapshotInterventionReason(error);
+        if (snapshotReason) {
+          await dependencies.persistence.openIntervention({
+            orderId: candidate.job.orderId,
+            reason: snapshotReason,
+            processingGeneration: claim.processingGeneration,
+          });
+          continue;
+        }
         failed += 1;
         await dependencies.persistence.markPublicationFailed({
           recoveryKey: candidate.recoveryKey,

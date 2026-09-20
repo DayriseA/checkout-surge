@@ -515,6 +515,8 @@ export const erpScopeResilienceState = pgTable("erp_scope_resilience_state", {
   scope: text("scope").primaryKey(),
   cooldownExpiresAt: timestamp("cooldown_expires_at", { withTimezone: true }),
   circuitOpenExpiresAt: timestamp("circuit_open_expires_at", { withTimezone: true }),
+  interventionReason: text("intervention_reason"),
+  interventionOpenedAt: timestamp("intervention_opened_at", { withTimezone: true }),
   updatedAt: updatedAt(),
 });
 

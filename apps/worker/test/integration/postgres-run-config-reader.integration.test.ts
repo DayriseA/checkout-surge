@@ -296,6 +296,7 @@ function runOrderJob() {
     runId,
     quantity: 1,
     queuedAt: "2026-06-21T00:00:01.000Z",
+    processingGeneration: 0,
   };
 }
 

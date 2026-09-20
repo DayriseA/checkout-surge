@@ -1,5 +1,4 @@
 import {
-  type BackpressureConfig,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
@@ -54,17 +53,13 @@ export function createOrderProcessJobPublisher(
   retryOptions: OrderProcessRetryOptions = defaultRetryOptions,
 ): BullMqOrderProcessJobPublisher {
   return {
-    async enqueue(input, options) {
+    async enqueue(input, _options) {
       const job = orderProcessJobSchema.parse(input);
-      if (job.runId && !options?.retryPolicy) {
-        throw new Error(`Frozen retry policy is required for order job run ${job.runId}.`);
-      }
-      const runPolicy: BackpressureConfig["retryPolicy"] | undefined = options?.retryPolicy;
       await queue.add(orderProcessJobName, job, {
-        attempts: runPolicy?.maxAttempts ?? retryOptions.maxAttempts,
+        attempts: 1,
         backoff: {
           type: "exponential",
-          delay: runPolicy?.initialBackoffMs ?? retryOptions.backoffBaseMs,
+          delay: retryOptions.backoffBaseMs,
         },
         jobId: job.orderId,
       });

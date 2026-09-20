@@ -2,10 +2,7 @@ import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { ErpCircuitOpenError } from "../../src/application/erp-circuit-breaker.js";
-import {
-  ErpAcceptedConfirmationPersistenceError,
-  isErpAttemptPersistenceError,
-} from "../../src/application/erp-confirmation-client.js";
+import { ErpAcceptedConfirmationPersistenceError } from "../../src/application/erp-confirmation-client.js";
 import {
   createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
   hasRemainingAttempts,
@@ -24,6 +21,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-worker-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const runScopedJob: OrderProcessJob = {
   ...job,
@@ -357,8 +355,6 @@ describe("order-process application workflow", () => {
       confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
       persistence,
       logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: () => true,
-      shouldRetryWithoutFailingOrder: isErpAttemptPersistenceError,
     });
 
     await expect(
@@ -464,8 +460,6 @@ describe("order-process application workflow", () => {
       confirmation: { confirm: vi.fn().mockRejectedValue(circuitOpenError) },
       persistence,
       logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: (error) => error instanceof ErpCircuitOpenError,
-      shouldRetryWithoutFailingOrder: (error) => error instanceof ErpCircuitOpenError,
     });
 
     await expect(
@@ -497,27 +491,25 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
-  it("persists stable failure details and propagates the original confirmation error", async () => {
-    const confirmationError = new Error("Local confirmation rejected the order");
+  it("terminally fails only an explicit permanent rejection", async () => {
     const persistence = createPersistence();
     const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      confirmation: {
+        confirm: vi.fn().mockResolvedValue({
+          disposition: "permanent_rejection",
+          errorCode: "erp_permanent_rejection",
+          errorMessage: "Local confirmation rejected the order",
+        }),
+      },
       persistence,
       logger: createSilentLogger("worker"),
     });
 
-    let thrown: unknown;
-    try {
-      await handler.handle(job, delivery);
-    } catch (error) {
-      thrown = error;
-    }
-
-    expect(thrown).toBe(confirmationError);
+    await handler.handle(job, delivery);
     expect(persistence.transitionToFailed).toHaveBeenCalledWith(
       job,
       {
-        code: "order_confirmation_failed",
+        code: "erp_permanent_rejection",
         message: "Local confirmation rejected the order",
       },
       delivery,
@@ -534,7 +526,6 @@ describe("order-process application workflow", () => {
       confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
       persistence,
       logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: () => true,
     });
 
     await expect(
@@ -545,37 +536,38 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
-  it("publishes a retrying business outcome update before retrying temporary confirmation failures", async () => {
-    const confirmationError = Object.assign(new Error("ERP temporarily unavailable"), {
-      attemptRecorded: true,
-    });
+  it("publishes a retrying business outcome update after durable deferral", async () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      confirmation: {
+        confirm: vi.fn().mockResolvedValue({ disposition: "deferred", reason: "erp_unavailable" }),
+      },
       persistence: createPersistence(),
       logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: () => true,
       publishBusinessOutcomeUpdate,
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 3 }),
-    ).rejects.toBe(confirmationError);
+    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 });
 
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "retrying");
   });
 
-  it("publishes a failed business outcome update after terminal confirmation failures", async () => {
-    const confirmationError = new Error("ERP rejected the order");
+  it("publishes a failed business outcome update after permanent rejection", async () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      confirmation: {
+        confirm: vi.fn().mockResolvedValue({
+          disposition: "permanent_rejection",
+          errorCode: "erp_permanent_rejection",
+          errorMessage: "ERP rejected the order",
+        }),
+      },
       persistence: createPersistence(),
       logger: createSilentLogger("worker"),
       publishBusinessOutcomeUpdate,
     });
 
-    await expect(handler.handle(job, delivery)).rejects.toBe(confirmationError);
+    await handler.handle(job, delivery);
 
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "processing");
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "failed");
@@ -590,7 +582,6 @@ describe("order-process application workflow", () => {
         transitionToProcessing: vi.fn().mockResolvedValue({ changed: false, status: "processing" }),
       }),
       logger: createSilentLogger("worker"),
-      shouldRetryWithoutFailingOrder: () => true,
       publishBusinessOutcomeUpdate: retryPublish,
     });
     await expect(retryHandler.handle(job, { ...delivery, maxAttempts: 4 })).rejects.toBe(
@@ -612,38 +603,32 @@ describe("order-process application workflow", () => {
     expect(terminalPublish).not.toHaveBeenCalled();
   });
 
-  it("marks exhausted temporary confirmation failures as terminal order failures", async () => {
-    const confirmationError = new Error("ERP still unavailable");
+  it("retains temporary confirmation failures beyond the old attempt budget", async () => {
     const persistence = createPersistence();
     const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      confirmation: {
+        confirm: vi.fn().mockResolvedValue({ disposition: "deferred", reason: "erp_unavailable" }),
+      },
       persistence,
       logger: createSilentLogger("worker"),
-      isTemporaryConfirmationFailure: () => true,
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
-    ).rejects.toBe(confirmationError);
-
-    expect(persistence.transitionToFailed).toHaveBeenCalledWith(
-      job,
-      {
-        code: "erp_retries_exhausted",
-        message: "ERP still unavailable",
-      },
-      { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
-    );
+    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 });
+    expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
   it("preserves confirmation and failure-persistence errors together", async () => {
-    const confirmationError = new Error("confirmation unavailable");
+    const confirmationError = {
+      disposition: "permanent_rejection" as const,
+      errorCode: "erp_permanent_rejection",
+      errorMessage: "confirmation unavailable",
+    };
     const persistenceError = new Error("database unavailable");
     const persistence = createPersistence({
       transitionToFailed: vi.fn().mockRejectedValue(persistenceError),
     });
     const handler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(confirmationError) },
+      confirmation: { confirm: vi.fn().mockResolvedValue(confirmationError) },
       persistence,
       logger: createSilentLogger("worker"),
     });

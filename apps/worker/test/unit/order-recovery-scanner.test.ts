@@ -14,6 +14,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-recovery",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 function persistence(overrides: Partial<OrderRecoveryPersistence> = {}): OrderRecoveryPersistence {
@@ -65,10 +66,13 @@ describe("order recovery scanner", () => {
     });
 
     await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, enqueued: 1 });
-    expect(publisher.enqueue).toHaveBeenCalledWith(job, {
-      jobId: "recovery-11111111-1111-4111-8111-111111111111-2",
-      attempts: 1,
-    });
+    expect(publisher.enqueue).toHaveBeenCalledWith(
+      { ...job, processingGeneration: 7 },
+      {
+        jobId: "recovery-11111111-1111-4111-8111-111111111111-2",
+        attempts: 1,
+      },
+    );
     expect(store.claimForPublication).toHaveBeenCalledOnce();
     expect(store.claimForPublication).toHaveBeenCalledWith({
       recoveryKey: "order:11111111-1111-4111-8111-111111111111",
@@ -105,19 +109,52 @@ describe("order recovery scanner", () => {
     });
   });
 
-  it("escalates instead of publishing after the recovery budget", async () => {
+  it("opens intervention when recovery publication finds a corrupt run snapshot", async () => {
+    const corruption = new Error("invalid snapshot");
+    corruption.name = "PersistedRunConfigCorruptionError";
+    const store = persistence({
+      claimForPublication: vi.fn().mockResolvedValue({
+        attempt: 2,
+        processingGeneration: 7,
+        jobId: `recovery-${job.orderId}-2`,
+      }),
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: store,
+      publisher: { enqueue: vi.fn().mockRejectedValue(corruption) },
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+    });
+
+    await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, failed: 0 });
+    expect(store.openIntervention).toHaveBeenCalledWith({
+      orderId: job.orderId,
+      reason: "accepted_run_snapshot_invalid",
+      processingGeneration: 7,
+    });
+    expect(store.markPublicationFailed).not.toHaveBeenCalled();
+  });
+
+  it("does not abandon work after the former recovery budget", async () => {
     const store = persistence({
       findRecoverable: vi.fn().mockResolvedValue([
         {
           recoveryKey: "order:key",
           job,
           reason: "persist",
-          attempts: 3,
+          attempts: 101,
           createdAt: new Date("2026-06-20T00:00:00.000Z"),
         },
       ]),
+      claimForPublication: vi.fn().mockResolvedValue({
+        attempt: 102,
+        processingGeneration: 102,
+        jobId: `recovery-${job.orderId}-102`,
+      }),
     });
-    const publisher = { enqueue: vi.fn() };
+    const publisher = { enqueue: vi.fn().mockResolvedValue(undefined) };
     const scanner = createOrderRecoveryScanner({
       persistence: store,
       publisher,
@@ -128,12 +165,13 @@ describe("order recovery scanner", () => {
       maxRecoveryAttempts: 3,
     });
 
-    await expect(scanner.scanOnce()).resolves.toMatchObject({ escalated: 1, enqueued: 0 });
-    expect(store.markEscalated).toHaveBeenCalledWith({
-      recoveryKey: "order:key",
-      error: "recovery_attempt_limit_exceeded",
-    });
-    expect(publisher.enqueue).not.toHaveBeenCalled();
+    await expect(scanner.scanOnce()).resolves.toMatchObject({ escalated: 0, enqueued: 1 });
+    expect(store.markEscalated).not.toHaveBeenCalled();
+    expect(store.claimForPublication).toHaveBeenCalledOnce();
+    expect(publisher.enqueue).toHaveBeenCalledWith(
+      { ...job, processingGeneration: 102 },
+      { jobId: `recovery-${job.orderId}-102`, attempts: 1 },
+    );
   });
 
   it("ingests one failed BullMQ disposition without resetting an active claim on rescans", async () => {

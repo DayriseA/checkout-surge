@@ -34,6 +34,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-worker-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const notificationJob: NotificationRecordJob = {
   orderId: job.orderId,
@@ -111,6 +112,7 @@ describe("BullMQ order-processing boundary", () => {
       attemptsMade: 0,
       maxAttempts: 1,
       deliveryId: job.orderId,
+      processingGeneration: 0,
     });
   });
 
@@ -149,8 +151,20 @@ describe("BullMQ order-processing boundary", () => {
       interval: 25,
     });
     expect(deliveries).toEqual([
-      { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2, deliveryId: job.orderId },
-      { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2, deliveryId: job.orderId },
+      {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 2,
+        deliveryId: job.orderId,
+        processingGeneration: 0,
+      },
+      {
+        attemptNumber: 2,
+        attemptsMade: 1,
+        maxAttempts: 2,
+        deliveryId: job.orderId,
+        processingGeneration: 0,
+      },
     ]);
     expect((await queue.getJob(job.orderId))?.attemptsMade).toBe(2);
   });
@@ -295,7 +309,7 @@ describe("BullMQ order-processing boundary", () => {
     await scanner.scanOnce();
     expect(await queue.getJob(`recovery-${job.orderId}-1`)).toBeDefined();
     consumer.start();
-    await expect(handled.promise).resolves.toEqual(job);
+    await expect(handled.promise).resolves.toEqual({ ...job, processingGeneration: 1 });
     expect(confirmationCalls).toHaveBeenCalledOnce();
   });
 

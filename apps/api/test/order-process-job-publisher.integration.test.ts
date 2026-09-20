@@ -15,6 +15,7 @@ const base: OrderProcessJob = {
   correlationId: "corr-a",
   quantity: 1,
   queuedAt: "2026-07-13T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 function url() {
@@ -22,7 +23,7 @@ function url() {
   return process.env.TEST_REDIS_URL;
 }
 
-describe("run retry policy BullMQ storage", () => {
+describe("single-attempt BullMQ wake-ups", () => {
   let queue: Queue<OrderProcessJob, void, typeof orderProcessJobName>;
   beforeEach(async () => {
     queue = new Queue(orderProcessBullMqQueueName, { connection: { url: url() } });
@@ -32,7 +33,7 @@ describe("run retry policy BullMQ storage", () => {
     await queue.close();
   });
 
-  it("stores independent frozen policies and deterministic IDs", async () => {
+  it("stores one delivery per generation and deterministic IDs", async () => {
     const publisher = createBullMqOrderProcessJobPublisher(
       { url: url() },
       { maxAttempts: 99, backoffBaseMs: 9999 },
@@ -55,12 +56,12 @@ describe("run retry policy BullMQ storage", () => {
     const firstStored = await queue.getJob(base.orderId);
     const secondStored = await queue.getJob(second.orderId);
     expect(firstStored?.opts).toMatchObject({
-      attempts: 6,
-      backoff: { type: "exponential", delay: 750 },
+      attempts: 1,
+      backoff: { type: "exponential", delay: 9999 },
     });
     expect(secondStored?.opts).toMatchObject({
-      attempts: 3,
-      backoff: { type: "exponential", delay: 0 },
+      attempts: 1,
+      backoff: { type: "exponential", delay: 9999 },
     });
     expect(await queue.getJobCounts("waiting")).toMatchObject({ waiting: 2 });
     await publisher.close();

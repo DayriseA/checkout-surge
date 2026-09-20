@@ -76,7 +76,8 @@ export class ErpCircuitBreaker implements OrderConfirmation {
 
     try {
       const result = await this.confirmation.confirm(job, delivery);
-      if (isHealthLearningEligible(result)) this.close();
+      if (isCountedOutcome(result)) this.recordFailure();
+      else if (isHealthLearningEligible(result)) this.close();
       return result;
     } catch (error) {
       if (this.isCountedFailure(error)) {
@@ -91,10 +92,10 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     }
   }
 
-  /** Lookups obey an outage circuit but never probe, close, or otherwise learn from it. */
+  /** Lookups wait out an open circuit but never probe, close, or otherwise learn from it. */
   assertAvailable(): void {
     this.enterHalfOpenIfReady();
-    if (this.state !== "closed") {
+    if (this.state === "open") {
       throw new ErpCircuitOpenError(this.retryAfterMs());
     }
   }
@@ -191,10 +192,24 @@ export class ErpCircuitBreaker implements OrderConfirmation {
 }
 
 function isHealthLearningEligible(result: unknown): boolean {
-  return !(
+  if (typeof result !== "object" || result === null) return true;
+  if ("erpHealthLearningEligible" in result && result.erpHealthLearningEligible === false) {
+    return false;
+  }
+  if ("disposition" in result) {
+    return (
+      (result.disposition === "succeeded" || result.disposition === "permanent_rejection") &&
+      (!("replayed" in result) || result.replayed !== true)
+    );
+  }
+  return true;
+}
+
+function isCountedOutcome(result: unknown): boolean {
+  return (
     typeof result === "object" &&
     result !== null &&
-    "erpHealthLearningEligible" in result &&
-    result.erpHealthLearningEligible === false
+    "disposition" in result &&
+    (result.disposition === "temporarily_unavailable" || result.disposition === "uncertain_result")
   );
 }

@@ -1,5 +1,4 @@
 import {
-  type BackpressureConfig,
   idempotencyKeySchema,
   type OrderProcessJob,
   type SecuredReservationHold,
@@ -22,10 +21,7 @@ import type {
   PersistedBuyAcceptance,
   StockReservationGateway,
 } from "./reserve-order-service.js";
-import {
-  DefinitivePersistenceRejectionError,
-  isPersistedBuyForReservation,
-} from "./reserve-order-service.js";
+import { isPersistedBuyForReservation } from "./reserve-order-service.js";
 import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export interface PendingPersistenceRecoverySummary {
@@ -398,10 +394,6 @@ export class PendingPersistenceRecoveryService {
     let auditResolved = false;
     let recoveryResult: { persisted: PersistedBuyAcceptance; materialized: boolean } | undefined;
     try {
-      const retryPolicyResolution = await this.resolveRunRetryPolicy(
-        reservation,
-        scope.runRetryPolicyResolver,
-      );
       recoveryResult = await this.withPendingPersistenceLock(
         reservation,
         scope.persistence,
@@ -410,7 +402,6 @@ export class PendingPersistenceRecoveryService {
             reservation,
             persistence,
             runDisposition,
-            retryPolicyResolution,
             scope.orderProcessJobPublisher,
           ),
       );
@@ -582,10 +573,6 @@ export class PendingPersistenceRecoveryService {
     reservation: SecuredReservationHold,
     persistence: BuyPersistenceOperations,
     runDisposition: "admissible" | "terminal" | "invalid",
-    retryPolicyResolution: {
-      retryPolicy?: BackpressureConfig["retryPolicy"];
-      error?: unknown;
-    },
     orderProcessJobPublisher: OrderProcessJobPublisher,
   ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean }> {
     let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
@@ -597,7 +584,6 @@ export class PendingPersistenceRecoveryService {
       if (runDisposition !== "admissible") {
         throw new Error(`Run disposition ${runDisposition} prevents durable materialization.`);
       }
-      if (retryPolicyResolution.error) throw retryPolicyResolution.error;
       try {
         persisted = await persistence.persistSecuredReservation({ reservation });
         materialized = true;
@@ -612,15 +598,8 @@ export class PendingPersistenceRecoveryService {
     if (runDisposition === "invalid") {
       throw new Error("Durable buy exists, but its run/sale ownership is invalid.");
     }
-    if (retryPolicyResolution.error) throw retryPolicyResolution.error;
     const job = toOrderProcessJob(persisted);
-    if (retryPolicyResolution.retryPolicy) {
-      await orderProcessJobPublisher.enqueue(job, {
-        retryPolicy: retryPolicyResolution.retryPolicy,
-      });
-    } else {
-      await orderProcessJobPublisher.enqueue(job);
-    }
+    await orderProcessJobPublisher.enqueue(job);
     return { persisted, materialized };
   }
 
@@ -642,25 +621,6 @@ export class PendingPersistenceRecoveryService {
       });
     }
     return operation(ownerPersistence, "admissible");
-  }
-
-  private async resolveRunRetryPolicy(
-    reservation: SecuredReservationHold,
-    resolver = this.options.runRetryPolicyResolver,
-  ): Promise<{ retryPolicy?: BackpressureConfig["retryPolicy"]; error?: unknown }> {
-    if (!reservation.runId || !resolver) return {};
-    try {
-      const retryPolicy = await resolver.resolve(reservation.runId);
-      return retryPolicy
-        ? { retryPolicy }
-        : {
-            error: new DefinitivePersistenceRejectionError(
-              `Accepted run snapshot was not found for order job run ${reservation.runId}.`,
-            ),
-          };
-    } catch (error) {
-      return { error };
-    }
   }
 
   private async readRecord(record: PendingPersistenceRecord) {
@@ -849,6 +809,7 @@ function toOrderProcessJob(persisted: PersistedBuyAcceptance): OrderProcessJob {
     ...(persisted.order.runId ? { runId: persisted.order.runId } : {}),
     quantity: persisted.order.quantity,
     queuedAt: persisted.order.queuedAt,
+    processingGeneration: 0,
   };
 }
 

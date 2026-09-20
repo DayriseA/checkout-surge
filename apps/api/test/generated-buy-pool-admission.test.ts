@@ -207,7 +207,7 @@ describe("generated buy bounded-pool admission", () => {
           releaseAdmissionEnqueues?.();
         }
         await allAdmissionEnqueues;
-        expect(options).toEqual({ retryPolicy });
+        expect(options).toBeUndefined();
         await publisher.enqueue(job, options);
       },
     };
@@ -281,8 +281,8 @@ describe("generated buy bounded-pool admission", () => {
       expect(jobs).toHaveLength(poolSize);
       for (const job of jobs) {
         expect(job.opts).toMatchObject({
-          attempts: retryPolicy.maxAttempts,
-          backoff: { type: "exponential", delay: retryPolicy.initialBackoffMs },
+          attempts: 1,
+          backoff: { type: "exponential", delay: 9999 },
         });
       }
       const advisoryLocks = await connection.sql`

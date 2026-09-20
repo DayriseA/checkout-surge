@@ -3802,6 +3802,7 @@ describe("API buy persistence", () => {
         correlationId: "queued-api-correlation",
         quantity: 2,
         queuedAt: firstPayload.order.queuedAt,
+        processingGeneration: 0,
       });
       expect(await job?.getState()).toBe("waiting");
       expect(queueStatus).toMatchObject({
@@ -3860,6 +3861,7 @@ describe("API buy persistence", () => {
       correlationId: `queue-inspection-${orderId}`,
       quantity: 1,
       queuedAt: new Date().toISOString(),
+      processingGeneration: 0,
     });
 
     try {

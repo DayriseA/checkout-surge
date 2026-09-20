@@ -13,6 +13,7 @@ const job = {
   correlationId: "corr-publisher-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 describe("order-processing job publisher", () => {
@@ -25,7 +26,7 @@ describe("order-processing job publisher", () => {
     await publisher.close();
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
-      attempts: 4,
+      attempts: 1,
       backoff: { type: "exponential", delay: 500 },
       jobId: job.orderId,
     });
@@ -47,7 +48,7 @@ describe("order-processing job publisher", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("uses explicit retry options when supplied", async () => {
+  it("uses one delivery even when retired retry defaults are supplied", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn().mockResolvedValue(undefined) } as OrderProcessQueue,
@@ -57,7 +58,7 @@ describe("order-processing job publisher", () => {
     await publisher.enqueue(job);
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
-      attempts: 7,
+      attempts: 1,
       backoff: { type: "exponential", delay: 250 },
       jobId: job.orderId,
     });
@@ -74,7 +75,7 @@ describe("order-processing job publisher", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
-  it("uses the supplied frozen run retry policy and rejects a missing policy", async () => {
+  it("ignores the retired frozen run retry budget", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher({ add, close: vi.fn() } as OrderProcessQueue, {
       maxAttempts: 9,
@@ -85,11 +86,11 @@ describe("order-processing job publisher", () => {
       retryPolicy: { maxAttempts: 6, initialBackoffMs: 0 },
     });
     expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
-      attempts: 6,
-      backoff: { type: "exponential", delay: 0 },
+      attempts: 1,
+      backoff: { type: "exponential", delay: 999 },
       jobId: job.orderId,
     });
 
-    await expect(publisher.enqueue(runJob)).rejects.toThrow("Frozen retry policy is required");
+    await expect(publisher.enqueue(runJob)).resolves.toBeUndefined();
   });
 });

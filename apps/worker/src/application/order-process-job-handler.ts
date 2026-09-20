@@ -10,6 +10,8 @@ export interface OrderProcessDeliveryMetadata {
   deliveryId?: string;
   /** Durable processing ownership generation, when the delivery carries one. */
   processingGeneration?: number;
+  /** Set by reconciliation for an atomic same-key replay handoff. */
+  supersedesErpCallId?: string;
 }
 
 export interface OrderProcessJobHandler {
@@ -132,8 +134,6 @@ export function createOrderProcessJobHandler(dependencies: {
   confirmation: OrderConfirmation;
   persistence: OrderTransitionPersistence;
   logger: CheckoutSurgeLogger;
-  isTemporaryConfirmationFailure?: (error: unknown) => boolean;
-  shouldRetryWithoutFailingOrder?: (error: unknown) => boolean;
   publishBusinessOutcomeUpdate: BusinessOutcomeUpdatePublisher;
   notificationRecordPublisher: NotificationRecordPublisher;
   recovery: OrderRecoveryHandoff;
@@ -221,11 +221,7 @@ export function createOrderProcessJobHandler(dependencies: {
           throw confirmationError;
         }
 
-        const shouldRetryWithoutFailingOrder =
-          dependencies.shouldRetryWithoutFailingOrder?.(confirmationError) ?? false;
-        const temporary = dependencies.isTemporaryConfirmationFailure?.(confirmationError) ?? false;
-        const remainingAttempts = hasRemainingAttempts(delivery);
-        if (isPersistenceLikeError(confirmationError) && !remainingAttempts) {
+        if (isPersistenceLikeError(confirmationError)) {
           await handoffOrThrow(
             dependencies.recovery,
             {
@@ -238,29 +234,30 @@ export function createOrderProcessJobHandler(dependencies: {
           );
           throw confirmationError;
         }
-        if (shouldRetryWithoutFailingOrder || (temporary && remainingAttempts)) {
-          logger.warn(
-            { ...logContext, err: confirmationError },
-            shouldRetryWithoutFailingOrder
-              ? "Order confirmation failure will be retried without marking the order failed."
-              : "Temporary order confirmation failure will be retried.",
+        throw confirmationError;
+      }
+
+      if (
+        isScheduledOutcome(confirmationResult) &&
+        confirmationResult.disposition !== "succeeded"
+      ) {
+        if (confirmationResult.disposition !== "permanent_rejection") {
+          await publishBusinessOutcomeUpdateWithoutFailingJob(
+            dependencies,
+            job,
+            "retrying",
+            logger,
           );
-          if (freshErpAttemptWasRecorded(confirmationError)) {
-            await publishBusinessOutcomeUpdateWithoutFailingJob(
-              dependencies,
-              job,
-              "retrying",
-              logger,
-            );
-          }
-          throw confirmationError;
+          logger.info(
+            { ...logContext, reason: confirmationResult.reason },
+            "Order processing was durably deferred.",
+          );
+          return;
         }
-
-        const failure = toOrderFailure(
-          confirmationError,
-          temporary && !remainingAttempts ? "erp_retries_exhausted" : undefined,
-        );
-
+        const failure = {
+          code: confirmationResult.errorCode,
+          message: confirmationResult.errorMessage,
+        };
         try {
           const failedTransition = await dependencies.persistence.transitionToFailed(
             job,
@@ -286,18 +283,9 @@ export function createOrderProcessJobHandler(dependencies: {
             },
             persistenceError,
           );
-          logger.error(
-            { ...logContext, err: confirmationError, persistenceError },
-            "Order confirmation and failure persistence both failed.",
-          );
-          throw new OrderFailurePersistenceError(confirmationError, persistenceError);
+          throw new OrderFailurePersistenceError(confirmationResult, persistenceError);
         }
-
-        logger.error(
-          { ...logContext, err: confirmationError, failureCode: failure.code },
-          "Order confirmation failed and the order transitioned to failed.",
-        );
-        throw confirmationError;
+        return;
       }
 
       let confirmedTransition: ConfirmedTransitionResult;
@@ -423,13 +411,13 @@ function isPersistenceLikeError(error: unknown): boolean {
   return error instanceof Error && error.name.includes("PersistenceError");
 }
 
-function freshErpAttemptWasRecorded(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "attemptRecorded" in error &&
-    (error as { attemptRecorded?: unknown }).attemptRecorded === true
-  );
+function isScheduledOutcome(
+  value: unknown,
+): value is
+  | { disposition: "succeeded" }
+  | { disposition: "permanent_rejection"; errorCode: string; errorMessage: string }
+  | { disposition: "deferred" | "intervention_required"; reason: string } {
+  return typeof value === "object" && value !== null && "disposition" in value;
 }
 
 function isOrderPoisonError(error: unknown): boolean {
@@ -473,11 +461,4 @@ async function handoffOrThrow(
   } catch (handoffError) {
     throw new OrderRecoveryHandoffError(sourceError, handoffError);
   }
-}
-
-function toOrderFailure(error: unknown, code = "order_confirmation_failed"): OrderFailure {
-  return {
-    code,
-    message: error instanceof Error ? error.message : "Order confirmation failed.",
-  };
 }

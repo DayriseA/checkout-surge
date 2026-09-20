@@ -10,8 +10,10 @@ import {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRuns,
   erpAttempts,
   erpDispatchCalls,
+  erpScopeResilienceState,
   orderEvents,
   orderRecoveryJobs,
   orders,
@@ -54,11 +56,28 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
       : null;
   }
 
+  async findUnresolvedCall(orderId: string): Promise<ErpCallReference | null> {
+    const [call] = await this.db
+      .select({
+        erpCallId: erpDispatchCalls.id,
+        orderId: erpDispatchCalls.orderId,
+        idempotencyKey: erpDispatchCalls.idempotencyKey,
+        processingGeneration: erpDispatchCalls.processingGeneration,
+        dispatchedAt: erpDispatchCalls.dispatchedAt,
+      })
+      .from(erpDispatchCalls)
+      .where(and(eq(erpDispatchCalls.orderId, orderId), isNull(erpDispatchCalls.resolvedAt)))
+      .orderBy(desc(erpDispatchCalls.dispatchedAt))
+      .limit(1);
+    return call ? { ...call, dispatchedAt: call.dispatchedAt.toISOString() } : null;
+  }
+
   async recordDispatchIntent(input: {
     job: ErpAttemptRecord["job"];
     idempotencyKey: string;
     dispatchedAt: Date;
     expectedProcessingGeneration: number;
+    supersedesErpCallId?: string;
   }): Promise<ErpCallReference> {
     const recoveryKey = `order:${input.job.orderId}`;
     const eligibilityAt = this.now();
@@ -90,17 +109,56 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         );
       }
       const generation = input.expectedProcessingGeneration;
+      const [scopeState] = await tx
+        .select({ interventionReason: erpScopeResilienceState.interventionReason })
+        .from(erpScopeResilienceState)
+        .where(
+          eq(erpScopeResilienceState.scope, input.job.runId ? `run:${input.job.runId}` : "catalog"),
+        )
+        .limit(1);
+      const [run] = input.job.runId
+        ? await tx
+            .select({ administrativeStop: demoRuns.administrativeStop })
+            .from(demoRuns)
+            .where(eq(demoRuns.id, input.job.runId))
+            .limit(1)
+        : [];
       if (
         generation !== control.generation ||
         (control.status !== "pending" && control.status !== "enqueued") ||
         (order?.status !== "queued" && order?.status !== "processing") ||
         control.interventionReason !== null ||
+        scopeState?.interventionReason != null ||
+        run?.administrativeStop != null ||
         (control.nextAttemptAt !== null && control.nextAttemptAt > eligibilityAt) ||
         (control.leaseExpiresAt !== null && control.leaseExpiresAt <= eligibilityAt)
       ) {
         throw new Error(
           `Order ${input.job.orderId} is not eligible for ERP dispatch by processing generation ${generation}.`,
         );
+      }
+      const unresolvedCalls = await tx
+        .select({ id: erpDispatchCalls.id, idempotencyKey: erpDispatchCalls.idempotencyKey })
+        .from(erpDispatchCalls)
+        .where(
+          and(eq(erpDispatchCalls.orderId, input.job.orderId), isNull(erpDispatchCalls.resolvedAt)),
+        );
+      if (
+        unresolvedCalls.some(
+          (call) =>
+            call.id !== input.supersedesErpCallId || call.idempotencyKey !== input.idempotencyKey,
+        ) ||
+        (input.supersedesErpCallId !== undefined && unresolvedCalls.length !== 1)
+      ) {
+        throw new Error(
+          `Order ${input.job.orderId} already has an unresolved ERP dispatch; new intent refused.`,
+        );
+      }
+      if (input.supersedesErpCallId) {
+        await tx
+          .update(erpDispatchCalls)
+          .set({ resolvedAt: input.dispatchedAt, updatedAt: input.dispatchedAt })
+          .where(eq(erpDispatchCalls.id, input.supersedesErpCallId));
       }
       const erpCallId = randomUUID();
       const [call] = await tx

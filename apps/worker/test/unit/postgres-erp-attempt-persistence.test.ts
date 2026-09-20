@@ -9,6 +9,7 @@ const job = {
   correlationId: "corr-attempt",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 const record = {

@@ -18,6 +18,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-circuit-test",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const delivery: OrderProcessDeliveryMetadata = {
   attemptNumber: 1,
@@ -226,7 +227,7 @@ describe("ERP circuit breaker", () => {
     expect(breaker.snapshot().state).toBe("open");
   });
 
-  it("gates lookups without letting them probe or close the circuit", async () => {
+  it("gates lookups while open and allows them without learning once half-open", async () => {
     let now = new Date("2026-06-22T00:00:00.000Z");
     const breaker = new ErpCircuitBreaker({
       confirmation: { confirm: vi.fn().mockRejectedValue(new Error("ERP unavailable")) },
@@ -240,7 +241,7 @@ describe("ERP circuit breaker", () => {
     expect(() => breaker.assertAvailable()).toThrow(ErpCircuitOpenError);
 
     now = new Date("2026-06-22T00:00:01.000Z");
-    expect(() => breaker.assertAvailable()).toThrow(ErpCircuitOpenError);
+    expect(() => breaker.assertAvailable()).not.toThrow();
     expect(breaker.snapshot().state).toBe("half_open");
   });
 

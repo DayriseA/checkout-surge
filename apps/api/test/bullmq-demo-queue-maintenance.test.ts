@@ -356,6 +356,7 @@ function orderJob(attributedRunId?: string) {
     ...(attributedRunId ? { runId: attributedRunId } : {}),
     quantity: 1,
     queuedAt: new Date().toISOString(),
+    processingGeneration: 0,
   };
 }
 

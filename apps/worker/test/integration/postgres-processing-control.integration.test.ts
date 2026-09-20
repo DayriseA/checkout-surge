@@ -1,4 +1,4 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { ErpCallReference, OrderProcessJob } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -97,6 +97,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       correlationId,
       quantity: 1,
       queuedAt: input.createdAt.toISOString(),
+      processingGeneration: 0,
     };
     const db = requireConnection().db;
     await db.insert(reservations).values({
@@ -177,7 +178,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       recoveryKey: `order:${seeded.orderId}`,
       status: "enqueued",
       processingGeneration: 0,
-      publicationOwner: "initial-delivery",
+      publicationOwner: null,
       interventionReason: null,
       unresolvedErpCallId: null,
       attemptCounts: {},
@@ -185,11 +186,65 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     expect(row?.leaseExpiresAt).toEqual(new Date(baseTime.getTime() + 30_000));
   });
 
+  it("consumes one delivery owner before concurrent duplicate ERP dispatch", async () => {
+    const seeded = await seedOrder({ createdAt: now });
+    let completeRequest!: (response: Response) => void;
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          completeRequest = resolve;
+        }),
+    );
+    const confirmation = new HttpErpOrderConfirmation({
+      baseUrl: "http://erp.test",
+      requestTimeoutMs: 2_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence,
+      fetch,
+      now: () => now,
+    });
+    const handler = handlerWith(confirmation.dispatch.bind(confirmation));
+    const delivery = {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "duplicate-delivery",
+    };
+
+    const first = handler.handle(seeded.job, delivery);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await expect(handler.handle(seeded.job, delivery)).resolves.toBeUndefined();
+    completeRequest(
+      Response.json({
+        status: "succeeded",
+        confirmationId: "single-owner-confirmation",
+        httpStatus: 200,
+        latencyMs: 1,
+        timestamp: now.toISOString(),
+      }),
+    );
+    await first;
+
+    expect(fetch).toHaveBeenCalledOnce();
+    await expect(
+      requireConnection()
+        .db.select()
+        .from(erpDispatchCalls)
+        .where(eq(erpDispatchCalls.orderId, seeded.orderId)),
+    ).resolves.toHaveLength(1);
+    await expect(
+      requireConnection()
+        .db.select()
+        .from(erpAttempts)
+        .where(eq(erpAttempts.orderId, seeded.orderId)),
+    ).resolves.toHaveLength(1);
+  });
+
   it("resumes a pre-migration processing order without a control row through the handler", async () => {
     const seeded = await seedOrder({ createdAt: now, status: "processing" });
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
       expect(await controlRow(seeded.orderId)).toMatchObject({
-        publicationOwner: "legacy-delivery",
+        publicationOwner: null,
         processingGeneration: 0,
         unresolvedErpCallId: expect.any(String),
       });
@@ -210,7 +265,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       now: () => now,
     });
 
-    await handlerWith(confirmation.confirm.bind(confirmation)).handle(seeded.job, {
+    await handlerWith(confirmation.dispatch.bind(confirmation)).handle(seeded.job, {
       attemptNumber: 2,
       attemptsMade: 1,
       maxAttempts: 4,
@@ -281,7 +336,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
             seeded.job,
             delivery,
           ),
-        ).resolves.toMatchObject({ executionClaimed: true });
+        ).resolves.toMatchObject({ executionClaimed: false });
       });
       expect(await result).toEqual([{ status: "fulfilled", value: true }]);
       expect(await controlRow(seeded.orderId)).toMatchObject({
@@ -334,14 +389,20 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
 
     const row = await controlRow(seeded.orderId);
     expect(row).toMatchObject({ attempts: 2, publicationOwner: `recovery-${seeded.orderId}-2` });
-    expect(enqueue).toHaveBeenCalledWith(seeded.job, { jobId: row?.publicationOwner, attempts: 1 });
+    expect(enqueue).toHaveBeenCalledWith(
+      { ...seeded.job, processingGeneration: 2 },
+      { jobId: row?.publicationOwner, attempts: 1 },
+    );
     const confirmation = vi.fn().mockResolvedValue(undefined);
-    await handlerWith(confirmation).handle(seeded.job, {
-      attemptNumber: 1,
-      attemptsMade: 0,
-      maxAttempts: 1,
-      deliveryId: row?.publicationOwner ?? "",
-    });
+    await handlerWith(confirmation).handle(
+      { ...seeded.job, processingGeneration: 2 },
+      {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+        deliveryId: row?.publicationOwner ?? "",
+      },
+    );
     expect(confirmation).toHaveBeenCalledOnce();
   });
 
@@ -490,7 +551,8 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
     const confirmation = vi.fn().mockResolvedValue(undefined);
 
-    await handlerWith(confirmation).handle(seeded.job, {
+    const recoveryJob = { ...seeded.job, processingGeneration: 1 };
+    await handlerWith(confirmation).handle(recoveryJob, {
       attemptNumber: 2,
       attemptsMade: 1,
       maxAttempts: 4,
@@ -504,7 +566,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
   });
 
-  it("reclaims an expired lease for a BullMQ retry of the same delivery", async () => {
+  it("denies an expired delivery until recovery publishes a new owner", async () => {
     const seeded = await seedOrder({ createdAt: now });
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
@@ -522,10 +584,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       deliveryId: "retry-delivery",
     });
 
-    expect(confirmation).toHaveBeenCalledWith(
-      seeded.job,
-      expect.objectContaining({ processingGeneration: 0 }),
-    );
+    expect(confirmation).not.toHaveBeenCalled();
   });
 
   it("renews an expired publication lease for its recovery delivery", async () => {
@@ -549,7 +608,8 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     now = new Date(now.getTime() + 31_000);
     const confirmation = vi.fn().mockResolvedValue(undefined);
 
-    await handlerWith(confirmation).handle(seeded.job, {
+    const recoveryJob = { ...seeded.job, processingGeneration: 1 };
+    await handlerWith(confirmation).handle(recoveryJob, {
       attemptNumber: 1,
       attemptsMade: 0,
       maxAttempts: 1,
@@ -558,7 +618,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
 
     expect(confirmation).toHaveBeenCalledWith(
-      seeded.job,
+      recoveryJob,
       expect.objectContaining({ processingGeneration: 1 }),
     );
   });
@@ -732,28 +792,73 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       unresolvedErpCallId: call.erpCallId,
     });
 
-    const newerCall = await attemptPersistence.recordDispatchIntent({
-      job: seeded.job,
-      idempotencyKey: `erp-confirmation:${seeded.orderId}`,
-      dispatchedAt: now,
-      expectedProcessingGeneration: 1,
-    });
+    await expect(
+      attemptPersistence.recordDispatchIntent({
+        job: seeded.job,
+        idempotencyKey: `erp-confirmation:${seeded.orderId}`,
+        dispatchedAt: now,
+        expectedProcessingGeneration: 1,
+      }),
+    ).rejects.toThrow(/already has an unresolved ERP dispatch/);
     const unresolvedCalls = await requireConnection()
       .db.select()
       .from(erpDispatchCalls)
       .where(
         and(eq(erpDispatchCalls.orderId, seeded.orderId), isNull(erpDispatchCalls.resolvedAt)),
       );
-    expect(unresolvedCalls.map((row) => row.id)).toEqual(
-      expect.arrayContaining([call.erpCallId, newerCall.erpCallId]),
-    );
+    expect(unresolvedCalls.map((row) => row.id)).toEqual([call.erpCallId]);
 
     await expect(
-      controlPersistence.resolveDispatchedCall({
-        orderId: seeded.orderId,
-        erpCallId: call.erpCallId,
+      attemptPersistence.recordDispatchIntent({
+        job: seeded.job,
+        idempotencyKey: call.idempotencyKey,
+        dispatchedAt: now,
+        expectedProcessingGeneration: 1,
+        supersedesErpCallId: "99999999-9999-4999-8999-999999999999",
       }),
-    ).resolves.toBe(true);
+    ).rejects.toThrow(/already has an unresolved ERP dispatch/);
+    expect(await attemptPersistence.findUnresolvedCall(seeded.orderId)).toEqual(call);
+    expect(await controlPersistence.readControlRecord({ orderId: seeded.orderId })).toMatchObject({
+      unresolvedErpCallId: call.erpCallId,
+    });
+    expect(
+      await requireConnection()
+        .db.select()
+        .from(erpDispatchCalls)
+        .where(eq(erpDispatchCalls.orderId, seeded.orderId)),
+    ).toHaveLength(1);
+    const db = requireConnection().db;
+    const transaction = db.transaction.bind(db);
+    const interrupted = new Error("replacement intent insertion interrupted");
+    vi.spyOn(db, "transaction").mockImplementationOnce((callback) =>
+      transaction(async (tx) => {
+        vi.spyOn(tx, "insert").mockImplementationOnce(() => {
+          throw interrupted;
+        });
+        return callback(tx);
+      }),
+    );
+    await expect(
+      attemptPersistence.recordDispatchIntent({
+        job: seeded.job,
+        idempotencyKey: call.idempotencyKey,
+        dispatchedAt: now,
+        expectedProcessingGeneration: 1,
+        supersedesErpCallId: call.erpCallId,
+      }),
+    ).rejects.toBe(interrupted);
+    expect(await attemptPersistence.findUnresolvedCall(seeded.orderId)).toEqual(call);
+    expect(await controlPersistence.readControlRecord({ orderId: seeded.orderId })).toMatchObject({
+      unresolvedErpCallId: call.erpCallId,
+    });
+
+    const newerCall = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey: `erp-confirmation:${seeded.orderId}`,
+      dispatchedAt: now,
+      expectedProcessingGeneration: 1,
+      supersedesErpCallId: call.erpCallId,
+    });
     const [resolvedCall] = await requireConnection()
       .db.select()
       .from(erpDispatchCalls)
@@ -1025,6 +1130,10 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       terminal: false,
       errorCode: "erp_request_timeout",
     });
+    await controlPersistence.resolveDispatchedCall({
+      orderId: seeded.orderId,
+      erpCallId: callA.erpCallId,
+    });
     const callB = await attemptPersistence.recordDispatchIntent(intent);
     const result =
       outcome === "success"
@@ -1058,9 +1167,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       .db.select()
       .from(erpDispatchCalls)
       .where(eq(erpDispatchCalls.orderId, seeded.orderId));
-    expect(calls.find((call) => call.id === callA.erpCallId)?.resolvedAt).toEqual(
-      outcome === "success" ? now : null,
-    );
+    expect(calls.find((call) => call.id === callA.erpCallId)?.resolvedAt).toEqual(now);
     expect(calls.find((call) => call.id === callB.erpCallId)?.resolvedAt).toEqual(now);
     expect(await controlRow(seeded.orderId)).toMatchObject({
       unresolvedErpCallId: null,
@@ -1071,7 +1178,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
   });
 
-  it("serializes concurrent calls adopting the same canonical success", async () => {
+  it("allows only one concurrent dispatch intent for an order", async () => {
     const seeded = await seedOrder({ createdAt: now });
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
@@ -1079,7 +1186,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       maxAttempts: 4,
       deliveryId: "concurrent-success-delivery",
     });
-    const calls = await Promise.all(
+    const intents = await Promise.allSettled(
       [0, 1].map((offset) =>
         attemptPersistence.recordDispatchIntent({
           job: seeded.job,
@@ -1089,6 +1196,11 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
         }),
       ),
     );
+    expect(intents.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(intents.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const fulfilled = intents.find((result) => result.status === "fulfilled");
+    if (!fulfilled) throw new Error("Expected one dispatch intent to win.");
+    const call = fulfilled.value;
     const response = {
       status: "succeeded" as const,
       confirmationId: "concurrent-canonical-confirmation",
@@ -1097,51 +1209,39 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       timestamp: "2026-06-22T00:00:00.005Z",
     };
 
-    const secondConnection = createDatabaseConnection(requireDatabaseUrl(), { max: 1 });
-    const stores = [
-      attemptPersistence,
-      new PostgresErpAttemptPersistence(secondConnection.db, () => now),
-    ];
-    try {
-      await expect(
-        Promise.all(
-          calls.map((call, index) =>
-            stores[index]?.recordAttempt({
-              job: seeded.job,
-              delivery: {
-                attemptNumber: 1,
-                attemptsMade: index,
-                maxAttempts: 4,
-                deliveryId: "concurrent-success-delivery",
-              },
-              call,
-              status: "succeeded",
-              terminal: true,
-              httpStatus: 200,
-              latencyMs: 5,
-              startedAt: now,
-              finishedAt: new Date(now.getTime() + 5),
-              response,
-            }),
-          ),
-        ),
-      ).resolves.toEqual([true, true]);
-    } finally {
-      await secondConnection.close();
-    }
+    await expect(
+      attemptPersistence.recordAttempt({
+        job: seeded.job,
+        delivery: {
+          attemptNumber: 1,
+          attemptsMade: 0,
+          maxAttempts: 1,
+          deliveryId: "concurrent-success-delivery",
+        },
+        call,
+        status: "succeeded",
+        terminal: true,
+        httpStatus: 200,
+        latencyMs: 5,
+        startedAt: now,
+        finishedAt: new Date(now.getTime() + 5),
+        response,
+      }),
+    ).resolves.toBe(true);
 
     const attempts = await requireConnection()
       .db.select()
       .from(erpAttempts)
       .where(eq(erpAttempts.orderId, seeded.orderId));
-    expect(attempts).toHaveLength(2);
+    expect(attempts).toHaveLength(1);
     expect(attempts.filter((attempt) => attempt.idempotencyKey !== null)).toHaveLength(1);
-    expect(await controlRow(seeded.orderId)).toMatchObject({ attemptCounts: { succeeded: 2 } });
+    expect(await controlRow(seeded.orderId)).toMatchObject({ attemptCounts: { succeeded: 1 } });
     const dispatchCalls = await requireConnection()
       .db.select()
       .from(erpDispatchCalls)
       .where(eq(erpDispatchCalls.orderId, seeded.orderId));
-    expect(dispatchCalls.every((call) => call.resolvedAt !== null)).toBe(true);
+    expect(dispatchCalls).toHaveLength(1);
+    expect(dispatchCalls[0]?.resolvedAt).not.toBeNull();
   });
 
   it("keeps malformed success and opaque server responses unresolved", async () => {
@@ -1156,8 +1256,15 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       { errorCode: "erp_invalid_response", httpStatus: 200 },
       { errorCode: "erp_unknown_server_failure", httpStatus: 500 },
     ] as const;
-    const calls = [];
+    const calls: ErpCallReference[] = [];
     for (const [index, outcome] of cases.entries()) {
+      const previousCall = calls.at(-1);
+      if (previousCall) {
+        await controlPersistence.resolveDispatchedCall({
+          orderId: seeded.orderId,
+          erpCallId: previousCall.erpCallId,
+        });
+      }
       const call = await attemptPersistence.recordDispatchIntent({
         job: seeded.job,
         idempotencyKey: `erp-confirmation:${seeded.orderId}`,
@@ -1189,7 +1296,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       .from(erpDispatchCalls)
       .where(eq(erpDispatchCalls.orderId, seeded.orderId));
     expect(dispatchCalls).toHaveLength(2);
-    expect(dispatchCalls.every((call) => call.resolvedAt === null)).toBe(true);
+    expect(dispatchCalls.filter((call) => call.resolvedAt === null)).toHaveLength(1);
     expect(await controlRow(seeded.orderId)).toMatchObject({
       unresolvedErpCallId: calls[1]?.erpCallId,
       attemptCounts: { intervention_required: 2 },

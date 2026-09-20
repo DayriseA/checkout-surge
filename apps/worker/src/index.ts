@@ -6,17 +6,15 @@ import {
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
+import { ErpCircuitBreaker } from "./application/erp-circuit-breaker.js";
 import {
-  ErpCircuitBreaker,
-  isTemporaryErpCircuitError,
-} from "./application/erp-circuit-breaker.js";
-import {
+  type ErpConfirmationOutcome,
   HttpErpOrderConfirmation,
-  isErpAttemptPersistenceError,
-  isTemporaryErpConfirmationError,
-  isTemporaryErpDependencyError,
-  shouldRetainOrderForErpOutcome,
 } from "./application/erp-confirmation-client.js";
+import {
+  ErpUnresolvedCallReconciler,
+  ScheduledErpOrderConfirmation,
+} from "./application/erp-reconciliation.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
@@ -28,6 +26,7 @@ import {
 } from "./application/order-recovery-scanner.js";
 import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
+import { PostgresErpScopeResiliencePersistence } from "./persistence/postgres-erp-scope-resilience-persistence.js";
 import { PostgresGeneratedRunPublicationFence } from "./persistence/postgres-generated-run-publication-fence.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
@@ -94,6 +93,7 @@ export async function startWorker(): Promise<void> {
     publicationFence,
   );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
+  const erpScopeState = new PostgresErpScopeResiliencePersistence(database.db);
   const orderRecoveryScanner = createOrderRecoveryScanner({
     persistence: orderRecoveryPersistence,
     publisher: orderProcessJobPublisher,
@@ -119,71 +119,75 @@ export async function startWorker(): Promise<void> {
     batchSize: config.orderDispatchBatchSize,
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
   });
+  const orderProcessAdmission = new ProcessLocalOrderProcessAdmission({
+    runConfigReader,
+    fallbackConcurrency: config.orderProcessConcurrency,
+  });
+  const erpClient = new HttpErpOrderConfirmation({
+    baseUrl: config.mockErpBaseUrl,
+    requestTimeoutMs: config.erpRequestTimeoutMs,
+    retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+    attemptPersistence: erpAttemptPersistence,
+    logger,
+    runConfigReader,
+  });
+  const catalogCircuit = new ErpCircuitBreaker({
+    confirmation: { confirm: (job, delivery) => erpClient.dispatch(job, delivery) },
+    failureThreshold: config.erpCircuitFailureThreshold,
+    resetTimeoutMs: config.erpCircuitResetTimeoutMs,
+    isCountedFailure: () => false,
+    onStateChange: async (snapshot) => {
+      try {
+        await setErpCircuitBreakerSnapshot(redis, snapshot, { type: "catalog" });
+      } catch (error) {
+        logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
+      }
+    },
+  });
+  const scopedCircuit = new RunScopedBackpressureOrderConfirmation({
+    runConfigReader,
+    inner: catalogCircuit,
+    circuitBreakerFactory: (snapshot, runId) =>
+      new ErpCircuitBreaker({
+        confirmation: { confirm: (job, delivery) => erpClient.dispatch(job, delivery) },
+        failureThreshold: snapshot.backpressureConfig.circuitBreakerFailureThreshold,
+        resetTimeoutMs: snapshot.backpressureConfig.circuitBreakerResetTimeoutMs,
+        isCountedFailure: () => false,
+        onStateChange: async (breakerSnapshot) => {
+          try {
+            await setErpCircuitBreakerSnapshot(redis, breakerSnapshot, { type: "run", runId });
+          } catch (error) {
+            logger.error({ err: error, runId }, "Could not publish run ERP circuit breaker state.");
+          }
+        },
+      }),
+  });
+  const reconciler = new ErpUnresolvedCallReconciler({
+    client: erpClient,
+    callResolution: orderRecoveryPersistence,
+    lookupAvailabilityCircuit: scopedCircuit,
+    lookupConcurrency: config.orderProcessConcurrency,
+  });
+  const scheduledConfirmation = new ScheduledErpOrderConfirmation({
+    client: erpClient,
+    reconciler,
+    dispatch: {
+      confirm: async (job, delivery) =>
+        (await scopedCircuit.confirm(job, delivery)) as ErpConfirmationOutcome,
+    },
+    admission: orderProcessAdmission,
+    control: orderRecoveryPersistence,
+    scopeState: erpScopeState,
+  });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
       url: config.redisUrl,
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
-    admission: new ProcessLocalOrderProcessAdmission({
-      runConfigReader,
-      fallbackConcurrency: config.orderProcessConcurrency,
-    }),
+    admission: orderProcessAdmission,
     handler: createOrderProcessJobHandler({
-      confirmation: new RunScopedBackpressureOrderConfirmation({
-        runConfigReader,
-        inner: new ErpCircuitBreaker({
-          confirmation: new HttpErpOrderConfirmation({
-            baseUrl: config.mockErpBaseUrl,
-            requestTimeoutMs: config.erpRequestTimeoutMs,
-            retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
-            attemptPersistence: erpAttemptPersistence,
-            logger,
-          }),
-          failureThreshold: config.erpCircuitFailureThreshold,
-          resetTimeoutMs: config.erpCircuitResetTimeoutMs,
-          isCountedFailure: isTemporaryErpDependencyError,
-          onStateChange: async (snapshot) => {
-            try {
-              await setErpCircuitBreakerSnapshot(redis, snapshot, { type: "catalog" });
-            } catch (error) {
-              logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
-            }
-          },
-        }),
-        circuitBreakerFactory: (snapshot, runId) =>
-          new ErpCircuitBreaker({
-            confirmation: new HttpErpOrderConfirmation({
-              baseUrl: config.mockErpBaseUrl,
-              requestTimeoutMs: config.erpRequestTimeoutMs,
-              retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
-              attemptPersistence: erpAttemptPersistence,
-              logger,
-              runConfigReader: {
-                read: async (requestedRunId) => (requestedRunId === runId ? snapshot : null),
-              },
-            }),
-            failureThreshold: snapshot.backpressureConfig.circuitBreakerFailureThreshold,
-            resetTimeoutMs: snapshot.backpressureConfig.circuitBreakerResetTimeoutMs,
-            isCountedFailure: isTemporaryErpDependencyError,
-            onStateChange: async (breakerSnapshot) => {
-              try {
-                await setErpCircuitBreakerSnapshot(redis, breakerSnapshot, { type: "run", runId });
-              } catch (error) {
-                logger.error(
-                  { err: error, runId },
-                  "Could not publish run ERP circuit breaker state.",
-                );
-              }
-            },
-          }),
-        onMissingRunSnapshot: (runId) => {
-          logger.warn(
-            { runId },
-            "Run configuration snapshot was not found; using the catalog ERP circuit breaker fallback.",
-          );
-        },
-      }),
+      confirmation: scheduledConfirmation,
       persistence: new PostgresOrderTransitionPersistence(
         database.db,
         undefined,
@@ -191,8 +195,6 @@ export async function startWorker(): Promise<void> {
       ),
       logger,
       recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
-      isTemporaryConfirmationFailure,
-      shouldRetryWithoutFailingOrder,
       notificationRecordPublisher,
       publishBusinessOutcomeUpdate: async (job) => {
         businessOutcomePublications.markDirty({
@@ -278,18 +280,6 @@ export async function startWorker(): Promise<void> {
     logger.error({ err: error }, "Worker runtime failed to start.");
     process.exitCode = 1;
   }
-}
-
-function isTemporaryConfirmationFailure(error: unknown): boolean {
-  return isTemporaryErpConfirmationError(error) || isTemporaryErpCircuitError(error);
-}
-
-function shouldRetryWithoutFailingOrder(error: unknown): boolean {
-  return (
-    isErpAttemptPersistenceError(error) ||
-    isTemporaryErpCircuitError(error) ||
-    shouldRetainOrderForErpOutcome(error)
-  );
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

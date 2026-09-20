@@ -1077,6 +1077,7 @@ describe("queue contracts", () => {
         runId,
         quantity: 1,
         queuedAt: timestamp,
+        processingGeneration: 0,
       }),
     ).toMatchObject({ publicOrderId: "ord_test", quantity: 1 });
 

@@ -12,6 +12,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-notification-recovery-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 describe("notification recovery scanner", () => {

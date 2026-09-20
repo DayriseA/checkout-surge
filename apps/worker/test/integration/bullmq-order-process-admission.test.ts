@@ -18,6 +18,7 @@ const baseJob: OrderProcessJob = {
   correlationId: "corr-admission",
   quantity: 1,
   queuedAt: "2026-07-13T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 function url() {
@@ -52,7 +53,7 @@ describe("BullMQ process-local admission", () => {
     redis.disconnect();
   });
 
-  it("keeps saturated work visible and processes it later without consuming attempts", async () => {
+  it("leaves admission to the claimed handler workflow", async () => {
     let releaseFirst: (() => void) | undefined;
     const firstBlocked = new Promise<void>((resolve) => (releaseFirst = resolve));
     const deliveries: number[] = [];
@@ -81,10 +82,8 @@ describe("BullMQ process-local admission", () => {
     };
     await queue.add(orderProcessJobName, baseJob, { jobId: baseJob.orderId, attempts: 4 });
     await queue.add(orderProcessJobName, second, { jobId: second.orderId, attempts: 4 });
-    await vi.waitFor(async () => expect(handle).toHaveBeenCalledTimes(1));
-    await vi.waitFor(async () => expect((await queue.getJobCounts()).delayed).toBeGreaterThan(0));
-    const delayed = await queue.getJob(second.orderId);
-    expect(delayed?.attemptsMade).toBe(0);
+    await vi.waitFor(async () => expect(handle).toHaveBeenCalledTimes(2));
+    expect((await queue.getJobCounts()).delayed).toBe(0);
     releaseFirst?.();
     await vi.waitFor(async () => expect(handle).toHaveBeenCalledTimes(2), { timeout: 5000 });
     expect(deliveries).toEqual([0, 0]);

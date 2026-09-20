@@ -1,7 +1,7 @@
 import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { DelayedError, type Job } from "bullmq";
+import type { Job } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
 import { ProcessLocalOrderProcessAdmission } from "../../src/application/order-process-admission.js";
 import { processJob } from "../../src/queue/bullmq-order-process-consumer.js";
@@ -14,6 +14,7 @@ const data: OrderProcessJob = {
   correlationId: "corr-admission",
   quantity: 1,
   queuedAt: "2026-07-13T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 function bullJob(overrides: Record<string, unknown> = {}) {
@@ -96,7 +97,7 @@ describe("process-local order admission", () => {
 });
 
 describe("order process admission boundary", () => {
-  it("acquires before handling and releases in finally without masking handler errors", async () => {
+  it("leaves dispatch admission to the claimed handler workflow", async () => {
     const order: string[] = [];
     const original = new Error("handler failed");
     const release = vi.fn(async () => {
@@ -129,10 +130,11 @@ describe("order process admission boundary", () => {
         logger: createSilentLogger("worker"),
       }),
     ).rejects.toBe(original);
-    expect(order).toEqual(["acquire", "handle", "release"]);
+    expect(order).toEqual(["handle"]);
+    expect(admission.tryAcquire).not.toHaveBeenCalled();
   });
 
-  it("defers saturated work with its BullMQ token and preserves delivery metadata", async () => {
+  it("delivers saturated work to durable scheduling instead of delaying in BullMQ", async () => {
     const job = bullJob();
     const handler = { handle: vi.fn() };
     const recovery = { recordRecoverable: vi.fn(), recordDeadLetter: vi.fn() };
@@ -146,9 +148,9 @@ describe("order process admission boundary", () => {
         admissionDelayMs: 1,
         logger: createSilentLogger("worker"),
       }),
-    ).rejects.toBeInstanceOf(DelayedError);
-    expect(job.moveToDelayed).toHaveBeenCalledWith(expect.any(Number), "lock-token");
-    expect(handler.handle).not.toHaveBeenCalled();
+    ).resolves.toBeUndefined();
+    expect(job.moveToDelayed).not.toHaveBeenCalled();
+    expect(handler.handle).toHaveBeenCalledOnce();
     expect(recovery.recordRecoverable).not.toHaveBeenCalled();
     expect(recovery.recordDeadLetter).not.toHaveBeenCalled();
     expect(job.attemptsMade).toBe(2);

@@ -7,6 +7,7 @@ import {
   positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
+import { processingGenerationSchema } from "./processing-control.js";
 
 export const orderProcessQueueName = "orders:process" as const;
 export const orderProcessBullMqQueueName = "orders-process" as const;
@@ -25,6 +26,7 @@ export const orderProcessJobSchema = z
     runId: uuidSchema.optional(),
     quantity: positiveIntegerSchema,
     queuedAt: isoTimestampSchema,
+    processingGeneration: processingGenerationSchema,
   })
   .strict();
 export type OrderProcessJob = z.infer<typeof orderProcessJobSchema>;

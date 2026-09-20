@@ -8,7 +8,7 @@ import type { RunConfigReader } from "./run-config.js";
 export type RunCircuitBreakerFactory = (
   snapshot: AcceptedRunConfigSnapshot,
   runId: string,
-) => OrderConfirmation;
+) => OrderConfirmation & { assertAvailable?(): void };
 
 interface RunCircuitBreakerEntry {
   configKey: string;
@@ -40,7 +40,7 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
     const snapshot = await this.options.runConfigReader.read(job.runId);
     if (!snapshot) {
       this.reportMissingRunSnapshot(job.runId);
-      return this.options.inner.confirm(job, delivery);
+      throw new MissingAcceptedRunSnapshotError(job.runId);
     }
 
     const nowMs = this.nowMs();
@@ -54,6 +54,17 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
       entry.activeConfirmationCount -= 1;
       entry.lastUsedAtMs = this.nowMs();
     }
+  }
+
+  async assertAvailable(job: OrderProcessJob): Promise<void> {
+    if (!job.runId) {
+      this.assertConfirmationAvailable(this.options.inner);
+      return;
+    }
+    const snapshot = await this.options.runConfigReader.read(job.runId);
+    if (!snapshot) throw new MissingAcceptedRunSnapshotError(job.runId);
+    const entry = this.getCircuitBreaker(job.runId, snapshot, this.nowMs());
+    this.assertConfirmationAvailable(entry?.confirmation ?? this.options.inner);
   }
 
   private getCircuitBreaker(
@@ -106,6 +117,27 @@ export class RunScopedBackpressureOrderConfirmation implements OrderConfirmation
       // Observability must never prevent the explicitly configured fallback path.
     }
   }
+
+  private assertConfirmationAvailable(confirmation: OrderConfirmation): void {
+    if ("assertAvailable" in confirmation && typeof confirmation.assertAvailable === "function") {
+      confirmation.assertAvailable();
+    }
+  }
+}
+
+export class MissingAcceptedRunSnapshotError extends Error {
+  override readonly name = "MissingAcceptedRunSnapshotError";
+  constructor(readonly runId: string) {
+    super(`Accepted run snapshot was not found for order job run ${runId}.`);
+  }
+}
+
+export function acceptedRunSnapshotInterventionReason(error: unknown): string | null {
+  if (error instanceof MissingAcceptedRunSnapshotError) return "accepted_run_snapshot_missing";
+  if (error instanceof Error && error.name === "PersistedRunConfigCorruptionError") {
+    return "accepted_run_snapshot_invalid";
+  }
+  return null;
 }
 
 function doubledDurationMs(durationMs: number): number {

@@ -17,6 +17,7 @@ const job = {
   correlationId: "corr-publisher-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 describe("worker order-processing job publisher", () => {
@@ -32,7 +33,7 @@ describe("worker order-processing job publisher", () => {
     await publisher.close();
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
-      attempts: 4,
+      attempts: 1,
       backoff: { type: "exponential", delay: 500 },
       jobId: job.orderId,
     });
@@ -91,7 +92,7 @@ describe("worker order-processing job publisher", () => {
     });
   });
 
-  it("uses frozen run retry policy for deterministic durable replay", async () => {
+  it("uses one delivery and ignores the retired run retry budget", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
     const publisher = createOrderProcessJobPublisher(
@@ -107,8 +108,8 @@ describe("worker order-processing job publisher", () => {
     );
     await publisher.enqueue(runJob);
     expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
-      attempts: 6,
-      backoff: { type: "exponential", delay: 250 },
+      attempts: 1,
+      backoff: { type: "exponential", delay: 999 },
       jobId: job.orderId,
     });
   });

@@ -54,6 +54,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-erp-attempt-recovery",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 run("PostgreSQL ERP attempt recovery", () => {
@@ -268,15 +269,24 @@ run("PostgreSQL ERP attempt recovery", () => {
 
     const replacementErp = await startInMemoryErpService("replacement");
     try {
+      const claim = await new PostgresOrderRecoveryPersistence(
+        requireConnection().db,
+      ).claimForPublication({
+        recoveryKey: `order:${job.orderId}`,
+        now: new Date("2026-06-22T00:00:32.000Z"),
+        leaseMs: 30_000,
+      });
+      if (!claim) throw new Error("Expected recovery publication ownership.");
+      const replayJob = { ...job, processingGeneration: claim.processingGeneration };
       const replayHandler = createHandler(
         createHttpConfirmation(replacementErp.baseUrl, requirePersistence()),
         transitionPersistence,
       );
-      await replayHandler.handle(job, {
+      await replayHandler.handle(replayJob, {
         attemptNumber: 2,
         attemptsMade: 1,
         maxAttempts: 2,
-        deliveryId: "replay-delivery",
+        deliveryId: claim.jobId,
       });
 
       expect(replacementErp.receivedRequests).toEqual([]);
@@ -393,15 +403,30 @@ function createHttpConfirmation(
   });
 }
 
-function createHandler(confirmation: OrderConfirmation, persistence: OrderTransitionPersistence) {
+function createHandler(
+  confirmation: OrderConfirmation | HttpErpOrderConfirmation,
+  persistence: OrderTransitionPersistence,
+) {
   return createOrderProcessJobHandler({
-    confirmation,
+    confirmation: toExplicitConfirmation(confirmation),
     persistence,
     logger: createSilentLogger("worker"),
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
     recovery: { handoff: async () => undefined, resolve: async () => undefined },
   });
+}
+
+function toExplicitConfirmation(
+  confirmation: OrderConfirmation | HttpErpOrderConfirmation,
+): OrderConfirmation {
+  if (!(confirmation instanceof HttpErpOrderConfirmation)) return confirmation;
+  return {
+    confirm: async (job, delivery) =>
+      (await confirmation.findSuccessfulAttempt(job))
+        ? { disposition: "succeeded" }
+        : confirmation.dispatch(job, delivery),
+  };
 }
 
 async function startInMemoryErpService(instanceName: string): Promise<{

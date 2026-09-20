@@ -6,8 +6,7 @@ import {
   orderProcessQueueName,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { type ConnectionOptions, DelayedError, type Job, Worker } from "bullmq";
-import { ErpCircuitOpenError } from "../application/erp-circuit-breaker.js";
+import { type ConnectionOptions, type Job, Worker } from "bullmq";
 import type { OrderProcessAdmission } from "../application/order-process-admission.js";
 import type { OrderProcessJobHandler } from "../application/order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "../application/order-recovery-scanner.js";
@@ -186,7 +185,7 @@ function correlationLogContext(data: unknown): { correlationId?: string } {
 
 export async function processJob(
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
-  token: string | undefined,
+  _token: string | undefined,
   options: CreateBullMqOrderProcessConsumerOptions,
 ): Promise<void> {
   if (job.name !== orderProcessJobName) {
@@ -217,33 +216,16 @@ export async function processJob(
       return;
     }
     const recovery = readRecoveryMetadata(job.id, parsed.data.orderId);
-    const permit = await options.admission?.tryAcquire(parsed.data);
-    if (options.admission && !permit) {
-      const baseDelay = options.admissionDelayMs ?? 100;
-      const jitter = Math.floor(Math.random() * Math.max(1, baseDelay));
-      await job.moveToDelayed(Date.now() + baseDelay + jitter, token);
-      throw new DelayedError();
-    }
-    try {
-      await options.handler.handle(parsed.data, {
-        attemptNumber: job.attemptsMade + 1,
-        attemptsMade: job.attemptsMade,
-        maxAttempts: normalizeMaxAttempts(job.opts.attempts),
-        deliveryId: String(job.id ?? parsed.data.orderId),
-        ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
-      });
-    } finally {
-      if (permit) {
-        try {
-          await permit.release();
-        } catch (releaseError) {
-          options.logger.error(
-            { err: releaseError, jobId: job.id, ...correlationLogContext(parsed.data) },
-            "Order-processing admission permit release failed.",
-          );
-        }
-      }
-    }
+    await options.handler.handle(parsed.data, {
+      attemptNumber: job.attemptsMade + 1,
+      attemptsMade: job.attemptsMade,
+      maxAttempts: normalizeMaxAttempts(job.opts.attempts),
+      deliveryId: String(job.id ?? parsed.data.orderId),
+      ...(parsed.data.processingGeneration === undefined
+        ? {}
+        : { processingGeneration: parsed.data.processingGeneration }),
+      ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
+    });
   } catch (error) {
     if (error instanceof OrderNotFoundError || error instanceof OrderJobIdentityMismatchError) {
       await recordDeadLetter(options, job, {
@@ -262,11 +244,6 @@ export async function processJob(
       });
       return;
     }
-    if (error instanceof ErpCircuitOpenError) {
-      await job.moveToDelayed(Date.now() + Math.max(error.retryAfterMs, 0), token);
-      throw new DelayedError();
-    }
-
     if (
       job.attemptsMade + 1 >= normalizeMaxAttempts(job.opts.attempts) &&
       isRecoverableFailure(error)

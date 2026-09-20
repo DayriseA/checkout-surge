@@ -96,6 +96,14 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
           isNull(orderRecoveryJobs.interventionReason),
+          sql`not exists (
+            select 1 from erp_scope_resilience_state scope_state
+            where scope_state.scope = case
+              when ${orders.runId} is null then 'catalog'
+              else 'run:' || ${orders.runId}::text
+            end
+              and scope_state.intervention_reason is not null
+          )`,
           or(
             isNull(orderRecoveryJobs.nextAttemptAt),
             lte(orderRecoveryJobs.nextAttemptAt, input.now),
@@ -167,6 +175,17 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
           eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
           isNull(orderRecoveryJobs.interventionReason),
+          sql`not exists (
+            select 1
+            from orders scope_order
+            join erp_scope_resilience_state scope_state
+              on scope_state.scope = case
+                when scope_order.run_id is null then 'catalog'
+                else 'run:' || scope_order.run_id::text
+              end
+            where scope_order.id = ${orderRecoveryJobs.orderId}
+              and scope_state.intervention_reason is not null
+          )`,
           or(
             isNull(orderRecoveryJobs.nextAttemptAt),
             lte(orderRecoveryJobs.nextAttemptAt, input.now),

@@ -12,6 +12,7 @@ const jobs: OrderProcessJob[] = [
     correlationId: "corr-dispatch-1",
     quantity: 1,
     queuedAt: "2026-06-21T00:00:00.000Z",
+    processingGeneration: 0,
   },
   {
     orderId: "11111111-1111-4111-8111-111111111112",
@@ -21,6 +22,7 @@ const jobs: OrderProcessJob[] = [
     correlationId: "corr-dispatch-2",
     quantity: 2,
     queuedAt: "2026-06-21T00:00:01.000Z",
+    processingGeneration: 0,
   },
 ];
 

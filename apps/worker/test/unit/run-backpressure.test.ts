@@ -14,6 +14,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-worker-backpressure-test",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const delivery: OrderProcessDeliveryMetadata = {
   attemptNumber: 1,
@@ -66,7 +67,7 @@ describe("run-scoped order confirmation backpressure", () => {
     await Promise.all([first, second]);
   });
 
-  it("isolates run breakers, reuses matching configuration, and uses fallback only without a snapshot", async () => {
+  it("isolates run breakers and refuses generated work without its accepted snapshot", async () => {
     const fallback = { confirm: vi.fn().mockResolvedValue(undefined) };
     const created: Array<{ runId: string; threshold: number; confirm: ReturnType<typeof vi.fn> }> =
       [];
@@ -112,8 +113,10 @@ describe("run-scoped order confirmation backpressure", () => {
     expect(created).toHaveLength(3);
 
     await confirmation.confirm({ ...job, runId: undefined }, delivery);
-    await confirmation.confirm({ ...job, runId: "66666666-6666-4666-8666-666666666666" }, delivery);
-    expect(fallback.confirm).toHaveBeenCalledTimes(2);
+    await expect(
+      confirmation.confirm({ ...job, runId: "66666666-6666-4666-8666-666666666666" }, delivery),
+    ).rejects.toThrow("snapshot was not found");
+    expect(fallback.confirm).toHaveBeenCalledOnce();
   });
 
   it("uses independent real breakers and snapshot thresholds instead of fallback configuration", async () => {
@@ -201,7 +204,7 @@ describe("run-scoped order confirmation backpressure", () => {
     });
   });
 
-  it("reads run configuration at most once and falls back for absent scope or snapshot", async () => {
+  it("reads run configuration once and reserves fallback for catalog work", async () => {
     const read = vi.fn(async (requestedRunId: string) =>
       requestedRunId === runId ? runConfigSnapshot() : null,
     );
@@ -218,7 +221,9 @@ describe("run-scoped order confirmation backpressure", () => {
     expect(read).toHaveBeenCalledTimes(1);
     expect(runConfirmation.confirm).toHaveBeenCalledOnce();
     expect(onMissingRunSnapshot).not.toHaveBeenCalled();
-    await confirmation.confirm({ ...job, runId: "66666666-6666-4666-8666-666666666666" }, delivery);
+    await expect(
+      confirmation.confirm({ ...job, runId: "66666666-6666-4666-8666-666666666666" }, delivery),
+    ).rejects.toThrow("snapshot was not found");
     expect(read).toHaveBeenCalledTimes(2);
     expect(onMissingRunSnapshot).toHaveBeenCalledOnce();
     expect(onMissingRunSnapshot).toHaveBeenCalledWith("66666666-6666-4666-8666-666666666666");
@@ -226,7 +231,7 @@ describe("run-scoped order confirmation backpressure", () => {
     await confirmation.confirm(catalogJob, delivery);
     expect(read).toHaveBeenCalledTimes(2);
     expect(onMissingRunSnapshot).toHaveBeenCalledOnce();
-    expect(fallback.confirm).toHaveBeenCalledTimes(2);
+    expect(fallback.confirm).toHaveBeenCalledOnce();
   });
 
   it("retains entries across semaphore waits and reset admission, then lazily evicts expired idle entries", async () => {

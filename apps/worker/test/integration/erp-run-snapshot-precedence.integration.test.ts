@@ -77,7 +77,7 @@ describe("worker and Mock ERP precedence", () => {
     });
 
     await expect(
-      confirmation.confirm(
+      confirmation.dispatch(
         {
           orderId: "11111111-1111-4111-8111-111111111111",
           publicOrderId: "ord_precedence",
@@ -87,6 +87,7 @@ describe("worker and Mock ERP precedence", () => {
           correlationId: "corr-precedence",
           quantity: 1,
           queuedAt: "2026-08-07T00:00:00.000Z",
+          processingGeneration: 0,
         },
         { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 },
       ),

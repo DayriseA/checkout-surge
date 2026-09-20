@@ -463,8 +463,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS` | `1000` | Run-scoped recovery scan cadence; the owner uses a fixed bounded per-sale batch. |
 | `PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS` | `2000` | Whole-discovery deadline for the sole recovery scheduler; aborts its operation-owned PostgreSQL scope and bounds discovery Redis commands. |
 | `PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS` | `3` | Process-local cap for distinct request-replay recovery attempts; overload preserves the pending response and retryability. |
-| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | API default/backfill for the frozen order-job retry budget |
-| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | API default/backfill for frozen exponential retry backoff |
+| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | Retired order-delivery setting retained until the coordinated configuration cleanup; order-process jobs use one BullMQ attempt. |
+| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | Retired order-delivery setting retained until the coordinated configuration cleanup; durable worker scheduling owns deferral timing. |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | Long-lived API application/data-path PostgreSQL pool maximum; control-plane pools described below are separate |
 | `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process, can open at most one separate short-lived PostgreSQL connection, and closes its PostgreSQL/Redis/BullMQ probe resources on completion, deadline, or API shutdown. |

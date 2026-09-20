@@ -256,7 +256,7 @@ export async function ensureProcessingOwnership(
       reason: "initial_dispatch_ownership",
       status: "enqueued",
       attempts: 0,
-      processingGeneration: 0,
+      processingGeneration: job.processingGeneration ?? 0,
       nextAttemptAt: now,
       claimedAt: now,
       leaseExpiresAt: new Date(now.getTime() + controlLeaseMs),
@@ -277,27 +277,31 @@ async function claimExecutionOwnership(
     .update(orderRecoveryJobs)
     .set({
       status: "enqueued",
-      processingGeneration: sql`CASE
-        WHEN ${orderRecoveryJobs.publicationOwner} = ${deliveryId}
-          THEN ${orderRecoveryJobs.processingGeneration}
-        ELSE ${orderRecoveryJobs.processingGeneration} + 1
-      END`,
       claimedAt: now,
       leaseExpiresAt: new Date(now.getTime() + controlLeaseMs),
-      publicationOwner: deliveryId,
+      publicationOwner: null,
       updatedAt: now,
     })
     .where(
       and(
         eq(orderRecoveryJobs.orderId, job.orderId),
+        eq(orderRecoveryJobs.processingGeneration, job.processingGeneration ?? 0),
         inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
         isNull(orderRecoveryJobs.interventionReason),
+        sql`not exists (
+          select 1 from erp_scope_resilience_state scope_state
+          where scope_state.scope = ${job.runId ? `run:${job.runId}` : "catalog"}
+            and scope_state.intervention_reason is not null
+        )`,
+        job.runId
+          ? sql`not exists (
+              select 1 from demo_runs stopped_run
+              where stopped_run.id = ${job.runId}
+                and stopped_run.administrative_stop is not null
+            )`
+          : undefined,
         or(isNull(orderRecoveryJobs.nextAttemptAt), lte(orderRecoveryJobs.nextAttemptAt, now)),
-        or(
-          eq(orderRecoveryJobs.publicationOwner, deliveryId),
-          isNull(orderRecoveryJobs.leaseExpiresAt),
-          lte(orderRecoveryJobs.leaseExpiresAt, now),
-        ),
+        eq(orderRecoveryJobs.publicationOwner, deliveryId),
       ),
     )
     .returning({ processingGeneration: orderRecoveryJobs.processingGeneration });

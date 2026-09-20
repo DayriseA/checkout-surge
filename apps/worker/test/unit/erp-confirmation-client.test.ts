@@ -18,6 +18,7 @@ const job = {
   correlationId: "corr-worker-erp-client",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const delivery: OrderProcessDeliveryMetadata = {
   attemptNumber: 2,
@@ -130,20 +131,27 @@ describe("HTTP ERP confirmation outcomes", () => {
     );
   });
 
-  it("records dispatch identity before sending the contract request", async () => {
+  it.each([
+    undefined,
+    "88888888-8888-4888-8888-888888888888",
+  ])("records dispatch identity before sending the contract request (supersedes %s)", async (supersedesErpCallId) => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
       .mockResolvedValue(jsonResponse(successResponse(), 200));
     const persistence = attemptPersistence();
     const client = createClient({ persistence, fetch });
 
-    await client.dispatch(job, delivery);
+    await client.dispatch(job, {
+      ...delivery,
+      ...(supersedesErpCallId ? { supersedesErpCallId } : {}),
+    });
 
     expect(persistence.recordDispatchIntent).toHaveBeenCalledWith({
       job,
       idempotencyKey: call.idempotencyKey,
       dispatchedAt: new Date("2026-06-22T00:00:00.000Z"),
       expectedProcessingGeneration: 7,
+      ...(supersedesErpCallId ? { supersedesErpCallId } : {}),
     });
     const request = fetch.mock.calls[0];
     expect(request?.[0]).toEqual(new URL("http://mock-erp:4100/confirmations"));

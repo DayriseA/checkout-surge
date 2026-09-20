@@ -36,6 +36,7 @@ describe("Postgres order dispatch persistence", () => {
         correlationId: row.correlationId,
         quantity: row.quantity,
         queuedAt: row.queuedAt.toISOString(),
+        processingGeneration: 0,
       },
     ]);
 

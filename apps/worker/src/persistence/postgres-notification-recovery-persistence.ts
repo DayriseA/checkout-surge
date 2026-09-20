@@ -36,6 +36,7 @@ export class PostgresNotificationRecoveryPersistence implements NotificationReco
         ...(order.runId ? { runId: order.runId } : {}),
         quantity: order.quantity,
         queuedAt: order.queuedAt.toISOString(),
+        processingGeneration: 0,
       },
       confirmedAt: requireConfirmedAt(order).toISOString(),
     }));

@@ -1,4 +1,5 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
+import { MissingAcceptedRunSnapshotError } from "./run-backpressure.js";
 import type { RunConfigReader } from "./run-config.js";
 
 export interface OrderProcessAdmissionPermit {
@@ -56,7 +57,7 @@ export class ProcessLocalOrderProcessAdmission implements OrderProcessAdmission 
 
     const snapshot = await this.options.runConfigReader.read(job.runId);
     if (!snapshot) {
-      throw new Error(`Accepted run snapshot was not found for order job run ${job.runId}.`);
+      throw new MissingAcceptedRunSnapshotError(job.runId);
     }
     return snapshot.backpressureConfig.orderProcessConcurrency;
   }

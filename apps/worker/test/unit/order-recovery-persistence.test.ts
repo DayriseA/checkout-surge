@@ -62,6 +62,7 @@ describe("Postgres order recovery persistence", () => {
         correlationId: "corr-recovery",
         quantity: 1,
         queuedAt: "2026-06-22T00:00:00.000Z",
+        processingGeneration: 0,
       },
       delivery: {
         attemptNumber: 4,

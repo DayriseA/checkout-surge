@@ -1,12 +1,18 @@
 import type { ErpCallReference, ErpConfirmationResponse } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
+import {
+  ErpCircuitBreaker,
+  ErpCircuitOpenError,
+} from "../../src/application/erp-circuit-breaker.js";
 import type {
   ErpConfirmationOutcome,
   ErpLookupOutcome,
 } from "../../src/application/erp-confirmation-client.js";
 import {
+  type ErpLookupAvailabilityCircuit,
   type ErpReplayDispatchAdmission,
   ErpUnresolvedCallReconciler,
+  ScheduledErpOrderConfirmation,
 } from "../../src/application/erp-reconciliation.js";
 
 const job = {
@@ -17,6 +23,7 @@ const job = {
   correlationId: "corr-reconcile",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 const delivery = {
   attemptNumber: 2,
@@ -71,7 +78,34 @@ describe("ERP unresolved-call reconciliation", () => {
 
     expect(admission.dispatchReplay).toHaveBeenCalledOnce();
     expect(client.dispatch).toHaveBeenCalledOnce();
-    expect(client.dispatch).toHaveBeenCalledWith(job, delivery);
+    expect(client.dispatch).toHaveBeenCalledWith(job, {
+      ...delivery,
+      supersedesErpCallId: call.erpCallId,
+    });
+  });
+
+  it("retains unknown call evidence after denied replay and looks up again next generation", async () => {
+    const client = clientPort(lookupUnknown());
+    const resolution = { resolveDispatchedCall: vi.fn().mockResolvedValue(true) };
+    const reconciler = createReconciler(client, resolution);
+    for (const processingGeneration of [3, 4]) {
+      await expect(
+        reconciler.reconcile({
+          job,
+          delivery: { ...delivery, processingGeneration },
+          call,
+          replayAdmission: rejectingAdmission(),
+        }),
+      ).resolves.toEqual({
+        operation: "non_call_deferral",
+        disposition: "uncertain_result",
+        reason: "replay_not_admitted",
+      });
+    }
+    expect(resolution.resolveDispatchedCall).not.toHaveBeenCalled();
+    expect(client.dispatch).not.toHaveBeenCalled();
+    expect(client.lookup).toHaveBeenCalledTimes(2);
+    expect(client.lookup).toHaveBeenNthCalledWith(2, call.idempotencyKey, job.correlationId);
   });
 
   it("bypasses replay admission and capacity cooldown for the lookup itself", async () => {
@@ -99,6 +133,49 @@ describe("ERP unresolved-call reconciliation", () => {
     ).rejects.toThrow("circuit open");
     expect(client.lookup).not.toHaveBeenCalled();
     expect(Object.keys(circuit)).toEqual(["assertAvailable"]);
+  });
+
+  it("converges unresolved-only work through half-open lookup and one POST probe", async () => {
+    let now = new Date("2026-06-22T00:00:00.000Z");
+    const outage = new Error("ERP unavailable");
+    const breaker = new ErpCircuitBreaker({
+      confirmation: {
+        confirm: vi.fn().mockRejectedValueOnce(outage).mockResolvedValue(dispatchedSuccess(false)),
+      },
+      failureThreshold: 1,
+      resetTimeoutMs: 1_000,
+      isCountedFailure: (error) => error === outage,
+      now: () => now,
+    });
+    const client = clientPort(lookupUnknown());
+    const reconciler = createReconciler(client, undefined, breaker);
+    const replayAdmission: ErpReplayDispatchAdmission = {
+      dispatchReplay: vi.fn(
+        async () => breaker.confirm(job, delivery) as Promise<ErpConfirmationOutcome>,
+      ),
+    };
+
+    await expect(breaker.confirm(job, delivery)).rejects.toBe(outage);
+    await expect(
+      reconciler.reconcile({ job, delivery, call, replayAdmission }),
+    ).rejects.toBeInstanceOf(ErpCircuitOpenError);
+
+    now = new Date("2026-06-22T00:00:01.000Z");
+    await expect(
+      reconciler.reconcile({ job, delivery, call, replayAdmission }),
+    ).resolves.toMatchObject({ disposition: "succeeded", replayed: false });
+    const secondJob = { ...job, orderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" };
+    const secondCall = {
+      ...call,
+      orderId: secondJob.orderId,
+      erpCallId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    };
+    await expect(
+      reconciler.reconcile({ job: secondJob, delivery, call: secondCall, replayAdmission }),
+    ).resolves.toMatchObject({ disposition: "succeeded", replayed: false });
+    expect(client.lookup).toHaveBeenCalledTimes(2);
+    expect(replayAdmission.dispatchReplay).toHaveBeenCalledTimes(2);
+    expect(breaker.snapshot().state).toBe("closed");
   });
 
   it("enforces a dedicated lookup bound and prevents parallel catch-up for one order", async () => {
@@ -174,10 +251,117 @@ describe("ERP unresolved-call reconciliation", () => {
   });
 });
 
+describe("durable ERP scheduling", () => {
+  it("persists local admission denial and releases ownership without a call", async () => {
+    const defer = vi.fn().mockResolvedValue(true);
+    const dispatch = vi.fn();
+    const scheduled = scheduledConfirmation({
+      admission: { tryAcquire: vi.fn().mockResolvedValue(null), close: vi.fn() },
+      control: { defer, openIntervention: vi.fn() },
+      dispatch: { confirm: dispatch },
+    });
+
+    await expect(scheduled.confirm(job, delivery)).resolves.toMatchObject({
+      disposition: "deferred",
+      reason: "local_admission",
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(defer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orderId: job.orderId,
+        processingGeneration: 3,
+        waitingReason: "local_admission",
+      }),
+    );
+  });
+
+  it("passes the unresolved call identity through the admitted circuit dispatch", async () => {
+    const client = clientPort(lookupUnknown());
+    const dispatch = vi.fn().mockResolvedValue(dispatchedSuccess(true));
+    const scheduled = scheduledConfirmation({
+      client: { ...client, findUnresolvedCall: vi.fn().mockResolvedValue(call) },
+      reconciler: createReconciler(client),
+      dispatch: { confirm: dispatch },
+    });
+    await expect(scheduled.confirm(job, delivery)).resolves.toEqual({ disposition: "succeeded" });
+    expect(dispatch).toHaveBeenCalledWith(job, {
+      ...delivery,
+      supersedesErpCallId: call.erpCallId,
+    });
+  });
+
+  it("blocks a marked scope without admission, HTTP, or per-order intervention", async () => {
+    const admission = { tryAcquire: vi.fn(), close: vi.fn() };
+    const control = { defer: vi.fn().mockResolvedValue(true), openIntervention: vi.fn() };
+    const scheduled = scheduledConfirmation({
+      admission,
+      control,
+      scopeState: {
+        get: vi.fn().mockResolvedValue({ interventionReason: "erp_http_401" }),
+        openIntervention: vi.fn(),
+      },
+    });
+
+    await expect(scheduled.confirm(job, delivery)).resolves.toMatchObject({
+      disposition: "intervention_required",
+      reason: "scope_intervention",
+    });
+    expect(admission.tryAcquire).not.toHaveBeenCalled();
+    expect(control.openIntervention).not.toHaveBeenCalled();
+  });
+
+  it("opens order intervention for a corrupt accepted run snapshot", async () => {
+    const corruption = new Error("invalid snapshot");
+    corruption.name = "PersistedRunConfigCorruptionError";
+    const control = {
+      defer: vi.fn(),
+      openIntervention: vi.fn().mockResolvedValue(true),
+    };
+    const scheduled = scheduledConfirmation({
+      admission: { tryAcquire: vi.fn().mockRejectedValue(corruption), close: vi.fn() },
+      control,
+    });
+
+    await expect(scheduled.confirm(job, delivery)).resolves.toEqual({
+      disposition: "intervention_required",
+      reason: "accepted_run_snapshot_invalid",
+    });
+    expect(control.openIntervention).toHaveBeenCalledWith({
+      orderId: job.orderId,
+      reason: "accepted_run_snapshot_invalid",
+      processingGeneration: 3,
+    });
+  });
+});
+
+function scheduledConfirmation(overrides: Record<string, unknown> = {}) {
+  const permit = { release: vi.fn().mockResolvedValue(undefined) };
+  return new ScheduledErpOrderConfirmation({
+    client: {
+      findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
+      findUnresolvedCall: vi.fn().mockResolvedValue(null),
+    },
+    reconciler: { reconcile: vi.fn() } as never,
+    dispatch: { confirm: vi.fn().mockResolvedValue(dispatchedSuccess(false)) },
+    admission: { tryAcquire: vi.fn().mockResolvedValue(permit), close: vi.fn() },
+    control: {
+      defer: vi.fn().mockResolvedValue(true),
+      openIntervention: vi.fn().mockResolvedValue(true),
+    },
+    scopeState: {
+      get: vi.fn().mockResolvedValue(null),
+      openIntervention: vi.fn().mockResolvedValue(undefined),
+    },
+    now: () => new Date("2026-06-22T00:00:02.000Z"),
+    random: () => 0,
+    ...overrides,
+  } as never);
+}
+
 function createReconciler(
   client: ReturnType<typeof clientPort>,
   callResolution = { resolveDispatchedCall: vi.fn().mockResolvedValue(true) },
-  lookupAvailabilityCircuit = { assertAvailable: vi.fn() },
+  lookupAvailabilityCircuit: ErpLookupAvailabilityCircuit = { assertAvailable: vi.fn() },
   lookupConcurrency = 2,
 ) {
   return new ErpUnresolvedCallReconciler({

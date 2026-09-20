@@ -73,15 +73,12 @@ export function createOrderProcessJobPublisher(
   return {
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
-      const add = async (snapshot?: AcceptedRunConfigSnapshot) => {
-        const retryPolicy = options?.attempts
-          ? undefined
-          : snapshot?.backpressureConfig.retryPolicy;
+      const add = async (_snapshot?: AcceptedRunConfigSnapshot) => {
         await queue.add(orderProcessJobName, job, {
-          attempts: options?.attempts ?? retryPolicy?.maxAttempts ?? retryOptions.maxAttempts,
+          attempts: 1,
           backoff: {
             type: "exponential",
-            delay: retryPolicy?.initialBackoffMs ?? retryOptions.backoffBaseMs,
+            delay: retryOptions.backoffBaseMs,
           },
           jobId: options?.jobId ?? job.orderId,
         });

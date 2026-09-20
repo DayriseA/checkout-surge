@@ -11,6 +11,7 @@ const orderJob = {
   runId: "55555555-5555-4555-8555-555555555555",
   quantity: 1,
   queuedAt: "2026-06-21T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 describe("notification-record job publisher", () => {

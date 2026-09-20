@@ -29,6 +29,7 @@ const job: OrderProcessJob = {
   correlationId: "corr-recovery-boundary",
   quantity: 1,
   queuedAt: "2026-06-22T00:00:00.000Z",
+  processingGeneration: 0,
 };
 
 run("PostgreSQL durable order recovery boundary", () => {
