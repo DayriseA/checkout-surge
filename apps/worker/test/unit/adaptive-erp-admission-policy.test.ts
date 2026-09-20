@@ -2,10 +2,91 @@ import { describe, expect, it } from "vitest";
 import {
   AdaptiveErpAdmissionController,
   type AdaptiveErpPermit,
+  AdaptiveErpRequestDeadlineController,
   adaptiveErpAdmissionPolicy,
   type ErpAdmissionOperation,
   type ErpAdmissionScope,
 } from "../../src/application/adaptive-erp-admission-policy.js";
+
+describe("adaptive ERP request deadlines", () => {
+  it("uses the initial deadline for an empty scope and isolates scope samples", () => {
+    const clock = testClock();
+    const controller = new AdaptiveErpRequestDeadlineController({ now: clock.now });
+
+    expect(controller.deadline("catalog")).toBe(
+      adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+    );
+    controller.record({
+      scope: "catalog",
+      source: "confirmation_response",
+      durationMs: 1_000,
+      requestDeadlineMs: 2_000,
+    });
+    expect(controller.deadline("catalog")).toBe(2_000);
+    expect(controller.deadline("run:separate")).toBe(
+      adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+    );
+  });
+
+  it("uses nearest-rank percentile, evicts the oldest sample, and clamps both bounds", () => {
+    const controller = new AdaptiveErpRequestDeadlineController({ now: () => 0 });
+    for (let index = 0; index < 95; index += 1) recordResponse(controller, 0);
+    for (let index = 0; index < 5; index += 1) recordResponse(controller, 1_000);
+    expect(controller.deadline("catalog")).toBe(500);
+
+    recordResponse(controller, 1_000);
+    expect(controller.snapshot("catalog").sampleCount).toBe(100);
+    expect(controller.deadline("catalog")).toBe(2_000);
+
+    for (let index = 0; index < 100; index += 1) recordResponse(controller, 10_000);
+    expect(controller.deadline("catalog")).toBe(6_000);
+  });
+
+  it("counts timeouts at their used deadline and excludes lookup, replay, and local reuse", () => {
+    const controller = new AdaptiveErpRequestDeadlineController({ now: () => 0 });
+    for (const source of ["lookup", "replay", "local_reuse"] as const) {
+      controller.record({
+        scope: "catalog",
+        source,
+        durationMs: 5_000,
+        requestDeadlineMs: 2_000,
+      });
+    }
+    expect(controller.snapshot("catalog").sampleCount).toBe(0);
+
+    for (const expected of [3_500, 5_750, 6_000]) {
+      const usedDeadline = controller.deadline("catalog");
+      controller.record({
+        scope: "catalog",
+        source: "confirmation_timeout",
+        durationMs: usedDeadline + 1_000,
+        requestDeadlineMs: usedDeadline,
+      });
+      expect(controller.deadline("catalog")).toBe(expected);
+    }
+    expect(controller.snapshot("catalog").sampleCount).toBe(3);
+  });
+
+  it("bounds retained scope state by evicting the least recently used scope", () => {
+    let now = 0;
+    const controller = new AdaptiveErpRequestDeadlineController({ now: () => now++ });
+    for (let index = 0; index <= adaptiveErpAdmissionPolicy.maximumScopeStates; index += 1) {
+      controller.record({
+        scope: `run:${index}`,
+        source: "confirmation_response",
+        durationMs: 100,
+        requestDeadlineMs: 2_000,
+      });
+    }
+    expect(controller.snapshot("run:0").sampleCount).toBe(0);
+    expect(
+      controller.snapshot(`run:${adaptiveErpAdmissionPolicy.maximumScopeStates}`).sampleCount,
+    ).toBe(1);
+    expect(controller.snapshot("run:0").scopeCount).toBe(
+      adaptiveErpAdmissionPolicy.maximumScopeStates,
+    );
+  });
+});
 
 describe("adaptive ERP admission policy", () => {
   it("paces starts without idle burst credit and applies both in-flight bounds", () => {
@@ -525,6 +606,15 @@ function acquire(
 
 function success() {
   return { outcome: "succeeded" as const, replayed: false };
+}
+
+function recordResponse(controller: AdaptiveErpRequestDeadlineController, durationMs: number) {
+  controller.record({
+    scope: "catalog",
+    source: "confirmation_response",
+    durationMs,
+    requestDeadlineMs: 2_000,
+  });
 }
 
 function createController(clock: ReturnType<typeof testClock>, random = () => 0) {

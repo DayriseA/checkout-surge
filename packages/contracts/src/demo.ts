@@ -4,7 +4,11 @@ import {
   demoPresetSchema,
   demoRunSummaryShapeSchema,
 } from "./entities.js";
-import { erpAttemptHistoryRetentionLimit, erpCumulativeOutcomeCountsSchema } from "./erp.js";
+import {
+  erpAttemptHistoryRetentionLimit,
+  erpCumulativeOutcomeCountsSchema,
+  largestAllowedErpLatencyMs,
+} from "./erp.js";
 import { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
@@ -15,7 +19,9 @@ import {
   trafficExecutionStatusSchema,
 } from "./lifecycle.js";
 import {
+  acceptedErpRunConfigSchema,
   acceptedRunConfigSnapshotSchema,
+  acceptedRunConfigWriteSchema,
   backpressureConfigSchema,
   erpRunConfigSchema,
   httpTimingBreakdownSummarySchema,
@@ -110,7 +116,7 @@ export const demoRunConfigOverrideSchema = z
   .object({
     trafficConfig: trafficConfigSchema.optional(),
     inventoryConfig: inventoryConfigSchema.optional(),
-    erpConfig: erpRunConfigSchema.optional(),
+    erpConfig: acceptedErpRunConfigSchema.optional(),
     backpressureConfig: backpressureConfigSchema.optional(),
   })
   .strict();
@@ -673,6 +679,12 @@ export const publicRuntimePolicyMutableSchema = z
     publicCustomLimits: publicCustomLimitsSchema,
   })
   .strict();
+export const publicRuntimePolicyMutableWriteSchema = publicRuntimePolicyMutableSchema.safeExtend({
+  publicCustomDefaults: acceptedRunConfigWriteSchema,
+  publicCustomLimits: publicCustomLimitsSchema.safeExtend({
+    maxErpLatencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs),
+  }),
+});
 export const publicRuntimePolicyPersistedSchema = publicRuntimePolicyMutableSchema.superRefine(
   (policy, context) => {
     for (const violation of collectPublicRuntimePolicyMutableViolations(policy)) {
@@ -734,7 +746,7 @@ export type AdminPublicRuntimePolicyResponse = z.infer<
 
 export const adminPublicRuntimePolicyUpdateRequestSchema = z
   .object({
-    policy: publicRuntimePolicyMutableSchema,
+    policy: publicRuntimePolicyMutableWriteSchema,
     correlationId: correlationIdSchema.optional(),
   })
   .strict();
@@ -748,7 +760,7 @@ export const saveDemoPresetRequestSchema = z
     display: demoPresetDisplaySchema,
     trafficConfig: trafficConfigSchema,
     inventoryConfig: inventoryConfigSchema,
-    erpConfig: erpRunConfigSchema,
+    erpConfig: acceptedErpRunConfigSchema,
     backpressureConfig: backpressureConfigSchema,
     correlationId: correlationIdSchema.optional(),
   })

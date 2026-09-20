@@ -20,10 +20,105 @@ export const adaptiveErpAdmissionPolicy = {
   lookupInFlightCeiling: 2,
   deferredRecheckMs: 100,
   maximumScopeStates: 1_000,
+  initialRequestDeadlineMs: 2_000,
+  requestDeadlineWindowSize: 100,
+  requestDeadlinePercentile: 0.95,
+  requestDeadlineFactor: 1.5,
+  requestDeadlineMarginMs: 500,
+  minimumRequestDeadlineMs: 500,
+  maximumRequestDeadlineMs: 6_000,
+  requestDeadlineLeaseHeadroomMs: 5_000,
 } as const;
 
 export type ErpAdmissionScope = `run:${string}` | "catalog";
 export type ErpAdmissionOperation = "confirmation" | "lookup";
+
+export type ErpLatencyObservationSource =
+  | "confirmation_response"
+  | "confirmation_timeout"
+  | "local_reuse"
+  | "lookup"
+  | "replay";
+
+interface DeadlineScopeState {
+  samples: number[];
+  lastUsedAtMs: number;
+}
+
+/** Process-local latency learning. Only task 09 will wire it into dispatch. */
+export class AdaptiveErpRequestDeadlineController {
+  private readonly scopes = new Map<ErpAdmissionScope, DeadlineScopeState>();
+
+  constructor(private readonly dependencies: { now: () => number }) {}
+
+  deadline(scope: ErpAdmissionScope): number {
+    const state = this.scopes.get(scope);
+    if (!state || state.samples.length === 0)
+      return adaptiveErpAdmissionPolicy.initialRequestDeadlineMs;
+    state.lastUsedAtMs = this.dependencies.now();
+    const sorted = [...state.samples].sort((left, right) => left - right);
+    const rank = Math.ceil(sorted.length * adaptiveErpAdmissionPolicy.requestDeadlinePercentile);
+    const percentile = sorted[Math.max(0, rank - 1)] as number;
+    return Math.min(
+      adaptiveErpAdmissionPolicy.maximumRequestDeadlineMs,
+      Math.max(
+        adaptiveErpAdmissionPolicy.minimumRequestDeadlineMs,
+        Math.ceil(
+          percentile * adaptiveErpAdmissionPolicy.requestDeadlineFactor +
+            adaptiveErpAdmissionPolicy.requestDeadlineMarginMs,
+        ),
+      ),
+    );
+  }
+
+  record(input: {
+    scope: ErpAdmissionScope;
+    source: ErpLatencyObservationSource;
+    durationMs: number;
+    requestDeadlineMs: number;
+  }): void {
+    if (input.source !== "confirmation_response" && input.source !== "confirmation_timeout") return;
+    const now = this.dependencies.now();
+    const state = this.scope(input.scope, now);
+    const sample =
+      input.source === "confirmation_timeout" ? input.requestDeadlineMs : input.durationMs;
+    state.samples.push(sample);
+    if (state.samples.length > adaptiveErpAdmissionPolicy.requestDeadlineWindowSize) {
+      state.samples.shift();
+    }
+  }
+
+  snapshot(scope: ErpAdmissionScope): {
+    policyVersion: string;
+    deadlineMs: number;
+    sampleCount: number;
+    scopeCount: number;
+  } {
+    return {
+      policyVersion: adaptiveErpAdmissionPolicy.version,
+      deadlineMs: this.deadline(scope),
+      sampleCount: this.scopes.get(scope)?.samples.length ?? 0,
+      scopeCount: this.scopes.size,
+    };
+  }
+
+  private scope(scope: ErpAdmissionScope, now: number): DeadlineScopeState {
+    const existing = this.scopes.get(scope);
+    if (existing) {
+      existing.lastUsedAtMs = now;
+      return existing;
+    }
+    if (this.scopes.size >= adaptiveErpAdmissionPolicy.maximumScopeStates) {
+      const oldest = [...this.scopes].reduce((candidate, entry) =>
+        entry[1].lastUsedAtMs < candidate[1].lastUsedAtMs ? entry : candidate,
+      );
+      this.scopes.delete(oldest[0]);
+    }
+    const created = { samples: [], lastUsedAtMs: now };
+    this.scopes.set(scope, created);
+    return created;
+  }
+}
 
 export type ErpAdmissionFeedback =
   | {

@@ -5,6 +5,7 @@ import {
   type ErpConfirmationRequest,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
+  largestAllowedErpLatencyMs,
 } from "@checkout-surge/contracts";
 import type { ConfirmationDecision, ConfirmationDecisionProvider } from "./confirmation-service.js";
 import type { TpsLimiter } from "./tps-limiter.js";
@@ -61,9 +62,10 @@ export class ErpChaosConfigStore {
   private validateAgainstCaps(config: ErpChaosConfig): void {
     const violations: Record<string, unknown> = {};
 
-    if (config.latencyMs > this.safetyCaps.maxLatencyMs) {
+    const maximumLatencyMs = Math.min(this.safetyCaps.maxLatencyMs, largestAllowedErpLatencyMs);
+    if (config.latencyMs > maximumLatencyMs) {
       violations.latencyMs = {
-        maximum: this.safetyCaps.maxLatencyMs,
+        maximum: maximumLatencyMs,
         actual: config.latencyMs,
       };
     }

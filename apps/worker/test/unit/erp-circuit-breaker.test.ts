@@ -213,6 +213,7 @@ describe("ERP circuit breaker", () => {
       startedAt: new Date("2026-06-22T00:00:00.000Z"),
       finishedAt: new Date("2026-06-22T00:00:01.000Z"),
       latencyMs: 1_000,
+      requestDeadlineMs: 1_000,
       replayed: false,
     });
     const breaker = new ErpCircuitBreaker({

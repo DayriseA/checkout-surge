@@ -169,6 +169,45 @@ run("PostgreSQL confirmation ledger", () => {
     }
   });
 
+  it("adopts one canonical result after the caller deadline aborts a slower confirmation", async () => {
+    const lateRequest = {
+      ...request,
+      orderId: "83500000-0000-4000-8000-000000000001",
+      publicOrderId: "ord-ledger-late-response",
+      reservationId: "83500000-0000-4000-8000-000000000002",
+      idempotencyKey: "erp-confirmation:83500000-0000-4000-8000-000000000001",
+    };
+    const runtime = await startMockErpProcess(runtimes, { latencyMs: 50 });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5);
+    const aborted = await fetch(`${runtime.baseUrl}${erpConfirmationPath}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(lateRequest),
+      signal: controller.signal,
+    }).catch((error: unknown) => error);
+    clearTimeout(timeout);
+    expect(aborted).toMatchObject({ name: "AbortError" });
+
+    await runtime.waitForOutput("Mock ERP confirmation request completed.");
+    const lookup = await fetch(
+      `${runtime.baseUrl}${erpConfirmationLookupPath.replace(
+        ":idempotencyKey",
+        encodeURIComponent(lateRequest.idempotencyKey),
+      )}`,
+    );
+    const lookupResult = erpLookupResponseSchema.parse(await lookup.json());
+    const replay = await postConfirmation(runtime.baseUrl, lateRequest);
+    await runtime.close();
+
+    expect(lookupResult.lookup.status).toBe("succeeded");
+    expect(replay.status).toBe(200);
+    expect(replay.headers.get(erpReplayedResponseHeaderName)).toBe("true");
+    if (lookupResult.lookup.status === "succeeded") {
+      expect(await replay.json()).toEqual(lookupResult.lookup.result);
+    }
+  });
+
   it("leaves unknown and no terminal row when killed during latency before insertion", async () => {
     const crashRequest = {
       ...request,

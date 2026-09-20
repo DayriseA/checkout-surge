@@ -20,6 +20,9 @@ export const erpChaosResetPath = "/chaos/reset" as const;
 export const erpResilienceStatusPath = "/erp/status" as const;
 export const controlServiceTokenHeaderName = "x-control-service-token" as const;
 
+/** Provisional deployment ceiling; task 20 owns final calibration and approval. */
+export const largestAllowedErpLatencyMs = 5_000 as const;
+
 export const erpChaosConfigSchema = z
   .object({
     latencyMs: nonnegativeIntegerSchema,
@@ -29,6 +32,11 @@ export const erpChaosConfigSchema = z
   })
   .strict();
 export type ErpChaosConfig = z.infer<typeof erpChaosConfigSchema>;
+
+/** Write/acceptance boundary. Keep the base schema permissive for historical data. */
+export const acceptedErpChaosConfigSchema = erpChaosConfigSchema.safeExtend({
+  latencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs),
+});
 
 export const erpChaosSafetyCapsSchema = z
   .object({
@@ -48,7 +56,7 @@ export const erpConfirmationRequestSchema = z
     saleOfferId: uuidSchema,
     runId: uuidSchema.optional(),
     idempotencyKey: idempotencyKeySchema,
-    erpConfig: erpChaosConfigSchema.optional(),
+    erpConfig: acceptedErpChaosConfigSchema.optional(),
     correlationId: correlationIdSchema,
     quantity: z.number().int().positive(),
   })

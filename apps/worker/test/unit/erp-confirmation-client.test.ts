@@ -217,22 +217,82 @@ describe("HTTP ERP confirmation outcomes", () => {
     expect(body).not.toHaveProperty("replayed");
   });
 
-  it("keeps a timeout after dispatch uncertain and a connection failure unavailable", async () => {
-    const abort = new Error("aborted");
-    abort.name = "AbortError";
-    const timedOut = createClient({ fetch: vi.fn<typeof fetch>().mockRejectedValue(abort) });
+  it("keeps a connection failure unavailable", async () => {
     const unavailable = createClient({
       fetch: vi.fn<typeof fetch>().mockRejectedValue(new Error("ECONNREFUSED")),
     });
 
-    await expect(timedOut.dispatch(job, delivery)).resolves.toMatchObject({
-      disposition: "uncertain_result",
-      errorCode: "erp_request_timeout",
-    });
     await expect(unavailable.dispatch(job, delivery)).resolves.toMatchObject({
       disposition: "temporarily_unavailable",
       errorCode: "erp_request_failed",
     });
+  });
+
+  it.each([
+    5_750, 6_000,
+  ])("aborts exactly at the chosen %ims deadline and keeps the result uncertain", async (requestDeadlineMs) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-22T00:00:00.000Z"));
+    try {
+      const persistence = attemptPersistence();
+      let signal: AbortSignal | undefined;
+      const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(
+        (_url, init) =>
+          new Promise<Response>((_resolve, reject) => {
+            signal = init?.signal ?? undefined;
+            signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+          }),
+      );
+      const client = createClient({
+        persistence,
+        fetch,
+        requestTimeoutMs: 1_000,
+        now: () => new Date(),
+      });
+      let settled = false;
+      const result = client.dispatch(job, delivery, requestDeadlineMs).finally(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(signal?.aborted).toBe(false);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(requestDeadlineMs - 1_001);
+      expect(signal?.aborted).toBe(false);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toMatchObject({
+        disposition: "uncertain_result",
+        errorCode: "erp_request_timeout",
+        requestDeadlineMs,
+        latencyMs: requestDeadlineMs,
+      });
+      expect(persistence.recordAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({ status: "timed_out", terminal: false }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses the policy-selected deadline and emits duration/deadline telemetry", async () => {
+    const logger = { info: vi.fn(), warn: vi.fn() };
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (_url, init) => {
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return jsonResponse(successResponse(), 200);
+    });
+    const client = createClient({ fetch, logger });
+
+    await expect(client.dispatch(job, delivery, 5_750)).resolves.toMatchObject({
+      requestDeadlineMs: 5_750,
+      latencyMs: 35,
+    });
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ durationMs: 35, requestDeadlineMs: 5_750 }),
+      "ERP confirmation request completed.",
+    );
   });
 
   it("records body-read connection loss as availability without authoritative response evidence", async () => {
@@ -339,18 +399,22 @@ function createClient(
   options: {
     persistence?: ErpAttemptPersistence;
     fetch?: typeof fetch;
-    logger?: Pick<CheckoutSurgeLogger, "warn">;
+    logger?: Pick<CheckoutSurgeLogger, "warn"> & Partial<Pick<CheckoutSurgeLogger, "info">>;
+    requestTimeoutMs?: number;
+    now?: () => Date;
   } = {},
 ): HttpErpOrderConfirmation {
   return new HttpErpOrderConfirmation({
     baseUrl: "http://mock-erp:4100",
-    requestTimeoutMs: 1_000,
+    requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
     retryAfterPolicy: { fallbackDelayMs: 750, maximumDelayMs: 5_000 },
     attemptPersistence: options.persistence ?? attemptPersistence(),
     fetch:
       options.fetch ??
       vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(successResponse(), 200)),
-    now: sequenceClock(new Date("2026-06-22T00:00:00.000Z"), new Date("2026-06-22T00:00:00.035Z")),
+    now:
+      options.now ??
+      sequenceClock(new Date("2026-06-22T00:00:00.000Z"), new Date("2026-06-22T00:00:00.035Z")),
     ...(options.logger ? { logger: options.logger } : {}),
   });
 }

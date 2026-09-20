@@ -1,4 +1,8 @@
-import { orderProcessConcurrencyHardCap } from "@checkout-surge/contracts";
+import {
+  largestAllowedErpLatencyMs,
+  orderProcessConcurrencyHardCap,
+} from "@checkout-surge/contracts";
+import { adaptiveErpAdmissionPolicy } from "../application/adaptive-erp-admission-policy.js";
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
   const config = {
@@ -91,7 +95,36 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
       `ORDER_PROCESS_CONCURRENCY must be at least the accepted run concurrency cap (${orderProcessConcurrencyHardCap}).`,
     );
   }
+  validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: config.orderRecoveryLeaseMs });
   return config;
+}
+
+export function validateAdaptiveErpDeadlineConfiguration(input: {
+  recoveryLeaseMs: number;
+  maximumRequestDeadlineMs?: number;
+  requestDeadlineMarginMs?: number;
+  requestDeadlineLeaseHeadroomMs?: number;
+  largestAllowedLatencyMs?: number;
+}): void {
+  const maximum =
+    input.maximumRequestDeadlineMs ?? adaptiveErpAdmissionPolicy.maximumRequestDeadlineMs;
+  const margin =
+    input.requestDeadlineMarginMs ?? adaptiveErpAdmissionPolicy.requestDeadlineMarginMs;
+  const largestLatency = input.largestAllowedLatencyMs ?? largestAllowedErpLatencyMs;
+  const leaseHeadroom =
+    input.requestDeadlineLeaseHeadroomMs ??
+    adaptiveErpAdmissionPolicy.requestDeadlineLeaseHeadroomMs;
+  if (maximum < largestLatency + margin) {
+    throw new Error(
+      `Adaptive ERP maximum request deadline (${maximum}ms) must be at least the largest allowed ERP latency plus policy margin (${largestLatency + margin}ms).`,
+    );
+  }
+  const minimumLease = maximum + leaseHeadroom;
+  if (input.recoveryLeaseMs < minimumLease) {
+    throw new Error(
+      `ORDER_RECOVERY_LEASE_MS (${input.recoveryLeaseMs}ms) must be at least the adaptive ERP maximum request deadline plus ownership headroom (${minimumLease}ms).`,
+    );
+  }
 }
 
 function requireEnv(env: NodeJS.ProcessEnv, name: string): string {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { acceptedRunConfigSnapshotSchema, erpProfileSchema } from "../src/index.js";
+import {
+  acceptedErpProfileSchema,
+  acceptedRunConfigSnapshotSchema,
+  acceptedRunConfigWriteSchema,
+  largestAllowedErpLatencyMs,
+  publicRuntimePolicyMutableWriteSchema,
+} from "../src/index.js";
 import {
   type AdaptiveErpScenarioFixture,
   acceptanceScenarioFixtures,
@@ -24,7 +30,7 @@ describe("adaptive ERP acceptance fixtures", () => {
         expect(fixture.presetSlug).toBe("surge-10k");
         continue;
       }
-      expect(() => acceptedRunConfigSnapshotSchema.parse(fixture.config)).not.toThrow();
+      expect(() => acceptedRunConfigWriteSchema.parse(fixture.config)).not.toThrow();
     }
   });
 
@@ -32,7 +38,7 @@ describe("adaptive ERP acceptance fixtures", () => {
     for (const fixture of acceptanceScenarioFixtures()) {
       if (fixture.profile === null) continue;
       expect(fixture.operatorScope).toBe("admin");
-      expect(() => erpProfileSchema.parse(fixture.profile)).not.toThrow();
+      expect(() => acceptedErpProfileSchema.parse(fixture.profile)).not.toThrow();
     }
     expect(
       acceptanceScenarioFixtures()
@@ -129,7 +135,52 @@ describe("adaptive ERP acceptance fixtures", () => {
     });
     expect(legacy.backpressureConfig.drainTimeoutSeconds).toBe(300);
     expect(legacy.erpConfig.requestTimeoutMs).toBe(2000);
+    expect(() => acceptedRunConfigWriteSchema.parse(legacy)).not.toThrow();
+  });
+
+  it("bounds new latency inputs without tightening historical snapshot reads", () => {
+    const legacy = previewRunConfigSnapshotFixture();
+    legacy.erpConfig.latencyMs = largestAllowedErpLatencyMs + 1;
     expect(() => acceptedRunConfigSnapshotSchema.parse(legacy)).not.toThrow();
+    expect(() => acceptedRunConfigWriteSchema.parse(legacy)).toThrow();
+
+    const profile = acceptanceScenarioFixtures().find((fixture) => fixture.profile)?.profile;
+    if (!profile) throw new Error("Missing profile fixture");
+    expect(() =>
+      acceptedErpProfileSchema.parse({
+        ...profile,
+        segments: [
+          {
+            ...profile.segments[0],
+            override: { latencyMs: largestAllowedErpLatencyMs + 1 },
+          },
+        ],
+      }),
+    ).toThrow();
+
+    const defaults = previewRunConfigSnapshotFixture();
+    const policy = {
+      isPublicRunBudgetEnforced: true,
+      publicRunBudget: { windowSeconds: 300, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
+      publicCustomDefaults: defaults,
+      publicCustomLimits: {
+        maxTotalRequests: 100,
+        maxBuyers: 100,
+        maxRequestsPerSecond: 100,
+        maxTrafficDurationSeconds: 100,
+        maxTrafficStartDelaySeconds: 10,
+        maxPreAllocatedVus: 10,
+        maxVus: 10,
+        maxStartingStock: 100,
+        maxErpLatencyMs: largestAllowedErpLatencyMs + 1,
+        minErpMaxTps: 1,
+        maxErpMaxTps: 10,
+        maxErpErrorRate: 0.25,
+        allowForcedOutage: false,
+        allowedTrafficModes: ["buyer-spike"],
+      },
+    };
+    expect(() => publicRuntimePolicyMutableWriteSchema.parse(policy)).toThrow();
   });
 });
 

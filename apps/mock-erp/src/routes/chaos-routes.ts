@@ -1,6 +1,6 @@
 import {
+  acceptedErpChaosConfigSchema,
   controlServiceTokenHeaderName,
-  erpChaosConfigSchema,
   erpChaosResetPath,
   erpChaosStatusPath,
   erpChaosStatusSchema,
@@ -31,7 +31,7 @@ export function registerChaosRoutes(
     }
 
     try {
-      const nextConfig = erpChaosConfigSchema.parse(request.body);
+      const nextConfig = acceptedErpChaosConfigSchema.parse(request.body);
       const status = options.chaosConfigStore.update(nextConfig);
       request.log.info({ status }, "Mock ERP chaos controls updated.");
       return erpChaosStatusSchema.parse(status);

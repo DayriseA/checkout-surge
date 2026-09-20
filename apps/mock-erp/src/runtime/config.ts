@@ -1,7 +1,7 @@
 import {
+  acceptedErpChaosConfigSchema,
   type ErpChaosConfig,
   type ErpChaosSafetyCaps,
-  erpChaosConfigSchema,
 } from "@checkout-surge/contracts";
 
 export interface MockErpConfig {
@@ -30,7 +30,7 @@ export function loadMockErpConfig(env: NodeJS.ProcessEnv): MockErpConfig {
       5,
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
-    defaultChaosConfig: erpChaosConfigSchema.parse({
+    defaultChaosConfig: acceptedErpChaosConfigSchema.parse({
       latencyMs: parseNonnegativeInteger(env.LATENCY_MS, "LATENCY_MS", 0),
       maxTps: parsePositiveInteger(env.MAX_TPS, "MAX_TPS", 100),
       errorRate: parsePercentage(env.ERROR_RATE, "ERROR_RATE", 0),

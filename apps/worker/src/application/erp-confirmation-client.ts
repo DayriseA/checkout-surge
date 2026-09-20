@@ -38,6 +38,7 @@ export interface ErpAttemptRecord {
   errorCode?: string;
   errorMessage?: string;
   latencyMs: number;
+  requestDeadlineMs?: number;
   startedAt: Date;
   finishedAt: Date;
   response?: ErpConfirmationResponse;
@@ -70,6 +71,7 @@ export type ErpConfirmationOutcome = {
   startedAt: Date;
   finishedAt: Date;
   latencyMs: number;
+  requestDeadlineMs: number;
   replayed: boolean;
   response?: ErpConfirmationResponse;
   httpStatus?: number;
@@ -200,7 +202,7 @@ export interface HttpErpOrderConfirmationOptions {
   fetch?: typeof fetch;
   now?: () => Date;
   runConfigReader?: RunConfigReader;
-  logger?: Pick<CheckoutSurgeLogger, "warn">;
+  logger?: Pick<CheckoutSurgeLogger, "warn"> & Partial<Pick<CheckoutSurgeLogger, "info">>;
 }
 
 export class HttpErpOrderConfirmation {
@@ -219,9 +221,17 @@ export class HttpErpOrderConfirmation {
   async dispatch(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
+    chosenRequestDeadlineMs?: number,
   ): Promise<ErpConfirmationOutcome> {
     const runConfig = job.runId ? await this.options.runConfigReader?.read(job.runId) : null;
-    const timeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.options.requestTimeoutMs;
+    // Temporary task-08 adapter: task 09 passes the policy deadline; task 12 removes snapshot timeout input.
+    const timeoutMs =
+      chosenRequestDeadlineMs ??
+      runConfig?.erpConfig.requestTimeoutMs ??
+      this.options.requestTimeoutMs;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error("ERP request deadline must be a positive finite number.");
+    }
     const startedAt = this.now();
     const call = await this.recordDispatchIntent({
       job,
@@ -252,6 +262,7 @@ export class HttpErpOrderConfirmation {
         call,
         startedAt,
         finishedAt,
+        requestDeadlineMs: timeoutMs,
         ...optional(
           "retryAfterMs",
           this.retryAfterMs(response.headers.get("retry-after"), finishedAt),
@@ -262,6 +273,7 @@ export class HttpErpOrderConfirmation {
         Object.defineProperty(record, "response", { value: outcome.response, enumerable: false });
       }
       await this.recordAttempt(record);
+      this.logRequestTelemetry(job, outcome);
       return outcome;
     } catch (error) {
       if (isKnownClientError(error)) throw error;
@@ -274,6 +286,7 @@ export class HttpErpOrderConfirmation {
         startedAt,
         finishedAt,
         latencyMs: elapsedMs(startedAt, finishedAt),
+        requestDeadlineMs: timeoutMs,
         replayed: false,
         errorCode: timedOut ? "erp_request_timeout" : "erp_request_failed",
         errorMessage: timedOut
@@ -284,6 +297,7 @@ export class HttpErpOrderConfirmation {
         cause: error,
       };
       await this.recordAttempt(toAttemptRecord(job, delivery, outcome));
+      this.logRequestTelemetry(job, outcome);
       return outcome;
     } finally {
       clearTimeout(timeout);
@@ -383,6 +397,21 @@ export class HttpErpOrderConfirmation {
     return this.options.retryAfterPolicy.maximumDelayMs;
   }
 
+  private logRequestTelemetry(job: OrderProcessJob, outcome: ErpConfirmationOutcome): void {
+    this.options.logger?.info?.(
+      {
+        orderId: job.orderId,
+        ...(job.runId ? { runId: job.runId } : {}),
+        operation: outcome.operation,
+        disposition: outcome.disposition,
+        replayed: outcome.replayed,
+        durationMs: outcome.latencyMs,
+        requestDeadlineMs: outcome.requestDeadlineMs,
+      },
+      "ERP confirmation request completed.",
+    );
+  }
+
   private async recordDispatchIntent(input: {
     job: OrderProcessJob;
     idempotencyKey: string;
@@ -412,6 +441,7 @@ export class HttpErpOrderConfirmation {
           startedAt: record.startedAt,
           finishedAt: record.finishedAt,
           latencyMs: record.latencyMs,
+          requestDeadlineMs: record.requestDeadlineMs ?? this.options.requestTimeoutMs,
           replayed: record.replayed ?? false,
           errorCode: "erp_attempt_contradiction",
           errorMessage: error.message,
@@ -443,6 +473,7 @@ function classifyConfirmationResponse(input: {
   call: ErpCallReference;
   startedAt: Date;
   finishedAt: Date;
+  requestDeadlineMs: number;
   retryAfterMs?: number;
 }): ErpConfirmationOutcome {
   const parsed = erpConfirmationResponseSchema.safeParse(input.body);
@@ -453,6 +484,7 @@ function classifyConfirmationResponse(input: {
     startedAt: input.startedAt,
     finishedAt: input.finishedAt,
     latencyMs: elapsedMs(input.startedAt, input.finishedAt),
+    requestDeadlineMs: input.requestDeadlineMs,
     replayed:
       input.response.headers.get(erpReplayedResponseHeaderName) === erpReplayedResponseHeaderValue,
     httpStatus: input.response.status,
@@ -536,6 +568,7 @@ function toAttemptRecord(
     ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
     ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
     latencyMs: outcome.latencyMs,
+    requestDeadlineMs: outcome.requestDeadlineMs,
     startedAt: outcome.startedAt,
     finishedAt: outcome.finishedAt,
     ...(outcome.response ? { response: outcome.response } : {}),

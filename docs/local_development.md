@@ -470,7 +470,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process, can open at most one separate short-lived PostgreSQL connection, and closes its PostgreSQL/Redis/BullMQ probe resources on completion, deadline, or API shutdown. |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
-| `ERP_REQUEST_TIMEOUT_MS` | `2000` | Worker ERP client default; run snapshots can supply the active demonstration policy |
+| `ERP_REQUEST_TIMEOUT_MS` | `2000` | Temporary ERP client fallback until adaptive runtime wiring and configuration cleanup (tasks 09/12) |
 | `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
 | `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
 | `ORDER_PROCESS_CONCURRENCY` | `10` | BullMQ's process-wide order-handler execution ceiling; must be at least the shared accepted-run hard cap of 10. Frozen per-run snapshots independently limit handlers through process-local admission in the single worker runtime. |
@@ -479,7 +479,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_DISPATCH_SCAN_INTERVAL_MS` / `ORDER_DISPATCH_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for committed queued orders whose immediate enqueue may have been lost |
 | `ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS` | `1000` | Minimum queued age before dispatch recovery reasserts a deterministic job; `0` is allowed |
 | `ORDER_RECOVERY_SCAN_INTERVAL_MS` / `ORDER_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker durable ERP/order-recovery scan cadence and batch |
-| `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must exceed normal ERP and handoff latency |
+| `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must cover the adaptive ERP maximum request deadline plus ownership headroom (currently 11000 ms) |
 | `ORDER_RECOVERY_MAX_ATTEMPTS` | `100` | Worker recovery-attempt ceiling before escalation |
 | `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
 | `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |

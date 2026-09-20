@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
-  acceptedRunConfigSnapshotSchema,
+  acceptedRunConfigWriteSchema,
   type BusinessOutcomeSummary,
   collectAcceptedRunConfigSnapshotViolations,
   type DemoPresetContract,
@@ -394,7 +394,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
 
     return {
       preset,
-      snapshot: acceptedRunConfigSnapshotSchema.parse(
+      snapshot: acceptedRunConfigWriteSchema.parse(
         mergeConfigSnapshot(base, request.configOverride),
       ),
     };
@@ -544,7 +544,7 @@ function mergeConfigSnapshot(
     return base;
   }
 
-  return acceptedRunConfigSnapshotSchema.parse({
+  return acceptedRunConfigWriteSchema.parse({
     trafficConfig: override.trafficConfig ?? base.trafficConfig,
     inventoryConfig: override.inventoryConfig ?? base.inventoryConfig,
     erpConfig: override.erpConfig ?? base.erpConfig,

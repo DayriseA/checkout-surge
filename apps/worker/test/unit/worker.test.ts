@@ -1,7 +1,10 @@
 import { healthResponseSchema, livenessResponseSchema } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { loadWorkerConfig as loadProductionWorkerConfig } from "../../src/runtime/config.js";
+import {
+  loadWorkerConfig as loadProductionWorkerConfig,
+  validateAdaptiveErpDeadlineConfiguration,
+} from "../../src/runtime/config.js";
 import { createWorkerReadiness } from "../../src/runtime/readiness.js";
 import { createWorkerRuntime } from "../../src/runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "../../src/server.js";
@@ -56,6 +59,24 @@ describe("worker configuration", () => {
       erpCircuitFailureThreshold: 2,
       erpCircuitResetTimeoutMs: 1500,
     });
+  });
+
+  it("accepts coherent deadline resource bounds and rejects unsafe ceilings or leases", () => {
+    expect(() =>
+      validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: 30_000 }),
+    ).not.toThrow();
+    expect(() =>
+      validateAdaptiveErpDeadlineConfiguration({
+        recoveryLeaseMs: 30_000,
+        maximumRequestDeadlineMs: 5_499,
+      }),
+    ).toThrow("largest allowed ERP latency plus policy margin (5500ms)");
+    expect(() => validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: 10_999 })).toThrow(
+      "must be at least the adaptive ERP maximum request deadline plus ownership headroom (11000ms)",
+    );
+    expect(() =>
+      validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: 11_000 }),
+    ).not.toThrow();
   });
 
   it("rejects missing infrastructure and invalid worker values", () => {

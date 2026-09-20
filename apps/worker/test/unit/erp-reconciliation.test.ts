@@ -432,6 +432,7 @@ function dispatchedSuccess(replayed: boolean): ErpConfirmationOutcome {
     startedAt: new Date("2026-06-22T00:00:01.000Z"),
     finishedAt: new Date("2026-06-22T00:00:01.010Z"),
     latencyMs: 10,
+    requestDeadlineMs: 2_000,
     replayed,
     httpStatus: 200,
     response: successResponse(),

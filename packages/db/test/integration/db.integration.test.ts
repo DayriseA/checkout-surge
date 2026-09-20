@@ -1072,6 +1072,14 @@ describe("database migrations, seed data, and reset behavior", () => {
       stderr: expect.stringContaining("public_custom_default_public_buyers_exceeded"),
     });
     expect((await readPolicy())[0]).toEqual(before);
+
+    const erpLatencySemanticFailure = await runSeedScript({
+      PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS: "50",
+    }).catch((error: unknown) => error);
+    expect(erpLatencySemanticFailure).toMatchObject({
+      stderr: expect.stringContaining("public_erp_latency_exceeded"),
+    });
+    expect((await readPolicy())[0]).toEqual(before);
   });
 
   it("maps every runtime-setup public policy bootstrap override", async () => {

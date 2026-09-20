@@ -1,10 +1,12 @@
 import {
+  acceptedErpRunConfigSchema,
   type BackpressureConfig,
   type DemoPresetDisplay,
   type DemoPresetVisibility,
   type ErpRunConfig,
   type InventoryConfig,
   type PublicRuntimePolicyMutable,
+  publicRuntimePolicyMutableWriteSchema,
   publicRuntimePolicyPersistedSchema,
   type TrafficConfig,
 } from "@checkout-surge/contracts";
@@ -111,6 +113,7 @@ try {
       });
 
     for (const preset of buildSeedPresets()) {
+      acceptedErpRunConfigSchema.parse(preset.erpConfig);
       const values = {
         id: preset.id,
         slug: preset.slug,
@@ -478,7 +481,7 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): Backp
 }
 
 function buildPublicRuntimePolicy(): PublicRuntimePolicyMutable {
-  return publicRuntimePolicyPersistedSchema.parse({
+  const policy = publicRuntimePolicyMutableWriteSchema.parse({
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: optionalIntegerEnv("PUBLIC_RUN_BUDGET_WINDOW_SECONDS", 300),
@@ -514,6 +517,7 @@ function buildPublicRuntimePolicy(): PublicRuntimePolicyMutable {
       allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
   });
+  return publicRuntimePolicyPersistedSchema.parse(policy);
 }
 
 async function seedRedisInventory(

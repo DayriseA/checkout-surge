@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { largestAllowedErpLatencyMs } from "./erp.js";
 import { metricSampleSchema } from "./inventory.js";
 import { trafficDeliveryStatusSchema, trafficExecutionStatusSchema } from "./lifecycle.js";
 import {
@@ -139,6 +140,11 @@ export const erpRunConfigSchema = z
   .strict();
 export type ErpRunConfig = z.infer<typeof erpRunConfigSchema>;
 
+/** Write/acceptance boundary. Keep erpRunConfigSchema permissive for history readers. */
+export const acceptedErpRunConfigSchema = erpRunConfigSchema.safeExtend({
+  latencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs),
+});
+
 export const orderProcessConcurrencyHardCap = 10;
 
 export const retryPolicySchema = z
@@ -171,6 +177,10 @@ export const acceptedRunConfigSnapshotSchema = z
   })
   .strict();
 export type AcceptedRunConfigSnapshot = z.infer<typeof acceptedRunConfigSnapshotSchema>;
+
+export const acceptedRunConfigWriteSchema = acceptedRunConfigSnapshotSchema.safeExtend({
+  erpConfig: acceptedErpRunConfigSchema,
+});
 
 /** Materialized accepted-run state. Persisted snapshots may not rely on wire defaults. */
 const materializedBuyerSpikeTrafficConfigSchema = buyerSpikeTrafficConfigSchema.safeExtend({

@@ -5,6 +5,7 @@ import {
   type AdminPresetMutationResponse,
   type ArchiveAdminPresetRequest,
   type ArchiveAdminPresetResponse,
+  acceptedErpRunConfigSchema,
   adminPresetListItemSchema,
   adminPresetListResponseSchema,
   adminPresetMutationResponseSchema,
@@ -70,6 +71,7 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
   }
 
   async saveAdminPreset(request: SaveDemoPresetRequest): Promise<AdminPresetMutationResponse> {
+    acceptedErpRunConfigSchema.parse(request.erpConfig);
     const now = this.now();
     const preset = await this.readActivePreset(request.slug);
     ensureEditableAdminPreset(preset);
@@ -96,6 +98,7 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
   async duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse> {
     const now = this.now();
     const source = await this.readActivePreset(request.sourceSlug);
+    acceptedErpRunConfigSchema.parse(source.erpConfig);
     const targetSlug = normalizeSlug(request.targetSlug);
     const [existingTarget] = await this.options.db
       .select({ id: demoPresets.id })
@@ -150,6 +153,7 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
   ): Promise<AdminPresetMutationResponse> {
     const now = this.now();
     const source = await this.readActivePreset(request.sourceSlug);
+    acceptedErpRunConfigSchema.parse(source.erpConfig);
     const custom = await this.readActivePreset("custom");
     ensureEditableAdminPreset(custom);
 

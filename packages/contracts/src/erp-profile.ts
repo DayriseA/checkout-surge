@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { erpChaosConfigSchema } from "./erp.js";
+import {
+  acceptedErpChaosConfigSchema,
+  erpChaosConfigSchema,
+  largestAllowedErpLatencyMs,
+} from "./erp.js";
 import {
   isoTimestampSchema,
   nonnegativeIntegerSchema,
@@ -69,6 +73,20 @@ export const erpProfileSchema = z
     }
   });
 export type ErpProfile = z.infer<typeof erpProfileSchema>;
+
+/** Write/acceptance boundary. Keep erpProfileSchema permissive for historical profiles. */
+export const acceptedErpProfileSchema = erpProfileSchema.safeExtend({
+  baseConfig: acceptedErpChaosConfigSchema,
+  segments: z
+    .array(
+      erpProfileSegmentSchema.safeExtend({
+        override: erpProfileSegmentOverrideSchema.safeExtend({
+          latencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs).optional(),
+        }),
+      }),
+    )
+    .min(1),
+});
 
 /**
  * Durable profile anchor (D10): run acceptance time plus the configured start

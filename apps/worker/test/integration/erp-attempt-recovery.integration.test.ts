@@ -19,7 +19,7 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import { ErpUnresolvedCallReconciler } from "../../src/application/erp-reconciliation.js";
 import {
@@ -383,6 +383,85 @@ run("PostgreSQL ERP attempt recovery", () => {
       await erp.close();
     }
   });
+
+  it("reconciles one late canonical success after timeout and lease expiry without another POST", async () => {
+    const startedAt = new Date("2026-06-22T00:00:00.000Z");
+    let now = startedAt;
+    const transition = new PostgresOrderTransitionPersistence(
+      requireConnection().db,
+      () => now,
+      80,
+    );
+    const processing = await transition.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+      deliveryId: "late-canonical-initial",
+    });
+    const delivery = {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+      deliveryId: "late-canonical-initial",
+      processingGeneration: processing.processingGeneration ?? 0,
+    };
+    const attemptPersistence = new PostgresErpAttemptPersistence(requireConnection().db, () => now);
+    const erp = await startInMemoryErpService("late-canonical", { latencyMs: 50 });
+    try {
+      const client = new HttpErpOrderConfirmation({
+        baseUrl: erp.baseUrl,
+        requestTimeoutMs: 10,
+        retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+        attemptPersistence,
+        now: () => now,
+      });
+      await expect(client.dispatch(job, delivery, 10)).resolves.toMatchObject({
+        disposition: "uncertain_result",
+        errorCode: "erp_request_timeout",
+      });
+      await erp.confirmationCompleted;
+
+      now = new Date(startedAt.getTime() + 100);
+      const recovery = new PostgresOrderRecoveryPersistence(requireConnection().db, () => now);
+      const claim = await recovery.claimForPublication({
+        recoveryKey: `order:${job.orderId}`,
+        now,
+        leaseMs: 40,
+      });
+      expect(claim).not.toBeNull();
+      const unresolved = await client.findUnresolvedCall(job.orderId);
+      if (!unresolved || !claim)
+        throw new Error("Expected expired-lease reconciliation ownership.");
+      const reconciler = new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: recovery,
+        lookupAvailabilityCircuit: { assertAvailable: () => undefined },
+        lookupConcurrency: 1,
+      });
+      const dispatchReplay = vi.fn().mockResolvedValue(null);
+
+      await expect(
+        reconciler.reconcile({
+          job,
+          delivery: {
+            ...delivery,
+            deliveryId: claim.jobId,
+            processingGeneration: claim.processingGeneration,
+          },
+          call: unresolved,
+          replayAdmission: { dispatchReplay },
+        }),
+      ).resolves.toMatchObject({ operation: "status_lookup", disposition: "succeeded" });
+      expect(dispatchReplay).not.toHaveBeenCalled();
+      expect(erp.receivedRequests).toHaveLength(1);
+      await expect(readRecoveryState(requireConnection())).resolves.toMatchObject({
+        successfulAttemptCount: 1,
+        confirmationIds: expect.arrayContaining(["late-canonical-confirmation-1", null]),
+      });
+    } finally {
+      await erp.close();
+    }
+  });
 });
 
 function createHttpConfirmation(
@@ -429,12 +508,20 @@ function toExplicitConfirmation(
   };
 }
 
-async function startInMemoryErpService(instanceName: string): Promise<{
+async function startInMemoryErpService(
+  instanceName: string,
+  options: { latencyMs?: number } = {},
+): Promise<{
   baseUrl: string;
   receivedRequests: ErpConfirmationRequest[];
+  confirmationCompleted: Promise<void>;
   close(): Promise<void>;
 }> {
   const receivedRequests: ErpConfirmationRequest[] = [];
+  let completeConfirmation!: () => void;
+  const confirmationCompleted = new Promise<void>((resolve) => {
+    completeConfirmation = resolve;
+  });
   const confirmationsByIdempotencyKey = new Map<
     string,
     { request: ErpConfirmationRequest; response: ErpConfirmationResponse }
@@ -444,6 +531,9 @@ async function startInMemoryErpService(instanceName: string): Promise<{
   server.post(erpConfirmationPath, async (request) => {
     const confirmationRequest = erpConfirmationRequestSchema.parse(request.body);
     receivedRequests.push(confirmationRequest);
+    if (options.latencyMs) {
+      await new Promise((resolve) => setTimeout(resolve, options.latencyMs));
+    }
     const existing = confirmationsByIdempotencyKey.get(confirmationRequest.idempotencyKey);
     if (existing) return existing.response;
 
@@ -458,6 +548,7 @@ async function startInMemoryErpService(instanceName: string): Promise<{
       request: confirmationRequest,
       response,
     });
+    completeConfirmation();
     return response;
   });
 
@@ -485,7 +576,7 @@ async function startInMemoryErpService(instanceName: string): Promise<{
   });
 
   const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });
-  return { baseUrl, receivedRequests, close: () => server.close() };
+  return { baseUrl, receivedRequests, confirmationCompleted, close: () => server.close() };
 }
 
 async function readRecoveryState(connection: ReturnType<typeof createDatabaseConnection>): Promise<{

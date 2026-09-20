@@ -6,6 +6,7 @@ import {
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
   publicRuntimePolicyMutableSchema,
+  publicRuntimePolicyMutableWriteSchema,
   publicRuntimePolicyResponseSchema,
   publicRuntimePolicySchema,
 } from "@checkout-surge/contracts";
@@ -66,7 +67,7 @@ export class PublicRuntimePolicyService
     correlationId: string,
   ): Promise<AdminPublicRuntimePolicyResponse> {
     const now = this.now();
-    const mutablePolicy = publicRuntimePolicyMutableSchema.parse(request.policy);
+    const mutablePolicy = publicRuntimePolicyMutableWriteSchema.parse(request.policy);
     let effectivePolicy: PublicRuntimePolicy;
     try {
       effectivePolicy = resolveEffectivePublicRuntimePolicy(
