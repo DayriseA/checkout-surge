@@ -260,6 +260,58 @@ describe("worker readiness", () => {
 });
 
 describe("worker runtime lifecycle", () => {
+  it("publishes one bounded recovery batch before admitting fresh queue traffic", async () => {
+    const order: string[] = [];
+    const runtime = createWorkerRuntime({
+      healthServer: {
+        listen: vi.fn(async () => order.push("health")),
+        close: vi.fn().mockResolvedValue(undefined),
+      } as never,
+      healthHost: "127.0.0.1",
+      healthPort: 0,
+      orderProcessConsumer: {
+        start: vi.fn(() => order.push("consumer")),
+        close: vi.fn().mockResolvedValue(undefined),
+        isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
+      notificationRecordConsumer: {
+        start: vi.fn(() => order.push("notifications")),
+        close: vi.fn().mockResolvedValue(undefined),
+        isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
+      orderRecoveryScanner: {
+        scanOnce: vi.fn(async () => {
+          order.push("startup-reconciliation");
+          return {
+            candidates: 1,
+            enqueued: 1,
+            failed: 0,
+            escalated: 0,
+            oldestAgeMs: 1,
+            maxObservedAttempts: 1,
+          };
+        }),
+        start: vi.fn(() => order.push("recovery-scanner")),
+        close: vi.fn().mockResolvedValue(undefined),
+      },
+      closePostgres: vi.fn().mockResolvedValue(undefined),
+      closeRedis: vi.fn().mockResolvedValue(undefined),
+      logger: createSilentLogger("worker"),
+    });
+
+    await runtime.start();
+    expect(order).toEqual([
+      "startup-reconciliation",
+      "consumer",
+      "notifications",
+      "recovery-scanner",
+      "health",
+    ]);
+    await runtime.close();
+  });
+
   it("starts and cleanly closes injected runtime dependencies", async () => {
     const logger = createSilentLogger("worker");
     const healthServer = buildWorkerHealthServer({

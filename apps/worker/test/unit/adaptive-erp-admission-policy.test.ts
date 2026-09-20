@@ -583,6 +583,84 @@ describe("adaptive ERP admission policy", () => {
       nextEligibleAtMs: 33_000,
     });
   });
+
+  it("hands an unknown lookup probe directly to one confirmation probe", () => {
+    const clock = testClock();
+    clock.set(5_000);
+    const controller = new AdaptiveErpAdmissionController({
+      now: clock.now,
+      random: () => 0,
+      safetyState: {
+        policyVersion: adaptiveErpAdmissionPolicy.version,
+        scopes: [
+          {
+            scope: "catalog",
+            cooldownUntilMs: 0,
+            availabilityRetryAtMs: 5_001,
+            availabilityCircuitOpen: true,
+            circuitOpenUntilMs: 5_001,
+            nextProbeAtMs: 5_001,
+          },
+        ],
+      },
+    });
+    clock.set(5_001);
+    const lookup = acquire(controller, "catalog", "lookup", 10);
+    expect(lookup.probe).toBe(true);
+    controller.feedback(lookup, success());
+    expect(controller.tryAcquire(request("catalog", "confirmation", 10))).toMatchObject({
+      admitted: false,
+      reason: "availability_probe_wait",
+    });
+    expect(
+      controller.tryAcquire({
+        ...request("catalog", "confirmation", 10),
+        confirmationProbeContinuation: true,
+      }),
+    ).toMatchObject({ admitted: true, permit: { probe: true } });
+  });
+
+  it("keeps capacity cooldown on a confirmation probe continuation", () => {
+    const clock = testClock();
+    const controller = new AdaptiveErpAdmissionController({
+      now: clock.now,
+      random: () => 0,
+      safetyState: {
+        policyVersion: adaptiveErpAdmissionPolicy.version,
+        scopes: [
+          {
+            scope: "catalog",
+            cooldownUntilMs: 0,
+            availabilityRetryAtMs: 0,
+            availabilityCircuitOpen: true,
+            circuitOpenUntilMs: 1_000,
+            nextProbeAtMs: 1_000,
+          },
+        ],
+      },
+    });
+
+    clock.set(1_000);
+    const confirmationProbe = acquire(controller, "catalog", "confirmation", 10);
+    controller.feedback(confirmationProbe, {
+      outcome: "capacity_rejected",
+      retryAfterMs: 60_000,
+    });
+    clock.set(6_000);
+    const lookupProbe = acquire(controller, "catalog", "lookup", 10);
+    controller.feedback(lookupProbe, success());
+
+    expect(
+      controller.tryAcquire({
+        ...request("catalog", "confirmation", 10),
+        confirmationProbeContinuation: true,
+      }),
+    ).toMatchObject({
+      admitted: false,
+      reason: "availability_probe_wait",
+      nextEligibleAtMs: 61_000,
+    });
+  });
 });
 
 function request(

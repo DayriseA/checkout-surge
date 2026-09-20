@@ -2,15 +2,11 @@ import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
   publishDashboardProjectionDirtySignal,
-  setErpCircuitBreakerSnapshot,
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
-import { ErpCircuitBreaker } from "./application/erp-circuit-breaker.js";
-import {
-  type ErpConfirmationOutcome,
-  HttpErpOrderConfirmation,
-} from "./application/erp-confirmation-client.js";
+import { adaptiveErpAdmissionPolicy } from "./application/adaptive-erp-admission-policy.js";
+import { HttpErpOrderConfirmation } from "./application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
@@ -18,13 +14,12 @@ import {
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
-import { ProcessLocalOrderProcessAdmission } from "./application/order-process-admission.js";
+import { AdaptiveErpRuntimeAdmission } from "./application/order-process-admission.js";
 import { createOrderProcessJobHandler } from "./application/order-process-job-handler.js";
 import {
   createOrderRecoveryHandoff,
   createOrderRecoveryScanner,
 } from "./application/order-recovery-scanner.js";
-import { RunScopedBackpressureOrderConfirmation } from "./application/run-backpressure.js";
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresErpScopeResiliencePersistence } from "./persistence/postgres-erp-scope-resilience-persistence.js";
 import { PostgresGeneratedRunPublicationFence } from "./persistence/postgres-generated-run-publication-fence.js";
@@ -119,62 +114,30 @@ export async function startWorker(): Promise<void> {
     batchSize: config.orderDispatchBatchSize,
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
   });
-  const orderProcessAdmission = new ProcessLocalOrderProcessAdmission({
+  const orderProcessAdmission = await AdaptiveErpRuntimeAdmission.restore({
+    persistence: erpScopeState,
     runConfigReader,
     fallbackConcurrency: config.orderProcessConcurrency,
   });
   const erpClient = new HttpErpOrderConfirmation({
     baseUrl: config.mockErpBaseUrl,
     requestTimeoutMs: config.erpRequestTimeoutMs,
-    retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+    retryAfterPolicy: {
+      fallbackDelayMs: adaptiveErpAdmissionPolicy.fallbackCooldownMs,
+      maximumDelayMs: adaptiveErpAdmissionPolicy.maximumCooldownMs,
+    },
     attemptPersistence: erpAttemptPersistence,
     logger,
     runConfigReader,
   });
-  const catalogCircuit = new ErpCircuitBreaker({
-    confirmation: { confirm: (job, delivery) => erpClient.dispatch(job, delivery) },
-    failureThreshold: config.erpCircuitFailureThreshold,
-    resetTimeoutMs: config.erpCircuitResetTimeoutMs,
-    isCountedFailure: () => false,
-    onStateChange: async (snapshot) => {
-      try {
-        await setErpCircuitBreakerSnapshot(redis, snapshot, { type: "catalog" });
-      } catch (error) {
-        logger.error({ err: error }, "Could not publish ERP circuit breaker state.");
-      }
-    },
-  });
-  const scopedCircuit = new RunScopedBackpressureOrderConfirmation({
-    runConfigReader,
-    inner: catalogCircuit,
-    circuitBreakerFactory: (snapshot, runId) =>
-      new ErpCircuitBreaker({
-        confirmation: { confirm: (job, delivery) => erpClient.dispatch(job, delivery) },
-        failureThreshold: snapshot.backpressureConfig.circuitBreakerFailureThreshold,
-        resetTimeoutMs: snapshot.backpressureConfig.circuitBreakerResetTimeoutMs,
-        isCountedFailure: () => false,
-        onStateChange: async (breakerSnapshot) => {
-          try {
-            await setErpCircuitBreakerSnapshot(redis, breakerSnapshot, { type: "run", runId });
-          } catch (error) {
-            logger.error({ err: error, runId }, "Could not publish run ERP circuit breaker state.");
-          }
-        },
-      }),
-  });
   const reconciler = new ErpUnresolvedCallReconciler({
     client: erpClient,
     callResolution: orderRecoveryPersistence,
-    lookupAvailabilityCircuit: scopedCircuit,
-    lookupConcurrency: config.orderProcessConcurrency,
+    admission: orderProcessAdmission,
   });
   const scheduledConfirmation = new ScheduledErpOrderConfirmation({
     client: erpClient,
     reconciler,
-    dispatch: {
-      confirm: async (job, delivery) =>
-        (await scopedCircuit.confirm(job, delivery)) as ErpConfirmationOutcome,
-    },
     admission: orderProcessAdmission,
     control: orderRecoveryPersistence,
     scopeState: erpScopeState,
@@ -185,7 +148,6 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
-    admission: orderProcessAdmission,
     handler: createOrderProcessJobHandler({
       confirmation: scheduledConfirmation,
       persistence: new PostgresOrderTransitionPersistence(
@@ -248,6 +210,7 @@ export async function startWorker(): Promise<void> {
     closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),
+    closeAdaptiveErpAdmission: () => orderProcessAdmission.close(),
     closePostgres: database.close,
     closeRedis: async () => {
       await redis.quit();

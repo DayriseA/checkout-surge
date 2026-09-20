@@ -19,9 +19,10 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import { ErpUnresolvedCallReconciler } from "../../src/application/erp-reconciliation.js";
+import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import {
   createOrderProcessJobHandler,
   type OrderConfirmation,
@@ -357,20 +358,18 @@ run("PostgreSQL ERP attempt recovery", () => {
         });
       }
       const client = createHttpConfirmation(erp.baseUrl, requirePersistence());
+      const admission = testAdmission();
       const reconciler = new ErpUnresolvedCallReconciler({
         client,
         callResolution: new PostgresOrderRecoveryPersistence(requireConnection().db),
-        lookupAvailabilityCircuit: { assertAvailable: () => undefined },
-        lookupConcurrency: 1,
+        admission,
       });
 
       const result = await reconciler.reconcile({
         job,
         delivery,
         call,
-        replayAdmission: {
-          dispatchReplay: async ({ dispatch }) => dispatch(),
-        },
+        context: { scope: "catalog", configuredConcurrency: 1 },
       });
 
       expect(result.disposition).toBe("succeeded");
@@ -435,10 +434,8 @@ run("PostgreSQL ERP attempt recovery", () => {
       const reconciler = new ErpUnresolvedCallReconciler({
         client,
         callResolution: recovery,
-        lookupAvailabilityCircuit: { assertAvailable: () => undefined },
-        lookupConcurrency: 1,
+        admission: testAdmission(() => now.getTime()),
       });
-      const dispatchReplay = vi.fn().mockResolvedValue(null);
 
       await expect(
         reconciler.reconcile({
@@ -449,10 +446,9 @@ run("PostgreSQL ERP attempt recovery", () => {
             processingGeneration: claim.processingGeneration,
           },
           call: unresolved,
-          replayAdmission: { dispatchReplay },
+          context: { scope: "catalog", configuredConcurrency: 1 },
         }),
       ).resolves.toMatchObject({ operation: "status_lookup", disposition: "succeeded" });
-      expect(dispatchReplay).not.toHaveBeenCalled();
       expect(erp.receivedRequests).toHaveLength(1);
       await expect(readRecoveryState(requireConnection())).resolves.toMatchObject({
         successfulAttemptCount: 1,
@@ -479,6 +475,22 @@ function createHttpConfirmation(
       now = new Date(now.getTime() + 20);
       return current;
     },
+  });
+}
+
+function testAdmission(now: () => number = Date.now): AdaptiveErpRuntimeAdmission {
+  return AdaptiveErpRuntimeAdmission.create({
+    persistence: {
+      listActive: async () => [],
+      readActive: async () => null,
+      listUnresolvedScopes: async () => [],
+      readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
+      save: async () => undefined,
+    },
+    runConfigReader: { read: async () => null },
+    fallbackConcurrency: 1,
+    now,
+    random: () => 0,
   });
 }
 

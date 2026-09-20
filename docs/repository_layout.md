@@ -85,7 +85,7 @@ checkout-surge/
 
 - Owns order state transitions: queued → processing → confirmed / failed.
 - Is the only service that calls `apps/mock-erp`.
-- Uses generation-scoped BullMQ wake-ups with `attempts: 1`, applies bounded process-local per-run admission only around actual ERP calls, durably defers denied work, reconciles unresolved calls before replay, and selects run-scoped circuit breakers around ERP calls.
+- Uses generation-scoped BullMQ wake-ups with `attempts: 1`, applies one paced adaptive admission authority to actual ERP confirmation calls, durably defers denied work, restores PostgreSQL safety expiries on restart, and reconciles unresolved calls before admitted same-key replay.
 - Runs autonomous scanners for committed-but-undispatched queued orders, durable ERP-result recovery, and missing simulated-notification jobs.
 - Persists poison order-job audit records and recovery/escalation state through `packages/db` adapters.
 - Publishes the internal dashboard projection-dirty signal through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.

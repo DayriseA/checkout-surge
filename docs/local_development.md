@@ -471,8 +471,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
 | `ERP_REQUEST_TIMEOUT_MS` | `2000` | Temporary ERP client fallback until adaptive runtime wiring and configuration cleanup (tasks 09/12) |
-| `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
-| `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Worker catalog/missing-snapshot circuit-breaker fallback and seed default |
+| `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Legacy accepted configuration retained until task 12; adaptive runtime admission does not use it |
+| `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Legacy accepted configuration retained until task 12; adaptive runtime admission does not use it |
 | `ORDER_PROCESS_CONCURRENCY` | `10` | BullMQ's process-wide order-handler execution ceiling; must be at least the shared accepted-run hard cap of 10. Frozen per-run snapshots independently limit handlers through process-local admission in the single worker runtime. |
 | `NOTIFICATION_RECORD_CONCURRENCY` | `5` | Worker notification-record consumer concurrency |
 | `NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS` / `NOTIFICATION_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for confirmed orders missing notification records |

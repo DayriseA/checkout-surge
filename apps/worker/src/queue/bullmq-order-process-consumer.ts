@@ -7,7 +7,6 @@ import {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { type ConnectionOptions, type Job, Worker } from "bullmq";
-import type { OrderProcessAdmission } from "../application/order-process-admission.js";
 import type { OrderProcessJobHandler } from "../application/order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "../application/order-recovery-scanner.js";
 import {
@@ -22,8 +21,6 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   handler: OrderProcessJobHandler;
   logger: CheckoutSurgeLogger;
   recovery: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
-  admission?: OrderProcessAdmission;
-  admissionDelayMs?: number;
 }
 
 export const orderProcessQueueNotReadyMessage =
@@ -154,12 +151,8 @@ export function createBullMqOrderProcessConsumer(
     async close() {
       isClosing = true;
       isQueueConnectionReady = false;
-      try {
-        await worker.close();
-        await runPromise;
-      } finally {
-        await options.admission?.close();
-      }
+      await worker.close();
+      await runPromise;
     },
     isRunning: () => worker.isRunning(),
     async checkConnectivity() {
@@ -301,7 +294,6 @@ function isRecoverableFailure(error: unknown): boolean {
   return (
     error instanceof Error &&
     (error.name.includes("PersistenceError") ||
-      error.name === "ErpCircuitOpenError" ||
       error.name === "OrderRecoveryHandoffError" ||
       error.name === "RecoverableOrderQueueFailureError")
   );

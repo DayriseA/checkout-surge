@@ -115,7 +115,11 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
           inArray(orders.status, ["queued", "processing"]),
         ),
       )
-      .orderBy(sql`${orderRecoveryJobs.nextAttemptAt} asc nulls first`, asc(orders.createdAt))
+      .orderBy(
+        sql`${orderRecoveryJobs.unresolvedErpCallId} is not null desc`,
+        sql`${orderRecoveryJobs.nextAttemptAt} asc nulls first`,
+        asc(orders.createdAt),
+      )
       .limit(input.limit);
     return rows.map(({ job: row }) => ({
       recoveryKey: row.recoveryKey,

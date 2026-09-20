@@ -148,7 +148,9 @@ export type ErpAdmissionReason =
   | "capacity_cooldown"
   | "lookup_in_flight"
   | "pacing"
+  | "reconciliation_pending"
   | "scope_in_flight"
+  | "scope_intervention"
   | "scope_state_limit"
   | "worker_in_flight";
 
@@ -241,29 +243,34 @@ export class AdaptiveErpAdmissionController {
       safetyState?: AdaptiveErpAdmissionSafetyState;
     },
   ) {
+    for (const safety of dependencies.safetyState?.scopes ?? []) this.restoreSafety(safety);
+  }
+
+  hasScope(scope: ErpAdmissionScope): boolean {
+    return this.scopes.has(scope);
+  }
+
+  restoreSafety(safety: AdaptiveErpAdmissionSafetyState["scopes"][number]): boolean {
+    if (this.scopes.has(safety.scope)) return true;
     const now = this.now();
-    for (const safety of dependencies.safetyState?.scopes.slice(
-      0,
-      adaptiveErpAdmissionPolicy.maximumScopeStates,
-    ) ?? []) {
-      const state = this.newScopeState(now);
-      state.cooldownUntilMs = safety.cooldownUntilMs > now ? safety.cooldownUntilMs : 0;
-      state.availabilityRetryAtMs =
-        safety.availabilityRetryAtMs > now ? safety.availabilityRetryAtMs : 0;
-      state.availabilityCircuitOpen =
-        safety.availabilityCircuitOpen &&
-        Math.max(safety.availabilityRetryAtMs, safety.circuitOpenUntilMs, safety.nextProbeAtMs) >
-          now;
-      state.circuitOpenUntilMs = safety.circuitOpenUntilMs > now ? safety.circuitOpenUntilMs : 0;
-      state.nextProbeAtMs = safety.nextProbeAtMs > now ? safety.nextProbeAtMs : 0;
-      this.scopes.set(safety.scope, state);
-    }
+    const state = this.getOrCreateScope(safety.scope, now);
+    if (!state) return false;
+    state.cooldownUntilMs = safety.cooldownUntilMs > now ? safety.cooldownUntilMs : 0;
+    state.availabilityRetryAtMs =
+      safety.availabilityRetryAtMs > now ? safety.availabilityRetryAtMs : 0;
+    state.availabilityCircuitOpen =
+      safety.availabilityCircuitOpen &&
+      Math.max(safety.availabilityRetryAtMs, safety.circuitOpenUntilMs, safety.nextProbeAtMs) > now;
+    state.circuitOpenUntilMs = safety.circuitOpenUntilMs > now ? safety.circuitOpenUntilMs : 0;
+    state.nextProbeAtMs = safety.nextProbeAtMs > now ? safety.nextProbeAtMs : 0;
+    return true;
   }
 
   tryAcquire(input: {
     scope: ErpAdmissionScope;
     operation: ErpAdmissionOperation;
     configuredConcurrency: number;
+    confirmationProbeContinuation?: boolean;
   }): AdaptiveErpAdmissionDecision {
     const now = this.now();
     const state = this.getOrCreateScope(input.scope, now);
@@ -287,6 +294,17 @@ export class AdaptiveErpAdmissionController {
     if (state.availabilityCircuitOpen) {
       if (state.probeInFlight) {
         return this.deferred(input, state, "availability_probe_in_flight", now, now);
+      }
+      if (input.operation === "confirmation" && input.confirmationProbeContinuation) {
+        const safetyDeadline = Math.max(
+          state.cooldownUntilMs,
+          state.availabilityRetryAtMs,
+          state.circuitOpenUntilMs,
+        );
+        if (now < safetyDeadline) {
+          return this.deferred(input, state, "availability_probe_wait", now, safetyDeadline);
+        }
+        return this.admit(input, state, now, true);
       }
       const probeAt = Math.max(
         state.circuitOpenUntilMs,
@@ -324,14 +342,8 @@ export class AdaptiveErpAdmissionController {
     if (!state || !this.activePermits.has(internal)) {
       throw new Error("ERP admission permit is not active.");
     }
-    this.activePermits.delete(internal);
-    this.workerInFlight -= 1;
-    if (internal.operation === "lookup") state.lookupInFlight -= 1;
-    else state.confirmationInFlight -= 1;
-    if (internal.probe) state.probeInFlight = false;
-
     const now = this.now();
-    state.lastUsedAtMs = now;
+    this.releasePermit(internal, state);
     if (feedback.outcome === "capacity_rejected") {
       if (internal.operation === "confirmation") {
         const currentGeneration = internal.generation === state.generation;
@@ -358,6 +370,16 @@ export class AdaptiveErpAdmissionController {
     return this.snapshot(internal.scope, internal.configuredConcurrency);
   }
 
+  release(permit: AdaptiveErpPermit): AdaptiveErpAdmissionSnapshot {
+    const internal = permit as InternalPermit;
+    const state = this.scopes.get(internal.scope);
+    if (!state || !this.activePermits.has(internal)) {
+      return this.snapshot(internal.scope, internal.configuredConcurrency);
+    }
+    this.releasePermit(internal, state);
+    return this.snapshot(internal.scope, internal.configuredConcurrency);
+  }
+
   safetyState(): AdaptiveErpAdmissionSafetyState {
     return {
       policyVersion: adaptiveErpAdmissionPolicy.version,
@@ -374,6 +396,10 @@ export class AdaptiveErpAdmissionController {
 
   snapshot(scope: ErpAdmissionScope, configuredConcurrency: number): AdaptiveErpAdmissionSnapshot {
     return this.toSnapshot(scope, this.scopes.get(scope) ?? null, configuredConcurrency);
+  }
+
+  scopeKeys(): ErpAdmissionScope[] {
+    return [...this.scopes.keys()];
   }
 
   private admit(
@@ -412,6 +438,15 @@ export class AdaptiveErpAdmissionController {
       permit,
       snapshot: this.toSnapshot(input.scope, state, input.configuredConcurrency),
     };
+  }
+
+  private releasePermit(internal: InternalPermit, state: ScopeState): void {
+    this.activePermits.delete(internal);
+    this.workerInFlight -= 1;
+    if (internal.operation === "lookup") state.lookupInFlight -= 1;
+    else state.confirmationInFlight -= 1;
+    if (internal.probe) state.probeInFlight = false;
+    state.lastUsedAtMs = this.now();
   }
 
   private deferred(

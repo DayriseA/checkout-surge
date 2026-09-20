@@ -4,8 +4,9 @@ import type {
   ErpLookupIdentity,
   ErpOutcomeDisposition,
   OrderProcessJob,
+  OrderWaitingReason,
 } from "@checkout-surge/contracts";
-import { ErpCircuitOpenError } from "./erp-circuit-breaker.js";
+import type { ErpAdmissionScope } from "./adaptive-erp-admission-policy.js";
 import type {
   ErpAttemptRecord,
   ErpConfirmationOutcome,
@@ -13,26 +14,15 @@ import type {
   HttpErpOrderConfirmation,
 } from "./erp-confirmation-client.js";
 import type {
-  OrderProcessAdmission,
-  OrderProcessAdmissionPermit,
+  AdaptiveErpRuntimeAdmission,
+  AdmittedErpOperation,
+  ErpAdmissionContext,
 } from "./order-process-admission.js";
 import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "./order-recovery-scanner.js";
-import { acceptedRunSnapshotInterventionReason } from "./run-backpressure.js";
+import { acceptedRunSnapshotInterventionReason } from "./run-config.js";
 
-export interface ErpReplayDispatchAdmission {
-  dispatchReplay(input: {
-    job: OrderProcessJob;
-    delivery: OrderProcessDeliveryMetadata;
-    dispatch: () => Promise<ErpConfirmationOutcome>;
-  }): Promise<ErpConfirmationOutcome | null>;
-}
-
-export interface ErpLookupAvailabilityCircuit {
-  assertAvailable(job: OrderProcessJob): void | Promise<void>;
-}
-
-export type ErpReconciliationResult =
+type ScheduledReconciliationResult = (
   | {
       operation: "local_result" | "status_lookup";
       disposition: "succeeded" | "permanent_rejection";
@@ -40,10 +30,15 @@ export type ErpReconciliationResult =
     }
   | ErpConfirmationOutcome
   | Exclude<ErpLookupOutcome, { disposition: "succeeded" }>
+) & { nextEligibleAtMs?: number };
+
+export type ErpReconciliationResult =
+  | ScheduledReconciliationResult
   | {
       operation: "non_call_deferral";
       disposition: "uncertain_result";
-      reason: "lookup_limit" | "order_reconciliation_in_flight" | "replay_not_admitted";
+      reason: string;
+      nextEligibleAtMs: number;
     };
 
 export type ScheduledErpOutcome =
@@ -58,22 +53,18 @@ export type ScheduledErpOutcome =
 export class ScheduledErpOrderConfirmation {
   constructor(
     private readonly options: {
-      client: Pick<HttpErpOrderConfirmation, "findSuccessfulAttempt" | "findUnresolvedCall">;
+      client: Pick<
+        HttpErpOrderConfirmation,
+        "dispatch" | "findSuccessfulAttempt" | "findUnresolvedCall"
+      >;
       reconciler: ErpUnresolvedCallReconciler;
-      dispatch: {
-        confirm(
-          job: OrderProcessJob,
-          delivery: OrderProcessDeliveryMetadata,
-        ): Promise<ErpConfirmationOutcome>;
-      };
-      admission: OrderProcessAdmission;
+      admission: AdaptiveErpRuntimeAdmission;
       control: Pick<OrderRecoveryPersistence, "defer" | "openIntervention">;
       scopeState: {
         get(scope: string): Promise<{ interventionReason: string | null } | null>;
         openIntervention(input: { scope: string; reason: string; openedAt: Date }): Promise<void>;
       };
       now?: () => Date;
-      random?: () => number;
     },
   ) {}
 
@@ -83,78 +74,77 @@ export class ScheduledErpOrderConfirmation {
   ): Promise<ScheduledErpOutcome> {
     const generation = delivery.processingGeneration;
     if (generation === undefined) throw new Error("Order delivery has no processing generation.");
-    const scope = job.runId ? `run:${job.runId}` : "catalog";
-    const scopeState = await this.options.scopeState.get(scope);
-    if (scopeState?.interventionReason) {
-      return this.defer(job, generation, "scope_intervention", "intervention_required");
+
+    let context: ErpAdmissionContext;
+    try {
+      context = await this.options.admission.context(job);
+    } catch (error) {
+      const reason = acceptedRunSnapshotInterventionReason(error);
+      if (reason) return this.openSnapshotIntervention(job, generation, reason);
+      throw error;
     }
-    if (await this.options.client.findSuccessfulAttempt(job)) return { disposition: "succeeded" };
+
+    const scopeState = await this.options.scopeState.get(context.scope);
+    if (scopeState?.interventionReason) {
+      return this.deferAt(
+        job,
+        generation,
+        "scope_intervention",
+        "intervention_required",
+        this.options.admission.nextInterventionRecheckAt(),
+      );
+    }
+    if (await this.options.client.findSuccessfulAttempt(job)) {
+      await this.options.admission.reconciliationSettled(context.scope);
+      return { disposition: "succeeded" };
+    }
 
     const unresolved = await this.options.client.findUnresolvedCall(job.orderId);
     if (unresolved) {
-      try {
-        const result = await this.options.reconciler.reconcile({
-          job,
-          delivery,
-          call: unresolved,
-          replayAdmission: {
-            dispatchReplay: async ({ delivery: replayDelivery }) => {
-              const permit = await this.options.admission.tryAcquire(job);
-              if (!permit) return null;
-              try {
-                return await this.options.dispatch.confirm(job, replayDelivery);
-              } finally {
-                await permit.release();
-              }
-            },
-          },
-        });
-        return this.scheduleResult(job, generation, scope, result);
-      } catch (error) {
-        const snapshotReason = acceptedRunSnapshotInterventionReason(error);
-        if (snapshotReason) return this.openSnapshotIntervention(job, generation, snapshotReason);
-        if (error instanceof ErpCircuitOpenError) {
-          return this.defer(
-            job,
-            generation,
-            "erp_circuit_open",
-            "erp_unavailable",
-            error.retryAfterMs,
-          );
-        }
-        throw error;
-      }
+      const result = await this.options.reconciler.reconcile({
+        job,
+        delivery,
+        call: unresolved,
+        context,
+      });
+      return this.scheduleResult(job, generation, context.scope, result);
     }
 
-    let permit: OrderProcessAdmissionPermit | null;
-    try {
-      permit = await this.options.admission.tryAcquire(job);
-    } catch (error) {
-      const snapshotReason = acceptedRunSnapshotInterventionReason(error);
-      if (snapshotReason) return this.openSnapshotIntervention(job, generation, snapshotReason);
-      throw error;
+    const admission = await this.options.admission.tryAcquire(context, "confirmation");
+    if (!admission.admitted) {
+      return this.deferAt(
+        job,
+        generation,
+        admission.decision.reason,
+        waitingReasonForAdmission(admission.decision.reason),
+        admission.decision.nextEligibleAtMs,
+      );
     }
-    if (!permit) return this.defer(job, generation, "local_admission", "local_admission");
+    const result = await this.dispatch(job, delivery, admission.operation);
+    return this.scheduleResult(job, generation, context.scope, result);
+  }
+
+  private async dispatch(
+    job: OrderProcessJob,
+    delivery: OrderProcessDeliveryMetadata,
+    operation: AdmittedErpOperation,
+  ): Promise<ScheduledReconciliationResult> {
     try {
-      const outcome = await this.options.dispatch.confirm(job, delivery);
-      return this.scheduleResult(job, generation, scope, outcome);
+      const outcome = await this.options.client.dispatch(
+        job,
+        delivery,
+        operation.requestDeadlineMs,
+      );
+      const settlement = await this.options.admission.feedback(operation, outcome);
+      return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
     } catch (error) {
       const outcome = dispatchedOutcomeFromError(error);
-      if (outcome) return this.scheduleResult(job, generation, scope, outcome);
-      const snapshotReason = acceptedRunSnapshotInterventionReason(error);
-      if (snapshotReason) return this.openSnapshotIntervention(job, generation, snapshotReason);
-      if (error instanceof ErpCircuitOpenError) {
-        return this.defer(
-          job,
-          generation,
-          "erp_circuit_open",
-          "erp_unavailable",
-          error.retryAfterMs,
-        );
-      }
-      throw error;
+      if (!outcome) throw error;
+      const settlement = await this.options.admission.feedback(operation, outcome);
+      return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
     } finally {
-      await permit.release();
+      this.options.admission.release(operation);
+      await this.options.admission.reconciliationSettled(operation.context.scope);
     }
   }
 
@@ -174,35 +164,42 @@ export class ScheduledErpOrderConfirmation {
   private async scheduleResult(
     job: OrderProcessJob,
     generation: number,
-    scope: string,
+    scope: ErpAdmissionScope,
     result: ErpReconciliationResult,
   ): Promise<ScheduledErpOutcome> {
     if (result.disposition === "succeeded") return { disposition: "succeeded" };
     if (result.disposition === "permanent_rejection") {
-      const errorCode = "errorCode" in result ? result.errorCode : undefined;
-      const errorMessage = "errorMessage" in result ? result.errorMessage : undefined;
       return {
         disposition: "permanent_rejection",
-        errorCode: errorCode ?? "erp_permanent_rejection",
-        errorMessage: errorMessage ?? "The ERP permanently rejected the order.",
+        errorCode:
+          "errorCode" in result
+            ? (result.errorCode ?? "erp_permanent_rejection")
+            : "erp_permanent_rejection",
+        errorMessage:
+          "errorMessage" in result
+            ? (result.errorMessage ?? "The ERP permanently rejected the order.")
+            : "The ERP permanently rejected the order.",
       };
     }
     if (result.disposition === "intervention_required") {
       const reason =
         ("errorCode" in result ? result.errorCode : undefined) ?? "erp_intervention_required";
       if (result.interventionScope === "scope") {
-        await this.options.scopeState.openIntervention({
-          scope,
+        await this.options.scopeState.openIntervention({ scope, reason, openedAt: this.now() });
+        return this.deferAt(
+          job,
+          generation,
           reason,
-          openedAt: this.now(),
-        });
-        return this.defer(job, generation, reason, "intervention_required");
+          "intervention_required",
+          this.options.admission.nextInterventionRecheckAt(),
+        );
       }
       await this.options.control.openIntervention({
         orderId: job.orderId,
         reason,
         processingGeneration: generation,
       });
+      await this.options.admission.reconciliationSettled(scope);
       return { disposition: "intervention_required", reason };
     }
     const reason =
@@ -215,43 +212,32 @@ export class ScheduledErpOrderConfirmation {
         : result.disposition === "uncertain_result"
           ? "uncertain_result"
           : "erp_unavailable";
-    return this.defer(
+    return this.deferAt(
       job,
       generation,
       reason,
       waitingReason,
-      "retryAfterMs" in result ? result.retryAfterMs : undefined,
+      result.nextEligibleAtMs ?? this.now().getTime(),
     );
   }
 
-  private async defer(
+  private async deferAt(
     job: OrderProcessJob,
     generation: number,
     reason: string,
-    waitingReason:
-      | "local_admission"
-      | "erp_capacity"
-      | "erp_unavailable"
-      | "uncertain_result"
-      | "intervention_required",
-    minimumDelayMs = 0,
+    waitingReason: OrderWaitingReason,
+    nextEligibleAtMs: number,
   ): Promise<ScheduledErpOutcome> {
-    const now = this.now();
-    // ponytail: task 09 replaces this bounded local adapter with the engine policy.
-    const jitteredBackoffMs = Math.floor(
-      1_000 * 2 ** Math.min(generation, 6) * (0.5 + this.random() / 2),
-    );
-    const nextEligibleAt = new Date(
-      now.getTime() + Math.min(60_000, Math.max(minimumDelayMs, jitteredBackoffMs)),
-    );
+    const nextEligibleAt = new Date(nextEligibleAtMs);
     const deferred = await this.options.control.defer({
       orderId: job.orderId,
       waitingReason,
       nextEligibleAt,
       processingGeneration: generation,
     });
-    if (!deferred)
+    if (!deferred) {
       throw new Error(`Order ${job.orderId} lost scheduling ownership while deferring.`);
+    }
     return {
       disposition: waitingReason === "intervention_required" ? "intervention_required" : "deferred",
       reason,
@@ -262,30 +248,9 @@ export class ScheduledErpOrderConfirmation {
   private now(): Date {
     return this.options.now?.() ?? new Date();
   }
-
-  private random(): number {
-    return this.options.random?.() ?? Math.random();
-  }
 }
 
-function dispatchedOutcomeFromError(error: unknown): ErpConfirmationOutcome | null {
-  if (
-    typeof error === "object" &&
-    error !== null &&
-    "outcome" in error &&
-    typeof error.outcome === "object" &&
-    error.outcome !== null &&
-    "operation" in error.outcome &&
-    error.outcome.operation === "dispatched_confirmation"
-  ) {
-    return error.outcome as ErpConfirmationOutcome;
-  }
-  return null;
-}
-
-/** Narrow task-04 boundary. Task 05 wires it into durable scheduling. */
 export class ErpUnresolvedCallReconciler {
-  private activeLookups = 0;
   private readonly activeOrders = new Set<string>();
 
   constructor(
@@ -297,8 +262,7 @@ export class ErpUnresolvedCallReconciler {
       callResolution: {
         resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean>;
       };
-      lookupAvailabilityCircuit: ErpLookupAvailabilityCircuit;
-      lookupConcurrency: number;
+      admission: AdaptiveErpRuntimeAdmission;
     },
   ) {}
 
@@ -306,40 +270,45 @@ export class ErpUnresolvedCallReconciler {
     job: OrderProcessJob;
     delivery: OrderProcessDeliveryMetadata;
     call: ErpCallReference;
-    replayAdmission: ErpReplayDispatchAdmission;
+    context: ErpAdmissionContext;
   }): Promise<ErpReconciliationResult> {
     if (this.activeOrders.has(input.job.orderId)) {
-      return nonCallDeferral("order_reconciliation_in_flight");
+      return nonCallDeferral(
+        "order_reconciliation_in_flight",
+        this.options.admission.nextRecheckAt(),
+      );
     }
     this.activeOrders.add(input.job.orderId);
     try {
       if (await this.options.client.findSuccessfulAttempt(input.job)) {
-        await this.resolve(input.call);
+        await this.resolve(input.call, input.context.scope);
         return { operation: "local_result", disposition: "succeeded" };
       }
-      await this.options.lookupAvailabilityCircuit.assertAvailable(input.job);
-      if (this.activeLookups >= this.options.lookupConcurrency) {
-        return nonCallDeferral("lookup_limit");
+
+      const lookupAdmission = await this.options.admission.tryAcquire(input.context, "lookup");
+      if (!lookupAdmission.admitted) {
+        return nonCallDeferral(
+          lookupAdmission.decision.reason,
+          lookupAdmission.decision.nextEligibleAtMs,
+        );
       }
-      this.activeLookups += 1;
+      const lookupOperation = lookupAdmission.operation;
       let lookup: ErpLookupOutcome;
       try {
         lookup = await this.options.client.lookup(
           input.call.idempotencyKey,
           input.job.correlationId,
         );
+        const settlement = await this.options.admission.feedback(lookupOperation, lookup);
+        if (lookup.disposition !== "succeeded") {
+          return { ...lookup, nextEligibleAtMs: settlement.nextEligibleAtMs };
+        }
       } finally {
-        this.activeLookups -= 1;
+        this.options.admission.release(lookupOperation);
       }
-      if (lookup.disposition !== "succeeded") return lookup;
+
       if (lookup.lookup.lookup.status === "unknown") {
-        const replayDelivery = { ...input.delivery, supersedesErpCallId: input.call.erpCallId };
-        const replay = await input.replayAdmission.dispatchReplay({
-          job: input.job,
-          delivery: replayDelivery,
-          dispatch: () => this.options.client.dispatch(input.job, replayDelivery),
-        });
-        return replay ?? nonCallDeferral("replay_not_admitted");
+        return this.replay(input, lookupOperation.permit.probe);
       }
       if (!sameIdentity(lookup.lookup.lookup.identity, input.job, input.call.idempotencyKey)) {
         return {
@@ -375,19 +344,81 @@ export class ErpUnresolvedCallReconciler {
         }
         throw error;
       }
-      await this.resolve(input.call);
+      await this.resolve(input.call, input.context.scope);
       return { operation: "status_lookup", disposition, response };
     } finally {
       this.activeOrders.delete(input.job.orderId);
     }
   }
 
-  private async resolve(call: ErpCallReference): Promise<void> {
+  private async replay(
+    input: {
+      job: OrderProcessJob;
+      delivery: OrderProcessDeliveryMetadata;
+      call: ErpCallReference;
+      context: ErpAdmissionContext;
+    },
+    confirmationProbeContinuation: boolean,
+  ): Promise<ErpReconciliationResult> {
+    const admission = await this.options.admission.tryAcquire(input.context, "confirmation", {
+      confirmationProbeContinuation,
+      reconciliation: true,
+    });
+    if (!admission.admitted) {
+      return nonCallDeferral(admission.decision.reason, admission.decision.nextEligibleAtMs);
+    }
+    const operation = admission.operation;
+    const delivery = { ...input.delivery, supersedesErpCallId: input.call.erpCallId };
+    try {
+      const outcome = await this.options.client.dispatch(
+        input.job,
+        delivery,
+        operation.requestDeadlineMs,
+      );
+      const settlement = await this.options.admission.feedback(operation, outcome);
+      return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
+    } catch (error) {
+      const outcome = dispatchedOutcomeFromError(error);
+      if (!outcome) throw error;
+      const settlement = await this.options.admission.feedback(operation, outcome);
+      return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
+    } finally {
+      this.options.admission.release(operation);
+      await this.options.admission.reconciliationSettled(input.context.scope);
+    }
+  }
+
+  private async resolve(
+    call: ErpCallReference,
+    scope: ErpAdmissionContext["scope"],
+  ): Promise<void> {
     await this.options.callResolution.resolveDispatchedCall({
       orderId: call.orderId,
       erpCallId: call.erpCallId,
     });
+    await this.options.admission.reconciliationSettled(scope);
   }
+}
+
+function dispatchedOutcomeFromError(error: unknown): ErpConfirmationOutcome | null {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "outcome" in error &&
+    typeof error.outcome === "object" &&
+    error.outcome !== null &&
+    "operation" in error.outcome &&
+    error.outcome.operation === "dispatched_confirmation"
+  ) {
+    return error.outcome as ErpConfirmationOutcome;
+  }
+  return null;
+}
+
+function waitingReasonForAdmission(reason: string): OrderWaitingReason {
+  if (reason === "capacity_cooldown") return "erp_capacity";
+  if (reason.startsWith("availability_")) return "erp_unavailable";
+  return "local_admission";
 }
 
 function lookupAttempt(
@@ -431,8 +462,11 @@ function sameIdentity(
   );
 }
 
-function nonCallDeferral(
-  reason: Extract<ErpReconciliationResult, { operation: "non_call_deferral" }>["reason"],
-): ErpReconciliationResult {
-  return { operation: "non_call_deferral", disposition: "uncertain_result", reason };
+function nonCallDeferral(reason: string, nextEligibleAtMs: number): ErpReconciliationResult {
+  return {
+    operation: "non_call_deferral",
+    disposition: "uncertain_result",
+    reason,
+    nextEligibleAtMs,
+  };
 }

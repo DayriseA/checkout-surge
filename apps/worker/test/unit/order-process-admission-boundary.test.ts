@@ -1,9 +1,9 @@
-import type { AcceptedRunConfigSnapshot, OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import type { Job } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
-import { ProcessLocalOrderProcessAdmission } from "../../src/application/order-process-admission.js";
+import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import { processJob } from "../../src/queue/bullmq-order-process-consumer.js";
 
 const data: OrderProcessJob = {
@@ -17,143 +17,412 @@ const data: OrderProcessJob = {
   processingGeneration: 0,
 };
 
-function bullJob(overrides: Record<string, unknown> = {}) {
-  return {
-    id: data.orderId,
-    name: "order.process",
-    data,
-    attemptsMade: 2,
-    opts: { attempts: 7 },
-    moveToDelayed: vi.fn(),
-    ...overrides,
-  } as unknown as Job<OrderProcessJob, void, "order.process">;
-}
-
-function snapshot(orderProcessConcurrency: number): AcceptedRunConfigSnapshot {
-  const snapshot = previewRunConfigSnapshotFixture();
-
-  return {
-    ...snapshot,
-    backpressureConfig: {
-      ...snapshot.backpressureConfig,
-      orderProcessConcurrency,
-    },
-  };
-}
-
-describe("process-local order admission", () => {
-  it("isolates run limits, bounds catalog work, and releases permits idempotently", async () => {
-    const firstRun = "55555555-5555-4555-8555-555555555551";
-    const secondRun = "55555555-5555-4555-8555-555555555552";
-    const admission = new ProcessLocalOrderProcessAdmission({
-      fallbackConcurrency: 1,
-      runConfigReader: {
-        read: async (runId) =>
-          runId === firstRun ? snapshot(1) : runId === secondRun ? snapshot(2) : null,
+describe("adaptive ERP runtime admission", () => {
+  it("restores durable safety, isolates scopes, and exposes bounded live counters", async () => {
+    let now = 1_000;
+    const runId = "55555555-5555-4555-8555-555555555555";
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        listActive: async () => [
+          {
+            scope: "catalog",
+            cooldownUntilMs: 5_000,
+            availabilityRetryAtMs: 0,
+            availabilityCircuitOpen: false,
+            circuitOpenUntilMs: 0,
+            nextProbeAtMs: 0,
+          },
+        ],
+        readActive: async () => null,
+        listUnresolvedScopes: async () => [],
+        readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
+        save: vi.fn(),
       },
+      runConfigReader: {
+        read: async () => ({
+          ...previewRunConfigSnapshotFixture(),
+          backpressureConfig: {
+            ...previewRunConfigSnapshotFixture().backpressureConfig,
+            orderProcessConcurrency: 1,
+          },
+        }),
+      },
+      fallbackConcurrency: 2,
+      now: () => now,
+      random: () => 0,
     });
 
-    const firstPermit = await admission.tryAcquire({ ...data, runId: firstRun });
-    expect(firstPermit).not.toBeNull();
-    expect(await admission.tryAcquire({ ...data, runId: firstRun })).toBeNull();
-    expect(await admission.tryAcquire({ ...data, runId: secondRun })).not.toBeNull();
-    expect(await admission.tryAcquire(data)).not.toBeNull();
-    expect(await admission.tryAcquire(data)).toBeNull();
-
-    await firstPermit?.release();
-    await firstPermit?.release();
-    expect(await admission.tryAcquire({ ...data, runId: firstRun })).not.toBeNull();
-    await admission.close();
+    const catalog = await admission.tryAcquire(await admission.context(data), "confirmation");
+    expect(catalog).toMatchObject({ admitted: false, decision: { reason: "capacity_cooldown" } });
+    const run = await admission.tryAcquire(
+      await admission.context({ ...data, runId }),
+      "confirmation",
+    );
+    expect(run.admitted).toBe(true);
+    if (run.admitted) admission.release(run.operation);
+    now = 5_000;
+    const state = admission.state();
+    expect(state).toMatchObject({
+      available: true,
+      counters: { admitted: 1, deferred: 1, released: 1 },
+    });
+    if (!state.available) throw new Error(state.error);
+    expect(state.scopes).toHaveLength(2);
   });
 
-  it("rejects a missing frozen snapshot and clears held permits on close", async () => {
-    const pendingRunId = "55555555-5555-4555-8555-555555555554";
-    let resolveRead: ((value: AcceptedRunConfigSnapshot) => void) | undefined;
-    const pendingSnapshot = new Promise<AcceptedRunConfigSnapshot>((resolve) => {
-      resolveRead = resolve;
+  it("rejects a missing accepted run snapshot instead of falling back to catalog", async () => {
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      persistence: noSafetyPersistence(),
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
     });
-    const admission = new ProcessLocalOrderProcessAdmission({
-      fallbackConcurrency: 1,
-      runConfigReader: {
-        read: async (runId) => {
-          if (runId === pendingRunId) return pendingSnapshot;
-          return null;
+    await expect(
+      admission.context({ ...data, runId: "55555555-5555-4555-8555-555555555555" }),
+    ).rejects.toThrow("snapshot was not found");
+  });
+
+  it("releases active permits on shutdown and admits no new work", async () => {
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      persistence: noSafetyPersistence(),
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => 0,
+    });
+    const context = await admission.context(data);
+    const active = await admission.tryAcquire(context, "confirmation");
+    expect(active.admitted).toBe(true);
+
+    await admission.close();
+
+    expect(admission.state()).toMatchObject({
+      available: true,
+      counters: { admitted: 1, released: 1 },
+      scopes: [{ admission: { workerInFlight: 0 } }],
+    });
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+    });
+  });
+
+  it("reports safety persistence failure as unavailable instead of zero state", async () => {
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      persistence: {
+        listActive: async () => [],
+        readActive: async () => null,
+        listUnresolvedScopes: async () => [],
+        readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
+        save: async () => {
+          throw new Error("PostgreSQL unavailable");
         },
       },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => 0,
     });
-    const runJob = { ...data, runId: "55555555-5555-4555-8555-555555555553" };
+    const acquired = await admission.tryAcquire(await admission.context(data), "confirmation");
+    if (!acquired.admitted) throw new Error("Expected permit.");
 
-    await expect(admission.tryAcquire(runJob)).rejects.toThrow("snapshot was not found");
-    const inFlightAcquire = admission.tryAcquire({
-      ...data,
-      runId: pendingRunId,
+    await expect(
+      admission.feedback(acquired.operation, {
+        disposition: "capacity_rejected",
+        operation: "dispatched_confirmation",
+        call: {
+          erpCallId: "99999999-9999-4999-8999-999999999999",
+          orderId: data.orderId,
+          idempotencyKey: `erp-confirmation:${data.orderId}`,
+          processingGeneration: 0,
+          dispatchedAt: new Date(0).toISOString(),
+        },
+        startedAt: new Date(0),
+        finishedAt: new Date(1),
+        latencyMs: 1,
+        requestDeadlineMs: 2_000,
+        replayed: false,
+        httpStatus: 429,
+      }),
+    ).rejects.toThrow("restart-safety state could not be persisted");
+    expect(admission.state()).toEqual({
+      available: false,
+      error: "PostgreSQL unavailable",
     });
-    await admission.close();
-    resolveRead?.(snapshot(1));
+  });
 
-    await expect(inFlightAcquire).resolves.toBeNull();
-    await expect(admission.tryAcquire(data)).resolves.toBeNull();
+  it("serializes per-scope safety writes and snapshots the latest restriction", async () => {
+    let now = 0;
+    let finishFirstSave: (() => void) | undefined;
+    const firstSave = new Promise<void>((resolve) => {
+      finishFirstSave = resolve;
+    });
+    const saved: Array<{ cooldownUntilMs: number }> = [];
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      persistence: {
+        ...noSafetyPersistence(),
+        save: async (record) => {
+          saved.push(record);
+          if (saved.length === 1) await firstSave;
+        },
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => now,
+    });
+    const context = await admission.context(data);
+    const first = await admission.tryAcquire(context, "confirmation");
+    if (!first.admitted) throw new Error("Expected first permit.");
+    now = 500;
+    const second = await admission.tryAcquire(context, "confirmation");
+    if (!second.admitted) throw new Error("Expected second permit.");
+
+    const healthyWrite = admission.feedback(first.operation, confirmationOutcome("succeeded"));
+    await vi.waitFor(() => expect(saved).toHaveLength(1));
+    const restrictedWrite = admission.feedback(
+      second.operation,
+      confirmationOutcome("capacity_rejected"),
+    );
+    await Promise.resolve();
+    expect(saved).toHaveLength(1);
+    finishFirstSave?.();
+    await Promise.all([healthyWrite, restrictedWrite]);
+
+    expect(saved).toHaveLength(2);
+    expect(saved[1]?.cooldownUntilMs).toBe(60_500);
+  });
+
+  it("blocks fresh confirmations for a restored unresolved scope", async () => {
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        ...noSafetyPersistence(),
+        listUnresolvedScopes: async () => ["catalog"],
+        readReconciliationGate: async () => ({ pending: true, nextEligibleAtMs: 60_000 }),
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => 1_000,
+    });
+    const context = await admission.context(data);
+
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+      decision: { reason: "reconciliation_pending", nextEligibleAtMs: 60_000 },
+    });
+    await expect(
+      admission.tryAcquire(context, "confirmation", { reconciliation: true }),
+    ).resolves.toMatchObject({ admitted: true });
+  });
+
+  it("uses a long bounded recheck for a durable scope intervention", async () => {
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        ...noSafetyPersistence(),
+        listActive: async () => [
+          {
+            scope: "catalog",
+            cooldownUntilMs: 0,
+            availabilityRetryAtMs: 0,
+            availabilityCircuitOpen: false,
+            circuitOpenUntilMs: 0,
+            nextProbeAtMs: 0,
+            interventionReason: "erp_lookup_identity_contradiction",
+          },
+        ],
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => 1_000,
+    });
+
+    await expect(
+      admission.tryAcquire(await admission.context(data), "confirmation"),
+    ).resolves.toMatchObject({
+      admitted: false,
+      decision: { reason: "scope_intervention", nextEligibleAtMs: 61_000 },
+    });
+  });
+
+  it("recovers a stale gate on denial and ignores an older overlapping refresh", async () => {
+    let now = 1_000;
+    let finishOlder: ((value: { pending: boolean; nextEligibleAtMs: number }) => void) | undefined;
+    let finishNewer: ((value: { pending: boolean; nextEligibleAtMs: number }) => void) | undefined;
+    const older = new Promise<{ pending: boolean; nextEligibleAtMs: number }>((resolve) => {
+      finishOlder = resolve;
+    });
+    const newer = new Promise<{ pending: boolean; nextEligibleAtMs: number }>((resolve) => {
+      finishNewer = resolve;
+    });
+    const readReconciliationGate = vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer);
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        ...noSafetyPersistence(),
+        listUnresolvedScopes: async () => ["catalog"],
+        readReconciliationGate,
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => now,
+    });
+    const context = await admission.context(data);
+
+    const deniedRefresh = admission.tryAcquire(context, "confirmation");
+    await vi.waitFor(() => expect(readReconciliationGate).toHaveBeenCalledOnce());
+    const settledRefresh = admission.reconciliationSettled("catalog");
+    await vi.waitFor(() => expect(readReconciliationGate).toHaveBeenCalledTimes(2));
+    finishNewer?.({ pending: false, nextEligibleAtMs: 0 });
+    await settledRefresh;
+    finishOlder?.({ pending: true, nextEligibleAtMs: 60_000 });
+
+    const admitted = await deniedRefresh;
+    expect(admitted).toMatchObject({ admitted: true });
+    if (admitted.admitted) admission.release(admitted.operation);
+    now = 1_500;
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: true,
+    });
+  });
+
+  it("keeps gate-read and safety-write failures independent until each recovers", async () => {
+    let now = 1_000;
+    const readReconciliationGate = vi
+      .fn()
+      .mockResolvedValueOnce({ pending: true, nextEligibleAtMs: 60_000 })
+      .mockRejectedValueOnce(new Error("gate read failed"))
+      .mockResolvedValue({ pending: false, nextEligibleAtMs: 0 });
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error("safety write failed"))
+      .mockResolvedValue(undefined);
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        ...noSafetyPersistence(),
+        listUnresolvedScopes: async () => ["catalog"],
+        readReconciliationGate,
+        save,
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => now,
+    });
+    const context = await admission.context(data);
+    await admission.tryAcquire(context, "confirmation");
+    now = 1_100;
+    await admission.reconciliationSettled("catalog");
+    expect(admission.state()).toEqual({ available: false, error: "gate read failed" });
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+      decision: { nextEligibleAtMs: 1_200 },
+    });
+    const first = await admission.tryAcquire(context, "confirmation", { reconciliation: true });
+    if (!first.admitted) throw new Error("Expected recovery permit.");
+    await admission.feedback(first.operation, confirmationOutcome("succeeded"));
+    expect(admission.state()).toEqual({ available: false, error: "gate read failed" });
+    now = 1_600;
+    const second = await admission.tryAcquire(context, "confirmation", { reconciliation: true });
+    if (!second.admitted) throw new Error("Expected recovery permit.");
+    await expect(
+      admission.feedback(second.operation, confirmationOutcome("succeeded")),
+    ).rejects.toThrow("restart-safety state could not be persisted");
+    expect(admission.state()).toEqual({
+      available: false,
+      error: "safety write failed; gate read failed",
+    });
+    await admission.reconciliationSettled("catalog");
+    expect(admission.state()).toEqual({ available: false, error: "safety write failed" });
+    now = 2_100;
+    const third = await admission.tryAcquire(context, "confirmation");
+    if (!third.admitted) throw new Error("Expected fresh permit.");
+    await admission.feedback(third.operation, confirmationOutcome("succeeded"));
+    expect(admission.state()).toMatchObject({ available: true });
+  });
+
+  it("throttles failed gate refreshes while keeping the short recovery recheck", async () => {
+    let now = 1_000;
+    const readReconciliationGate = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("PostgreSQL unavailable"))
+      .mockResolvedValue({ pending: false, nextEligibleAtMs: 0 });
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: {
+        ...noSafetyPersistence(),
+        listUnresolvedScopes: async () => ["catalog"],
+        readReconciliationGate,
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => now,
+    });
+    const context = await admission.context(data);
+
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+      decision: { reason: "reconciliation_pending", nextEligibleAtMs: 1_100 },
+    });
+    expect(admission.state()).toEqual({ available: false, error: "PostgreSQL unavailable" });
+    await admission.tryAcquire(context, "confirmation");
+    expect(readReconciliationGate).toHaveBeenCalledOnce();
+    now = 1_100;
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: true,
+    });
+    expect(readReconciliationGate).toHaveBeenCalledTimes(2);
+    expect(admission.state()).toMatchObject({ available: true });
   });
 });
 
-describe("order process admission boundary", () => {
-  it("leaves dispatch admission to the claimed handler workflow", async () => {
-    const order: string[] = [];
-    const original = new Error("handler failed");
-    const release = vi.fn(async () => {
-      order.push("release");
-      throw new Error("release failed");
-    });
-    const handler = {
-      handle: vi.fn(async () => {
-        order.push("handle");
-        throw original;
-      }),
-    };
-    const admission = {
-      tryAcquire: vi.fn(async () => {
-        order.push("acquire");
-        return { release };
-      }),
-      close: vi.fn(),
-    };
+function noSafetyPersistence() {
+  return {
+    listActive: async () => [],
+    readActive: async () => null,
+    listUnresolvedScopes: async () => [],
+    readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
+    save: async () => undefined,
+  };
+}
+
+function confirmationOutcome(disposition: "succeeded" | "capacity_rejected") {
+  return {
+    disposition,
+    operation: "dispatched_confirmation" as const,
+    call: {
+      erpCallId: "99999999-9999-4999-8999-999999999999",
+      orderId: data.orderId,
+      idempotencyKey: `erp-confirmation:${data.orderId}`,
+      processingGeneration: 0,
+      dispatchedAt: new Date(0).toISOString(),
+    },
+    startedAt: new Date(0),
+    finishedAt: new Date(1),
+    latencyMs: 1,
+    requestDeadlineMs: 2_000,
+    replayed: false,
+    httpStatus: disposition === "capacity_rejected" ? 429 : 200,
+    ...(disposition === "capacity_rejected" ? { retryAfterMs: 60_000 } : {}),
+  };
+}
+
+describe("order process consumer boundary", () => {
+  it("leaves ERP admission inside the claimed handler workflow", async () => {
+    const handler = { handle: vi.fn().mockRejectedValue(new Error("handler failed")) };
     await expect(
       processJob(bullJob(), "lock-token", {
         connection: {},
         concurrency: 10,
         handler,
-        recovery: {
-          recordRecoverable: async () => undefined,
-          recordDeadLetter: async () => undefined,
-        },
-        admission,
+        recovery: { recordRecoverable: vi.fn(), recordDeadLetter: vi.fn() },
         logger: createSilentLogger("worker"),
       }),
-    ).rejects.toBe(original);
-    expect(order).toEqual(["handle"]);
-    expect(admission.tryAcquire).not.toHaveBeenCalled();
-  });
-
-  it("delivers saturated work to durable scheduling instead of delaying in BullMQ", async () => {
-    const job = bullJob();
-    const handler = { handle: vi.fn() };
-    const recovery = { recordRecoverable: vi.fn(), recordDeadLetter: vi.fn() };
-    await expect(
-      processJob(job, "lock-token", {
-        connection: {},
-        concurrency: 10,
-        handler,
-        recovery,
-        admission: { tryAcquire: vi.fn().mockResolvedValue(null), close: vi.fn() },
-        admissionDelayMs: 1,
-        logger: createSilentLogger("worker"),
-      }),
-    ).resolves.toBeUndefined();
-    expect(job.moveToDelayed).not.toHaveBeenCalled();
+    ).rejects.toThrow("handler failed");
     expect(handler.handle).toHaveBeenCalledOnce();
-    expect(recovery.recordRecoverable).not.toHaveBeenCalled();
-    expect(recovery.recordDeadLetter).not.toHaveBeenCalled();
-    expect(job.attemptsMade).toBe(2);
-    expect(job.opts.attempts).toBe(7);
+    expect(bullJob().moveToDelayed).not.toHaveBeenCalled();
   });
 });
+
+function bullJob() {
+  return {
+    id: data.orderId,
+    name: "order.process",
+    data,
+    attemptsMade: 0,
+    opts: { attempts: 1 },
+    moveToDelayed: vi.fn(),
+  } as unknown as Job<OrderProcessJob, void, "order.process">;
+}

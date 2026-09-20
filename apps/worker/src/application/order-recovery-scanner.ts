@@ -6,7 +6,7 @@ import type {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { OrderJobPublisher } from "./order-job-publisher.js";
 import type { OrderRecoveryHandoff, RecoverableOrderHandoff } from "./order-process-job-handler.js";
-import { acceptedRunSnapshotInterventionReason } from "./run-backpressure.js";
+import { acceptedRunSnapshotInterventionReason } from "./run-config.js";
 
 export type { RecoverableOrderHandoff } from "./order-process-job-handler.js";
 

@@ -36,12 +36,11 @@ import {
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
-import { ErpCircuitBreaker } from "../../src/application/erp-circuit-breaker.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
@@ -49,7 +48,7 @@ import {
 } from "../../src/application/erp-reconciliation.js";
 import { createNotificationRecordJobHandler as createProductionNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
-import { ProcessLocalOrderProcessAdmission } from "../../src/application/order-process-admission.js";
+import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import {
   createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
   type OrderConfirmation,
@@ -69,6 +68,7 @@ import {
   OrderNotFoundError,
   PostgresOrderTransitionPersistence,
 } from "../../src/persistence/postgres-order-transition-persistence.js";
+import { PostgresRunConfigReader } from "../../src/persistence/postgres-run-config-reader.js";
 import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
@@ -100,6 +100,27 @@ const runScopedJob: OrderProcessJob = {
   ...job,
   runId: ids.run,
 };
+const freshIds = {
+  reservation: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  order: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+} as const;
+const freshJob: OrderProcessJob = {
+  ...job,
+  orderId: freshIds.order,
+  reservationId: freshIds.reservation,
+  publicOrderId: "ord_worker_fresh",
+  correlationId: "corr-worker-fresh",
+};
+const capacityJobs: OrderProcessJob[] = [
+  job,
+  ...[1, 2, 3].map((index) => ({
+    ...job,
+    orderId: `10000000-0000-4000-8000-00000000000${index}`,
+    reservationId: `20000000-0000-4000-8000-00000000000${index}`,
+    publicOrderId: `ord_worker_capacity_${index}`,
+    correlationId: `corr-worker-capacity-${index}`,
+  })),
+];
 
 type HandlerDependencies = Parameters<typeof createProductionOrderProcessJobHandler>[0];
 
@@ -899,8 +920,624 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
   });
 
+  it("keeps business totals stable across concurrency after a real capacity rejection", async () => {
+    const serial = await runCapacityFixture(1);
+    const parallel = await runCapacityFixture(10);
+
+    for (const result of [serial, parallel]) {
+      expect(result.confirmed).toBe(capacityJobs.length);
+      expect(result.capacityRejected).toBeGreaterThanOrEqual(1);
+      expect(result.peakInFlight).toBeLessThanOrEqual(1);
+      expect(result.minimumStartSpacingMs).toBeGreaterThanOrEqual(400);
+      expect(result.publications).toBeLessThanOrEqual(12);
+      expect(result.scans).toBeLessThanOrEqual(6);
+    }
+    expect(parallel.confirmed).toBe(serial.confirmed);
+    expect(parallel.capacityRejected).toBe(serial.capacityRejected);
+  }, 30_000);
+
+  it("reconciles a restarted scope before fresh queued traffic can dispatch", async () => {
+    await seedAdditionalQueuedOrder(connection, freshJob);
+    let policyNow = new Date();
+    const transition = new PostgresOrderTransitionPersistence(connection.db, () => policyNow);
+    await transition.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "crashed-delivery",
+    });
+    const attempts = new PostgresErpAttemptPersistence(connection.db, () => policyNow);
+    const call = await attempts.recordDispatchIntent({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: policyNow,
+      expectedProcessingGeneration: 0,
+    });
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    await control.defer({
+      orderId: job.orderId,
+      waitingReason: "uncertain_result",
+      nextEligibleAt: policyNow,
+      processingGeneration: 0,
+    });
+    const operations: string[] = [];
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async (_input, init) => {
+      const method = init?.method ?? "GET";
+      operations.push(method);
+      if (method === "GET") {
+        return Response.json({
+          lookup: {
+            status: "succeeded",
+            identity: {
+              orderId: job.orderId,
+              publicOrderId: job.publicOrderId,
+              reservationId: job.reservationId,
+              saleOfferId: job.saleOfferId,
+              idempotencyKey: call.idempotencyKey,
+              quantity: job.quantity,
+            },
+            result: {
+              status: "succeeded",
+              confirmationId: "erp_recovered",
+              httpStatus: 200,
+              latencyMs: 1,
+              timestamp: policyNow.toISOString(),
+            },
+          },
+          timestamp: policyNow.toISOString(),
+        });
+      }
+      return Response.json({
+        status: "succeeded",
+        confirmationId: "erp_fresh",
+        httpStatus: 200,
+        latencyMs: 1,
+        timestamp: policyNow.toISOString(),
+      });
+    });
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: attempts,
+      fetch,
+      now: () => policyNow,
+    });
+    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: scopeState,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+      fallbackConcurrency: 2,
+      now: () => policyNow.getTime(),
+      random: () => 0,
+    });
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: control,
+        admission,
+      }),
+      admission,
+      control,
+      scopeState,
+      now: () => policyNow,
+    });
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 2,
+      handler: createOrderProcessJobHandler({
+        confirmation: scheduled,
+        persistence: transition,
+        logger: createSilentLogger("worker"),
+      }),
+      logger: createSilentLogger("worker"),
+    });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      await queue.add(orderProcessJobName, freshJob, { jobId: freshJob.orderId });
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 1 });
+      consumer.start();
+      await waitForOrderStatus(connection, "confirmed", ids.order);
+      expect(operations).toEqual(["GET"]);
+      const [freshControl] = await connection.db
+        .select({ nextAttemptAt: orderRecoveryJobs.nextAttemptAt })
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, freshIds.order));
+      if (!freshControl?.nextAttemptAt) throw new Error("Fresh traffic was not gated.");
+      policyNow = new Date(freshControl.nextAttemptAt.getTime() + 1);
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 1 });
+      await waitForOrderStatus(connection, "confirmed", freshIds.order);
+      expect(operations).toEqual(["GET", "POST"]);
+    } finally {
+      await scanner.close();
+      await publisher.close();
+    }
+  }, 20_000);
+
+  it("does not gate fresh orders behind overlapping healthy dispatch leases", async () => {
+    const secondJob = capacityJobs[1];
+    if (!secondJob) throw new Error("Missing overlap fixture order.");
+    await seedAdditionalQueuedOrder(connection, secondJob);
+    await seedAdditionalQueuedOrder(connection, freshJob);
+    const baseTime = Date.now();
+    let now = baseTime;
+    const responses: Array<(response: Response) => void> = [];
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockImplementation(() => new Promise<Response>((resolve) => responses.push(resolve)));
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => new Date(now));
+    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: scopeState,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+      fallbackConcurrency: 10,
+      now: () => now,
+      random: () => 0,
+    });
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => new Date(now)),
+      fetch,
+      now: () => new Date(now),
+    });
+    const handler = createOrderProcessJobHandler({
+      confirmation: new ScheduledErpOrderConfirmation({
+        client,
+        reconciler: new ErpUnresolvedCallReconciler({ client, callResolution: control, admission }),
+        admission,
+        control,
+        scopeState,
+        now: () => new Date(now),
+      }),
+      persistence: new PostgresOrderTransitionPersistence(connection.db, () => new Date(now)),
+      logger: createSilentLogger("worker"),
+    });
+    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 };
+    const succeed = (index: number) =>
+      responses[index]?.(
+        Response.json({
+          status: "succeeded",
+          confirmationId: `erp_overlap_${index}`,
+          httpStatus: 200,
+          latencyMs: 1_500,
+          timestamp: new Date(now).toISOString(),
+        }),
+      );
+    const first = handler.handle(job, { ...delivery, deliveryId: "overlap-a" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1));
+    now = baseTime + 500;
+    const second = handler.handle(secondJob, { ...delivery, deliveryId: "overlap-b" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    now = baseTime + 1_500;
+    succeed(0);
+    await first;
+    // B still owns a durable dispatch intent and an unexpired lease.
+    expect(await scopeState.readReconciliationGate("catalog")).toMatchObject({
+      pending: true,
+      nextEligibleAtMs: baseTime + 30_500,
+    });
+    const fresh = handler.handle(freshJob, { ...delivery, deliveryId: "overlap-c" });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(3));
+    now = baseTime + 2_000;
+    succeed(1);
+    await second;
+    now = baseTime + 3_000;
+    succeed(2);
+    await fresh;
+    const [freshOrder] = await connection.db
+      .select()
+      .from(orders)
+      .where(eq(orders.id, freshJob.orderId));
+    expect(freshOrder?.status).toBe("confirmed");
+    expect(admission.state()).toMatchObject({ available: true, counters: { deferred: 0 } });
+  });
+
+  it("does not republish gated fresh traffic before the unresolved scope due time", async () => {
+    await seedAdditionalQueuedOrder(connection, freshJob);
+    let policyNow = new Date();
+    const dueAt = new Date(policyNow.getTime() + 60_000);
+    const transition = new PostgresOrderTransitionPersistence(connection.db, () => policyNow);
+    await transition.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "delayed-reconciliation",
+    });
+    const attempts = new PostgresErpAttemptPersistence(connection.db, () => policyNow);
+    await attempts.recordDispatchIntent({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: policyNow,
+      expectedProcessingGeneration: 0,
+    });
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    await control.defer({
+      orderId: job.orderId,
+      waitingReason: "erp_unavailable",
+      nextEligibleAt: dueAt,
+      processingGeneration: 0,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: attempts,
+      fetch,
+      now: () => policyNow,
+    });
+    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: scopeState,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+      fallbackConcurrency: 10,
+      now: () => policyNow.getTime(),
+      random: () => 0,
+    });
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({ client, callResolution: control, admission }),
+      admission,
+      control,
+      scopeState,
+      now: () => policyNow,
+    });
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 10,
+      handler: createOrderProcessJobHandler({
+        confirmation: scheduled,
+        persistence: transition,
+        logger: createSilentLogger("worker"),
+      }),
+      logger: createSilentLogger("worker"),
+    });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      consumer.start();
+      await queue.add(orderProcessJobName, freshJob, { jobId: freshJob.orderId });
+      await waitForQueueToSettle(queue);
+      const [freshControl] = await connection.db
+        .select({ nextAttemptAt: orderRecoveryJobs.nextAttemptAt })
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, freshJob.orderId));
+      expect(freshControl?.nextAttemptAt).toEqual(dueAt);
+      expect(fetch).not.toHaveBeenCalled();
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 0, enqueued: 0 });
+      policyNow = new Date(policyNow.getTime() + 1_000);
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 0, enqueued: 0 });
+    } finally {
+      await scanner.close();
+      await publisher.close();
+    }
+  }, 20_000);
+
+  it("does not gate fresh scope traffic on a parked unresolved order intervention", async () => {
+    const now = new Date();
+    const transition = new PostgresOrderTransitionPersistence(connection.db, () => now);
+    await transition.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "intervened-delivery",
+    });
+    const attempts = new PostgresErpAttemptPersistence(connection.db, () => now);
+    await attempts.recordDispatchIntent({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: now,
+      expectedProcessingGeneration: 0,
+    });
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => now);
+    await control.defer({
+      orderId: job.orderId,
+      waitingReason: "uncertain_result",
+      nextEligibleAt: now,
+      processingGeneration: 0,
+    });
+    await control.openIntervention({
+      orderId: job.orderId,
+      reason: "erp_lookup_identity_contradiction",
+      processingGeneration: 0,
+    });
+    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+
+    await expect(scopeState.listUnresolvedScopes(10)).resolves.toEqual([]);
+    await expect(scopeState.readReconciliationGate("catalog")).resolves.toEqual({
+      pending: false,
+      nextEligibleAtMs: 0,
+    });
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: scopeState,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+      fallbackConcurrency: 2,
+      now: () => now.getTime(),
+      random: () => 0,
+    });
+    await expect(
+      admission.tryAcquire({ scope: "catalog", configuredConcurrency: 2 }, "confirmation"),
+    ).resolves.toMatchObject({ admitted: true });
+  });
+
+  it("restores cooldown and open-circuit timing before BullMQ traffic", async () => {
+    let policyNow = new Date();
+    const safetyUntil = policyNow.getTime() + 1_000;
+    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+    await scopeState.save({
+      scope: "catalog",
+      cooldownUntilMs: safetyUntil,
+      availabilityRetryAtMs: safetyUntil,
+      availabilityCircuitOpen: true,
+      circuitOpenUntilMs: safetyUntil,
+      nextProbeAtMs: safetyUntil,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      Response.json({
+        status: "succeeded",
+        confirmationId: "erp_after_restart_safety",
+        httpStatus: 200,
+        latencyMs: 1,
+        timestamp: policyNow.toISOString(),
+      }),
+    );
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => policyNow),
+      fetch,
+      now: () => policyNow,
+    });
+    const admission = await AdaptiveErpRuntimeAdmission.restore({
+      persistence: scopeState,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+      fallbackConcurrency: 10,
+      now: () => policyNow.getTime(),
+      random: () => 0,
+    });
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: control,
+        admission,
+      }),
+      admission,
+      control,
+      scopeState,
+      now: () => policyNow,
+    });
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 10,
+      handler: createOrderProcessJobHandler({
+        confirmation: scheduled,
+        persistence: new PostgresOrderTransitionPersistence(connection.db, () => policyNow),
+        logger: createSilentLogger("worker"),
+      }),
+      logger: createSilentLogger("worker"),
+    });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      consumer.start();
+      await queue.add(orderProcessJobName, job, { jobId: job.orderId });
+      await vi.waitFor(async () => {
+        expect(await (await queue.getJob(job.orderId))?.getState()).toBe("completed");
+      });
+      expect(fetch).not.toHaveBeenCalled();
+      const [waiting] = await connection.db
+        .select({
+          nextAttemptAt: orderRecoveryJobs.nextAttemptAt,
+          leaseExpiresAt: orderRecoveryJobs.leaseExpiresAt,
+          status: orderRecoveryJobs.status,
+          waitingReason: orderRecoveryJobs.waitingReason,
+          interventionReason: orderRecoveryJobs.interventionReason,
+          unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId,
+        })
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, ids.order));
+      expect(waiting?.nextAttemptAt?.getTime()).toBe(safetyUntil);
+
+      policyNow = new Date(safetyUntil);
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 1 });
+      await waitForOrderStatus(connection, "confirmed");
+      expect(fetch).toHaveBeenCalledOnce();
+      expect((await queue.getJobCounts()).delayed).toBe(0);
+    } finally {
+      await scanner.close();
+      await publisher.close();
+    }
+  }, 20_000);
+
+  async function runCapacityFixture(concurrency: number) {
+    await consumer?.close();
+    consumer = null;
+    await redis.flushdb();
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection);
+    for (const capacityJob of capacityJobs.slice(1)) {
+      await seedAdditionalQueuedOrder(connection, capacityJob);
+    }
+    const confirmationStarts: number[] = [];
+    let lastAcceptedStart = 0;
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
+      const startedAt = Date.now();
+      confirmationStarts.push(startedAt);
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      inFlight -= 1;
+      if (lastAcceptedStart > 0 && startedAt - lastAcceptedStart < 650) {
+        return Response.json(
+          {
+            status: "failed",
+            httpStatus: 429,
+            errorCode: "erp_capacity_exceeded",
+            errorMessage: "ERP capacity is temporarily exhausted.",
+            latencyMs: 1,
+            timestamp: new Date().toISOString(),
+          },
+          { status: 429, headers: { "retry-after": "1" } },
+        );
+      }
+      lastAcceptedStart = startedAt;
+      return Response.json({
+        status: "succeeded",
+        confirmationId: `erp_capacity_${concurrency}`,
+        httpStatus: 200,
+        latencyMs: 1,
+        timestamp: new Date().toISOString(),
+      });
+    });
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+      fetch,
+    });
+    consumer = buildConsumer(connection, client, {
+      concurrency,
+    });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: new PostgresOrderRecoveryPersistence(connection.db),
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 20,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => new Date(),
+    });
+    try {
+      consumer.start();
+      await Promise.all(
+        capacityJobs.map((capacityJob) =>
+          queue.add(orderProcessJobName, capacityJob, {
+            attempts: 1,
+            jobId: capacityJob.orderId,
+          }),
+        ),
+      );
+      await waitForQueueToSettle(queue);
+      let publications = 0;
+      let scans = 0;
+      while (scans < 12) {
+        const currentOrders = await connection.db
+          .select({ status: orders.status })
+          .from(orders)
+          .where(
+            inArray(
+              orders.id,
+              capacityJobs.map((capacityJob) => capacityJob.orderId),
+            ),
+          );
+        if (currentOrders.every((order) => order.status === "confirmed")) break;
+        const pending = await connection.db
+          .select({ nextAttemptAt: orderRecoveryJobs.nextAttemptAt })
+          .from(orderRecoveryJobs)
+          .where(inArray(orderRecoveryJobs.status, ["pending", "enqueued"]));
+        const nextAttemptAt = Math.min(
+          ...pending.flatMap((record) =>
+            record.nextAttemptAt ? [record.nextAttemptAt.getTime()] : [Date.now()],
+          ),
+        );
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.max(0, nextAttemptAt - Date.now() + 20)),
+        );
+        const scan = await scanner.scanOnce();
+        publications += scan.enqueued;
+        scans += 1;
+        await waitForQueueToSettle(queue);
+      }
+      const attempts = await connection.db
+        .select({ disposition: erpAttempts.disposition })
+        .from(erpAttempts)
+        .where(
+          inArray(
+            erpAttempts.orderId,
+            capacityJobs.map((capacityJob) => capacityJob.orderId),
+          ),
+        )
+        .orderBy(asc(erpAttempts.startedAt));
+      const confirmed = await connection.db
+        .select({ status: orders.status })
+        .from(orders)
+        .where(
+          inArray(
+            orders.id,
+            capacityJobs.map((capacityJob) => capacityJob.orderId),
+          ),
+        );
+      expect((await queue.getJobCounts()).delayed).toBe(0);
+      const spacings = confirmationStarts
+        .slice(1)
+        .map((startedAt, index) => startedAt - (confirmationStarts[index] ?? startedAt));
+      return {
+        confirmed: confirmed.filter((order) => order.status === "confirmed").length,
+        capacityRejected: attempts.filter((attempt) => attempt.disposition === "capacity_rejected")
+          .length,
+        publications,
+        scans,
+        peakInFlight,
+        minimumStartSpacingMs: Math.min(...spacings),
+      };
+    } finally {
+      await scanner.close();
+      await publisher.close();
+      await consumer?.close();
+      consumer = null;
+    }
+  }
+
   it("converges after transient failures beyond former execution and publication limits", async () => {
     const transientFailures = 101;
+    let policyNow = new Date("2026-06-21T00:00:00.000Z");
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
       if (fetch.mock.calls.length <= transientFailures) {
         return Response.json(
@@ -932,7 +1569,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       fetch,
     });
     consumer = buildConsumer(connection, client, {
-      scheduledNow: () => new Date("2020-01-01T00:00:00.000Z"),
+      scheduledNow: () => policyNow,
       notificationRecordPublisher,
     });
     consumer.start();
@@ -948,6 +1585,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       batchSize: 1,
       recoveryLeaseMs: 30_000,
       failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
     });
     try {
       await queue.add(orderProcessJobName, job, { attempts: 1, jobId: job.orderId });
@@ -956,6 +1594,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         await vi.waitFor(async () => {
           expect(await (await queue.getJob(jobId))?.getState()).toBe("completed");
         });
+        const [control] = await connection.db
+          .select({ nextAttemptAt: orderRecoveryJobs.nextAttemptAt })
+          .from(orderRecoveryJobs)
+          .where(eq(orderRecoveryJobs.orderId, ids.order));
+        if (control?.nextAttemptAt) {
+          policyNow = new Date(control.nextAttemptAt.getTime() + 1);
+        }
         await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 1 });
       }
       await waitForOrderStatus(connection, "confirmed");
@@ -995,50 +1640,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await scanner.close();
       await publisher.close();
     }
-  });
-
-  it("never converts circuit failures into terminal order failure", async () => {
-    const confirmationFailure = new Error("ERP unavailable");
-    const downstreamConfirmation = {
-      confirm: vi
-        .fn<OrderConfirmation["confirm"]>()
-        .mockRejectedValueOnce(confirmationFailure)
-        .mockResolvedValueOnce(undefined),
-    };
-    consumer = buildConsumer(
-      connection,
-      new ErpCircuitBreaker({
-        confirmation: downstreamConfirmation,
-        failureThreshold: 1,
-        resetTimeoutMs: 1000,
-        isCountedFailure: (error) => error === confirmationFailure,
-      }),
-    );
-    consumer.start();
-
-    await queue.add(orderProcessJobName, job, {
-      attempts: 1,
-      backoff: { type: "exponential", delay: 10 },
-      jobId: job.orderId,
-    });
-    await vi.waitFor(async () => {
-      expect(await (await queue.getJob(job.orderId))?.getState()).toBe("failed");
-    });
-
-    const [orderBeforeProbe] = await connection.db
-      .select()
-      .from(orders)
-      .where(eq(orders.id, ids.order));
-    expect(orderBeforeProbe?.status).toBe("processing");
-    expect(orderBeforeProbe?.failedAt).toBeNull();
-
-    const failedEvents = (await readOrderEvents(connection, ids.order)).filter(
-      (event) => event.eventName === "order.failed",
-    );
-
-    expect(downstreamConfirmation.confirm).toHaveBeenCalledOnce();
-    expect(failedEvents).toHaveLength(0);
-  });
+  }, 20_000);
 
   it("retains recognized unavailability after the delivery budget is exhausted", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
@@ -1141,17 +1743,23 @@ function buildConsumer(
   confirmation: OrderConfirmation | HttpErpOrderConfirmation,
   options: {
     scheduledNow?: () => Date;
+    concurrency?: number;
     notificationRecordPublisher?: HandlerDependencies["notificationRecordPublisher"];
   } = {},
 ): OrderProcessConsumer {
   const logger = createSilentLogger("worker");
   const orderConfirmation =
     confirmation instanceof HttpErpOrderConfirmation
-      ? scheduledConfirmation(connection, confirmation, options.scheduledNow)
+      ? scheduledConfirmation(
+          connection,
+          confirmation,
+          options.concurrency ?? 2,
+          options.scheduledNow,
+        )
       : confirmation;
   return createBullMqOrderProcessConsumer({
     connection: { url: requireTestEnv("TEST_REDIS_URL"), maxRetriesPerRequest: null },
-    concurrency: 2,
+    concurrency: options.concurrency ?? 2,
     handler: createOrderProcessJobHandler({
       confirmation: orderConfirmation,
       persistence: new PostgresOrderTransitionPersistence(connection.db),
@@ -1167,27 +1775,40 @@ function buildConsumer(
 function scheduledConfirmation(
   connection: ReturnType<typeof createDatabaseConnection>,
   client: HttpErpOrderConfirmation,
+  concurrency: number,
   now?: () => Date,
 ) {
   const control = new PostgresOrderRecoveryPersistence(connection.db);
-  const admission = new ProcessLocalOrderProcessAdmission({
-    runConfigReader: { read: async () => null },
-    fallbackConcurrency: 2,
+  const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
+  const admission = AdaptiveErpRuntimeAdmission.create({
+    persistence: scopeState,
+    runConfigReader: new PostgresRunConfigReader(connection.db),
+    fallbackConcurrency: concurrency,
+    ...(now ? { now: () => now().getTime() } : {}),
+    random: () => 0,
   });
   return new ScheduledErpOrderConfirmation({
     client,
     reconciler: new ErpUnresolvedCallReconciler({
       client,
       callResolution: control,
-      lookupAvailabilityCircuit: { assertAvailable: () => undefined },
-      lookupConcurrency: 2,
+      admission,
     }),
-    dispatch: { confirm: (job, delivery) => client.dispatch(job, delivery) },
     admission,
     control,
-    scopeState: new PostgresErpScopeResiliencePersistence(connection.db),
+    scopeState,
     ...(now ? { now } : {}),
   });
+}
+
+async function waitForQueueToSettle(queue: Queue): Promise<void> {
+  await vi.waitFor(
+    async () => {
+      const counts = await queue.getJobCounts("active", "waiting");
+      expect((counts.active ?? 0) + (counts.waiting ?? 0)).toBe(0);
+    },
+    { timeout: 5_000 },
+  );
 }
 
 async function seedQueuedOrder(
@@ -1300,6 +1921,53 @@ async function seedQueuedOrder(
   ]);
 }
 
+async function seedAdditionalQueuedOrder(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  additionalJob: OrderProcessJob,
+): Promise<void> {
+  await connection.db.insert(reservations).values({
+    id: additionalJob.reservationId,
+    saleOfferId: additionalJob.saleOfferId,
+    correlationId: additionalJob.correlationId,
+    quantity: additionalJob.quantity,
+    reservationToken: `token-${additionalJob.orderId}`,
+    securedAt: queuedAt,
+    expiresAt: new Date("2026-06-21T00:15:00.000Z"),
+  });
+  await connection.db.insert(orders).values({
+    id: additionalJob.orderId,
+    publicOrderId: additionalJob.publicOrderId,
+    saleOfferId: additionalJob.saleOfferId,
+    reservationId: additionalJob.reservationId,
+    correlationId: additionalJob.correlationId,
+    quantity: additionalJob.quantity,
+    status: "queued",
+    queuedAt,
+  });
+  await connection.db.insert(orderEvents).values([
+    {
+      orderId: additionalJob.orderId,
+      reservationId: additionalJob.reservationId,
+      saleOfferId: additionalJob.saleOfferId,
+      correlationId: additionalJob.correlationId,
+      eventName: "reservation.secured",
+      payload: { quantity: additionalJob.quantity },
+      source: "api",
+      occurredAt: queuedAt,
+    },
+    {
+      orderId: additionalJob.orderId,
+      reservationId: additionalJob.reservationId,
+      saleOfferId: additionalJob.saleOfferId,
+      correlationId: additionalJob.correlationId,
+      eventName: "order.queued",
+      payload: { quantity: additionalJob.quantity },
+      source: "api",
+      occurredAt: queuedAt,
+    },
+  ]);
+}
+
 async function seedTrafficCompleteRunArtifacts(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: Redis,
@@ -1362,10 +2030,11 @@ async function readOrderEvents(
 async function waitForOrderStatus(
   connection: ReturnType<typeof createDatabaseConnection>,
   status: "confirmed" | "failed",
+  orderId: string = ids.order,
 ): Promise<void> {
   await vi.waitFor(
     async () => {
-      const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+      const [order] = await connection.db.select().from(orders).where(eq(orders.id, orderId));
       expect(order?.status).toBe(status);
     },
     { timeout: 10_000, interval: 25 },
