@@ -84,7 +84,6 @@ run("PostgreSQL ERP scope resilience state", () => {
         availabilityCircuitOpen: true,
         circuitOpenUntilMs: Date.parse("2026-06-22T00:02:00.000Z"),
         nextProbeAtMs: Date.parse("2026-06-22T00:02:30.000Z"),
-        interventionReason: null,
       },
     ]);
   });
@@ -174,25 +173,6 @@ run("PostgreSQL ERP scope resilience state", () => {
     ).resolves.toMatchObject({
       admitted: false,
       decision: { reason: "capacity_cooldown" },
-    });
-  });
-
-  it("opens one durable scope intervention without replacing its first cause", async () => {
-    const firstOpenedAt = new Date("2026-06-22T00:01:00.000Z");
-    await persistence.openIntervention({
-      scope: "catalog",
-      reason: "erp_http_401",
-      openedAt: firstOpenedAt,
-    });
-    await persistence.openIntervention({
-      scope: "catalog",
-      reason: "erp_http_403",
-      openedAt: new Date("2026-06-22T00:02:00.000Z"),
-    });
-
-    await expect(persistence.get("catalog")).resolves.toMatchObject({
-      interventionReason: "erp_http_401",
-      interventionOpenedAt: firstOpenedAt,
     });
   });
 });

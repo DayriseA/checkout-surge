@@ -303,7 +303,7 @@ Implemented statuses:
 - `escalated`
 - `resolved`
 
-Key fields include `recoveryKey`, recovery/source job IDs, `orderId`, validated payload, optional captured result, reason, attempt count, last error, next-attempt/claim/resolution/escalation timestamps, processing generation, lease expiry, waiting/intervention reasons, publication ownership, unresolved ERP call identity, cumulative attempt categories, and creation/update timestamps.
+Key fields include `recoveryKey`, recovery/source job IDs, `orderId`, validated payload, optional captured result, reason, attempt count, last error, next-attempt/claim/resolution/escalation timestamps, processing generation, lease expiry, waiting reason, publication ownership, unresolved ERP call identity, cumulative attempt categories, and creation/update timestamps.
 
 ### 8. OrderDeadLetter
 
@@ -432,7 +432,7 @@ Notes:
 - Every normal run creates a generated run-scoped `SaleOffer` with isolated PostgreSQL and Redis inventory.
 - The generated sale offer is bound to the run through `DemoRunSaleContext`; a composite foreign key requires the context's `(runId, saleOfferId)` to match `DemoRun`, and run-owned business rows must use that same pair.
 - The load orchestrator owns only traffic execution status; the API owns traffic-delivery quality classification, business draining, and final terminal state.
-- Traffic completion moves the run to `draining` and closes new run traffic; elapsed drain time is not a terminal condition. Normal completion requires no queued/processing orders, unresolved ERP call, open order/scope intervention, pending control record, or confirmed order missing its simulated notification. Missing accepted-estimate metadata remains unavailable rather than being reconstructed from the retired drain timeout.
+- Traffic completion moves the run to `draining` and closes new run traffic; elapsed drain time is not a terminal condition. Normal completion requires no queued/processing orders, unresolved ERP call, pending control record, or confirmed order missing its simulated notification. Missing accepted-estimate metadata remains unavailable rather than being reconstructed from the retired drain timeout.
 - A hand-authored PostgreSQL partial unique index permits at most one `starting`, `active`, or `draining` run even when concurrent callers bypass the API's fast overlap check.
 - Lifecycle changes use expected-status compare-and-set transitions. Traffic-start acknowledgement can move only `starting -> active`; a late acknowledgement reads the authoritative winner and cannot resurrect a draining or terminal run.
 - A `starting` row is a durable traffic intent. The API poller replays its exact ID and immutable snapshot against the load orchestrator's journal after ambiguous start outcomes or API restart.

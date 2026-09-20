@@ -210,35 +210,6 @@ describe("adaptive ERP runtime admission", () => {
     ).resolves.toMatchObject({ admitted: true });
   });
 
-  it("uses a long bounded recheck for a durable scope intervention", async () => {
-    const admission = await AdaptiveErpRuntimeAdmission.restore({
-      persistence: {
-        ...noSafetyPersistence(),
-        listActive: async () => [
-          {
-            scope: "catalog",
-            cooldownUntilMs: 0,
-            availabilityRetryAtMs: 0,
-            availabilityCircuitOpen: false,
-            circuitOpenUntilMs: 0,
-            nextProbeAtMs: 0,
-            interventionReason: "erp_lookup_identity_contradiction",
-          },
-        ],
-      },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
-      now: () => 1_000,
-    });
-
-    await expect(
-      admission.tryAcquire(await admission.context(data), "confirmation"),
-    ).resolves.toMatchObject({
-      admitted: false,
-      decision: { reason: "scope_intervention", nextEligibleAtMs: 61_000 },
-    });
-  });
-
   it("recovers a stale gate on denial and ignores an older overlapping refresh", async () => {
     let now = 1_000;
     let finishOlder: ((value: { pending: boolean; nextEligibleAtMs: number }) => void) | undefined;

@@ -180,24 +180,11 @@ async function hasOutstandingGeneratedRunWork(
         eq(orders.runId, runId),
         or(
           inArray(orders.status, ["queued", "processing"]),
-          isNotNull(orderRecoveryJobs.interventionReason),
           and(isNotNull(erpDispatchCalls.id), isNull(erpDispatchCalls.resolvedAt)),
           and(eq(orders.status, "confirmed"), isNull(simulatedNotifications.id)),
         ),
       ),
     )
     .limit(1);
-  if (outstanding) return true;
-
-  const [scopeIntervention] = await db
-    .select({ scope: erpScopeResilienceState.scope })
-    .from(erpScopeResilienceState)
-    .where(
-      and(
-        eq(erpScopeResilienceState.scope, `run:${runId}`),
-        isNotNull(erpScopeResilienceState.interventionReason),
-      ),
-    )
-    .limit(1);
-  return scopeIntervention !== undefined;
+  return outstanding !== undefined;
 }

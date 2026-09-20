@@ -25,7 +25,6 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
-  erpScopeResilienceState,
   getInventoryStatus,
   initializeInventory,
   inventoryKeys,
@@ -231,9 +230,9 @@ describe("demo run finalization service", () => {
       orderFixture(ids.order2, ids.reservation2, "failed"),
       {
         ...orderFixture(ids.order3, ids.reservation3, "failed"),
-        failureCategory: "administrative",
-        failureCode: "admin_reset",
-        failureMessage: "Administratively disposed for final report coverage.",
+        failureCategory: "technical",
+        failureCode: "erp_response_contract_invalid",
+        failureMessage: "ERP response failed contract validation.",
       },
     ]);
     await db.insert(simulatedNotifications).values({
@@ -269,7 +268,8 @@ describe("demo run finalization service", () => {
       confirmedOrders: 1,
       failedOrders: 2,
       businessRejectedOrders: 1,
-      administrativelyDisposedOrders: 1,
+      technicallyFailedOrders: 1,
+      administrativelyDisposedOrders: 0,
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
@@ -562,7 +562,7 @@ describe("demo run finalization service", () => {
     ).toHaveLength(0);
   });
 
-  it("keeps escalated processing and intervention-required work nonterminal", async () => {
+  it("keeps escalated processing work nonterminal", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -598,7 +598,6 @@ describe("demo run finalization service", () => {
       reason: "recovery_attempt_limit_exceeded",
       status: "escalated",
       attempts: 3,
-      interventionReason: "configuration_invalid",
     });
 
     await expect(service.finalizeRun(ids.run, "corr-finalize-unrelated")).resolves.toMatchObject({
@@ -621,24 +620,6 @@ describe("demo run finalization service", () => {
     await expect(service.finalizeRun(ids.run, "corr-finalize-escalated")).resolves.toMatchObject({
       status: "draining",
     });
-    expect(
-      await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
-    ).toHaveLength(0);
-  });
-
-  it("keeps a run-scoped intervention nonterminal without inventing an order status", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-    await db.insert(erpScopeResilienceState).values({
-      scope: `run:${ids.run}`,
-      interventionReason: "authentication_failed",
-      interventionOpenedAt: new Date("2026-06-20T00:00:08.000Z"),
-    });
-
-    await expect(
-      createService(connection, redis).finalizeRun(ids.run, "corr-scope-intervention"),
-    ).resolves.toMatchObject({ status: "draining" });
     expect(
       await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
     ).toHaveLength(0);

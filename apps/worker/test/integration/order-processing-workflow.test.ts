@@ -41,7 +41,7 @@ import {
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
@@ -192,6 +192,283 @@ describe("PostgreSQL worker order transitions", () => {
 
   afterAll(async () => {
     await connection?.close();
+  });
+
+  it.each([
+    "succeeded",
+    "unknown",
+  ] as const)("settles a %s lookup when recovery publication loses the accepted snapshot", async (lookupStatus) => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    const control = new PostgresOrderRecoveryPersistence(connection.db);
+    const transitions = new PostgresOrderTransitionPersistence(connection.db);
+    const attempts = new PostgresErpAttemptPersistence(connection.db);
+    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    await transitions.transitionToProcessing(runScopedJob, delivery);
+    await attempts.recordDispatchIntent({
+      job: runScopedJob,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: new Date(),
+      expectedProcessingGeneration: 0,
+    });
+    await control.defer({
+      orderId: job.orderId,
+      waitingReason: "uncertain_result",
+      nextEligibleAt: new Date(),
+      processingGeneration: 0,
+    });
+    await connection.db
+      .update(demoRuns)
+      .set({ configSnapshot: sql`'{}'::jsonb` })
+      .where(eq(demoRuns.id, ids.run));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      Response.json({
+        lookup:
+          lookupStatus === "unknown"
+            ? { status: "unknown", idempotencyKey: `erp-confirmation:${job.orderId}` }
+            : {
+                status: "succeeded",
+                identity: {
+                  orderId: job.orderId,
+                  publicOrderId: job.publicOrderId,
+                  reservationId: job.reservationId,
+                  saleOfferId: job.saleOfferId,
+                  runId: ids.run,
+                  quantity: job.quantity,
+                  idempotencyKey: `erp-confirmation:${job.orderId}`,
+                },
+                result: {
+                  status: "succeeded",
+                  confirmationId: "erp_recovered",
+                  httpStatus: 200,
+                  latencyMs: 1,
+                  timestamp: new Date().toISOString(),
+                },
+              },
+        timestamp: new Date().toISOString(),
+      }),
+    );
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
+      attemptPersistence: attempts,
+      fetch,
+    });
+    const publishForConfirmedOrder = vi.fn().mockResolvedValue(undefined);
+    const handler = createOrderProcessJobHandler({
+      confirmation: scheduledConfirmation(connection, client, 2),
+      persistence: transitions,
+      logger: createSilentLogger("worker"),
+      notificationRecordPublisher: { publishForConfirmedOrder },
+    });
+    const corruption = new Error("invalid snapshot");
+    corruption.name = "PersistedRunConfigCorruptionError";
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      handler,
+      publisher: { enqueue: vi.fn().mockRejectedValue(corruption) },
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+    });
+
+    await scanner.scanOnce();
+    await scanner.scanOnce();
+    const [order] = await connection.db.select().from(orders).where(eq(orders.id, job.orderId));
+    if (lookupStatus === "unknown") {
+      expect(order).toMatchObject({
+        status: "failed",
+        failureCategory: "technical",
+        failureCode: "accepted_run_snapshot_invalid",
+      });
+      expect(await control.readControlRecord({ orderId: job.orderId })).toMatchObject({
+        status: "resolved",
+        unresolvedErpCallId: null,
+        nextAttemptAt: null,
+      });
+      expect(await attempts.findUnresolvedCall(job.orderId)).toBeNull();
+      expect(
+        await control.findRecoverable({ limit: 10, now: new Date(Date.now() + 60000) }),
+      ).toEqual([]);
+    } else {
+      expect(order?.status).toBe("confirmed");
+    }
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[1]?.method).toBeUndefined();
+    expect(publishForConfirmedOrder).toHaveBeenCalledTimes(lookupStatus === "succeeded" ? 1 : 0);
+  });
+
+  it.each([
+    "authentication",
+    "authorization",
+    "contract",
+    "identity",
+    "attempt",
+  ])("settles durable uncertainty after a terminal lookup %s failure", async (failure) => {
+    const control = new PostgresOrderRecoveryPersistence(connection.db);
+    const transitions = new PostgresOrderTransitionPersistence(connection.db);
+    const attempts = new PostgresErpAttemptPersistence(connection.db);
+    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    await transitions.transitionToProcessing(job, delivery);
+    const call = await attempts.recordDispatchIntent({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: new Date(),
+      expectedProcessingGeneration: 0,
+    });
+    await control.defer({
+      orderId: job.orderId,
+      waitingReason: "uncertain_result",
+      nextEligibleAt: new Date(),
+      processingGeneration: 0,
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      failure === "authentication" || failure === "authorization"
+        ? new Response("denied", { status: failure === "authentication" ? 401 : 403 })
+        : failure === "contract"
+          ? Response.json({ invalid: true })
+          : Response.json({
+              lookup: {
+                status: "succeeded",
+                identity: {
+                  orderId: job.orderId,
+                  publicOrderId: job.publicOrderId,
+                  reservationId: job.reservationId,
+                  saleOfferId: job.saleOfferId,
+                  quantity: failure === "identity" ? 2 : job.quantity,
+                  idempotencyKey: call.idempotencyKey,
+                },
+                result: {
+                  status: "succeeded",
+                  confirmationId: "erp_lookup",
+                  httpStatus: 200,
+                  latencyMs: 1,
+                  timestamp: new Date().toISOString(),
+                },
+              },
+              timestamp: new Date().toISOString(),
+            }),
+    );
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
+      attemptPersistence: attempts,
+      fetch,
+    });
+    if (failure === "attempt") {
+      await attempts.recordAttempt({
+        job,
+        delivery: { ...delivery, attemptNumber: 1, deliveryId: `erp-lookup:${call.erpCallId}` },
+        operation: "status_lookup",
+        disposition: "temporarily_unavailable",
+        status: "failed",
+        terminal: false,
+        latencyMs: 1,
+        startedAt: new Date(),
+        finishedAt: new Date(),
+      });
+    }
+    const claim = await control.claimForPublication({
+      recoveryKey: `order:${job.orderId}`,
+      now: new Date(),
+      leaseMs: 30000,
+    });
+    if (!claim) throw new Error("Expected recovery claim");
+    const handler = createOrderProcessJobHandler({
+      confirmation: scheduledConfirmation(connection, client, 2),
+      persistence: transitions,
+      logger: createSilentLogger("worker"),
+    });
+    await handler.handle(
+      { ...job, processingGeneration: claim.processingGeneration },
+      { ...delivery, deliveryId: claim.jobId, processingGeneration: claim.processingGeneration },
+    );
+
+    expect(
+      (await connection.db.select().from(orders).where(eq(orders.id, job.orderId)))[0],
+    ).toMatchObject({
+      status: "failed",
+      failureCategory: "technical",
+      failureCode: {
+        authentication: "erp_authentication_failed",
+        authorization: "erp_authorization_failed",
+        contract: "erp_response_contract_invalid",
+        identity: "erp_lookup_identity_contradiction",
+        attempt: "erp_attempt_contradiction",
+      }[failure],
+    });
+    expect(await control.readControlRecord({ orderId: job.orderId })).toMatchObject({
+      status: "resolved",
+      unresolvedErpCallId: null,
+    });
+    expect(await attempts.findUnresolvedCall(job.orderId)).toBeNull();
+    expect(
+      (
+        await connection.db
+          .select()
+          .from(erpDispatchCalls)
+          .where(eq(erpDispatchCalls.id, call.erpCallId))
+      )[0]?.resolvedAt,
+    ).toBeInstanceOf(Date);
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
+  it("reuses a persisted technical failure after the terminal transition fails", async () => {
+    const control = new PostgresOrderRecoveryPersistence(connection.db);
+    const transitions = new PostgresOrderTransitionPersistence(connection.db);
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(new Response("denied", { status: 401 }));
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      requestTimeoutMs: 1000,
+      retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+      fetch,
+    });
+    const handler = createProductionOrderProcessJobHandler({
+      confirmation: scheduledConfirmation(connection, client, 2),
+      persistence: transitions,
+      logger: createSilentLogger("worker"),
+      recovery: {
+        handoff: (input) => control.recordRecoverable(input),
+        resolve: (input) => control.markResolved(input),
+      },
+      publishBusinessOutcomeUpdate: async () => undefined,
+      notificationRecordPublisher: { publishForConfirmedOrder: vi.fn() },
+    });
+    vi.spyOn(transitions, "transitionToFailed").mockRejectedValueOnce(
+      new Error("database unavailable"),
+    );
+    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    await expect(handler.handle(job, delivery)).rejects.toThrow(
+      "terminal failure could not be persisted",
+    );
+    const persisted = await new PostgresErpAttemptPersistence(connection.db).findTechnicalFailure(
+      job,
+    );
+    expect(persisted?.errorCode).toBe("erp_authentication_failed");
+    const claim = await control.claimForPublication({
+      recoveryKey: `order:${job.orderId}`,
+      now: new Date(Date.now() + 60000),
+      leaseMs: 30000,
+    });
+    if (!claim) throw new Error("Expected recovery claim");
+    await handler.handle(
+      { ...job, processingGeneration: claim.processingGeneration },
+      { ...delivery, deliveryId: claim.jobId, processingGeneration: claim.processingGeneration },
+    );
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(
+      (await connection.db.select().from(orders).where(eq(orders.id, job.orderId)))[0],
+    ).toMatchObject({
+      status: "failed",
+      failureCode: persisted?.errorCode,
+      failureMessage: persisted?.errorMessage,
+    });
   });
 
   it("atomically persists processing and confirmation with exact durable history", async () => {
@@ -425,12 +702,16 @@ describe("PostgreSQL worker order transitions", () => {
     await persistence.transitionToProcessing(job, delivery);
     const failedTransition = await persistence.transitionToFailed(
       job,
-      { code: "order_confirmation_failed", message: "placeholder confirmation failed" },
+      {
+        category: "business_rejection",
+        code: "order_confirmation_failed",
+        message: "placeholder confirmation failed",
+      },
       delivery,
     );
     const replay = await persistence.transitionToFailed(
       job,
-      { code: "different", message: "must not overwrite" },
+      { category: "business_rejection", code: "different", message: "must not overwrite" },
       { attemptNumber: 5, attemptsMade: 4, maxAttempts: 5 },
     );
 
@@ -441,6 +722,7 @@ describe("PostgreSQL worker order transitions", () => {
     expect(order).toMatchObject({
       status: "failed",
       failedAt,
+      failureCategory: "business_rejection",
       failureCode: "order_confirmation_failed",
       failureMessage: "placeholder confirmation failed",
     });
@@ -450,6 +732,7 @@ describe("PostgreSQL worker order transitions", () => {
     expect(failedEvents[0]?.payload).toEqual({
       attemptNumber: 4,
       attemptsMade: 3,
+      failureCategory: "business_rejection",
       failureCode: "order_confirmation_failed",
       failureMessage: "placeholder confirmation failed",
     });
@@ -1210,7 +1493,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       }),
       admission,
       control,
-      scopeState,
       now: () => policyNow,
     });
     consumer = createBullMqOrderProcessConsumer({
@@ -1229,6 +1511,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: control,
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
@@ -1291,7 +1574,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         reconciler: new ErpUnresolvedCallReconciler({ client, callResolution: control, admission }),
         admission,
         control,
-        scopeState,
         now: () => new Date(now),
       }),
       persistence: new PostgresOrderTransitionPersistence(connection.db, () => new Date(now)),
@@ -1384,7 +1666,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       reconciler: new ErpUnresolvedCallReconciler({ client, callResolution: control, admission }),
       admission,
       control,
-      scopeState,
       now: () => policyNow,
     });
     consumer = createBullMqOrderProcessConsumer({
@@ -1403,6 +1684,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: control,
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
@@ -1428,53 +1710,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await publisher.close();
     }
   }, 20_000);
-
-  it("does not gate fresh scope traffic on a parked unresolved order intervention", async () => {
-    const now = new Date();
-    const transition = new PostgresOrderTransitionPersistence(connection.db, () => now);
-    await transition.transitionToProcessing(job, {
-      attemptNumber: 1,
-      attemptsMade: 0,
-      maxAttempts: 1,
-      deliveryId: "intervened-delivery",
-    });
-    const attempts = new PostgresErpAttemptPersistence(connection.db, () => now);
-    await attempts.recordDispatchIntent({
-      job,
-      idempotencyKey: `erp-confirmation:${job.orderId}`,
-      dispatchedAt: now,
-      expectedProcessingGeneration: 0,
-    });
-    const control = new PostgresOrderRecoveryPersistence(connection.db, () => now);
-    await control.defer({
-      orderId: job.orderId,
-      waitingReason: "uncertain_result",
-      nextEligibleAt: now,
-      processingGeneration: 0,
-    });
-    await control.openIntervention({
-      orderId: job.orderId,
-      reason: "erp_lookup_identity_contradiction",
-      processingGeneration: 0,
-    });
-    const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
-
-    await expect(scopeState.listUnresolvedScopes(10)).resolves.toEqual([]);
-    await expect(scopeState.readReconciliationGate("catalog")).resolves.toEqual({
-      pending: false,
-      nextEligibleAtMs: 0,
-    });
-    const admission = await AdaptiveErpRuntimeAdmission.restore({
-      persistence: scopeState,
-      runConfigReader: new PostgresRunConfigReader(connection.db),
-      fallbackConcurrency: 2,
-      now: () => now.getTime(),
-      random: () => 0,
-    });
-    await expect(
-      admission.tryAcquire({ scope: "catalog", configuredConcurrency: 2 }, "confirmation"),
-    ).resolves.toMatchObject({ admitted: true });
-  });
 
   it("restores cooldown and open-circuit timing before BullMQ traffic", async () => {
     let policyNow = new Date();
@@ -1522,7 +1757,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       }),
       admission,
       control,
-      scopeState,
       now: () => policyNow,
     });
     consumer = createBullMqOrderProcessConsumer({
@@ -1541,6 +1775,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: control,
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
@@ -1561,7 +1796,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           leaseExpiresAt: orderRecoveryJobs.leaseExpiresAt,
           status: orderRecoveryJobs.status,
           waitingReason: orderRecoveryJobs.waitingReason,
-          interventionReason: orderRecoveryJobs.interventionReason,
           unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId,
         })
         .from(orderRecoveryJobs)
@@ -1637,6 +1871,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
@@ -1769,6 +2004,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
@@ -1986,7 +2222,6 @@ function scheduledConfirmation(
     }),
     admission,
     control,
-    scopeState,
     ...(now ? { now } : {}),
   });
 }

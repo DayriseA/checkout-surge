@@ -43,7 +43,7 @@ describe("ERP outcome vocabulary", () => {
       "temporarily_unavailable",
       "uncertain_result",
       "permanent_rejection",
-      "intervention_required",
+      "technical_failure",
     ]);
     expect(erpOutcomeDispositionSchema.safeParse("business_rejection").success).toBe(false);
   });
@@ -53,7 +53,7 @@ describe("ERP outcome vocabulary", () => {
       erp_capacity_exceeded: "capacity_rejected",
       erp_forced_outage: "temporarily_unavailable",
       erp_injected_error: "temporarily_unavailable",
-      erp_idempotency_conflict: "intervention_required",
+      erp_idempotency_conflict: "technical_failure",
     });
     for (const [code, disposition] of Object.entries(recognizedErpErrorCodeDispositions)) {
       expect(erpErrorCodeSchema.safeParse(code).success).toBe(true);

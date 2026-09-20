@@ -4,7 +4,7 @@ import {
   orderRecoveryJobs,
   orders,
 } from "@checkout-surge/db";
-import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type {
   AdaptiveErpSafetyPersistence,
   AdaptiveErpSafetyRecord,
@@ -14,8 +14,6 @@ export interface ErpScopeResilienceExpiries {
   scope: string;
   cooldownExpiresAt: Date | null;
   circuitOpenExpiresAt: Date | null;
-  interventionReason: string | null;
-  interventionOpenedAt: Date | null;
   updatedAt: Date;
 }
 
@@ -39,29 +37,8 @@ export class PostgresErpScopeResiliencePersistence implements AdaptiveErpSafetyP
       scope: row.scope,
       cooldownExpiresAt: row.cooldownExpiresAt,
       circuitOpenExpiresAt: row.circuitOpenExpiresAt,
-      interventionReason: row.interventionReason,
-      interventionOpenedAt: row.interventionOpenedAt,
       updatedAt: row.updatedAt,
     };
-  }
-
-  async openIntervention(input: { scope: string; reason: string; openedAt: Date }): Promise<void> {
-    const openedAt = input.openedAt.toISOString();
-    await this.db
-      .insert(erpScopeResilienceState)
-      .values({
-        scope: input.scope,
-        interventionReason: input.reason,
-        interventionOpenedAt: input.openedAt,
-      })
-      .onConflictDoUpdate({
-        target: erpScopeResilienceState.scope,
-        set: {
-          interventionReason: sql`coalesce(${erpScopeResilienceState.interventionReason}, ${input.reason})`,
-          interventionOpenedAt: sql`coalesce(${erpScopeResilienceState.interventionOpenedAt}, ${openedAt}::timestamptz)`,
-          updatedAt: sql`case when ${erpScopeResilienceState.interventionReason} is null then ${openedAt}::timestamptz else ${erpScopeResilienceState.updatedAt} end`,
-        },
-      });
   }
 
   async setExpiries(input: {
@@ -167,7 +144,6 @@ function activeObligation(now: Date) {
     gt(erpScopeResilienceState.availabilityRetryAt, now),
     gt(erpScopeResilienceState.circuitOpenExpiresAt, now),
     gt(erpScopeResilienceState.nextProbeAt, now),
-    isNotNull(erpScopeResilienceState.interventionReason),
   );
 }
 
@@ -179,13 +155,7 @@ function runnableReconciliationObligation() {
   return and(
     isNotNull(orderRecoveryJobs.unresolvedErpCallId),
     inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-    isNull(orderRecoveryJobs.interventionReason),
     inArray(orders.status, ["queued", "processing"]),
-    sql`not exists (
-      select 1 from erp_scope_resilience_state scope_state
-      where scope_state.scope = ${scopeExpression()}
-        and scope_state.intervention_reason is not null
-    )`,
   );
 }
 
@@ -201,7 +171,6 @@ function toSafetyRecord(
       availabilityCircuitOpen: row.availabilityCircuitOpen,
       circuitOpenUntilMs: row.circuitOpenExpiresAt?.getTime() ?? 0,
       nextProbeAtMs: row.nextProbeAt?.getTime() ?? 0,
-      interventionReason: row.interventionReason,
     },
   ];
 }

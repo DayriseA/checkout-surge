@@ -74,6 +74,7 @@ export async function readBusinessOutcomeSummary(
     confirmedOrders,
     failedOrders,
     businessRejectedOrders,
+    technicallyFailedOrders,
     administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
@@ -102,6 +103,11 @@ export async function readBusinessOutcomeSummary(
     countRows(
       db,
       orders,
+      and(orderFilter, eq(orders.status, "failed"), eq(orders.failureCategory, "technical")),
+    ),
+    countRows(
+      db,
+      orders,
       and(orderFilter, eq(orders.status, "failed"), eq(orders.failureCategory, "administrative")),
     ),
     countRows(
@@ -125,6 +131,7 @@ export async function readBusinessOutcomeSummary(
     confirmedOrders,
     failedOrders,
     businessRejectedOrders,
+    technicallyFailedOrders,
     administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,

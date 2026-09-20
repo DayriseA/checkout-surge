@@ -938,7 +938,14 @@ export function RunOutcomesPanel({
             <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
             <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
             <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
-            <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
+            <Fact
+              label="Business-rejected"
+              value={formatNumber(outcome.businessRejectedOrders ?? 0)}
+            />
+            <Fact
+              label="Technically Failed"
+              value={formatNumber(outcome.technicallyFailedOrders ?? 0)}
+            />
             <Fact
               label={publicVocabulary.pendingReservations}
               value={formatNumber(outcome.pendingPersistenceCount)}

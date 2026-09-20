@@ -491,8 +491,37 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).toHaveBeenCalledWith(
       job,
       {
+        category: "business_rejection",
         code: "erp_permanent_rejection",
         message: "Local confirmation rejected the order",
+      },
+      delivery,
+    );
+    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("terminally fails a non-transient ERP error as technical", async () => {
+    const persistence = createPersistence();
+    const handler = createOrderProcessJobHandler({
+      confirmation: {
+        confirm: vi.fn().mockResolvedValue({
+          disposition: "technical_failure",
+          errorCode: "erp_authentication_failed",
+          errorMessage: "Authentication failed",
+        }),
+      },
+      persistence,
+      logger: createSilentLogger("worker"),
+    });
+
+    await handler.handle(job, delivery);
+
+    expect(persistence.transitionToFailed).toHaveBeenCalledWith(
+      job,
+      {
+        category: "technical",
+        code: "erp_authentication_failed",
+        message: "Authentication failed",
       },
       delivery,
     );

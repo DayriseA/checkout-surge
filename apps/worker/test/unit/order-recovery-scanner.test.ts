@@ -37,8 +37,6 @@ function persistence(overrides: Partial<OrderRecoveryPersistence> = {}): OrderRe
     markResolved: vi.fn(),
     reconcileTerminal: vi.fn().mockResolvedValue(0),
     defer: vi.fn().mockResolvedValue(true),
-    openIntervention: vi.fn().mockResolvedValue(true),
-    resumeFromIntervention: vi.fn().mockResolvedValue(true),
     resolveDispatchedCall: vi.fn().mockResolvedValue(true),
     ...overrides,
   };
@@ -57,6 +55,7 @@ describe("order recovery scanner", () => {
     const publisher = { enqueue: vi.fn().mockResolvedValue(undefined) };
     const scanner = createOrderRecoveryScanner({
       persistence: store,
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -92,6 +91,7 @@ describe("order recovery scanner", () => {
     });
     const scanner = createOrderRecoveryScanner({
       persistence: store,
+      handler: { handle: vi.fn() },
       publisher: { enqueue: vi.fn().mockRejectedValue(new Error("queue unavailable")) },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -109,7 +109,7 @@ describe("order recovery scanner", () => {
     });
   });
 
-  it("opens intervention when recovery publication finds a corrupt run snapshot", async () => {
+  it("hands snapshot publication failures to the order handler under the claimed generation", async () => {
     const corruption = new Error("invalid snapshot");
     corruption.name = "PersistedRunConfigCorruptionError";
     const store = persistence({
@@ -119,8 +119,10 @@ describe("order recovery scanner", () => {
         jobId: `recovery-${job.orderId}-2`,
       }),
     });
+    const handle = vi.fn();
     const scanner = createOrderRecoveryScanner({
       persistence: store,
+      handler: { handle },
       publisher: { enqueue: vi.fn().mockRejectedValue(corruption) },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -129,11 +131,10 @@ describe("order recovery scanner", () => {
     });
 
     await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, failed: 0 });
-    expect(store.openIntervention).toHaveBeenCalledWith({
-      orderId: job.orderId,
-      reason: "accepted_run_snapshot_invalid",
-      processingGeneration: 7,
-    });
+    expect(handle).toHaveBeenCalledWith(
+      { ...job, processingGeneration: 7 },
+      expect.objectContaining({ processingGeneration: 7 }),
+    );
     expect(store.markPublicationFailed).not.toHaveBeenCalled();
   });
 
@@ -157,6 +158,7 @@ describe("order recovery scanner", () => {
     const publisher = { enqueue: vi.fn().mockResolvedValue(undefined) };
     const scanner = createOrderRecoveryScanner({
       persistence: store,
+      handler: { handle: vi.fn() },
       publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -207,6 +209,7 @@ describe("order recovery scanner", () => {
     };
     const scanner = createOrderRecoveryScanner({
       persistence: store,
+      handler: { handle: vi.fn() },
       publisher,
       failedJobReader: reader,
       logger: createSilentLogger("worker"),

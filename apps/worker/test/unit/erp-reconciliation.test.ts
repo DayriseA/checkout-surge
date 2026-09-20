@@ -123,8 +123,7 @@ describe("adaptive ERP reconciliation", () => {
       client,
       reconciler: { reconcile: vi.fn() } as never,
       admission,
-      control: { defer, openIntervention: vi.fn() },
-      scopeState: { get: vi.fn().mockResolvedValue(null), openIntervention: vi.fn() },
+      control: { defer },
       now: () => new Date(nowMs),
     });
 
@@ -142,33 +141,58 @@ describe("adaptive ERP reconciliation", () => {
     });
   });
 
-  it("opens a per-order intervention when a run snapshot is missing", async () => {
+  it("returns a technical failure when a run snapshot is missing", async () => {
     const runJob = { ...job, runId: "44444444-4444-4444-8444-444444444444" };
-    const control = { defer: vi.fn(), openIntervention: vi.fn().mockResolvedValue(true) };
     const scheduled = new ScheduledErpOrderConfirmation({
       client: {
         dispatch: vi.fn(),
+        findTechnicalFailure: vi.fn().mockResolvedValue(null),
         findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
         findUnresolvedCall: vi.fn().mockResolvedValue(null),
       },
       reconciler: { reconcile: vi.fn() } as never,
       admission: runtimeAdmission(),
-      control,
-      scopeState: { get: vi.fn(), openIntervention: vi.fn() },
+      control: { defer: vi.fn() },
     });
 
-    await expect(scheduled.confirm(runJob, delivery)).resolves.toEqual({
-      disposition: "intervention_required",
-      reason: "accepted_run_snapshot_missing",
-    });
-    expect(control.openIntervention).toHaveBeenCalledWith({
-      orderId: job.orderId,
-      reason: "accepted_run_snapshot_missing",
-      processingGeneration: 3,
+    await expect(scheduled.confirm(runJob, delivery)).resolves.toMatchObject({
+      disposition: "technical_failure",
+      errorCode: "accepted_run_snapshot_missing",
     });
   });
 
-  it("refreshes the scope gate after parking an unresolved order intervention", async () => {
+  it("lets an earlier canonical success win before a missing-snapshot failure", async () => {
+    const runId = "44444444-4444-4444-8444-444444444444";
+    const runJob = { ...job, runId };
+    const lookup = lookupSucceeded();
+    if (lookup.disposition !== "succeeded" || lookup.lookup.lookup.status !== "succeeded") {
+      throw new Error("Expected successful lookup fixture.");
+    }
+    lookup.lookup.lookup.identity.runId = runId;
+    const client = {
+      ...clientPort(lookup),
+      findUnresolvedCall: vi.fn().mockResolvedValue(call),
+    };
+    const admission = runtimeAdmission();
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: { resolveDispatchedCall: vi.fn().mockResolvedValue(true) },
+        admission,
+      }),
+      admission,
+      control: { defer: vi.fn() },
+    });
+
+    await expect(scheduled.confirm(runJob, delivery)).resolves.toEqual({
+      disposition: "succeeded",
+    });
+    expect(client.dispatch).not.toHaveBeenCalled();
+    expect(client.recordLookupResult).toHaveBeenCalledOnce();
+  });
+
+  it("refreshes the scope gate after an unresolved order fails technically", async () => {
     const readReconciliationGate = vi.fn().mockResolvedValue({
       pending: false,
       nextEligibleAtMs: 0,
@@ -185,29 +209,28 @@ describe("adaptive ERP reconciliation", () => {
       fallbackConcurrency: 2,
       now: () => 0,
     });
-    const control = { defer: vi.fn(), openIntervention: vi.fn().mockResolvedValue(true) };
     const scheduled = new ScheduledErpOrderConfirmation({
       client: {
         dispatch: vi.fn(),
+        findTechnicalFailure: vi.fn().mockResolvedValue(null),
         findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
         findUnresolvedCall: vi.fn().mockResolvedValue(call),
       },
       reconciler: {
         reconcile: vi.fn().mockResolvedValue({
           operation: "status_lookup",
-          disposition: "intervention_required",
+          disposition: "technical_failure",
           errorCode: "erp_lookup_identity_contradiction",
-          interventionScope: "order",
+          errorMessage: "Identity mismatch.",
         }),
       } as never,
       admission,
-      control,
-      scopeState: { get: vi.fn().mockResolvedValue(null), openIntervention: vi.fn() },
+      control: { defer: vi.fn() },
     });
 
     await expect(scheduled.confirm(job, delivery)).resolves.toMatchObject({
-      disposition: "intervention_required",
-      reason: "erp_lookup_identity_contradiction",
+      disposition: "technical_failure",
+      errorCode: "erp_lookup_identity_contradiction",
     });
     expect(readReconciliationGate).toHaveBeenCalledWith("catalog");
     await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
@@ -234,6 +257,7 @@ describe("adaptive ERP reconciliation", () => {
     });
     const client = {
       dispatch: vi.fn(),
+      findTechnicalFailure: vi.fn().mockResolvedValue(null),
       findSuccessfulAttempt: vi.fn().mockResolvedValue({ orderId: job.orderId }),
       findUnresolvedCall: vi.fn(),
     };
@@ -241,14 +265,13 @@ describe("adaptive ERP reconciliation", () => {
       client,
       reconciler: { reconcile: vi.fn() } as never,
       admission,
-      control: { defer: vi.fn(), openIntervention: vi.fn() },
-      scopeState: { get: vi.fn().mockResolvedValue(null), openIntervention: vi.fn() },
+      control: { defer: vi.fn() },
     });
 
     await expect(scheduled.confirm(job, delivery)).resolves.toEqual({ disposition: "succeeded" });
     expect(client.dispatch).not.toHaveBeenCalled();
     expect(client.findUnresolvedCall).not.toHaveBeenCalled();
-    expect(readReconciliationGate).toHaveBeenCalledWith("catalog");
+    expect(readReconciliationGate).not.toHaveBeenCalled();
     expect(admission.state()).toMatchObject({
       available: true,
       counters: { admitted: 0 },
@@ -274,6 +297,7 @@ function runtimeAdmission(now: () => number = () => 0): AdaptiveErpRuntimeAdmiss
 
 function clientPort(lookup: ErpLookupOutcome) {
   return {
+    findTechnicalFailure: vi.fn().mockResolvedValue(null),
     findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
     lookup: vi.fn().mockResolvedValue(lookup),
     dispatch: vi.fn().mockResolvedValue(dispatchedSuccess(false)),

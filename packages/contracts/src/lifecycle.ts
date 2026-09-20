@@ -33,18 +33,34 @@ export const orderWaitingReasonValues = [
   "erp_capacity",
   "erp_unavailable",
   "uncertain_result",
-  "intervention_required",
 ] as const;
 export const orderWaitingReasonSchema = z.enum(orderWaitingReasonValues);
 export type OrderWaitingReason = z.infer<typeof orderWaitingReasonSchema>;
 
 /**
- * Terminal order failure categories (D01/D03). Technical problems never
- * terminalize an order and are not part of this closed vocabulary.
+ * Terminal order failure categories (D01/D03).
  */
-export const orderFailureCategoryValues = ["business_rejection", "administrative"] as const;
+export const orderFailureCategoryValues = [
+  "business_rejection",
+  "technical",
+  "administrative",
+] as const;
 export const orderFailureCategorySchema = z.enum(orderFailureCategoryValues);
 export type OrderFailureCategory = z.infer<typeof orderFailureCategorySchema>;
+
+export const technicalOrderFailureCodeValues = [
+  "erp_authentication_failed",
+  "erp_authorization_failed",
+  "erp_response_contract_invalid",
+  "erp_idempotency_conflict",
+  "erp_attempt_contradiction",
+  "erp_lookup_identity_contradiction",
+  "accepted_run_snapshot_missing",
+  "accepted_run_snapshot_invalid",
+  "erp_unrecognized_client_error",
+] as const;
+export const technicalOrderFailureCodeSchema = z.enum(technicalOrderFailureCodeValues);
+export type TechnicalOrderFailureCode = z.infer<typeof technicalOrderFailureCodeSchema>;
 
 export const administrativeOrderFailureCodeValues = ["admin_reset"] as const;
 export const administrativeOrderFailureCodeSchema = z.enum(administrativeOrderFailureCodeValues);

@@ -28,6 +28,12 @@ export function evidenceFromDashboard(projection: DashboardProjection): RunResul
           uniqueReservations: business.acceptedReservations,
           soldOutDecisions: business.soldOutRejections,
           confirmedOrders: business.confirmedOrders,
+          ...(business.businessRejectedOrders === undefined
+            ? {}
+            : { businessRejectedOrders: business.businessRejectedOrders }),
+          ...(business.technicallyFailedOrders === undefined
+            ? {}
+            : { technicallyFailedOrders: business.technicallyFailedOrders }),
           failedOrders: business.failedOrders,
           queuedOrders: business.queuedOrders,
           processingOrders: business.processingOrders,
@@ -60,6 +66,12 @@ export function evidenceFromRunHistorySummary(summary: SummaryLike): RunResultEv
       uniqueReservations: business.acceptedReservations,
       soldOutDecisions: business.soldOutRejections,
       confirmedOrders: business.confirmedOrders,
+      ...(business.businessRejectedOrders === undefined
+        ? {}
+        : { businessRejectedOrders: business.businessRejectedOrders }),
+      ...(business.technicallyFailedOrders === undefined
+        ? {}
+        : { technicallyFailedOrders: business.technicallyFailedOrders }),
       failedOrders: business.failedOrders,
       queuedOrders: business.queuedOrders,
       processingOrders: business.processingOrders,
@@ -219,10 +231,12 @@ function soldOutSentence(result: RunResult): string {
 
 function orderSentence(result: RunResult): string {
   if (result.confirmedOrders === null) return "Order evidence is unavailable.";
-  const failed = result.failedOrders ?? 0;
   const pending = result.pendingOrders ?? 0;
-  if (failed > 0 || pending > 0) {
-    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(failed)} failed, and ${formatNarrativeCount(pending)} remain pending.`;
+  if ((result.failedOrders ?? 0) > 0 || pending > 0) {
+    if (result.businessRejectedOrders !== null && result.technicallyFailedOrders !== null) {
+      return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(result.businessRejectedOrders)} business-rejected, ${formatNarrativeCount(result.technicallyFailedOrders)} technically failed, and ${formatNarrativeCount(pending)} remain pending.`;
+    }
+    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(result.failedOrders)} failed, and ${formatNarrativeCount(pending)} remain pending.`;
   }
   return result.uniqueReservations === result.confirmedOrders
     ? `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
@@ -230,9 +244,11 @@ function orderSentence(result: RunResult): string {
 }
 
 function neutralOrderSentence(result: RunResult): string {
-  return result.confirmedOrders === null
-    ? "Order evidence is unavailable."
-    : `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.failedOrders ?? 0)} failed, and ${formatNarrativeCount(result.pendingOrders ?? 0)} pending.`;
+  if (result.confirmedOrders === null) return "Order evidence is unavailable.";
+  if (result.businessRejectedOrders !== null && result.technicallyFailedOrders !== null) {
+    return `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.businessRejectedOrders)} business-rejected, ${formatNarrativeCount(result.technicallyFailedOrders)} technically failed, and ${formatNarrativeCount(result.pendingOrders ?? 0)} pending.`;
+  }
+  return `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.failedOrders ?? 0)} failed, and ${formatNarrativeCount(result.pendingOrders ?? 0)} pending.`;
 }
 
 /**

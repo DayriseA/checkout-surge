@@ -493,7 +493,6 @@ export const orderRecoveryJobs = pgTable(
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     waitingReason: orderWaitingReasonEnum("waiting_reason"),
     publicationOwner: text("publication_owner"),
-    interventionReason: text("intervention_reason"),
     unresolvedErpCallId: uuid("unresolved_erp_call_id"),
     attemptCounts: jsonb("attempt_counts")
       .$type<Partial<Record<ErpOutcomeDisposition, number>>>()
@@ -525,8 +524,6 @@ export const erpScopeResilienceState = pgTable("erp_scope_resilience_state", {
   availabilityCircuitOpen: boolean("availability_circuit_open").default(false).notNull(),
   circuitOpenExpiresAt: timestamp("circuit_open_expires_at", { withTimezone: true }),
   nextProbeAt: timestamp("next_probe_at", { withTimezone: true }),
-  interventionReason: text("intervention_reason"),
-  interventionOpenedAt: timestamp("intervention_opened_at", { withTimezone: true }),
   updatedAt: updatedAt(),
 });
 

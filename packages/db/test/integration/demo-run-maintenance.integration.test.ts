@@ -115,47 +115,8 @@ run("generated-run durable maintenance with processing-control data", () => {
     await connection?.close();
   });
 
-  it("refuses inspection and deletion while intervention work remains", async () => {
-    await requireConnection()
-      .db.insert(orderRecoveryJobs)
-      .values({
-        recoveryKey: `order:${ids.order}`,
-        jobId: "maintenance-job",
-        orderId: ids.order,
-        payload: { orderId: ids.order },
-        reason: "initial_dispatch_ownership",
-        status: "escalated",
-        interventionReason: "identity_contradiction",
-      });
-
-    await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
-      outcome: "outstanding_work",
-    });
-    await expect(
-      deleteGeneratedRunDurable(requireConnection().db, {
-        runId: ids.run,
-        saleOfferId: ids.saleOffer,
-      }),
-    ).resolves.toEqual({ outcome: "outstanding_work" });
-    await expect(requireConnection().db.select().from(orderRecoveryJobs)).resolves.toHaveLength(1);
-  });
-
   it("refuses teardown while a confirmed order still needs notification", async () => {
     await requireConnection().db.delete(simulatedNotifications);
-
-    await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
-      outcome: "outstanding_work",
-    });
-  });
-
-  it("refuses teardown while the run scope requires intervention", async () => {
-    await requireConnection()
-      .db.insert(erpScopeResilienceState)
-      .values({
-        scope: `run:${ids.run}`,
-        interventionReason: "authentication_failed",
-        interventionOpenedAt: new Date("2026-06-20T00:00:03Z"),
-      });
 
     await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
       outcome: "outstanding_work",

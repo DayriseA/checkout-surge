@@ -88,9 +88,20 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
         </div>
       </div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-3">
+      <div className="mt-4 grid gap-4 sm:grid-cols-4">
         <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
-        <Fact label="Failed orders" value={number(summary.failedOrders)} />
+        {summary.businessRejectedOrders === undefined ||
+        summary.technicallyFailedOrders === undefined ? (
+          <Fact label="Failed orders" value={number(summary.failedOrders)} />
+        ) : (
+          <>
+            <Fact label="Business-rejected orders" value={number(summary.businessRejectedOrders)} />
+            <Fact
+              label="Technically failed orders"
+              value={number(summary.technicallyFailedOrders)}
+            />
+          </>
+        )}
         <Fact
           label="Overall duration"
           value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}

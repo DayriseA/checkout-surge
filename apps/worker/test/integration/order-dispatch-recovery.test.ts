@@ -7,7 +7,6 @@ import {
   demoPresets,
   demoRunSaleContexts,
   demoRuns,
-  erpScopeResilienceState,
   orderEvents,
   orders,
   products,
@@ -121,81 +120,6 @@ describe("queued order dispatch recovery", () => {
       await publisher.close();
       await queue.close();
     }
-  });
-
-  it("filters scope-blocked older orders before limiting the dispatch batch", async () => {
-    const runId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01";
-    const snapshot = previewRunConfigSnapshotFixture();
-    await connection.db.insert(demoPresets).values({
-      id: "ffffffff-ffff-4fff-8fff-fffffffffff1",
-      slug: "blocked-dispatch-recovery",
-      visibility: "public",
-      isEditable: false,
-      isCustom: false,
-      display: {
-        name: "Blocked dispatch recovery",
-        description: "Dispatch eligibility fixture.",
-        sortOrder: 1,
-        outcomeFocus: ["run_history"],
-      },
-      ...snapshot,
-    });
-    await connection.db.insert(demoRuns).values({
-      id: runId,
-      presetId: "ffffffff-ffff-4fff-8fff-fffffffffff1",
-      presetName: "Blocked dispatch recovery",
-      operatorMode: "public",
-      status: "active",
-      trafficStatus: "active",
-      configSnapshot: snapshot,
-      saleOfferId: ids.saleOffer,
-    });
-    await connection.db.insert(demoRunSaleContexts).values({ runId, saleOfferId: ids.saleOffer });
-    for (const [index, suffix] of ["02", "03"].entries()) {
-      const reservationId = `cccccccc-cccc-4ccc-8ccc-cccccccccc${suffix}`;
-      const orderId = `dddddddd-dddd-4ddd-8ddd-dddddddddd${suffix}`;
-      const olderQueuedAt = new Date(queuedAt.getTime() - (index + 1) * 1_000);
-      await connection.db.insert(reservations).values({
-        id: reservationId,
-        saleOfferId: ids.saleOffer,
-        runId,
-        correlationId: `corr-blocked-${suffix}`,
-        quantity: 1,
-        reservationToken: `blocked-dispatch-${suffix}`,
-        securedAt: olderQueuedAt,
-        expiresAt: new Date(queuedAt.getTime() + 900_000),
-      });
-      await connection.db.insert(orders).values({
-        id: orderId,
-        publicOrderId: `ord_blocked_${suffix}`,
-        saleOfferId: ids.saleOffer,
-        reservationId,
-        runId,
-        correlationId: `corr-blocked-${suffix}`,
-        quantity: 1,
-        status: "queued",
-        queuedAt: olderQueuedAt,
-      });
-    }
-    await connection.db.insert(erpScopeResilienceState).values({
-      scope: `run:${runId}`,
-      interventionReason: "erp_http_401",
-      interventionOpenedAt: queuedAt,
-    });
-    const enqueue = vi.fn().mockResolvedValue(undefined);
-    const scanner = createOrderDispatchScanner({
-      persistence: new PostgresOrderDispatchPersistence(connection.db),
-      publisher: { enqueue },
-      logger: createSilentLogger("worker"),
-      scanIntervalMs: 10_000,
-      batchSize: 2,
-      minimumQueuedAgeMs: 0,
-      now: () => new Date("2026-06-21T00:00:10.000Z"),
-    });
-
-    await expect(scanner.scanOnce()).resolves.toEqual({ candidates: 1, published: 1, failed: 0 });
-    expect(enqueue).toHaveBeenCalledWith(job);
-    await scanner.close();
   });
 
   it("filters terminal-run orders before limiting the dispatch batch", async () => {

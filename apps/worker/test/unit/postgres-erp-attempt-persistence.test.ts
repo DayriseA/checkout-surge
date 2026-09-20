@@ -135,7 +135,7 @@ describe("Postgres ERP attempt persistence", () => {
     const failedRecord = {
       ...recordWithoutResponse,
       status: "failed" as const,
-      disposition: "intervention_required" as const,
+      disposition: "technical_failure" as const,
       terminal: false,
       httpStatus: 500,
       errorCode: "erp_forced_outage",

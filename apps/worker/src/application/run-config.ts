@@ -1,4 +1,7 @@
-import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
+import type {
+  AcceptedRunConfigSnapshot,
+  TechnicalOrderFailureCode,
+} from "@checkout-surge/contracts";
 
 export interface RunConfigReader {
   read(runId: string): Promise<AcceptedRunConfigSnapshot | null>;
@@ -11,7 +14,7 @@ export class MissingAcceptedRunSnapshotError extends Error {
   }
 }
 
-export function acceptedRunSnapshotInterventionReason(error: unknown): string | null {
+export function acceptedRunSnapshotFailureCode(error: unknown): TechnicalOrderFailureCode | null {
   if (error instanceof MissingAcceptedRunSnapshotError) return "accepted_run_snapshot_missing";
   if (error instanceof Error && error.name === "PersistedRunConfigCorruptionError") {
     return "accepted_run_snapshot_invalid";

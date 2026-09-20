@@ -18,7 +18,6 @@ import {
   type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRuns,
-  erpScopeResilienceState,
   getInventoryStatus,
   orderRecoveryJobs,
   orders,
@@ -526,9 +525,6 @@ function businessDrainBlockers(
   if (recovery.unresolvedCallCount > 0) {
     blockers.push("uncertain_calls");
   }
-  if (recovery.interventionCount > 0 || recovery.scopeInterventionCount > 0) {
-    blockers.push("open_intervention");
-  }
   if (parsed.queuedOrders > 0) {
     blockers.push("queued_orders");
   }
@@ -548,41 +544,28 @@ function businessDrainBlockers(
 interface RecoveryObligations {
   pendingCount: number;
   unresolvedCallCount: number;
-  interventionCount: number;
-  scopeInterventionCount: number;
 }
 
 const emptyRecoveryObligations: RecoveryObligations = {
   pendingCount: 0,
   unresolvedCallCount: 0,
-  interventionCount: 0,
-  scopeInterventionCount: 0,
 };
 
 async function readRecoveryObligations(
   db: CheckoutSurgeDatabase,
   runId: string,
 ): Promise<RecoveryObligations> {
-  const [rows, scopeRows] = await Promise.all([
-    db
-      .select({
-        status: orderRecoveryJobs.status,
-        interventionReason: orderRecoveryJobs.interventionReason,
-        unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId,
-      })
-      .from(orderRecoveryJobs)
-      .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
-      .where(eq(orders.runId, runId)),
-    db
-      .select({ interventionReason: erpScopeResilienceState.interventionReason })
-      .from(erpScopeResilienceState)
-      .where(eq(erpScopeResilienceState.scope, `run:${runId}`)),
-  ]);
+  const rows = await db
+    .select({
+      status: orderRecoveryJobs.status,
+      unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId,
+    })
+    .from(orderRecoveryJobs)
+    .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
+    .where(eq(orders.runId, runId));
   return {
     pendingCount: rows.filter((row) => row.status !== "resolved").length,
     unresolvedCallCount: rows.filter((row) => row.unresolvedErpCallId !== null).length,
-    interventionCount: rows.filter((row) => row.interventionReason !== null).length,
-    scopeInterventionCount: scopeRows.filter((row) => row.interventionReason !== null).length,
   };
 }
 

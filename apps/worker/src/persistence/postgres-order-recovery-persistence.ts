@@ -7,7 +7,7 @@ import {
   orderRecoveryJobs,
   orders,
 } from "@checkout-surge/db";
-import { and, asc, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { RecoverableOrderHandoff } from "../application/order-process-job-handler.js";
 import type {
   DeadLetterRecord,
@@ -85,7 +85,7 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
   async findRecoverable(input: { limit: number; now: Date }): Promise<RecoverableOrderJob[]> {
     // Eligibility is fully filtered before the batch limit: pending rows must
     // also respect the next eligible time, leased rows wait for expiry, and
-    // open interventions or terminal orders never occupy the front of a batch.
+    // terminal orders never occupy the front of a batch.
     // Ordering by next eligible time, then order creation time, keeps older
     // retries from being starved by new orders.
     const rows = await this.db
@@ -95,7 +95,6 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
       .where(
         and(
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-          isNull(orderRecoveryJobs.interventionReason),
           sql`(
             ${orders.runId} is null
             or exists (
@@ -103,14 +102,6 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
               where eligible_run.id = ${orders.runId}
                 and eligible_run.status in ('starting', 'active', 'draining')
             )
-          )`,
-          sql`not exists (
-            select 1 from erp_scope_resilience_state scope_state
-            where scope_state.scope = case
-              when ${orders.runId} is null then 'catalog'
-              else 'run:' || ${orders.runId}::text
-            end
-              and scope_state.intervention_reason is not null
           )`,
           or(
             isNull(orderRecoveryJobs.nextAttemptAt),
@@ -157,7 +148,6 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
       nextAttemptAt: row.nextAttemptAt,
       waitingReason: row.waitingReason,
       publicationOwner: row.publicationOwner,
-      interventionReason: row.interventionReason,
       unresolvedErpCallId: row.unresolvedErpCallId,
     };
   }
@@ -186,18 +176,6 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-          isNull(orderRecoveryJobs.interventionReason),
-          sql`not exists (
-            select 1
-            from orders scope_order
-            join erp_scope_resilience_state scope_state
-              on scope_state.scope = case
-                when scope_order.run_id is null then 'catalog'
-                else 'run:' || scope_order.run_id::text
-              end
-            where scope_order.id = ${orderRecoveryJobs.orderId}
-              and scope_state.intervention_reason is not null
-          )`,
           or(
             isNull(orderRecoveryJobs.nextAttemptAt),
             lte(orderRecoveryJobs.nextAttemptAt, input.now),
@@ -300,67 +278,11 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           eq(orderRecoveryJobs.orderId, input.orderId),
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-          isNull(orderRecoveryJobs.interventionReason),
           eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
         ),
       )
       .returning({ id: orderRecoveryJobs.id });
     return deferred !== undefined;
-  }
-
-  async openIntervention(input: {
-    orderId: string;
-    reason: string;
-    processingGeneration: number;
-  }): Promise<boolean> {
-    const now = this.now();
-    const [opened] = await this.db
-      .update(orderRecoveryJobs)
-      .set({
-        interventionReason: input.reason,
-        waitingReason: "intervention_required",
-        leaseExpiresAt: null,
-        publicationOwner: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(orderRecoveryJobs.orderId, input.orderId),
-          inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-          eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
-        ),
-      )
-      .returning({ id: orderRecoveryJobs.id });
-    return opened !== undefined;
-  }
-
-  async resumeFromIntervention(input: {
-    orderId: string;
-    nextEligibleAt: Date;
-    processingGeneration?: number;
-  }): Promise<boolean> {
-    const now = this.now();
-    const [resumed] = await this.db
-      .update(orderRecoveryJobs)
-      .set({
-        interventionReason: null,
-        waitingReason: null,
-        nextAttemptAt: input.nextEligibleAt,
-        leaseExpiresAt: null,
-        publicationOwner: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(orderRecoveryJobs.orderId, input.orderId),
-          isNotNull(orderRecoveryJobs.interventionReason),
-          ...(input.processingGeneration === undefined
-            ? []
-            : [eq(orderRecoveryJobs.processingGeneration, input.processingGeneration)]),
-        ),
-      )
-      .returning({ id: orderRecoveryJobs.id });
-    return resumed !== undefined;
   }
 
   async resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean> {

@@ -39,14 +39,6 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
             where control.order_id = ${orders.id}
           )`,
           sql`not exists (
-            select 1 from erp_scope_resilience_state scope_state
-            where scope_state.scope = case
-              when ${orders.runId} is null then 'catalog'
-              else 'run:' || ${orders.runId}::text
-            end
-              and scope_state.intervention_reason is not null
-          )`,
-          sql`not exists (
             select 1 from demo_runs stopped_run
             where stopped_run.id = ${orders.runId}
               and stopped_run.administrative_stop is not null

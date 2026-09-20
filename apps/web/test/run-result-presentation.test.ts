@@ -219,6 +219,24 @@ describe("run result presentation", () => {
     }
   });
 
+  it("reports business rejections and technical failures separately", () => {
+    const result = deriveRunResult({
+      ...cleanEvidence,
+      durable: {
+        ...cleanDurable,
+        confirmedOrders: 247,
+        failedOrders: 3,
+        businessRejectedOrders: 1,
+        technicallyFailedOrders: 2,
+        notificationsRecorded: 247,
+      },
+    });
+
+    expect(runConclusionSentence(result)).toContain(
+      "247 orders were confirmed, 1 business-rejected, 2 technically failed, and 0 remain pending.",
+    );
+  });
+
   it("uses units, not reservation rows, for a multi-unit clean sellout", () => {
     const result = deriveRunResult(
       withEvidence({

@@ -88,17 +88,12 @@ export async function startWorker(): Promise<void> {
     publicationFence,
   );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
+  const orderTransitionPersistence = new PostgresOrderTransitionPersistence(
+    database.db,
+    undefined,
+    config.orderRecoveryLeaseMs,
+  );
   const erpScopeState = new PostgresErpScopeResiliencePersistence(database.db);
-  const orderRecoveryScanner = createOrderRecoveryScanner({
-    persistence: orderRecoveryPersistence,
-    publisher: orderProcessJobPublisher,
-    logger,
-    scanIntervalMs: config.orderRecoveryScanIntervalMs,
-    batchSize: config.orderRecoveryBatchSize,
-    maxRecoveryAttempts: config.orderRecoveryMaxAttempts,
-    recoveryLeaseMs: config.orderRecoveryLeaseMs,
-    failedJobReader: orderProcessJobPublisher,
-  });
   const notificationRecoveryScanner = createNotificationRecoveryScanner({
     persistence: new PostgresNotificationRecoveryPersistence(database.db),
     publisher: notificationRecordPublisher,
@@ -140,7 +135,31 @@ export async function startWorker(): Promise<void> {
     reconciler,
     admission: orderProcessAdmission,
     control: orderRecoveryPersistence,
-    scopeState: erpScopeState,
+  });
+  const orderProcessHandler = createOrderProcessJobHandler({
+    confirmation: scheduledConfirmation,
+    persistence: orderTransitionPersistence,
+    logger,
+    recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
+    notificationRecordPublisher,
+    publishBusinessOutcomeUpdate: async (job) => {
+      businessOutcomePublications.markDirty({
+        saleOfferId: job.saleOfferId,
+        ...(job.runId ? { runId: job.runId } : {}),
+        correlationId: job.correlationId,
+      });
+    },
+  });
+  const orderRecoveryScanner = createOrderRecoveryScanner({
+    persistence: orderRecoveryPersistence,
+    handler: orderProcessHandler,
+    publisher: orderProcessJobPublisher,
+    logger,
+    scanIntervalMs: config.orderRecoveryScanIntervalMs,
+    batchSize: config.orderRecoveryBatchSize,
+    maxRecoveryAttempts: config.orderRecoveryMaxAttempts,
+    recoveryLeaseMs: config.orderRecoveryLeaseMs,
+    failedJobReader: orderProcessJobPublisher,
   });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {
@@ -148,24 +167,7 @@ export async function startWorker(): Promise<void> {
       maxRetriesPerRequest: null,
     },
     concurrency: config.orderProcessConcurrency,
-    handler: createOrderProcessJobHandler({
-      confirmation: scheduledConfirmation,
-      persistence: new PostgresOrderTransitionPersistence(
-        database.db,
-        undefined,
-        config.orderRecoveryLeaseMs,
-      ),
-      logger,
-      recovery: createOrderRecoveryHandoff(orderRecoveryPersistence),
-      notificationRecordPublisher,
-      publishBusinessOutcomeUpdate: async (job) => {
-        businessOutcomePublications.markDirty({
-          saleOfferId: job.saleOfferId,
-          ...(job.runId ? { runId: job.runId } : {}),
-          correlationId: job.correlationId,
-        });
-      },
-    }),
+    handler: orderProcessHandler,
     logger,
     recovery: orderRecoveryPersistence,
   });

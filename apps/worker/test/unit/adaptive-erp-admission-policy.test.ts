@@ -89,6 +89,21 @@ describe("adaptive ERP request deadlines", () => {
 });
 
 describe("adaptive ERP admission policy", () => {
+  it("releases technical failures without pacing or availability feedback", () => {
+    const clock = testClock();
+    const controller = createController(clock);
+    const permit = acquire(controller, "catalog", "confirmation", 1);
+
+    const snapshot = controller.feedback(permit, { outcome: "technical_failure" });
+
+    expect(snapshot.scope).toMatchObject({
+      cooldownUntilMs: 0,
+      availabilityRetryAtMs: 0,
+      availabilityFailureCount: 0,
+      availabilityCircuitOpen: false,
+    });
+  });
+
   it("paces starts without idle burst credit and applies both in-flight bounds", () => {
     const clock = testClock();
     const controller = createController(clock);

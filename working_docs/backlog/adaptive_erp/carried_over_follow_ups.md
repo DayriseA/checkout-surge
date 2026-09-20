@@ -1,6 +1,6 @@
 # Adaptive ERP — Carried-over follow-ups awaiting a decision
 
-Optional items surfaced while tasks 03 to 10 were implemented. None of them blocks a later task, and none is scheduled: each one is a judgement call for the project owner to action or reject.
+Optional items surfaced while tasks 03 to 11 were implemented. None of them blocks a later task, and none is scheduled: each one is a judgement call for the project owner to action or reject.
 
 This file is intentionally not named `xx_*.md`, so the sequential task runner never treats it as an implementation task.
 
@@ -30,3 +30,9 @@ Deferred work that a later task genuinely needs was **not** recorded here. It wa
 - Origin: task 04, ERP classification and reconciliation.
 - Observation: a failing status lookup neither opens nor closes the availability circuit. This follows task 04's rules — only a fresh non-replayed confirmation teaches health — and it deliberately keeps reconciliation progressing during an outage. What is undecided is whether *repeated* lookup failures should themselves count as evidence that the ERP is unavailable.
 - Decision: keep lookups non-teaching, or let sustained lookup failure contribute to the circuit. This changes learning semantics rather than a constant, so it is a structural decision and would need explicit approval before task [20](20_calibrate_policy_and_obtain_approval.md) calibrates against it.
+
+## 5. A corrupt accepted run snapshot still blocks notification publication
+
+- Origin: task 11, terminal technical failures.
+- Observation: `apps/worker/src/queue/bullmq-notification-record-publisher.ts` publishes generated-run notifications through the publication fence, which parses the accepted run snapshot before enqueueing. Task 11 made a missing or invalid snapshot fail the affected order instead of parking it, and lets an earlier uncertain call found `succeeded` by lookup confirm the order. That confirmed order then cannot publish its notification, notification recovery meets the same failure on every pass, and the run stays `draining` because settlement requires one notification per confirmed order. The behavior predates task 11 and also affects any order confirmed before the snapshot became unreadable. Reaching it requires a stored snapshot to become missing or corrupt mid-run, which no supported workflow does.
+- Decision: accept it as an unreachable-in-practice corruption case, or let notification publication proceed without the parsed snapshot (it only needs the run's nonterminal status for the fence). Task [12](12_implement_destructive_admin_reset.md)'s destructive reset already gives an operator a way out of a stuck run.

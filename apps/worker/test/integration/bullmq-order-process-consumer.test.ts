@@ -229,6 +229,7 @@ describe("BullMQ order-processing boundary", () => {
     const publisher = createOrderProcessJobPublisher(queue);
     const recordDeadLetter = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderRecoveryScanner({
+      handler: { handle: vi.fn() },
       persistence: {
         recordRecoverable: vi.fn(),
         findRecoverable: vi.fn().mockResolvedValue([]),
@@ -238,8 +239,6 @@ describe("BullMQ order-processing boundary", () => {
         reconcileTerminal: vi.fn().mockResolvedValue(0),
         resolveDispatchedCall: vi.fn().mockResolvedValue(true),
         defer: vi.fn().mockResolvedValue(true),
-        openIntervention: vi.fn().mockResolvedValue(true),
-        resumeFromIntervention: vi.fn().mockResolvedValue(true),
         readControlRecord: vi.fn().mockResolvedValue(null),
         markEscalated: vi.fn(),
         recordDeadLetter,
@@ -273,6 +272,7 @@ describe("BullMQ order-processing boundary", () => {
       logger: createSilentLogger("worker"),
     });
     const scanner = createOrderRecoveryScanner({
+      handler: { handle: vi.fn() },
       persistence: {
         recordRecoverable: vi.fn(),
         findRecoverable: vi.fn().mockResolvedValue([
@@ -294,8 +294,6 @@ describe("BullMQ order-processing boundary", () => {
         reconcileTerminal: vi.fn().mockResolvedValue(0),
         resolveDispatchedCall: vi.fn().mockResolvedValue(true),
         defer: vi.fn().mockResolvedValue(true),
-        openIntervention: vi.fn().mockResolvedValue(true),
-        resumeFromIntervention: vi.fn().mockResolvedValue(true),
         readControlRecord: vi.fn().mockResolvedValue(null),
         markEscalated: vi.fn(),
         recordDeadLetter: vi.fn(),
@@ -340,8 +338,6 @@ describe("BullMQ order-processing boundary", () => {
       markEscalated: vi.fn(),
       resolveDispatchedCall: vi.fn().mockResolvedValue(true),
       defer: vi.fn().mockResolvedValue(true),
-      openIntervention: vi.fn().mockResolvedValue(true),
-      resumeFromIntervention: vi.fn().mockResolvedValue(true),
       readControlRecord: vi.fn().mockResolvedValue(null),
     };
     const handler = createOrderProcessJobHandler({
@@ -394,6 +390,7 @@ describe("BullMQ order-processing boundary", () => {
     databaseRestored = true;
     const scanner = createOrderRecoveryScanner({
       persistence: recoveryPersistence,
+      handler: { handle: vi.fn() },
       publisher: createOrderProcessJobPublisher(queue),
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,

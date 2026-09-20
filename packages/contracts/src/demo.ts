@@ -253,6 +253,8 @@ export const businessOutcomeSummarySchema = z
     failedOrders: nonnegativeIntegerSchema,
     /** Permanent ERP rejections. Optional for immutable historical summaries. */
     businessRejectedOrders: nonnegativeIntegerSchema.optional(),
+    /** Non-transient integration failures. Optional for immutable historical summaries. */
+    technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
     /** Explicit administrative dispositions. Optional for immutable historical summaries. */
     administrativelyDisposedOrders: nonnegativeIntegerSchema.optional(),
     pendingPersistenceCount: nonnegativeIntegerSchema,
@@ -305,6 +307,8 @@ export const runHistoryListItemSchema = z
     uniqueReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     confirmedOrders: nonnegativeIntegerSchema,
+    businessRejectedOrders: nonnegativeIntegerSchema.optional(),
+    technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
     failedOrders: nonnegativeIntegerSchema,
     convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
   })

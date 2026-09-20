@@ -50,6 +50,7 @@ describe("worker and Mock ERP precedence", () => {
       requestTimeoutMs: 1000,
     };
     const attemptPersistence: ErpAttemptPersistence = {
+      findTechnicalFailure: vi.fn().mockResolvedValue(null),
       findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
       recordDispatchIntent: vi
         .fn()

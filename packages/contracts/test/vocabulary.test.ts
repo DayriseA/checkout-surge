@@ -21,6 +21,8 @@ import {
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
   saleOfferPurposeValues,
+  technicalOrderFailureCodeSchema,
+  technicalOrderFailureCodeValues,
   trafficCompletionEnrichmentStatusValues,
   trafficExecutionStatusSchema,
   trafficExecutionStatusValues,
@@ -64,9 +66,23 @@ describe("shared PostgreSQL vocabulary", () => {
       "erp_capacity",
       "erp_unavailable",
       "uncertain_result",
-      "intervention_required",
     ]);
-    expect(orderFailureCategoryValues).toEqual(["business_rejection", "administrative"]);
+    expect(orderFailureCategoryValues).toEqual([
+      "business_rejection",
+      "technical",
+      "administrative",
+    ]);
+    expect(technicalOrderFailureCodeValues).toEqual([
+      "erp_authentication_failed",
+      "erp_authorization_failed",
+      "erp_response_contract_invalid",
+      "erp_idempotency_conflict",
+      "erp_attempt_contradiction",
+      "erp_lookup_identity_contradiction",
+      "accepted_run_snapshot_missing",
+      "accepted_run_snapshot_invalid",
+      "erp_unrecognized_client_error",
+    ]);
     expect(administrativeOrderFailureCodeValues).toEqual(["admin_reset"]);
   });
 
@@ -80,6 +96,7 @@ describe("shared PostgreSQL vocabulary", () => {
     [trafficExecutionStatusSchema, trafficExecutionStatusValues],
     [orderWaitingReasonSchema, orderWaitingReasonValues],
     [orderFailureCategorySchema, orderFailureCategoryValues],
+    [technicalOrderFailureCodeSchema, technicalOrderFailureCodeValues],
     [administrativeOrderFailureCodeSchema, administrativeOrderFailureCodeValues],
   ] as const)("derives schema %# from its tuple", (schema, values) => {
     expect(schema.options).toEqual(values);

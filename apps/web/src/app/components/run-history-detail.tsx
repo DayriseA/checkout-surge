@@ -179,7 +179,24 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
               ],
               ["Confirmed", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-              ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+              ...(summary.businessOutcomeSummary.businessRejectedOrders === undefined ||
+              summary.businessOutcomeSummary.technicallyFailedOrders === undefined
+                ? [
+                    ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)] as [
+                      string,
+                      ReactNode,
+                    ],
+                  ]
+                : [
+                    [
+                      "Business-rejected",
+                      formatNumber(summary.businessOutcomeSummary.businessRejectedOrders),
+                    ] as [string, ReactNode],
+                    [
+                      "Technically failed",
+                      formatNumber(summary.businessOutcomeSummary.technicallyFailedOrders),
+                    ] as [string, ReactNode],
+                  ]),
               [
                 publicVocabulary.notifications,
                 formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
@@ -1258,7 +1275,24 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
                   formatNumber(summary.businessOutcomeSummary.soldOutRejections),
                 ],
                 ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-                ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+                ...(summary.businessOutcomeSummary.businessRejectedOrders === undefined ||
+                summary.businessOutcomeSummary.technicallyFailedOrders === undefined
+                  ? [
+                      [
+                        "Failed orders",
+                        formatNumber(summary.businessOutcomeSummary.failedOrders),
+                      ] as [string, ReactNode],
+                    ]
+                  : [
+                      [
+                        "Business-rejected orders",
+                        formatNumber(summary.businessOutcomeSummary.businessRejectedOrders),
+                      ] as [string, ReactNode],
+                      [
+                        "Technically failed orders",
+                        formatNumber(summary.businessOutcomeSummary.technicallyFailedOrders),
+                      ] as [string, ReactNode],
+                    ]),
               ]}
               title="Final evidence"
             />

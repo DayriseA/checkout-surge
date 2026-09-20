@@ -1,10 +1,11 @@
-import type {
-  ErpCallReference,
-  ErpConfirmationResponse,
-  ErpLookupIdentity,
-  ErpOutcomeDisposition,
-  OrderProcessJob,
-  OrderWaitingReason,
+import {
+  type ErpCallReference,
+  type ErpConfirmationResponse,
+  type ErpLookupIdentity,
+  type ErpOutcomeDisposition,
+  type OrderProcessJob,
+  type OrderWaitingReason,
+  technicalOrderFailureCodeSchema,
 } from "@checkout-surge/contracts";
 import type { ErpAdmissionScope } from "./adaptive-erp-admission-policy.js";
 import type {
@@ -20,7 +21,7 @@ import type {
 } from "./order-process-admission.js";
 import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "./order-recovery-scanner.js";
-import { acceptedRunSnapshotInterventionReason } from "./run-config.js";
+import { acceptedRunSnapshotFailureCode } from "./run-config.js";
 
 type ScheduledReconciliationResult = (
   | {
@@ -44,8 +45,9 @@ export type ErpReconciliationResult =
 export type ScheduledErpOutcome =
   | { disposition: "succeeded" }
   | { disposition: "permanent_rejection"; errorCode: string; errorMessage: string }
+  | { disposition: "technical_failure"; errorCode: string; errorMessage: string }
   | {
-      disposition: "deferred" | "intervention_required";
+      disposition: "deferred";
       reason: string;
       nextEligibleAt?: Date;
     };
@@ -55,15 +57,11 @@ export class ScheduledErpOrderConfirmation {
     private readonly options: {
       client: Pick<
         HttpErpOrderConfirmation,
-        "dispatch" | "findSuccessfulAttempt" | "findUnresolvedCall"
+        "dispatch" | "findSuccessfulAttempt" | "findTechnicalFailure" | "findUnresolvedCall"
       >;
       reconciler: ErpUnresolvedCallReconciler;
       admission: AdaptiveErpRuntimeAdmission;
-      control: Pick<OrderRecoveryPersistence, "defer" | "openIntervention">;
-      scopeState: {
-        get(scope: string): Promise<{ interventionReason: string | null } | null>;
-        openIntervention(input: { scope: string; reason: string; openedAt: Date }): Promise<void>;
-      };
+      control: Pick<OrderRecoveryPersistence, "defer">;
       now?: () => Date;
     },
   ) {}
@@ -75,31 +73,39 @@ export class ScheduledErpOrderConfirmation {
     const generation = delivery.processingGeneration;
     if (generation === undefined) throw new Error("Order delivery has no processing generation.");
 
+    if (await this.options.client.findSuccessfulAttempt(job)) {
+      return { disposition: "succeeded" };
+    }
+    const unresolved = await this.options.client.findUnresolvedCall(job.orderId);
+    if (!unresolved) {
+      const failure = await this.options.client.findTechnicalFailure(job);
+      if (failure) return { disposition: "technical_failure", ...failure };
+    }
+
     let context: ErpAdmissionContext;
     try {
       context = await this.options.admission.context(job);
     } catch (error) {
-      const reason = acceptedRunSnapshotInterventionReason(error);
-      if (reason) return this.openSnapshotIntervention(job, generation, reason);
+      const code = acceptedRunSnapshotFailureCode(error);
+      if (code) {
+        const failure = {
+          disposition: "technical_failure" as const,
+          errorCode: code,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        };
+        if (unresolved) {
+          const reconciliationContext = this.options.admission.reconciliationContext(job);
+          const result = await this.options.reconciler.reconcile(
+            { job, delivery, call: unresolved, context: reconciliationContext },
+            { unknownFailure: failure },
+          );
+          return this.scheduleResult(job, generation, reconciliationContext.scope, result);
+        }
+        return failure;
+      }
       throw error;
     }
 
-    const scopeState = await this.options.scopeState.get(context.scope);
-    if (scopeState?.interventionReason) {
-      return this.deferAt(
-        job,
-        generation,
-        "scope_intervention",
-        "intervention_required",
-        this.options.admission.nextInterventionRecheckAt(),
-      );
-    }
-    if (await this.options.client.findSuccessfulAttempt(job)) {
-      await this.options.admission.reconciliationSettled(context.scope);
-      return { disposition: "succeeded" };
-    }
-
-    const unresolved = await this.options.client.findUnresolvedCall(job.orderId);
     if (unresolved) {
       const result = await this.options.reconciler.reconcile({
         job,
@@ -148,19 +154,6 @@ export class ScheduledErpOrderConfirmation {
     }
   }
 
-  private async openSnapshotIntervention(
-    job: OrderProcessJob,
-    generation: number,
-    reason: string,
-  ): Promise<ScheduledErpOutcome> {
-    await this.options.control.openIntervention({
-      orderId: job.orderId,
-      reason,
-      processingGeneration: generation,
-    });
-    return { disposition: "intervention_required", reason };
-  }
-
   private async scheduleResult(
     job: OrderProcessJob,
     generation: number,
@@ -181,26 +174,17 @@ export class ScheduledErpOrderConfirmation {
             : "The ERP permanently rejected the order.",
       };
     }
-    if (result.disposition === "intervention_required") {
-      const reason =
-        ("errorCode" in result ? result.errorCode : undefined) ?? "erp_intervention_required";
-      if (result.interventionScope === "scope") {
-        await this.options.scopeState.openIntervention({ scope, reason, openedAt: this.now() });
-        return this.deferAt(
-          job,
-          generation,
-          reason,
-          "intervention_required",
-          this.options.admission.nextInterventionRecheckAt(),
-        );
-      }
-      await this.options.control.openIntervention({
-        orderId: job.orderId,
-        reason,
-        processingGeneration: generation,
-      });
+    if (result.disposition === "technical_failure") {
       await this.options.admission.reconciliationSettled(scope);
-      return { disposition: "intervention_required", reason };
+      return {
+        disposition: "technical_failure",
+        errorCode: technicalOrderFailureCodeSchema.parse(
+          "errorCode" in result ? result.errorCode : undefined,
+        ),
+        errorMessage:
+          ("errorMessage" in result ? result.errorMessage : undefined) ??
+          "The ERP returned a non-transient technical failure.",
+      };
     }
     const reason =
       result.operation === "non_call_deferral"
@@ -239,7 +223,7 @@ export class ScheduledErpOrderConfirmation {
       throw new Error(`Order ${job.orderId} lost scheduling ownership while deferring.`);
     }
     return {
-      disposition: waitingReason === "intervention_required" ? "intervention_required" : "deferred",
+      disposition: "deferred",
       reason,
       nextEligibleAt,
     };
@@ -266,12 +250,15 @@ export class ErpUnresolvedCallReconciler {
     },
   ) {}
 
-  async reconcile(input: {
-    job: OrderProcessJob;
-    delivery: OrderProcessDeliveryMetadata;
-    call: ErpCallReference;
-    context: ErpAdmissionContext;
-  }): Promise<ErpReconciliationResult> {
+  async reconcile(
+    input: {
+      job: OrderProcessJob;
+      delivery: OrderProcessDeliveryMetadata;
+      call: ErpCallReference;
+      context: ErpAdmissionContext;
+    },
+    options: { unknownFailure?: { errorCode: string; errorMessage: string } } = {},
+  ): Promise<ErpReconciliationResult> {
     if (this.activeOrders.has(input.job.orderId)) {
       return nonCallDeferral(
         "order_reconciliation_in_flight",
@@ -308,18 +295,20 @@ export class ErpUnresolvedCallReconciler {
       }
 
       if (lookup.lookup.lookup.status === "unknown") {
+        if (options.unknownFailure) {
+          return { ...lookup, ...options.unknownFailure, disposition: "technical_failure" };
+        }
         return this.replay(input, lookupOperation.permit.probe);
       }
       if (!sameIdentity(lookup.lookup.lookup.identity, input.job, input.call.idempotencyKey)) {
         return {
-          disposition: "intervention_required",
+          disposition: "technical_failure",
           operation: "status_lookup",
           startedAt: lookup.startedAt,
           finishedAt: lookup.finishedAt,
           latencyMs: lookup.latencyMs,
           errorCode: "erp_lookup_identity_contradiction",
           errorMessage: "The ERP lookup result contradicted the immutable order identity.",
-          interventionScope: "order",
         };
       }
       const response = lookup.lookup.lookup.result;
@@ -332,14 +321,13 @@ export class ErpUnresolvedCallReconciler {
       } catch (error) {
         if (error instanceof Error && error.name === "ErpConfirmationInvalidResponseError") {
           return {
-            disposition: "intervention_required",
+            disposition: "technical_failure",
             operation: "status_lookup",
             startedAt: lookup.startedAt,
             finishedAt: lookup.finishedAt,
             latencyMs: lookup.latencyMs,
             errorCode: "erp_attempt_contradiction",
             errorMessage: error.message,
-            interventionScope: "order",
           };
         }
         throw error;

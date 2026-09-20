@@ -192,7 +192,6 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       status: "enqueued",
       processingGeneration: 0,
       publicationOwner: null,
-      interventionReason: null,
       unresolvedErpCallId: null,
       attemptCounts: {},
     });
@@ -390,6 +389,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderRecoveryScanner({
       persistence: controlPersistence,
+      handler: { handle: vi.fn() },
       publisher: { enqueue },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1_000,
@@ -674,7 +674,6 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     const eligibleNew = await seedOrder({ createdAt: new Date(baseTime.getTime() - 20_000) });
     const futureDue = await seedOrder({ createdAt: new Date(baseTime.getTime() - 30_000) });
     const leased = await seedOrder({ createdAt: new Date(baseTime.getTime() - 30_000) });
-    const intervened = await seedOrder({ createdAt: new Date(baseTime.getTime() - 30_000) });
     const terminal = await seedOrder({
       createdAt: new Date(baseTime.getTime() - 30_000),
       status: "failed",
@@ -694,7 +693,6 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       eligibleNew,
       futureDue,
       leased,
-      intervened,
       terminal,
       terminalRunOld,
       terminalRunNew,
@@ -719,10 +717,6 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       .db.update(orderRecoveryJobs)
       .set({ status: "enqueued", leaseExpiresAt: new Date(baseTime.getTime() + 60_000) })
       .where(eq(orderRecoveryJobs.orderId, leased.orderId));
-    await requireConnection()
-      .db.update(orderRecoveryJobs)
-      .set({ interventionReason: "authentication_failure" })
-      .where(eq(orderRecoveryJobs.orderId, intervened.orderId));
 
     const batch = await controlPersistence.findRecoverable({ limit: 2, now });
 
@@ -802,22 +796,6 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     expect(await controlPersistence.readControlRecord({ orderId: seeded.orderId })).toMatchObject({
       unresolvedErpCallId: call.erpCallId,
     });
-
-    await expect(
-      controlPersistence.openIntervention({
-        orderId: seeded.orderId,
-        reason: "identity_contradiction",
-        processingGeneration: 1,
-      }),
-    ).resolves.toBe(true);
-    await expect(
-      attemptPersistence.recordDispatchIntent({
-        job: seeded.job,
-        idempotencyKey,
-        dispatchedAt: now,
-        expectedProcessingGeneration: 1,
-      }),
-    ).rejects.toThrow(/not eligible for ERP dispatch/);
   });
 
   it("retains uncertainty across lease expiry and resolves it idempotently", async () => {
@@ -1348,7 +1326,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
   });
 
-  it("keeps unresolved ownership for a validated intervention despite a recognized raw code", async () => {
+  it("resolves ownership for a terminal technical failure", async () => {
     const seeded = await seedOrder({ createdAt: now });
     const delivery = {
       attemptNumber: 1,
@@ -1368,25 +1346,25 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       job: seeded.job,
       delivery,
       call,
-      disposition: "intervention_required",
+      disposition: "technical_failure",
       status: "failed",
-      terminal: false,
-      httpStatus: 500,
-      errorCode: "erp_forced_outage",
+      terminal: true,
+      httpStatus: 200,
+      errorCode: "erp_response_contract_invalid",
       latencyMs: 5,
       startedAt: now,
       finishedAt: new Date(now.getTime() + 5),
     });
 
     expect(await controlRow(seeded.orderId)).toMatchObject({
-      unresolvedErpCallId: call.erpCallId,
-      attemptCounts: { intervention_required: 1 },
+      unresolvedErpCallId: null,
+      attemptCounts: { technical_failure: 1 },
     });
     const [storedCall] = await requireConnection()
       .db.select({ resolvedAt: erpDispatchCalls.resolvedAt })
       .from(erpDispatchCalls)
       .where(eq(erpDispatchCalls.id, call.erpCallId));
-    expect(storedCall?.resolvedAt).toBeNull();
+    expect(storedCall?.resolvedAt).not.toBeNull();
   });
 
   it.each([
@@ -1586,7 +1564,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     expect(dispatchCalls[0]?.resolvedAt).not.toBeNull();
   });
 
-  it("keeps malformed success and opaque server responses unresolved", async () => {
+  it("resolves malformed success and retains opaque server uncertainty", async () => {
     const seeded = await seedOrder({ createdAt: now });
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
@@ -1595,8 +1573,18 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       deliveryId: "uncertain-response-delivery",
     });
     const cases = [
-      { errorCode: "erp_invalid_response", httpStatus: 200 },
-      { errorCode: "erp_unknown_server_failure", httpStatus: 500 },
+      {
+        disposition: "technical_failure" as const,
+        errorCode: "erp_response_contract_invalid",
+        httpStatus: 200,
+        terminal: true,
+      },
+      {
+        disposition: "uncertain_result" as const,
+        errorCode: "erp_unknown_server_failure",
+        httpStatus: 500,
+        terminal: false,
+      },
     ] as const;
     const calls: ErpCallReference[] = [];
     for (const [index, outcome] of cases.entries()) {
@@ -1623,8 +1611,9 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
           deliveryId: "uncertain-response-delivery",
         },
         call,
+        disposition: outcome.disposition,
         status: "failed",
-        terminal: false,
+        terminal: outcome.terminal,
         httpStatus: outcome.httpStatus,
         errorCode: outcome.errorCode,
         latencyMs: 1,
@@ -1641,57 +1630,8 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     expect(dispatchCalls.filter((call) => call.resolvedAt === null)).toHaveLength(1);
     expect(await controlRow(seeded.orderId)).toMatchObject({
       unresolvedErpCallId: calls[1]?.erpCallId,
-      attemptCounts: { intervention_required: 2 },
+      attemptCounts: { technical_failure: 1, uncertain_result: 1 },
     });
-  });
-
-  it("opens and resumes interventions without losing the processing generation", async () => {
-    const seeded = await seedOrder({ createdAt: now });
-    await transitionPersistence.transitionToProcessing(seeded.job, {
-      attemptNumber: 1,
-      attemptsMade: 0,
-      maxAttempts: 4,
-      deliveryId: "initial-delivery",
-    });
-
-    await expect(
-      controlPersistence.openIntervention({
-        orderId: seeded.orderId,
-        reason: "erp_idempotency_conflict",
-        processingGeneration: 0,
-      }),
-    ).resolves.toBe(true);
-    const opened = await controlPersistence.readControlRecord({ orderId: seeded.orderId });
-    expect(opened).toMatchObject({
-      processingGeneration: 0,
-      interventionReason: "erp_idempotency_conflict",
-      waitingReason: "intervention_required",
-      leaseExpiresAt: null,
-      publicationOwner: null,
-    });
-
-    // An open intervention is invisible to the recoverable selection.
-    await expect(controlPersistence.findRecoverable({ limit: 10, now })).resolves.toHaveLength(0);
-
-    await expect(
-      controlPersistence.resumeFromIntervention({
-        orderId: seeded.orderId,
-        nextEligibleAt: new Date(now.getTime() + 1_000),
-        processingGeneration: 0,
-      }),
-    ).resolves.toBe(true);
-    expect(await controlPersistence.readControlRecord({ orderId: seeded.orderId })).toMatchObject({
-      processingGeneration: 0,
-      interventionReason: null,
-      waitingReason: null,
-      nextAttemptAt: new Date(now.getTime() + 1_000),
-    });
-    await expect(
-      controlPersistence.findRecoverable({
-        limit: 10,
-        now: new Date(now.getTime() + 2_000),
-      }),
-    ).resolves.toHaveLength(1);
   });
 
   it("marks publication failures without overwriting a newer owner", async () => {

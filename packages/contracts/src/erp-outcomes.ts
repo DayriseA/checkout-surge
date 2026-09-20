@@ -44,7 +44,7 @@ export const erpOutcomeDispositionValues = [
   "temporarily_unavailable",
   "uncertain_result",
   "permanent_rejection",
-  "intervention_required",
+  "technical_failure",
 ] as const;
 export const erpOutcomeDispositionSchema = z.enum(erpOutcomeDispositionValues);
 export type ErpOutcomeDisposition = z.infer<typeof erpOutcomeDispositionSchema>;
@@ -52,9 +52,9 @@ export type ErpOutcomeDisposition = z.infer<typeof erpOutcomeDispositionSchema>;
 /**
  * Pure data mapping of every recognized shared error code to its disposition
  * (D03). Connection failures and request timeouts carry no code: they are
- * `temporarily_unavailable` and `uncertain_result` respectively. Any response
- * code outside the recognized vocabulary maps to `intervention_required` and
- * must never be reinterpreted by callers.
+ * `temporarily_unavailable` and `uncertain_result` respectively. The client
+ * classifies opaque 5xx responses as uncertain and other contract failures as
+ * technical failures.
  */
 export const recognizedErpErrorCodeDispositions: Readonly<
   Record<ErpErrorCode, ErpOutcomeDisposition>
@@ -62,7 +62,7 @@ export const recognizedErpErrorCodeDispositions: Readonly<
   erp_capacity_exceeded: "capacity_rejected",
   erp_forced_outage: "temporarily_unavailable",
   erp_injected_error: "temporarily_unavailable",
-  erp_idempotency_conflict: "intervention_required",
+  erp_idempotency_conflict: "technical_failure",
 };
 
 /**

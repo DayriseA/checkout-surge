@@ -41,70 +41,64 @@ describe("HTTP ERP confirmation outcomes", () => {
       status: 200,
       body: successResponse(),
       disposition: "succeeded",
-      interventionScope: undefined,
     },
     {
       name: "capacity",
       status: 429,
       body: failedResponse(429, "erp_capacity_exceeded"),
       disposition: "capacity_rejected",
-      interventionScope: undefined,
     },
     {
       name: "forced outage",
       status: 503,
       body: failedResponse(503, "erp_forced_outage"),
       disposition: "temporarily_unavailable",
-      interventionScope: undefined,
     },
     {
       name: "injected error",
       status: 503,
       body: failedResponse(503, "erp_injected_error"),
       disposition: "temporarily_unavailable",
-      interventionScope: undefined,
     },
     {
       name: "idempotency conflict",
       status: 409,
       body: { code: "erp_idempotency_conflict", message: "Conflict" },
-      disposition: "intervention_required",
-      interventionScope: "order",
+      disposition: "technical_failure",
+      errorCode: "erp_idempotency_conflict",
     },
     {
       name: "authorization",
       status: 403,
       body: { code: "forbidden", message: "Forbidden" },
-      disposition: "intervention_required",
-      interventionScope: "scope",
+      disposition: "technical_failure",
+      errorCode: "erp_authorization_failed",
     },
     {
       name: "unknown 4xx code",
       status: 422,
       body: failedResponse(422, "erp_unknown_business_code"),
-      disposition: "intervention_required",
-      interventionScope: "order",
+      disposition: "technical_failure",
+      errorCode: "erp_unrecognized_client_error",
     },
     {
       name: "opaque 5xx",
       status: 500,
       body: { code: "internal_error", message: "Opaque" },
-      disposition: "intervention_required",
-      interventionScope: "order",
+      disposition: "uncertain_result",
     },
     {
       name: "status-mismatched recognized availability",
       status: 500,
       body: failedResponse(503, "erp_forced_outage"),
-      disposition: "intervention_required",
-      interventionScope: "order",
+      disposition: "uncertain_result",
     },
     {
       name: "malformed response",
       status: 200,
       body: { bad: true },
-      disposition: "intervention_required",
-      interventionScope: "order",
+      disposition: "technical_failure",
+      errorCode: "erp_response_contract_invalid",
     },
   ] as const)("classifies $name without broad permanent rejection", async (testCase) => {
     const persistence = attemptPersistence();
@@ -119,14 +113,15 @@ describe("HTTP ERP confirmation outcomes", () => {
       disposition: testCase.disposition,
       operation: "dispatched_confirmation",
       call,
-      ...(testCase.interventionScope ? { interventionScope: testCase.interventionScope } : {}),
+      ...("errorCode" in testCase ? { errorCode: testCase.errorCode } : {}),
     });
     expect(outcome.disposition).not.toBe("permanent_rejection");
     expect(persistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "dispatched_confirmation",
         disposition: testCase.disposition,
-        terminal: testCase.disposition === "succeeded",
+        terminal:
+          testCase.disposition === "succeeded" || testCase.disposition === "technical_failure",
       }),
     );
   });
@@ -351,8 +346,8 @@ describe("HTTP ERP confirmation outcomes", () => {
       failedResponse(503, "erp_forced_outage"),
       "temporarily_unavailable",
     ],
-    ["unknown code", failedResponse(503, "erp_unknown_failure"), "intervention_required"],
-    ["malformed body", { code: "erp_forced_outage" }, "intervention_required"],
+    ["unknown code", failedResponse(503, "erp_unknown_failure"), "technical_failure"],
+    ["malformed body", { code: "erp_forced_outage" }, "technical_failure"],
   ] as const)("classifies lookup $name through validated vocabulary", async (_name, body, disposition) => {
     const client = createClient({
       fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(body, 503)),
@@ -360,11 +355,10 @@ describe("HTTP ERP confirmation outcomes", () => {
 
     await expect(client.lookup(call.idempotencyKey, job.correlationId)).resolves.toMatchObject({
       disposition,
-      ...(disposition === "intervention_required" ? { interventionScope: "order" } : {}),
     });
   });
 
-  it("turns a local attempt contradiction into affected-order intervention", async () => {
+  it("turns a local attempt contradiction into a technical failure", async () => {
     const persistence = attemptPersistence();
     const contradiction = new Error("contradictory ERP attempt");
     contradiction.name = "ErpAttemptContradictionError";
@@ -376,8 +370,7 @@ describe("HTTP ERP confirmation outcomes", () => {
     expect(error).toBeInstanceOf(ErpConfirmationInvalidResponseError);
     expect(error).toMatchObject({
       outcome: {
-        disposition: "intervention_required",
-        interventionScope: "order",
+        disposition: "technical_failure",
         errorCode: "erp_attempt_contradiction",
       },
     });
@@ -421,6 +414,7 @@ function createClient(
 
 function attemptPersistence(): ErpAttemptPersistence {
   return {
+    findTechnicalFailure: vi.fn().mockResolvedValue(null),
     findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
     recordDispatchIntent: vi.fn().mockResolvedValue(call),
     recordAttempt: vi.fn().mockResolvedValue(true),

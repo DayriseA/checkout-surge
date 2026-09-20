@@ -22,7 +22,6 @@ export interface AdaptiveErpSafetyRecord {
   availabilityCircuitOpen: boolean;
   circuitOpenUntilMs: number;
   nextProbeAtMs: number;
-  interventionReason?: string | null;
 }
 
 export interface AdaptiveErpSafetyPersistence {
@@ -76,7 +75,6 @@ export class AdaptiveErpSafetyPersistenceError extends Error {
 
 export class AdaptiveErpRuntimeAdmission {
   private readonly configuredConcurrency = new Map<ErpAdmissionScope, number>();
-  private readonly interventions = new Set<ErpAdmissionScope>();
   private readonly unresolvedScopes = new Set<ErpAdmissionScope>();
   private readonly unresolvedNextEligibleAt = new Map<ErpAdmissionScope, number>();
   private readonly reconciliationRefreshAfter = new Map<ErpAdmissionScope, number>();
@@ -123,12 +121,9 @@ export class AdaptiveErpRuntimeAdmission {
       now,
       safetyState: {
         policyVersion: adaptiveErpAdmissionPolicy.version,
-        scopes: records.filter((record) => !record.interventionReason),
+        scopes: records,
       },
     });
-    for (const record of records) {
-      if (record.interventionReason) admission.interventions.add(record.scope);
-    }
     const unresolvedScopes = await options.persistence.listUnresolvedScopes(
       adaptiveErpAdmissionPolicy.maximumScopeStates + 1,
     );
@@ -180,6 +175,13 @@ export class AdaptiveErpRuntimeAdmission {
     };
   }
 
+  reconciliationContext(job: OrderProcessJob): ErpAdmissionContext {
+    return {
+      scope: job.runId ? `run:${job.runId}` : "catalog",
+      configuredConcurrency: this.options.fallbackConcurrency,
+    };
+  }
+
   async tryAcquire(
     context: ErpAdmissionContext,
     operation: ErpAdmissionOperation,
@@ -197,9 +199,6 @@ export class AdaptiveErpRuntimeAdmission {
           snapshot: this.options.controller.snapshot(context.scope, context.configuredConcurrency),
         },
       };
-    }
-    if (this.interventions.has(context.scope)) {
-      return this.deferredDecision(context, "scope_intervention");
     }
     if (
       operation === "confirmation" &&
@@ -278,10 +277,6 @@ export class AdaptiveErpRuntimeAdmission {
     return this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs;
   }
 
-  nextInterventionRecheckAt(): number {
-    return this.options.now() + adaptiveErpAdmissionPolicy.maximumAvailabilityBackoffMs;
-  }
-
   async reconciliationSettled(scope: ErpAdmissionScope): Promise<void> {
     await this.refreshReconciliationGate(scope, true).catch(() => undefined);
   }
@@ -320,7 +315,7 @@ export class AdaptiveErpRuntimeAdmission {
           .safetyState()
           .scopes.find((item) => item.scope === scope);
         if (!state) return;
-        await this.options.persistence.save({ ...state, interventionReason: null });
+        await this.options.persistence.save(state);
       });
     this.safetyWrites.set(scope, write);
     try {
@@ -335,13 +330,9 @@ export class AdaptiveErpRuntimeAdmission {
   }
 
   private async hydrate(scope: ErpAdmissionScope): Promise<void> {
-    if (this.options.controller.hasScope(scope) || this.interventions.has(scope)) return;
+    if (this.options.controller.hasScope(scope)) return;
     const record = await this.options.persistence.readActive(scope, this.options.now());
     if (!record) return;
-    if (record.interventionReason) {
-      this.interventions.add(scope);
-      return;
-    }
     if (!this.options.controller.restoreSafety(record)) {
       throw new Error("Active ERP restart-safety state exceeds the bounded controller capacity.");
     }
@@ -349,22 +340,19 @@ export class AdaptiveErpRuntimeAdmission {
 
   private deferredDecision(
     context: ErpAdmissionContext,
-    reason: "reconciliation_pending" | "scope_intervention",
+    reason: "reconciliation_pending",
     gateRefreshSucceeded = true,
   ): ErpOperationAdmission {
     this.deferred += 1;
     const snapshot = this.options.controller.snapshot(context.scope, context.configuredConcurrency);
-    const nextEligibleAtMs =
-      reason === "scope_intervention"
-        ? this.nextInterventionRecheckAt()
-        : Math.max(
-            this.nextRecheckAt(),
-            gateRefreshSucceeded ? (this.unresolvedNextEligibleAt.get(context.scope) ?? 0) : 0,
-            snapshot.scope?.cooldownUntilMs ?? 0,
-            snapshot.scope?.availabilityRetryAtMs ?? 0,
-            snapshot.scope?.circuitOpenUntilMs ?? 0,
-            snapshot.scope?.nextProbeAtMs ?? 0,
-          );
+    const nextEligibleAtMs = Math.max(
+      this.nextRecheckAt(),
+      gateRefreshSucceeded ? (this.unresolvedNextEligibleAt.get(context.scope) ?? 0) : 0,
+      snapshot.scope?.cooldownUntilMs ?? 0,
+      snapshot.scope?.availabilityRetryAtMs ?? 0,
+      snapshot.scope?.circuitOpenUntilMs ?? 0,
+      snapshot.scope?.nextProbeAtMs ?? 0,
+    );
     return {
       admitted: false,
       decision: {
@@ -491,5 +479,5 @@ function toFeedback(outcome: ErpConfirmationOutcome | ErpLookupOutcome): ErpAdmi
         : {}),
     };
   }
-  return { outcome: "intervention_required" };
+  return { outcome: "technical_failure" };
 }

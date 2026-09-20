@@ -13,6 +13,7 @@ import {
   erpReplayedResponseHeaderValue,
   type OrderProcessJob,
   recognizedErpErrorCodeDispositions,
+  type TechnicalOrderFailureCode,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
@@ -51,7 +52,13 @@ export interface ReusableErpConfirmationAttempt {
   finishedAt: Date;
 }
 
+export interface ReusableErpTechnicalFailure {
+  errorCode: string;
+  errorMessage: string;
+}
+
 export interface ErpAttemptPersistence {
+  findTechnicalFailure(job: OrderProcessJob): Promise<ReusableErpTechnicalFailure | null>;
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
   recordDispatchIntent(input: {
     job: OrderProcessJob;
@@ -78,7 +85,6 @@ export type ErpConfirmationOutcome = {
   errorCode?: string;
   errorMessage?: string;
   retryAfterMs?: number;
-  interventionScope?: "order" | "scope";
   cause?: unknown;
 };
 
@@ -92,7 +98,7 @@ export type ErpLookupOutcome =
       latencyMs: number;
     }
   | {
-      disposition: "temporarily_unavailable" | "intervention_required";
+      disposition: "temporarily_unavailable" | "technical_failure";
       operation: "status_lookup";
       startedAt: Date;
       finishedAt: Date;
@@ -100,7 +106,6 @@ export type ErpLookupOutcome =
       httpStatus?: number;
       errorCode?: string;
       errorMessage?: string;
-      interventionScope?: "scope" | "order";
       cause?: unknown;
     };
 
@@ -331,7 +336,6 @@ export class HttpErpOrderConfirmation {
           latencyMs: elapsedMs(startedAt, finishedAt),
         };
       }
-      const scopeIntervention = response.status === 401 || response.status === 403;
       const availability = erpConfirmationResponseSchema.safeParse(body);
       const recognizedAvailability =
         availability.success &&
@@ -342,15 +346,14 @@ export class HttpErpOrderConfirmation {
           availability.data.errorCode as keyof typeof recognizedErpErrorCodeDispositions
         ] === "temporarily_unavailable";
       return {
-        disposition: recognizedAvailability ? "temporarily_unavailable" : "intervention_required",
+        disposition: recognizedAvailability ? "temporarily_unavailable" : "technical_failure",
         operation: "status_lookup",
         startedAt,
         finishedAt,
         latencyMs: elapsedMs(startedAt, finishedAt),
         httpStatus: response.status,
-        errorCode: readErrorCode(body) ?? "erp_invalid_lookup_response",
+        errorCode: technicalFailureCode(response.status, readErrorCode(body)),
         errorMessage: "The ERP returned an invalid status lookup response.",
-        interventionScope: scopeIntervention ? "scope" : "order",
       };
     } catch (error) {
       const finishedAt = this.now();
@@ -371,6 +374,14 @@ export class HttpErpOrderConfirmation {
 
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null> {
     return this.readSuccessfulAttempt(job);
+  }
+
+  async findTechnicalFailure(job: OrderProcessJob): Promise<ReusableErpTechnicalFailure | null> {
+    try {
+      return await this.options.attemptPersistence.findTechnicalFailure(job);
+    } catch (error) {
+      throw new ErpAttemptPersistenceError(error);
+    }
   }
 
   recordLookupResult(record: ErpAttemptRecord): Promise<boolean> {
@@ -435,7 +446,7 @@ export class HttpErpOrderConfirmation {
     } catch (error) {
       if (error instanceof Error && error.name === "ErpAttemptContradictionError") {
         throw new ErpConfirmationInvalidResponseError(record.httpStatus ?? 500, false, {
-          disposition: "intervention_required",
+          disposition: "technical_failure",
           operation: "dispatched_confirmation",
           call: record.call as ErpCallReference,
           startedAt: record.startedAt,
@@ -445,7 +456,6 @@ export class HttpErpOrderConfirmation {
           replayed: record.replayed ?? false,
           errorCode: "erp_attempt_contradiction",
           errorMessage: error.message,
-          interventionScope: "order",
           cause: error,
         });
       }
@@ -514,34 +524,39 @@ function classifyConfirmationResponse(input: {
         response: failed,
         errorCode: failed.errorCode,
         errorMessage: failed.errorMessage,
-        ...(disposition === "intervention_required" ? { interventionScope: "order" as const } : {}),
       };
     }
   }
   if (input.response.status === 409 && errorCode === "erp_idempotency_conflict") {
     return {
       ...common,
-      disposition: "intervention_required",
-      errorCode,
+      disposition: "technical_failure",
+      errorCode: "erp_idempotency_conflict",
       ...optional("errorMessage", readErrorMessage(input.body)),
-      interventionScope: "order",
     };
   }
   if (input.response.status === 401 || input.response.status === 403) {
     return {
       ...common,
-      disposition: "intervention_required",
-      errorCode: errorCode ?? `erp_http_${input.response.status}`,
+      disposition: "technical_failure",
+      errorCode:
+        input.response.status === 401 ? "erp_authentication_failed" : "erp_authorization_failed",
       ...optional("errorMessage", readErrorMessage(input.body)),
-      interventionScope: "scope",
+    };
+  }
+  if (input.response.status >= 500) {
+    return {
+      ...common,
+      disposition: "uncertain_result",
+      errorCode: errorCode ?? `erp_http_${input.response.status}`,
+      errorMessage: readErrorMessage(input.body) ?? "The ERP returned an opaque server error.",
     };
   }
   return {
     ...common,
-    disposition: "intervention_required",
-    errorCode: errorCode ?? "erp_invalid_response",
+    disposition: "technical_failure",
+    errorCode: technicalFailureCode(input.response.status, errorCode),
     errorMessage: readErrorMessage(input.body) ?? "The ERP returned an invalid response.",
-    interventionScope: "order",
   };
 }
 
@@ -563,7 +578,10 @@ function toAttemptRecord(
         : outcome.disposition === "uncertain_result"
           ? "timed_out"
           : "failed",
-    terminal: outcome.disposition === "succeeded" || outcome.disposition === "permanent_rejection",
+    terminal:
+      outcome.disposition === "succeeded" ||
+      outcome.disposition === "permanent_rejection" ||
+      outcome.disposition === "technical_failure",
     ...(outcome.httpStatus === undefined ? {} : { httpStatus: outcome.httpStatus }),
     ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
     ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
@@ -573,6 +591,19 @@ function toAttemptRecord(
     finishedAt: outcome.finishedAt,
     ...(outcome.response ? { response: outcome.response } : {}),
   };
+}
+
+function technicalFailureCode(
+  status: number,
+  errorCode: string | undefined,
+): TechnicalOrderFailureCode {
+  if (status === 401) return "erp_authentication_failed";
+  if (status === 403) return "erp_authorization_failed";
+  if (status === 409 && errorCode === "erp_idempotency_conflict") {
+    return "erp_idempotency_conflict";
+  }
+  if (status >= 400 && status < 500) return "erp_unrecognized_client_error";
+  return "erp_response_contract_invalid";
 }
 
 function recognizedStatusMatches(code: string, status: number): boolean {

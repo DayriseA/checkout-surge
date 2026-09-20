@@ -130,7 +130,7 @@ export type ErpAdmissionFeedback =
       outcome: Extract<ErpOutcomeDisposition, "temporarily_unavailable" | "uncertain_result">;
       retryAfterMs?: number;
     }
-  | { outcome: Extract<ErpOutcomeDisposition, "intervention_required"> };
+  | { outcome: Extract<ErpOutcomeDisposition, "technical_failure"> };
 
 export interface AdaptiveErpPermit {
   readonly scope: ErpAdmissionScope;
@@ -150,7 +150,6 @@ export type ErpAdmissionReason =
   | "pacing"
   | "reconciliation_pending"
   | "scope_in_flight"
-  | "scope_intervention"
   | "scope_state_limit"
   | "worker_in_flight";
 

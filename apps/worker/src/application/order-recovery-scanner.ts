@@ -5,8 +5,12 @@ import type {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import type { OrderJobPublisher } from "./order-job-publisher.js";
-import type { OrderRecoveryHandoff, RecoverableOrderHandoff } from "./order-process-job-handler.js";
-import { acceptedRunSnapshotInterventionReason } from "./run-config.js";
+import type {
+  OrderProcessJobHandler,
+  OrderRecoveryHandoff,
+  RecoverableOrderHandoff,
+} from "./order-process-job-handler.js";
+import { acceptedRunSnapshotFailureCode } from "./run-config.js";
 
 export type { RecoverableOrderHandoff } from "./order-process-job-handler.js";
 
@@ -35,7 +39,6 @@ export interface OrderControlRecord {
   nextAttemptAt: Date | null;
   waitingReason: OrderWaitingReason | null;
   publicationOwner: string | null;
-  interventionReason: string | null;
   unresolvedErpCallId: string | null;
 }
 
@@ -68,18 +71,6 @@ export interface OrderRecoveryPersistence {
     waitingReason: OrderWaitingReason;
     nextEligibleAt: Date;
     processingGeneration: number;
-  }): Promise<boolean>;
-  /** Opens a visible intervention and releases the current lease. */
-  openIntervention(input: {
-    orderId: string;
-    reason: string;
-    processingGeneration: number;
-  }): Promise<boolean>;
-  /** Clears an open intervention and reschedules the existing control record. */
-  resumeFromIntervention(input: {
-    orderId: string;
-    nextEligibleAt: Date;
-    processingGeneration?: number;
   }): Promise<boolean>;
   /** Clears the unresolved dispatched-call identity once its outcome is known. */
   resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean>;
@@ -146,6 +137,7 @@ export function createOrderRecoveryHandoff(
 
 export function createOrderRecoveryScanner(dependencies: {
   persistence: OrderRecoveryPersistence;
+  handler: OrderProcessJobHandler;
   publisher: OrderJobPublisher;
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
@@ -236,13 +228,18 @@ export function createOrderRecoveryScanner(dependencies: {
         );
         enqueued += 1;
       } catch (error) {
-        const snapshotReason = acceptedRunSnapshotInterventionReason(error);
-        if (snapshotReason) {
-          await dependencies.persistence.openIntervention({
-            orderId: candidate.job.orderId,
-            reason: snapshotReason,
-            processingGeneration: claim.processingGeneration,
-          });
+        const snapshotFailureCode = acceptedRunSnapshotFailureCode(error);
+        if (snapshotFailureCode) {
+          await dependencies.handler.handle(
+            { ...candidate.job, processingGeneration: claim.processingGeneration },
+            {
+              attemptNumber: claim.attempt,
+              attemptsMade: claim.attempt - 1,
+              maxAttempts: 1,
+              deliveryId: claim.jobId,
+              processingGeneration: claim.processingGeneration,
+            },
+          );
           continue;
         }
         failed += 1;

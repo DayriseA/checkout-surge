@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: implementation backlog prepared; tasks 01 to 10 are completed; tasks 11–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
+Status: implementation backlog prepared; tasks 01 to 11 are completed; tasks 12–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 

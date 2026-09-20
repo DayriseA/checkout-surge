@@ -159,7 +159,9 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
         queuedAt: securedAtByStatus[status as keyof typeof securedAtByStatus],
         ...(status === "processing" ? { processingAt: now } : {}),
         ...(status === "confirmed" ? { processingAt: now, confirmedAt: now } : {}),
-        ...(status === "failed" ? { processingAt: now, failedAt: now } : {}),
+        ...(status === "failed"
+          ? { processingAt: now, failedAt: now, failureCategory: "technical" as const }
+          : {}),
       })),
     );
     await connection.db.insert(reservations).values({
@@ -235,6 +237,7 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       confirmedOrders: 1,
       failedOrders: 1,
       businessRejectedOrders: 0,
+      technicallyFailedOrders: 1,
       administrativelyDisposedOrders: 0,
       pendingPersistenceCount: 1,
       notificationsRecorded: 1,

@@ -1,6 +1,7 @@
 import type { OrderProcessJob, OrderStatus } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  erpDispatchCalls,
   orderEvents,
   orderRecoveryJobs,
   orders,
@@ -170,6 +171,7 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({
           status: "failed",
+          failureCategory: failure.category,
           failureCode: failure.code,
           failureMessage: failure.message,
           failedAt: occurredAt,
@@ -221,6 +223,7 @@ async function closeControlRecordForTerminalOrder(
     .update(orderRecoveryJobs)
     .set({
       status: "resolved",
+      unresolvedErpCallId: null,
       resolvedAt: occurredAt,
       nextAttemptAt: null,
       leaseExpiresAt: null,
@@ -228,6 +231,10 @@ async function closeControlRecordForTerminalOrder(
       updatedAt: occurredAt,
     })
     .where(eq(orderRecoveryJobs.recoveryKey, `order:${orderId}`));
+  await tx
+    .update(erpDispatchCalls)
+    .set({ resolvedAt: occurredAt, updatedAt: occurredAt })
+    .where(and(eq(erpDispatchCalls.orderId, orderId), isNull(erpDispatchCalls.resolvedAt)));
 }
 
 /**
@@ -287,12 +294,6 @@ async function claimExecutionOwnership(
         eq(orderRecoveryJobs.orderId, job.orderId),
         eq(orderRecoveryJobs.processingGeneration, job.processingGeneration ?? 0),
         inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-        isNull(orderRecoveryJobs.interventionReason),
-        sql`not exists (
-          select 1 from erp_scope_resilience_state scope_state
-          where scope_state.scope = ${job.runId ? `run:${job.runId}` : "catalog"}
-            and scope_state.intervention_reason is not null
-        )`,
         job.runId
           ? sql`not exists (
               select 1 from demo_runs stopped_run
@@ -346,7 +347,13 @@ async function appendTransitionEvent(
       payload: {
         attemptNumber: delivery.attemptNumber,
         attemptsMade: delivery.attemptsMade,
-        ...(failure ? { failureCode: failure.code, failureMessage: failure.message } : {}),
+        ...(failure
+          ? {
+              failureCategory: failure.category,
+              failureCode: failure.code,
+              failureMessage: failure.message,
+            }
+          : {}),
       },
       source: "worker",
       occurredAt,

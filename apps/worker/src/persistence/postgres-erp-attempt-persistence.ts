@@ -8,13 +8,13 @@ import {
   erpErrorCodeSchema,
   erpPermanentRejectionCodeValues,
   recognizedErpErrorCodeDispositions,
+  technicalOrderFailureCodeSchema,
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   demoRuns,
   erpAttempts,
   erpDispatchCalls,
-  erpScopeResilienceState,
   orderEvents,
   orderRecoveryJobs,
   orders,
@@ -53,6 +53,24 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           attemptNumber: attempt.attemptNumber,
           ...(attempt.httpStatus ? { httpStatus: attempt.httpStatus } : {}),
           finishedAt: attempt.finishedAt,
+        }
+      : null;
+  }
+
+  async findTechnicalFailure(job: ErpAttemptRecord["job"]) {
+    const [attempt] = await this.db
+      .select({ errorCode: erpAttempts.errorCode, errorMessage: erpAttempts.errorMessage })
+      .from(erpAttempts)
+      .where(
+        and(eq(erpAttempts.orderId, job.orderId), eq(erpAttempts.disposition, "technical_failure")),
+      )
+      .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt))
+      .limit(1);
+    return attempt
+      ? {
+          errorCode: technicalOrderFailureCodeSchema.parse(attempt.errorCode),
+          errorMessage:
+            attempt.errorMessage ?? "The ERP returned a non-transient technical failure.",
         }
       : null;
   }
@@ -96,7 +114,6 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         .select({
           generation: orderRecoveryJobs.processingGeneration,
           status: orderRecoveryJobs.status,
-          interventionReason: orderRecoveryJobs.interventionReason,
           nextAttemptAt: orderRecoveryJobs.nextAttemptAt,
           leaseExpiresAt: orderRecoveryJobs.leaseExpiresAt,
         })
@@ -110,13 +127,6 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         );
       }
       const generation = input.expectedProcessingGeneration;
-      const [scopeState] = await tx
-        .select({ interventionReason: erpScopeResilienceState.interventionReason })
-        .from(erpScopeResilienceState)
-        .where(
-          eq(erpScopeResilienceState.scope, input.job.runId ? `run:${input.job.runId}` : "catalog"),
-        )
-        .limit(1);
       const [run] = input.job.runId
         ? await tx
             .select({ administrativeStop: demoRuns.administrativeStop })
@@ -128,8 +138,6 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         generation !== control.generation ||
         (control.status !== "pending" && control.status !== "enqueued") ||
         (order?.status !== "queued" && order?.status !== "processing") ||
-        control.interventionReason !== null ||
-        scopeState?.interventionReason != null ||
         run?.administrativeStop != null ||
         (control.nextAttemptAt !== null && control.nextAttemptAt > eligibilityAt) ||
         (control.leaseExpiresAt !== null && control.leaseExpiresAt <= eligibilityAt)
@@ -192,7 +200,6 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
             eq(orderRecoveryJobs.recoveryKey, recoveryKey),
             eq(orderRecoveryJobs.processingGeneration, generation),
             inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-            isNull(orderRecoveryJobs.interventionReason),
             or(
               isNull(orderRecoveryJobs.nextAttemptAt),
               lte(orderRecoveryJobs.nextAttemptAt, eligibilityAt),
@@ -639,6 +646,7 @@ function isCanonicalTerminalOutcome(record: ErpAttemptRecord): boolean {
 function isDefinitiveCallOutcome(record: ErpAttemptRecord): boolean {
   if (isCanonicalTerminalOutcome(record)) return true;
   return (
+    record.disposition === "technical_failure" ||
     record.disposition === "capacity_rejected" ||
     // Availability also includes transport failures without authoritative ERP evidence.
     (record.disposition === "temporarily_unavailable" && record.response !== undefined)
@@ -656,7 +664,7 @@ function attemptCountCategory(record: ErpAttemptRecord): ErpOutcomeDisposition {
   if (record.errorCode === "erp_request_failed") return "temporarily_unavailable";
   const recognizedCode = erpErrorCodeSchema.safeParse(record.errorCode);
   if (recognizedCode.success) return recognizedErpErrorCodeDispositions[recognizedCode.data];
-  if (record.errorCode !== undefined) return "intervention_required";
+  if (record.errorCode !== undefined) return "technical_failure";
   return "temporarily_unavailable";
 }
 

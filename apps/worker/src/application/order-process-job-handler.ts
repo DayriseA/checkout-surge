@@ -1,4 +1,4 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderFailureCategory, OrderProcessJob } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
 
 export interface OrderProcessDeliveryMetadata {
@@ -42,6 +42,7 @@ export type ConfirmedTransitionResult =
       confirmedAt: Date;
     };
 export interface OrderFailure {
+  category: OrderFailureCategory;
   code: string;
   message: string;
 }
@@ -241,7 +242,7 @@ export function createOrderProcessJobHandler(dependencies: {
         isScheduledOutcome(confirmationResult) &&
         confirmationResult.disposition !== "succeeded"
       ) {
-        if (confirmationResult.disposition !== "permanent_rejection") {
+        if (confirmationResult.disposition === "deferred") {
           await publishBusinessOutcomeUpdateWithoutFailingJob(
             dependencies,
             job,
@@ -255,6 +256,10 @@ export function createOrderProcessJobHandler(dependencies: {
           return;
         }
         const failure = {
+          category:
+            confirmationResult.disposition === "technical_failure"
+              ? ("technical" as const)
+              : ("business_rejection" as const),
           code: confirmationResult.errorCode,
           message: confirmationResult.errorMessage,
         };
@@ -416,7 +421,8 @@ function isScheduledOutcome(
 ): value is
   | { disposition: "succeeded" }
   | { disposition: "permanent_rejection"; errorCode: string; errorMessage: string }
-  | { disposition: "deferred" | "intervention_required"; reason: string } {
+  | { disposition: "technical_failure"; errorCode: string; errorMessage: string }
+  | { disposition: "deferred"; reason: string } {
   return typeof value === "object" && value !== null && "disposition" in value;
 }
 
