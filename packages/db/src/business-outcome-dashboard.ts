@@ -3,12 +3,14 @@ import {
   businessOutcomeSummarySchema,
   type ConsistencyLagSummary,
   consistencyLagSummarySchema,
+  type ErpCumulativeOutcomeCounts,
 } from "@checkout-surge/contracts";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunSoldOutCounts,
   erpAttempts,
+  orderRecoveryJobs,
   orders,
   reservationPendingPersistence,
   reservations,
@@ -18,6 +20,31 @@ import {
 export interface BusinessOutcomeProjectionScope {
   saleOfferId: string;
   runId?: string;
+}
+
+export async function readCumulativeErpOutcomeCounts(
+  db: CheckoutSurgeDatabase,
+  scope: { runId: string } | { saleOfferId: string },
+): Promise<ErpCumulativeOutcomeCounts> {
+  const orderFilter =
+    "runId" in scope ? eq(orders.runId, scope.runId) : eq(orders.saleOfferId, scope.saleOfferId);
+  const [row] = await db
+    .select({
+      capacityRejected: sumAttemptCount("capacity_rejected"),
+      temporarilyUnavailable: sumAttemptCount("temporarily_unavailable"),
+      uncertainResult: sumAttemptCount("uncertain_result"),
+      permanentRejected: sumAttemptCount("permanent_rejection"),
+    })
+    .from(orderRecoveryJobs)
+    .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
+    .where(orderFilter);
+
+  return {
+    capacityRejected: row?.capacityRejected ?? 0,
+    temporarilyUnavailable: row?.temporarilyUnavailable ?? 0,
+    uncertainResult: row?.uncertainResult ?? 0,
+    permanentRejected: row?.permanentRejected ?? 0,
+  };
 }
 
 export async function readBusinessOutcomeSummary(
@@ -151,6 +178,10 @@ async function countRows(
   const [row] = await db.select({ value: sql<number>`count(*)::int` }).from(table).where(where);
 
   return row?.value ?? 0;
+}
+
+function sumAttemptCount(category: string) {
+  return sql<number>`coalesce(sum(coalesce((${orderRecoveryJobs.attemptCounts} ->> ${category})::int, 0)), 0)::int`;
 }
 
 function clampNonnegative(value: number | null): number | null {

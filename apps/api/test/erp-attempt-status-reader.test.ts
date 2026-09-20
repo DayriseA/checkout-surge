@@ -5,6 +5,7 @@ import {
   demoRunSaleContexts,
   demoRuns,
   erpAttempts,
+  orderRecoveryJobs,
   orders,
   products,
   readBusinessOutcomeSummary,
@@ -52,6 +53,19 @@ describe("PostgresErpAttemptStatusReader", () => {
     }
 
     const firstAttemptStartedAt = new Date("2026-06-22T00:00:00.000Z");
+    await connection.db.insert(orderRecoveryJobs).values({
+      recoveryKey: `order:${ids.order}`,
+      jobId: "erp-status-reader-control",
+      orderId: ids.order,
+      payload: {},
+      reason: "erp_processing",
+      attemptCounts: {
+        capacity_rejected: 90,
+        temporarily_unavailable: 10,
+        uncertain_result: 5,
+        permanent_rejection: 1,
+      },
+    });
     await connection.db.insert(erpAttempts).values(
       Array.from({ length: 125 }, (_, index) => {
         const attemptNumber = index + 1;
@@ -85,6 +99,12 @@ describe("PostgresErpAttemptStatusReader", () => {
     expect(readModel.recentAttemptCount).toBe(125);
     expect(readModel.recentFailureCount).toBe(50);
     expect(readModel.recentTimeoutCount).toBe(25);
+    expect(readModel.cumulativeOutcomeCounts).toEqual({
+      capacityRejected: 90,
+      temporarilyUnavailable: 10,
+      uncertainResult: 5,
+      permanentRejected: 1,
+    });
     expect(readModel.latestAttempt).toEqual({
       runId: ids.runA,
       status: "timed_out",

@@ -4,6 +4,7 @@ import {
   demoPresetSchema,
   demoRunSummaryShapeSchema,
 } from "./entities.js";
+import { erpAttemptHistoryRetentionLimit, erpCumulativeOutcomeCountsSchema } from "./erp.js";
 import { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
@@ -477,6 +478,9 @@ const erpAttemptStatusCountsSchema = z
 export const runHistoryErpAttemptSummarySchema = z
   .object({
     totalCount: nonnegativeIntegerSchema,
+    historyCoverage: z.literal("retained_history").optional(),
+    attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
+    cumulativeOutcomeCounts: erpCumulativeOutcomeCountsSchema.optional(),
     byStatus: erpAttemptStatusCountsSchema,
     averageLatencyMs: nonnegativeNumberSchema.nullable(),
     p95LatencyMs: nonnegativeNumberSchema.nullable(),
@@ -500,6 +504,8 @@ export const adminRunHistoryDetailResponseSchema = z
       .strict(),
     erpAttempts: runHistoryCollectionMetadataSchema
       .extend({
+        historyCoverage: z.literal("retained_history").optional(),
+        attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
         records: z.array(runHistoryErpAttemptSchema),
       })
       .strict(),
@@ -511,6 +517,8 @@ export const adminRunHistoryDetailResponseSchema = z
       .strict(),
     eventTimeline: runHistoryCollectionMetadataSchema
       .extend({
+        attemptHistoryCoverage: z.literal("retained_history").optional(),
+        attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
         records: z.array(runHistoryEventTimelineEntrySchema),
       })
       .strict(),

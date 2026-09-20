@@ -57,6 +57,13 @@
       "when": 1789874620626,
       "tag": "0007_fat_captain_universe",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789879157690,
+      "tag": "0008_overrated_lester",
+      "breakpoints": true
     }
   ]
 }

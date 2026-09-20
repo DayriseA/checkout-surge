@@ -142,6 +142,18 @@ export const erpLatestAttemptSummarySchema = z
   .strict();
 export type ErpLatestAttemptSummary = z.infer<typeof erpLatestAttemptSummarySchema>;
 
+export const erpAttemptHistoryRetentionLimit = 32;
+
+export const erpCumulativeOutcomeCountsSchema = z
+  .object({
+    capacityRejected: nonnegativeIntegerSchema,
+    temporarilyUnavailable: nonnegativeIntegerSchema,
+    uncertainResult: nonnegativeIntegerSchema,
+    permanentRejected: nonnegativeIntegerSchema,
+  })
+  .strict();
+export type ErpCumulativeOutcomeCounts = z.infer<typeof erpCumulativeOutcomeCountsSchema>;
+
 export const runErpOutcomeSummarySchema = z
   .object({
     runId: uuidSchema,
@@ -152,6 +164,9 @@ export const runErpOutcomeSummarySchema = z
     recentAttemptCount: nonnegativeIntegerSchema,
     recentFailureCount: nonnegativeIntegerSchema,
     recentTimeoutCount: nonnegativeIntegerSchema,
+    recentAttemptCoverage: z.literal("retained_history").optional(),
+    attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
+    cumulativeOutcomeCounts: erpCumulativeOutcomeCountsSchema.optional(),
     observedAt: isoTimestampSchema,
   })
   .strict();

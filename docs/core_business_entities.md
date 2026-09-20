@@ -17,7 +17,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Reservation model | Model reservations as first-class stock holds separate from orders | The project's core workflow depends on "reservation secured" not meaning "order confirmed." |
 | Rejected reservation persistence | Do not create a PostgreSQL row for every immediate sold-out rejection in the current model | At surge scale, persisting every reject would create noise without improving business recovery or operator understanding. |
 | Order model | Create an order only from a successful reservation | Orders represent the asynchronous business process, not every attempted click. |
-| ERP attempt model | Store ERP calls as append-only attempt records per order | Retry behavior, latency analysis, and failure diagnosis all require attempt history, not just a final outcome. |
+| ERP attempt model | Retain the newest 32 ordinary ERP attempts per order plus protected canonical, permanent-rejection, and current unresolved-call evidence | Cumulative control-record counters preserve lifetime outcome totals without unbounded diagnostic rows. |
 | ERP result model | Keep worker attempt evidence separate from the Mock ERP's durable terminal-outcome ledger | Status lookup and same-key replay can settle a lost response across process restarts without treating worker-local evidence as proof of the external effect. |
 | Order recovery model | Store retryable/accepted-result handoff recovery and poison-job evidence independently from the live queue | An accepted ERP result must not be lost because local persistence failed, and malformed jobs need durable audit evidence. |
 | Order event model | Keep an append-only event timeline for reservation and order facts | The operator dashboard, run recap, and post-incident debugging all benefit from a durable event history. |
@@ -803,7 +803,7 @@ This document establishes a domain model that preserves the core architectural s
 - products, sale offers, and durable order history live in PostgreSQL,
 - inventory is a split object with Redis on the hot path,
 - reservations are distinct from orders,
-- ERP retries and accepted results are captured as delivery-scoped durable attempt history, Mock ERP replay is process-local, and unsafe handoffs have durable recovery/dead-letter evidence,
+- ERP calls use durable call identities, bounded per-order attempt history, and cumulative outcome counters; canonical results and the current unresolved call remain protected while unsafe handoffs retain recovery/dead-letter evidence,
 - business facts are preserved in an event timeline,
 - demo presets, runs, generated sale ownership contexts, pending-persistence audit evidence, simulated notifications, ERP attempts/recovery evidence, sold-out aggregates, finalizations, summaries, and the public runtime policy are durable PostgreSQL records,
 - and the UI derives dashboard-facing statuses from those underlying states rather than redefining the lifecycle itself.

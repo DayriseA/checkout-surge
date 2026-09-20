@@ -30,6 +30,11 @@ const enumInventory = {
     "erp_attempt_status",
     contracts.erpAttemptStatusValues,
   ],
+  erpOutcomeDispositionEnum: [
+    schema.erpOutcomeDispositionEnum,
+    "erp_outcome_disposition",
+    contracts.erpOutcomeDispositionValues,
+  ],
   orderEventNameEnum: [
     schema.orderEventNameEnum,
     "order_event_name",

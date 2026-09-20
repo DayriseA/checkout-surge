@@ -24,6 +24,7 @@ import {
   demoRunStatusValues,
   emptyServerReservationTimingSummary,
   erpAttemptStatusValues,
+  erpOutcomeDispositionValues,
   operatorModeValues,
   orderEventNameValues,
   orderFailureCategoryValues,
@@ -70,6 +71,11 @@ export const orderFailureCategoryEnum = pgEnum(
 );
 
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
+
+export const erpOutcomeDispositionEnum = pgEnum(
+  "erp_outcome_disposition",
+  erpOutcomeDispositionValues,
+);
 
 export const recoveryJobStatusEnum = pgEnum("recovery_job_status", recoveryJobStatusValues);
 
@@ -417,6 +423,7 @@ export const erpAttempts = pgTable(
     }),
     attemptNumber: integer("attempt_number").notNull(),
     status: erpAttemptStatusEnum("status").notNull(),
+    disposition: erpOutcomeDispositionEnum("disposition"),
     terminal: boolean("terminal").default(false).notNull(),
     httpStatus: integer("http_status"),
     errorCode: text("error_code"),

@@ -60,6 +60,7 @@ describe("Postgres ERP attempt persistence", () => {
     let selectCalls = 0;
     const existing = {
       status: "succeeded",
+      disposition: "succeeded",
       terminal: true,
       httpStatus: 200,
       errorCode: null,
@@ -109,6 +110,7 @@ describe("Postgres ERP attempt persistence", () => {
         chain([
           {
             status: "succeeded",
+            disposition: "succeeded",
             terminal: true,
             httpStatus: 200,
             errorCode: null,
@@ -126,5 +128,37 @@ describe("Postgres ERP attempt persistence", () => {
     await expect(persistence.recordAttempt({ ...record, terminal: false })).rejects.toThrow(
       "contradictory ERP attempt",
     );
+  });
+
+  it("accepts an identical pre-migration attempt with a backfilled disposition", async () => {
+    const { response: _response, ...recordWithoutResponse } = record;
+    const failedRecord = {
+      ...recordWithoutResponse,
+      status: "failed" as const,
+      disposition: "intervention_required" as const,
+      terminal: false,
+      httpStatus: 500,
+      errorCode: "erp_forced_outage",
+    };
+    const tx = {
+      select: vi.fn(() =>
+        chain([
+          {
+            status: failedRecord.status,
+            disposition: "temporarily_unavailable",
+            terminal: failedRecord.terminal,
+            httpStatus: failedRecord.httpStatus,
+            errorCode: failedRecord.errorCode,
+            errorMessage: null,
+            confirmationId: null,
+            idempotencyKey: null,
+            response: null,
+          },
+        ]),
+      ),
+    };
+    const persistence = new PostgresErpAttemptPersistence(databaseWithTransaction(tx));
+
+    await expect(persistence.recordAttempt(failedRecord)).resolves.toBe(false);
   });
 });

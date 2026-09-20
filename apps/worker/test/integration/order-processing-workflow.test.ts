@@ -4,6 +4,7 @@ import {
   type AcceptedRunConfigSnapshot,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  erpAttemptHistoryRetentionLimit,
   type NotificationRecordJob,
   notificationRecordBullMqQueueName,
   type notificationRecordJobName,
@@ -25,6 +26,7 @@ import {
   getInventoryStatus,
   initializeInventory,
   orderEvents,
+  orderRecoveryJobs,
   orders,
   products,
   reservations,
@@ -966,13 +968,27 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         .select({ id: erpDispatchCalls.id })
         .from(erpDispatchCalls)
         .where(eq(erpDispatchCalls.orderId, ids.order));
-      const confirmedEvents = (await readOrderEvents(connection, ids.order)).filter(
+      const retainedEvents = await readOrderEvents(connection, ids.order);
+      const confirmedEvents = retainedEvents.filter(
         (event) => event.eventName === "order.confirmed",
       );
+      const attemptEvents = retainedEvents.filter((event) =>
+        event.eventName.startsWith("erp.attempt."),
+      );
+      const [control] = await connection.db
+        .select({ attemptCounts: orderRecoveryJobs.attemptCounts })
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, ids.order));
 
       expect(fetch).toHaveBeenCalledTimes(transientFailures + 1);
-      expect(attempts).toHaveLength(transientFailures + 1);
-      expect(new Set(calls.map((call) => call.id)).size).toBe(transientFailures + 1);
+      expect(attempts).toHaveLength(erpAttemptHistoryRetentionLimit);
+      expect(attemptEvents).toHaveLength(erpAttemptHistoryRetentionLimit);
+      expect(new Set(calls.map((call) => call.id)).size).toBe(erpAttemptHistoryRetentionLimit);
+      expect(attempts.some((attempt) => attempt.idempotencyKey !== null)).toBe(true);
+      expect(control?.attemptCounts).toMatchObject({
+        temporarily_unavailable: transientFailures,
+        succeeded: 1,
+      });
       expect(confirmedEvents).toHaveLength(1);
       expect(notificationRecordPublisher.publishForConfirmedOrder).toHaveBeenCalledOnce();
     } finally {

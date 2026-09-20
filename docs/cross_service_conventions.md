@@ -207,7 +207,7 @@ Run-scoped fields:
 | --- | --- | --- |
 | Queued / processing backlog | `businessOutcome.queuedOrders` is `accepted_awaiting_first_processing_start`; `processingOrders` and adjacent `retryingOrders` are filtered by `orders.runId`. Retrying remains separate because BullMQ retries can resume after the first processing start. | Complete projection `recoveredAt`; terminal history uses its captured run timeline. |
 | Confirmed and failed outcomes | `businessOutcome.confirmedOrders` and `failedOrders` are filtered by the selected `runId`. | Durable event timestamps and projection `recoveredAt`. |
-| ERP attempt totals | `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` query only `erp_attempts.run_id = scope.runId`; `recentAttemptWindowSeconds` defines the aggregate window. | `erp.observedAt` is the API observation time. |
+| ERP attempt totals | `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` query retained rows only for `erp_attempts.run_id = scope.runId`; `recentAttemptWindowSeconds` defines the time predicate and `recentAttemptCoverage = retained_history` prevents treating the bounded tail as complete. `cumulativeOutcomeCounts` sums per-order actual-call counters for capacity, unavailability, uncertainty/timeout, and permanent rejection across the full order lifetime. | `erp.observedAt` is the API observation time. |
 | Latest ERP attempt | `erp.latestAttempt` is selected only inside the same run predicate. Its status and `finishedAt` cannot be inherited from another or unscoped run. | `latestAttempt.finishedAt` is attempt completion time. |
 | Run circuit | `erp.circuit` reads the Redis per-run breaker key. `circuitReadStatus = available` with no snapshot means protection has not yet been exercised and is neutral; `unavailable` means the Redis read failed while independently read PostgreSQL attempt evidence remains visible. State, threshold, failure count, open/probe times, and reset timeout all belong to this run-keyed snapshot. | `circuit.lastChangedAt` is edge-triggered and changes only when run protection opens, probes, or closes. |
 
@@ -288,6 +288,8 @@ The canonical order lifecycle is:
 - `failed`
 
 Retrying remains a derived processing condition rather than a first-class order state. Retry counts, retry delays, and ERP-attempt history can be represented separately without changing the canonical lifecycle vocabulary.
+
+ERP attempt and `erp.attempt.*` event diagnostics retain 32 ordinary rows per order. Canonical success, permanent rejection, and the attempt referenced by the control record's current `unresolvedErpCallId` are exceptions to pruning. Run-history attempt rows, status totals, and attempt-event timelines carry `retained_history` coverage and the per-order limit; cumulative outcome counters are actual-call totals and exclude status lookups, local result reuse, and admission deferrals. Those counters cover orders processed since durable call accounting was introduced; legacy orders without a durable control record/counters contribute zero and are not backfilled.
 
 The implemented order workflows permit `queued -> processing | failed` and `processing -> confirmed | failed`; `confirmed` and `failed` are terminal. Producers select the explicit event name that describes the transition rather than deriving it through a generic status-to-event helper.
 

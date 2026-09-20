@@ -1524,6 +1524,14 @@ describe("ERP contracts", () => {
       recentAttemptCount: 8,
       recentFailureCount: 3,
       recentTimeoutCount: 1,
+      recentAttemptCoverage: "retained_history",
+      attemptRetentionLimitPerOrder: 32,
+      cumulativeOutcomeCounts: {
+        capacityRejected: 12,
+        temporarilyUnavailable: 4,
+        uncertainResult: 2,
+        permanentRejected: 1,
+      },
       observedAt: timestamp,
     });
     const protection = sharedErpProtectionStatusSchema.parse({

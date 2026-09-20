@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import {
   type ErpCallReference,
   type ErpOutcomeDisposition,
+  erpAttemptHistoryRetentionLimit,
   erpConfirmationResponseSchema,
   erpErrorCodeSchema,
   erpPermanentRejectionCodeValues,
@@ -18,7 +19,7 @@ import {
   orderRecoveryJobs,
   orders,
 } from "@checkout-surge/db";
-import { and, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type {
   ErpAttemptPersistence,
   ErpAttemptRecord,
@@ -208,6 +209,8 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           `Processing ownership for order ${input.job.orderId} changed before dispatch intent was recorded.`,
         );
       }
+      // Crash-left intents never reach recordAttempt, so bound call rows here too.
+      await pruneDispatchCalls(tx, input.job.orderId, erpCallId);
       return {
         erpCallId,
         orderId: input.job.orderId,
@@ -236,12 +239,13 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         .limit(1);
 
       if (record.call) {
-        await tx
+        const [storedCall] = await tx
           .select({ id: erpDispatchCalls.id })
           .from(erpDispatchCalls)
           .where(eq(erpDispatchCalls.id, record.call.erpCallId))
           .for("update")
           .limit(1);
+        if (!storedCall) return false;
         const [existingCall] = await tx
           .select()
           .from(erpAttempts)
@@ -295,6 +299,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         ...(record.call ? { erpCallId: record.call.erpCallId } : {}),
         attemptNumber: record.delivery.attemptNumber,
         status: record.status,
+        disposition: attemptCountCategory(record),
         terminal: record.terminal,
         ...(record.httpStatus ? { httpStatus: record.httpStatus } : {}),
         ...(record.errorCode ? { errorCode: record.errorCode } : {}),
@@ -308,6 +313,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         ...(record.response ? { response: record.response } : {}),
         ...(idempotencyKey && !canonicalSuccessExists ? { idempotencyKey } : {}),
       };
+      let insertedCanonical = idempotencyKey !== undefined && !canonicalSuccessExists;
       let inserted = await tx
         .insert(erpAttempts)
         .values(attemptValues)
@@ -345,6 +351,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
               .values({ ...attemptValues, idempotencyKey: null })
               .onConflictDoNothing()
               .returning({ id: erpAttempts.id });
+            insertedCanonical = false;
           }
         }
         if (inserted.length > 0) {
@@ -377,6 +384,10 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         await accountForCall(tx, record, record.call);
       }
 
+      const attemptId = inserted[0]?.id;
+      if (!attemptId) {
+        throw new Error(`ERP attempt for order ${record.job.orderId} could not be recorded.`);
+      }
       await tx.insert(orderEvents).values({
         orderId: record.job.orderId,
         reservationId: record.job.reservationId,
@@ -386,6 +397,9 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         eventName: record.status === "succeeded" ? "erp.attempt.succeeded" : "erp.attempt.failed",
         payload: {
           erpAttemptStatus: record.status,
+          erpAttemptId: attemptId,
+          disposition: attemptCountCategory(record),
+          canonical: insertedCanonical,
           terminal: record.terminal,
           attemptNumber: record.delivery.attemptNumber,
           attemptsMade: record.delivery.attemptsMade,
@@ -395,6 +409,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}),
           ...(record.operation ? { operation: record.operation } : {}),
           ...(record.replayed !== undefined ? { replayed: record.replayed } : {}),
+          ...(record.call ? { erpCallId: record.call.erpCallId } : {}),
           ...(record.response?.confirmationId
             ? { confirmationId: record.response.confirmationId }
             : {}),
@@ -402,6 +417,7 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         source: "worker",
         occurredAt: record.finishedAt,
       });
+      await pruneAttemptHistory(tx, record.job.orderId);
       return true;
     });
   }
@@ -416,6 +432,146 @@ export class ErpAttemptContradictionError extends Error {
 }
 
 type Transaction = Parameters<Parameters<CheckoutSurgeDatabase["transaction"]>[0]>[0];
+
+async function pruneAttemptHistory(tx: Transaction, orderId: string): Promise<void> {
+  const [control] = await tx
+    .select({ unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId })
+    .from(orderRecoveryJobs)
+    .where(eq(orderRecoveryJobs.orderId, orderId))
+    .limit(1);
+  const [attemptTotal] = await tx
+    .select({ value: count() })
+    .from(erpAttempts)
+    .where(eq(erpAttempts.orderId, orderId))
+    .limit(1);
+  const attemptsToPrune = Math.max(0, (attemptTotal?.value ?? 0) - erpAttemptHistoryRetentionLimit);
+
+  if (attemptsToPrune > 0) {
+    const candidates = await tx
+      .select({ id: erpAttempts.id, erpCallId: erpAttempts.erpCallId })
+      .from(erpAttempts)
+      .where(
+        and(
+          eq(erpAttempts.orderId, orderId),
+          isNull(erpAttempts.idempotencyKey),
+          or(isNull(erpAttempts.disposition), ne(erpAttempts.disposition, "permanent_rejection")),
+          control?.unresolvedErpCallId
+            ? or(
+                isNull(erpAttempts.erpCallId),
+                ne(erpAttempts.erpCallId, control.unresolvedErpCallId),
+              )
+            : undefined,
+        ),
+      )
+      .orderBy(asc(erpAttempts.finishedAt), asc(erpAttempts.createdAt), asc(erpAttempts.id))
+      .limit(attemptsToPrune);
+    const attemptIds = candidates.map(({ id }) => id);
+    const callIds = candidates.flatMap(({ erpCallId }) => (erpCallId ? [erpCallId] : []));
+    if (attemptIds.length > 0) {
+      await tx
+        .delete(orderEvents)
+        .where(inArray(sql<string>`${orderEvents.payload} ->> 'erpAttemptId'`, attemptIds));
+      await tx.delete(erpAttempts).where(inArray(erpAttempts.id, attemptIds));
+    }
+    if (callIds.length > 0) {
+      await tx.delete(erpDispatchCalls).where(inArray(erpDispatchCalls.id, callIds));
+    }
+  }
+
+  await pruneDispatchCalls(tx, orderId, control?.unresolvedErpCallId ?? null);
+  await pruneAttemptEvents(tx, orderId, control?.unresolvedErpCallId ?? null);
+}
+
+async function pruneDispatchCalls(
+  tx: Transaction,
+  orderId: string,
+  unresolvedErpCallId: string | null,
+): Promise<void> {
+  const [callTotal] = await tx
+    .select({ value: count() })
+    .from(erpDispatchCalls)
+    .where(eq(erpDispatchCalls.orderId, orderId))
+    .limit(1);
+  const callsToPrune = Math.max(0, (callTotal?.value ?? 0) - erpAttemptHistoryRetentionLimit);
+  if (callsToPrune === 0) return;
+
+  const candidates = await tx
+    .select({ id: erpDispatchCalls.id })
+    .from(erpDispatchCalls)
+    .where(
+      and(
+        eq(erpDispatchCalls.orderId, orderId),
+        unresolvedErpCallId ? ne(erpDispatchCalls.id, unresolvedErpCallId) : undefined,
+        sql`not exists (
+          select 1 from ${erpAttempts}
+          where ${erpAttempts.erpCallId} = ${erpDispatchCalls.id}
+            and (${erpAttempts.idempotencyKey} is not null or ${erpAttempts.disposition} = 'permanent_rejection')
+        )`,
+      ),
+    )
+    // Discard crash-left call intents before sacrificing retained attempt diagnostics.
+    .orderBy(
+      sql`case when exists (
+        select 1 from ${erpAttempts}
+        where ${erpAttempts.erpCallId} = ${erpDispatchCalls.id}
+      ) then 1 else 0 end`,
+      asc(erpDispatchCalls.dispatchedAt),
+      asc(erpDispatchCalls.createdAt),
+      asc(erpDispatchCalls.id),
+    )
+    .limit(callsToPrune);
+  const callIds = candidates.map(({ id }) => id);
+  if (callIds.length === 0) return;
+
+  const linkedAttempts = await tx
+    .select({ id: erpAttempts.id })
+    .from(erpAttempts)
+    .where(inArray(erpAttempts.erpCallId, callIds));
+  const attemptIds = linkedAttempts.map(({ id }) => id);
+  if (attemptIds.length > 0) {
+    await tx
+      .delete(orderEvents)
+      .where(inArray(sql<string>`${orderEvents.payload} ->> 'erpAttemptId'`, attemptIds));
+    await tx.delete(erpAttempts).where(inArray(erpAttempts.id, attemptIds));
+  }
+  await tx.delete(erpDispatchCalls).where(inArray(erpDispatchCalls.id, callIds));
+}
+
+async function pruneAttemptEvents(
+  tx: Transaction,
+  orderId: string,
+  unresolvedErpCallId: string | null,
+): Promise<void> {
+  const attemptEventNames = ["erp.attempt.failed", "erp.attempt.succeeded"] as const;
+  const [eventTotal] = await tx
+    .select({ value: count() })
+    .from(orderEvents)
+    .where(and(eq(orderEvents.orderId, orderId), inArray(orderEvents.eventName, attemptEventNames)))
+    .limit(1);
+  const eventsToPrune = Math.max(0, (eventTotal?.value ?? 0) - erpAttemptHistoryRetentionLimit);
+  if (eventsToPrune === 0) return;
+
+  const candidates = await tx
+    .select({ id: orderEvents.id })
+    .from(orderEvents)
+    .where(
+      and(
+        eq(orderEvents.orderId, orderId),
+        inArray(orderEvents.eventName, attemptEventNames),
+        sql`coalesce(${orderEvents.payload} ->> 'canonical', 'false') <> 'true'`,
+        sql`coalesce(${orderEvents.payload} ->> 'disposition', '') <> 'permanent_rejection'`,
+        unresolvedErpCallId
+          ? sql`coalesce(${orderEvents.payload} ->> 'erpCallId', '') <> ${unresolvedErpCallId}`
+          : undefined,
+      ),
+    )
+    .orderBy(asc(orderEvents.occurredAt), asc(orderEvents.createdAt), asc(orderEvents.id))
+    .limit(eventsToPrune);
+  const eventIds = candidates.map(({ id }) => id);
+  if (eventIds.length > 0) {
+    await tx.delete(orderEvents).where(inArray(orderEvents.id, eventIds));
+  }
+}
 
 /**
  * Per-call cumulative accounting (D09): the counters are incremented exactly

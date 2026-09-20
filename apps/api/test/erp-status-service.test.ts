@@ -235,5 +235,13 @@ function erpReadModel(): Omit<
     recentAttemptCount: 0,
     recentFailureCount: 0,
     recentTimeoutCount: 0,
+    recentAttemptCoverage: "retained_history",
+    attemptRetentionLimitPerOrder: 32,
+    cumulativeOutcomeCounts: {
+      capacityRejected: 0,
+      temporarilyUnavailable: 0,
+      uncertainResult: 0,
+      permanentRejected: 0,
+    },
   };
 }

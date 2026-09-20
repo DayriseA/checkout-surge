@@ -10,6 +10,7 @@ import {
   countUnavailableLoadRunDiagnosticProbes,
   deriveLoadExecutionPlan,
   deriveRunResult,
+  erpAttemptHistoryRetentionLimit,
   httpTimingBreakdownSummarySchema,
   internalRunFailureReasonSchema,
   type LoadRunDiagnosticsSummary,
@@ -47,6 +48,7 @@ import {
   erpAttempts,
   orderEvents,
   orders,
+  readCumulativeErpOutcomeCounts,
   simulatedNotifications,
 } from "@checkout-surge/db";
 import { type AnyColumn, and, count, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
@@ -136,19 +138,22 @@ export class RunHistoryService implements RunHistoryController {
     const source = await this.readDetailSource(runId);
     if (!source) return null;
 
-    const attemptCounts = await this.options.db
-      .select({
-        totalCount: sql<number>`count(*)::int`,
-        succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
-        failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
-        timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
-        averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
-        p95LatencyMs: sql<
-          number | null
-        >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
-      })
-      .from(erpAttempts)
-      .where(eq(erpAttempts.runId, runId));
+    const [attemptCounts, cumulativeOutcomeCounts] = await Promise.all([
+      this.options.db
+        .select({
+          totalCount: sql<number>`count(*)::int`,
+          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
+          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
+          p95LatencyMs: sql<
+            number | null
+          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
+        })
+        .from(erpAttempts)
+        .where(eq(erpAttempts.runId, runId)),
+      readCumulativeErpOutcomeCounts(this.options.db, { runId }),
+    ]);
     const attempt = attemptCounts[0];
     const summary = toPublicRunHistorySummary(source.summaryRow);
     const run = toPublicRunHistoryRun(source.runRow);
@@ -167,6 +172,9 @@ export class RunHistoryService implements RunHistoryController {
       ),
       erpAttempts: {
         totalCount: attempt?.totalCount ?? 0,
+        historyCoverage: "retained_history",
+        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
+        cumulativeOutcomeCounts,
         byStatus: {
           succeeded: attempt?.succeeded ?? 0,
           failed: attempt?.failed ?? 0,
@@ -268,6 +276,7 @@ export class RunHistoryService implements RunHistoryController {
       notificationTotalRows,
       eventRows,
       eventTotalRows,
+      cumulativeOutcomeCounts,
     ] = await Promise.all([
       this.options.db
         .select()
@@ -346,6 +355,7 @@ export class RunHistoryService implements RunHistoryController {
         .limit(query.limit)
         .offset(offset),
       eventCounts,
+      readCumulativeErpOutcomeCounts(this.options.db, { runId }),
     ]);
 
     const orderTotalCount = orderTotalRows[0]?.totalCount ?? 0;
@@ -400,6 +410,8 @@ export class RunHistoryService implements RunHistoryController {
       erpAttempts: {
         records: erpAttemptRows.map(toRunHistoryErpAttempt),
         totalCount: erpAttemptTotalCount,
+        historyCoverage: "retained_history",
+        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
         matchedCount: erpAttemptMatchedCount,
         warningCount: erpAttemptTotalRows[0]?.warningCount ?? 0,
         limit: query.limit,
@@ -408,6 +420,9 @@ export class RunHistoryService implements RunHistoryController {
       },
       erpAttemptSummary: {
         totalCount: erpAttemptTotalCount,
+        historyCoverage: "retained_history",
+        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
+        cumulativeOutcomeCounts,
         byStatus: {
           succeeded: erpAttemptTotalRows[0]?.succeeded ?? 0,
           failed: erpAttemptTotalRows[0]?.failed ?? 0,
@@ -429,6 +444,8 @@ export class RunHistoryService implements RunHistoryController {
         records: eventRows.map(toRunHistoryEventTimelineEntry),
         totalCount: eventTotalCount,
         matchedCount: eventMatchedCount,
+        attemptHistoryCoverage: "retained_history",
+        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
         warningCount: 0,
         limit: query.limit,
         truncated: recordsOmitted(eventMatchedCount, eventRows.length),

@@ -1,16 +1,19 @@
 import type {
   DashboardProjectionScope,
   ErpCircuitBreakerSnapshot,
+  ErpCumulativeOutcomeCounts,
   ErpLatestAttemptSummary,
   RunErpOutcomeSummary,
   SharedErpProtectionStatus,
 } from "@checkout-surge/contracts";
+import { erpAttemptHistoryRetentionLimit } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   type ErpCircuitBreakerScope,
   erpAttempts,
   getErpCircuitBreakerSnapshot,
+  readCumulativeErpOutcomeCounts,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
@@ -22,6 +25,7 @@ export interface ErpStatusReadModel {
   recentAttemptCount: number;
   recentFailureCount: number;
   recentTimeoutCount: number;
+  cumulativeOutcomeCounts?: ErpCumulativeOutcomeCounts | undefined;
 }
 
 export interface ErpAttemptStatusReader {
@@ -53,7 +57,7 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
     recentAttemptWindowSeconds: number,
   ): Promise<ErpStatusReadModel> {
     const recentSince = new Date(now.getTime() - recentAttemptWindowSeconds * 1000);
-    const [latestAttemptRows, recentAttemptCountRows] = await Promise.all([
+    const [latestAttemptRows, recentAttemptCountRows, cumulativeOutcomeCounts] = await Promise.all([
       this.db
         .select({
           runId: erpAttempts.runId,
@@ -72,6 +76,7 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
         })
         .from(erpAttempts)
         .where(and(eq(erpAttempts.runId, scope.runId), gte(erpAttempts.finishedAt, recentSince))),
+      readCumulativeErpOutcomeCounts(this.db, scope),
     ]);
 
     const recentAttemptCounts = recentAttemptCountRows[0] ?? {
@@ -86,6 +91,7 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
       recentAttemptCount: recentAttemptCounts.recentAttemptCount,
       recentFailureCount: recentAttemptCounts.recentFailureCount,
       recentTimeoutCount: recentAttemptCounts.recentTimeoutCount,
+      cumulativeOutcomeCounts,
     };
   }
 }
@@ -186,6 +192,9 @@ export class RunErpOutcomeService {
       recentAttemptCount: attemptReadModel.recentAttemptCount,
       recentFailureCount: attemptReadModel.recentFailureCount,
       recentTimeoutCount: attemptReadModel.recentTimeoutCount,
+      recentAttemptCoverage: "retained_history",
+      attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
+      cumulativeOutcomeCounts: attemptReadModel.cumulativeOutcomeCounts,
       observedAt: now.toISOString(),
     };
   }

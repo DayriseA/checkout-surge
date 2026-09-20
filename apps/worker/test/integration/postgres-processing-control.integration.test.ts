@@ -1,4 +1,9 @@
-import type { ErpCallReference, OrderProcessJob } from "@checkout-surge/contracts";
+import { randomUUID } from "node:crypto";
+import {
+  type ErpCallReference,
+  erpAttemptHistoryRetentionLimit,
+  type OrderProcessJob,
+} from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -12,7 +17,7 @@ import {
 } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
@@ -1003,6 +1008,285 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     await expect(attemptPersistence.recordAttempt(successRecord)).resolves.toBe(false);
     expect(await controlRow(seeded.orderId)).toMatchObject({
       attemptCounts: { succeeded: 2, capacity_rejected: 1, uncertain_result: 1 },
+    });
+  });
+
+  it("bounds attempts, call rows, and attempt events without losing cumulative or protected evidence", async () => {
+    const seeded = await seedOrder({ createdAt: now });
+    const other = await seedOrder({ createdAt: new Date(now.getTime() + 1) });
+    await transitionPersistence.transitionToProcessing(seeded.job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "bounded-history",
+    });
+    await transitionPersistence.transitionToProcessing(other.job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 1,
+      deliveryId: "other-order",
+    });
+
+    const idempotencyKey = `erp-confirmation:${seeded.orderId}`;
+    const supersededStartedAt = new Date(now.getTime() + 10);
+    const supersededCall = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey,
+      dispatchedAt: supersededStartedAt,
+      expectedProcessingGeneration: 0,
+    });
+    const supersededRecord = {
+      job: seeded.job,
+      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+      call: supersededCall,
+      disposition: "uncertain_result" as const,
+      status: "timed_out" as const,
+      terminal: false,
+      errorCode: "erp_request_timeout",
+      latencyMs: 1,
+      startedAt: supersededStartedAt,
+      finishedAt: new Date(supersededStartedAt.getTime() + 1),
+    };
+    await attemptPersistence.recordAttempt(supersededRecord);
+
+    const canonicalStartedAt = new Date(now.getTime() + 20);
+    const canonicalCall = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey,
+      dispatchedAt: canonicalStartedAt,
+      expectedProcessingGeneration: 0,
+      supersedesErpCallId: supersededCall.erpCallId,
+    });
+    await attemptPersistence.recordAttempt({
+      job: seeded.job,
+      delivery: { attemptNumber: 1, attemptsMade: 1, maxAttempts: 1 },
+      call: canonicalCall,
+      disposition: "succeeded",
+      status: "succeeded",
+      terminal: true,
+      httpStatus: 200,
+      latencyMs: 1,
+      startedAt: canonicalStartedAt,
+      finishedAt: new Date(canonicalStartedAt.getTime() + 1),
+      response: {
+        status: "succeeded",
+        confirmationId: "bounded-history-canonical",
+        httpStatus: 200,
+        latencyMs: 1,
+        timestamp: new Date(canonicalStartedAt.getTime() + 1).toISOString(),
+      },
+    });
+
+    const permanentStartedAt = new Date(now.getTime() + 30);
+    const permanentCall = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey,
+      dispatchedAt: permanentStartedAt,
+      expectedProcessingGeneration: 0,
+    });
+    await attemptPersistence.recordAttempt({
+      job: seeded.job,
+      delivery: { attemptNumber: 1, attemptsMade: 2, maxAttempts: 1 },
+      call: permanentCall,
+      disposition: "permanent_rejection",
+      status: "failed",
+      terminal: true,
+      errorCode: "test_declared_permanent_rejection",
+      latencyMs: 1,
+      startedAt: permanentStartedAt,
+      finishedAt: new Date(permanentStartedAt.getTime() + 1),
+    });
+    await controlPersistence.resolveDispatchedCall({
+      orderId: seeded.orderId,
+      erpCallId: permanentCall.erpCallId,
+    });
+
+    const timeoutStartedAt = new Date(now.getTime() + 40);
+    const timeoutCall = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey,
+      dispatchedAt: timeoutStartedAt,
+      expectedProcessingGeneration: 0,
+    });
+    await attemptPersistence.recordAttempt({
+      job: seeded.job,
+      delivery: { attemptNumber: 1, attemptsMade: 3, maxAttempts: 1 },
+      call: timeoutCall,
+      disposition: "uncertain_result",
+      status: "timed_out",
+      terminal: false,
+      errorCode: "erp_request_timeout",
+      latencyMs: 1,
+      startedAt: timeoutStartedAt,
+      finishedAt: new Date(timeoutStartedAt.getTime() + 1),
+    });
+
+    const orphanCallIds: string[] = [];
+    for (let index = 0; index < 4; index += 1) {
+      const dispatchedAt = new Date(now.getTime() + 50 + index);
+      const id = randomUUID();
+      orphanCallIds.push(id);
+      await requireConnection().db.insert(erpDispatchCalls).values({
+        id,
+        orderId: seeded.orderId,
+        processingGeneration: 0,
+        idempotencyKey,
+        publicOrderId: seeded.job.publicOrderId,
+        reservationId: seeded.job.reservationId,
+        saleOfferId: seeded.job.saleOfferId,
+        quantity: seeded.job.quantity,
+        correlationId: seeded.job.correlationId,
+        dispatchedAt,
+        resolvedAt: dispatchedAt,
+      });
+    }
+
+    for (let index = 0; index < erpAttemptHistoryRetentionLimit + 3; index += 1) {
+      const startedAt = new Date(now.getTime() + 100 + index * 10);
+      const erpCallId = randomUUID();
+      await requireConnection().db.insert(erpDispatchCalls).values({
+        id: erpCallId,
+        orderId: seeded.orderId,
+        processingGeneration: 0,
+        idempotencyKey,
+        publicOrderId: seeded.job.publicOrderId,
+        reservationId: seeded.job.reservationId,
+        saleOfferId: seeded.job.saleOfferId,
+        quantity: seeded.job.quantity,
+        correlationId: seeded.job.correlationId,
+        dispatchedAt: startedAt,
+      });
+      await expect(
+        attemptPersistence.recordAttempt({
+          job: seeded.job,
+          delivery: {
+            attemptNumber: 1,
+            attemptsMade: index + 4,
+            maxAttempts: 1,
+            deliveryId: "bounded-history",
+          },
+          call: {
+            erpCallId,
+            orderId: seeded.orderId,
+            idempotencyKey,
+            processingGeneration: 0,
+            dispatchedAt: startedAt.toISOString(),
+          },
+          disposition: "capacity_rejected",
+          status: "failed",
+          terminal: false,
+          httpStatus: 429,
+          errorCode: "erp_capacity_exceeded",
+          latencyMs: 1,
+          startedAt,
+          finishedAt: new Date(startedAt.getTime() + 1),
+        }),
+      ).resolves.toBe(true);
+    }
+
+    const otherStartedAt = new Date(now.getTime() + 1_000);
+    const otherCall = await attemptPersistence.recordDispatchIntent({
+      job: other.job,
+      idempotencyKey: `erp-confirmation:${other.orderId}`,
+      dispatchedAt: otherStartedAt,
+      expectedProcessingGeneration: 0,
+    });
+    await attemptPersistence.recordAttempt({
+      job: other.job,
+      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+      call: otherCall,
+      disposition: "capacity_rejected",
+      status: "failed",
+      terminal: false,
+      httpStatus: 429,
+      errorCode: "erp_capacity_exceeded",
+      latencyMs: 1,
+      startedAt: otherStartedAt,
+      finishedAt: new Date(otherStartedAt.getTime() + 1),
+    });
+
+    const [attemptRows, callRows, eventRows, otherAttemptRows] = await Promise.all([
+      requireConnection()
+        .db.select()
+        .from(erpAttempts)
+        .where(eq(erpAttempts.orderId, seeded.orderId)),
+      requireConnection()
+        .db.select()
+        .from(erpDispatchCalls)
+        .where(eq(erpDispatchCalls.orderId, seeded.orderId)),
+      requireConnection()
+        .db.select()
+        .from(orderEvents)
+        .where(
+          and(
+            eq(orderEvents.orderId, seeded.orderId),
+            inArray(orderEvents.eventName, ["erp.attempt.failed", "erp.attempt.succeeded"]),
+          ),
+        ),
+      requireConnection()
+        .db.select()
+        .from(erpAttempts)
+        .where(eq(erpAttempts.orderId, other.orderId)),
+    ]);
+    expect(attemptRows).toHaveLength(erpAttemptHistoryRetentionLimit);
+    expect(callRows).toHaveLength(erpAttemptHistoryRetentionLimit);
+    expect(eventRows).toHaveLength(erpAttemptHistoryRetentionLimit);
+    expect(otherAttemptRows).toHaveLength(1);
+    expect(attemptRows.some((attempt) => attempt.idempotencyKey !== null)).toBe(true);
+    expect(attemptRows.some((attempt) => attempt.disposition === "permanent_rejection")).toBe(true);
+    expect(attemptRows.some((attempt) => attempt.erpCallId === timeoutCall.erpCallId)).toBe(true);
+    expect(attemptRows.some((attempt) => attempt.erpCallId === supersededCall.erpCallId)).toBe(
+      false,
+    );
+    expect(eventRows.some((event) => event.payload.canonical === true)).toBe(true);
+    expect(eventRows.some((event) => event.payload.disposition === "permanent_rejection")).toBe(
+      true,
+    );
+    expect(eventRows.some((event) => event.payload.erpCallId === timeoutCall.erpCallId)).toBe(true);
+    expect(eventRows.some((event) => event.payload.erpCallId === supersededCall.erpCallId)).toBe(
+      false,
+    );
+    expect(callRows.map(({ id }) => id)).toEqual(
+      expect.arrayContaining([
+        canonicalCall.erpCallId,
+        permanentCall.erpCallId,
+        timeoutCall.erpCallId,
+      ]),
+    );
+    expect(callRows.some((call) => call.id === supersededCall.erpCallId)).toBe(false);
+    expect(callRows.some((call) => orphanCallIds.includes(call.id))).toBe(false);
+    expect(
+      callRows.some((call) => call.id === timeoutCall.erpCallId && call.resolvedAt === null),
+    ).toBe(true);
+    expect(
+      await requireConnection()
+        .db.select()
+        .from(orderEvents)
+        .where(
+          and(
+            eq(orderEvents.orderId, seeded.orderId),
+            eq(orderEvents.eventName, "order.processing"),
+          ),
+        ),
+    ).toHaveLength(1);
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      unresolvedErpCallId: timeoutCall.erpCallId,
+      attemptCounts: {
+        capacity_rejected: erpAttemptHistoryRetentionLimit + 3,
+        succeeded: 1,
+        permanent_rejection: 1,
+        uncertain_result: 2,
+      },
+    });
+
+    await expect(attemptPersistence.recordAttempt(supersededRecord)).resolves.toBe(false);
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      attemptCounts: {
+        capacity_rejected: erpAttemptHistoryRetentionLimit + 3,
+        succeeded: 1,
+        permanent_rejection: 1,
+        uncertain_result: 2,
+      },
     });
   });
 

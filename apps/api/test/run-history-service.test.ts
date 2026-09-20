@@ -619,7 +619,7 @@ describe("run history service", () => {
 
     const detail = await service.detail(ids.newerRun);
 
-    expect(selectSpy).toHaveBeenCalledTimes(3);
+    expect(selectSpy).toHaveBeenCalledTimes(4);
 
     expect(detail).toMatchObject({
       summary: {
@@ -633,6 +633,14 @@ describe("run history service", () => {
       },
       erpAttempts: {
         totalCount: 3,
+        historyCoverage: "retained_history",
+        attemptRetentionLimitPerOrder: 32,
+        cumulativeOutcomeCounts: {
+          capacityRejected: 0,
+          temporarilyUnavailable: 0,
+          uncertainResult: 0,
+          permanentRejected: 0,
+        },
         byStatus: { succeeded: 1, failed: 1, timedOut: 1 },
       },
     });
@@ -699,6 +707,10 @@ describe("run history service", () => {
       "order.confirmed",
       "order.queued",
     ]);
+    expect(adminDetail?.eventTimeline).toMatchObject({
+      attemptHistoryCoverage: "retained_history",
+      attemptRetentionLimitPerOrder: 32,
+    });
 
     const {
       generatorCapacity: _generatorCapacity,
@@ -896,6 +908,14 @@ describe("run history service", () => {
 
     expect(detail?.erpAttempts).toEqual({
       totalCount: 0,
+      historyCoverage: "retained_history",
+      attemptRetentionLimitPerOrder: 32,
+      cumulativeOutcomeCounts: {
+        capacityRejected: 0,
+        temporarilyUnavailable: 0,
+        uncertainResult: 0,
+        permanentRejected: 0,
+      },
       byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
       averageLatencyMs: null,
       p95LatencyMs: null,
