@@ -46,6 +46,7 @@ import {
 import {
   HttpErpOrderConfirmation,
   isTemporaryErpConfirmationError,
+  shouldRetainOrderForErpOutcome,
 } from "../../src/application/erp-confirmation-client.js";
 import { createNotificationRecordJobHandler as createProductionNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
@@ -848,6 +849,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
         requestTimeoutMs: 1000,
+        retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
         now: sequenceClock(
@@ -901,7 +903,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           JSON.stringify({
             status: "failed",
             httpStatus: 503,
-            errorCode: "erp_unavailable",
+            errorCode: "erp_forced_outage",
             errorMessage: "The ERP is temporarily unavailable.",
             latencyMs: 10,
             timestamp: "2026-06-21T00:00:01.010Z",
@@ -926,6 +928,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
         requestTimeoutMs: 1000,
+        retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
         now: sequenceClock(
@@ -961,7 +964,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         status: "failed",
         terminal: false,
         httpStatus: 503,
-        errorCode: "erp_unavailable",
+        errorCode: "erp_forced_outage",
         latencyMs: 10,
       },
       {
@@ -1026,13 +1029,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(failedEvents).toHaveLength(0);
   });
 
-  it("persists terminal order failure after the ERP retry budget is exhausted", async () => {
+  it("retains recognized unavailability after the delivery budget is exhausted", async () => {
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
       new Response(
         JSON.stringify({
           status: "failed",
           httpStatus: 503,
-          errorCode: "erp_unavailable",
+          errorCode: "erp_forced_outage",
           errorMessage: "The ERP is temporarily unavailable.",
           latencyMs: 15,
           timestamp: "2026-06-21T00:00:01.015Z",
@@ -1045,6 +1048,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
         requestTimeoutMs: 1000,
+        retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
         now: sequenceClock(
@@ -1053,6 +1057,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         ),
       }),
       isTemporaryErpConfirmationError,
+      shouldRetainOrderForErpOutcome,
     );
     consumer.start();
 
@@ -1061,7 +1066,15 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       backoff: { type: "exponential", delay: 10 },
       jobId: job.orderId,
     });
-    await waitForFailedOrderProcessingState(connection, queue, 1);
+    await vi.waitFor(
+      async () => {
+        const bullJob = await queue.getJob(job.orderId);
+        const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+        expect(await bullJob?.getState()).toBe("failed");
+        expect(order?.status).toBe("processing");
+      },
+      { timeout: 10_000, interval: 25 },
+    );
     const bullJob = await queue.getJob(job.orderId);
     const [attempt] = await connection.db
       .select()
@@ -1078,21 +1091,17 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(attempt).toMatchObject({
       attemptNumber: 1,
       status: "failed",
-      terminal: true,
+      terminal: false,
       httpStatus: 503,
-      errorCode: "erp_unavailable",
+      errorCode: "erp_forced_outage",
       latencyMs: 15,
     });
     expect(order).toMatchObject({
-      status: "failed",
-      failureCode: "erp_retries_exhausted",
-      failureMessage: "The ERP is temporarily unavailable.",
+      status: "processing",
+      failureCode: null,
+      failureMessage: null,
     });
-    expect(failedEvent?.payload).toMatchObject({
-      attemptNumber: 1,
-      attemptsMade: 0,
-      failureCode: "erp_retries_exhausted",
-    });
+    expect(failedEvent).toBeUndefined();
   });
 
   it("persists an injected failure and leaves the BullMQ job failed with attempt metadata", async () => {

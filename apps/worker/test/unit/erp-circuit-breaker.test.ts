@@ -4,6 +4,10 @@ import {
   ErpCircuitBreaker,
   ErpCircuitOpenError,
 } from "../../src/application/erp-circuit-breaker.js";
+import {
+  ErpConfirmationTimeoutError,
+  isTemporaryErpDependencyError,
+} from "../../src/application/erp-confirmation-client.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
 
 const job: OrderProcessJob = {
@@ -192,5 +196,73 @@ describe("ERP circuit breaker", () => {
       state: "closed",
       consecutiveFailureCount: 0,
     });
+  });
+
+  it("counts an uncertain dispatched timeout as an availability failure", async () => {
+    const timeout = new ErpConfirmationTimeoutError(1_000, true, {
+      disposition: "uncertain_result",
+      operation: "dispatched_confirmation",
+      call: {
+        erpCallId: "99999999-9999-4999-8999-999999999999",
+        orderId: job.orderId,
+        idempotencyKey: `erp-confirmation:${job.orderId}`,
+        processingGeneration: 1,
+        dispatchedAt: "2026-06-22T00:00:00.000Z",
+      },
+      startedAt: new Date("2026-06-22T00:00:00.000Z"),
+      finishedAt: new Date("2026-06-22T00:00:01.000Z"),
+      latencyMs: 1_000,
+      replayed: false,
+    });
+    const breaker = new ErpCircuitBreaker({
+      confirmation: { confirm: vi.fn().mockRejectedValue(timeout) },
+      failureThreshold: 1,
+      resetTimeoutMs: 1_000,
+      isCountedFailure: isTemporaryErpDependencyError,
+      now: () => new Date("2026-06-22T00:00:01.000Z"),
+    });
+
+    await expect(breaker.confirm(job, delivery)).rejects.toBe(timeout);
+    expect(breaker.snapshot().state).toBe("open");
+  });
+
+  it("gates lookups without letting them probe or close the circuit", async () => {
+    let now = new Date("2026-06-22T00:00:00.000Z");
+    const breaker = new ErpCircuitBreaker({
+      confirmation: { confirm: vi.fn().mockRejectedValue(new Error("ERP unavailable")) },
+      failureThreshold: 1,
+      resetTimeoutMs: 1000,
+      isCountedFailure: () => true,
+      now: () => now,
+    });
+
+    await expect(breaker.confirm(job, delivery)).rejects.toThrow("ERP unavailable");
+    expect(() => breaker.assertAvailable()).toThrow(ErpCircuitOpenError);
+
+    now = new Date("2026-06-22T00:00:01.000Z");
+    expect(() => breaker.assertAvailable()).toThrow(ErpCircuitOpenError);
+    expect(breaker.snapshot().state).toBe("half_open");
+  });
+
+  it("does not reset failure evidence from a reused or replayed success", async () => {
+    const delegate = {
+      confirm: vi
+        .fn()
+        .mockRejectedValueOnce(new Error("ERP unavailable"))
+        .mockResolvedValueOnce({ erpHealthLearningEligible: false }),
+    };
+    const breaker = new ErpCircuitBreaker({
+      confirmation: delegate,
+      failureThreshold: 2,
+      resetTimeoutMs: 1000,
+      isCountedFailure: () => true,
+      now: () => new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    await expect(breaker.confirm(job, delivery)).rejects.toThrow("ERP unavailable");
+    await expect(breaker.confirm(job, delivery)).resolves.toEqual({
+      erpHealthLearningEligible: false,
+    });
+    expect(breaker.snapshot()).toMatchObject({ state: "closed", consecutiveFailureCount: 1 });
   });
 });

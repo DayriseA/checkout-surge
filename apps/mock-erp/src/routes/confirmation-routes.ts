@@ -36,6 +36,14 @@ export function registerConfirmationRoutes(
     if (result.replayed) {
       reply.header(erpReplayedResponseHeaderName, erpReplayedResponseHeaderValue);
     }
+    if (
+      response.status === "failed" &&
+      (response.errorCode === "erp_capacity_exceeded" ||
+        response.errorCode === "erp_forced_outage" ||
+        response.errorCode === "erp_injected_error")
+    ) {
+      reply.header("retry-after", "1");
+    }
 
     request.log.info(
       {

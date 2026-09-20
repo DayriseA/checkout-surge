@@ -204,6 +204,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://erp.test",
       requestTimeoutMs: 2_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       fetch,
       now: () => now,
@@ -836,6 +837,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
         job: seeded.job,
         delivery: { attemptNumber: 1, attemptsMade: 1, maxAttempts: 4, deliveryId: "d1" },
         call: capacityCall,
+        disposition: "capacity_rejected",
         status: "failed",
         terminal: false,
         httpStatus: 429,
@@ -899,6 +901,103 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
   });
 
+  it("keeps unresolved ownership for a validated intervention despite a recognized raw code", async () => {
+    const seeded = await seedOrder({ createdAt: now });
+    const delivery = {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+      deliveryId: "malformed-response-delivery",
+    };
+    const processing = await transitionPersistence.transitionToProcessing(seeded.job, delivery);
+    const call = await attemptPersistence.recordDispatchIntent({
+      job: seeded.job,
+      idempotencyKey: `erp-confirmation:${seeded.orderId}`,
+      dispatchedAt: now,
+      expectedProcessingGeneration: processing.processingGeneration ?? 0,
+    });
+
+    await attemptPersistence.recordAttempt({
+      job: seeded.job,
+      delivery,
+      call,
+      disposition: "intervention_required",
+      status: "failed",
+      terminal: false,
+      httpStatus: 500,
+      errorCode: "erp_forced_outage",
+      latencyMs: 5,
+      startedAt: now,
+      finishedAt: new Date(now.getTime() + 5),
+    });
+
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      unresolvedErpCallId: call.erpCallId,
+      attemptCounts: { intervention_required: 1 },
+    });
+    const [storedCall] = await requireConnection()
+      .db.select({ resolvedAt: erpDispatchCalls.resolvedAt })
+      .from(erpDispatchCalls)
+      .where(eq(erpDispatchCalls.id, call.erpCallId));
+    expect(storedCall?.resolvedAt).toBeNull();
+  });
+
+  it.each([
+    "connection_loss",
+    "body_read_failure",
+    "recognized_availability",
+  ] as const)("preserves unresolved ownership unless %s supplies authoritative evidence", async (scenario) => {
+    const seeded = await seedOrder({ createdAt: now });
+    const delivery = {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+      deliveryId: "transport-failure-delivery",
+    };
+    const processing = await transitionPersistence.transitionToProcessing(seeded.job, delivery);
+    const response = new Response(
+      JSON.stringify({
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_forced_outage",
+        errorMessage: "offline",
+        latencyMs: 5,
+        timestamp: now.toISOString(),
+      }),
+      { status: 503 },
+    );
+    if (scenario === "body_read_failure") {
+      vi.spyOn(response, "json").mockRejectedValue(new TypeError("terminated"));
+    }
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://erp.test",
+      requestTimeoutMs: 1_000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence,
+      now: () => now,
+      fetch:
+        scenario === "connection_loss"
+          ? vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed"))
+          : vi.fn<typeof fetch>().mockResolvedValue(response),
+    });
+
+    const outcome = await client.dispatch(seeded.job, {
+      ...delivery,
+      processingGeneration: processing.processingGeneration ?? 0,
+    });
+    expect(outcome.disposition).toBe("temporarily_unavailable");
+    const authoritative = scenario === "recognized_availability";
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      unresolvedErpCallId: authoritative ? null : outcome.call.erpCallId,
+      attemptCounts: { temporarily_unavailable: 1 },
+    });
+    const [storedCall] = await requireConnection()
+      .db.select({ resolvedAt: erpDispatchCalls.resolvedAt })
+      .from(erpDispatchCalls)
+      .where(eq(erpDispatchCalls.id, outcome.call.erpCallId));
+    expect(storedCall?.resolvedAt).toEqual(authoritative ? now : null);
+  });
+
   it.each([
     "success",
     "capacity",
@@ -946,6 +1045,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
         : {
             ...base,
             call: callB,
+            disposition: "capacity_rejected" as const,
             status: "failed" as const,
             terminal: false,
             httpStatus: 429,

@@ -15,6 +15,7 @@ import {
   isErpAttemptPersistenceError,
   isTemporaryErpConfirmationError,
   isTemporaryErpDependencyError,
+  shouldRetainOrderForErpOutcome,
 } from "./application/erp-confirmation-client.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
@@ -135,7 +136,9 @@ export async function startWorker(): Promise<void> {
           confirmation: new HttpErpOrderConfirmation({
             baseUrl: config.mockErpBaseUrl,
             requestTimeoutMs: config.erpRequestTimeoutMs,
+            retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
             attemptPersistence: erpAttemptPersistence,
+            logger,
           }),
           failureThreshold: config.erpCircuitFailureThreshold,
           resetTimeoutMs: config.erpCircuitResetTimeoutMs,
@@ -153,7 +156,9 @@ export async function startWorker(): Promise<void> {
             confirmation: new HttpErpOrderConfirmation({
               baseUrl: config.mockErpBaseUrl,
               requestTimeoutMs: config.erpRequestTimeoutMs,
+              retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
               attemptPersistence: erpAttemptPersistence,
+              logger,
               runConfigReader: {
                 read: async (requestedRunId) => (requestedRunId === runId ? snapshot : null),
               },
@@ -280,7 +285,11 @@ function isTemporaryConfirmationFailure(error: unknown): boolean {
 }
 
 function shouldRetryWithoutFailingOrder(error: unknown): boolean {
-  return isErpAttemptPersistenceError(error) || isTemporaryErpCircuitError(error);
+  return (
+    isErpAttemptPersistenceError(error) ||
+    isTemporaryErpCircuitError(error) ||
+    shouldRetainOrderForErpOutcome(error)
+  );
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

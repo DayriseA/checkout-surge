@@ -15,6 +15,8 @@ const record = {
   job,
   delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
   status: "succeeded" as const,
+  operation: "dispatched_confirmation" as const,
+  replayed: true,
   terminal: true,
   httpStatus: 200,
   latencyMs: 4,
@@ -90,7 +92,13 @@ describe("Postgres ERP attempt persistence", () => {
     );
     expect(eventInsert.values).toHaveBeenCalledOnce();
     expect(eventInsert.values).toHaveBeenCalledWith(
-      expect.objectContaining({ payload: expect.objectContaining({ terminal: true }) }),
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          terminal: true,
+          operation: "dispatched_confirmation",
+          replayed: true,
+        }),
+      }),
     );
   });
 

@@ -1,24 +1,40 @@
 import {
   type ErpCallReference,
   type ErpConfirmationResponse,
+  type ErpLookupResponse,
+  type ErpOutcomeDisposition,
+  erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
+  erpLookupResponseSchema,
+  erpPermanentRejectionCodeSchema,
+  erpReplayedResponseHeaderName,
+  erpReplayedResponseHeaderValue,
   type OrderProcessJob,
+  recognizedErpErrorCodeDispositions,
 } from "@checkout-surge/contracts";
-import { correlationIdHeaderName } from "@checkout-surge/logger";
-import {
-  hasRemainingAttempts,
-  type OrderConfirmation,
-  type OrderProcessDeliveryMetadata,
+import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
+import type {
+  OrderConfirmation,
+  OrderProcessDeliveryMetadata,
 } from "./order-process-job-handler.js";
 import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
+
+export type ErpOperationKind = "dispatched_confirmation" | "status_lookup" | "non_call_deferral";
+
+export interface ErpHealthLearningResult {
+  erpHealthLearningEligible: boolean;
+  response?: ErpConfirmationResponse;
+}
 
 export interface ErpAttemptRecord {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
-  /** Durable identity of the actual ERP call this attempt result belongs to. */
   call?: ErpCallReference;
+  operation?: Exclude<ErpOperationKind, "non_call_deferral">;
+  replayed?: boolean;
+  disposition?: ErpOutcomeDisposition;
   status: "succeeded" | "failed" | "timed_out";
   terminal: boolean;
   httpStatus?: number;
@@ -39,11 +55,6 @@ export interface ReusableErpConfirmationAttempt {
 
 export interface ErpAttemptPersistence {
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null>;
-  /**
-   * Records the durable identity of one actual confirmation POST before the
-   * HTTP request is sent (D04/D05), so a crash cannot erase the existence of
-   * an uncertain attempt.
-   */
   recordDispatchIntent(input: {
     job: OrderProcessJob;
     idempotencyKey: string;
@@ -53,12 +64,51 @@ export interface ErpAttemptPersistence {
   recordAttempt(record: ErpAttemptRecord): Promise<boolean>;
 }
 
+export type ErpConfirmationOutcome = {
+  disposition: ErpOutcomeDisposition;
+  operation: "dispatched_confirmation";
+  call: ErpCallReference;
+  startedAt: Date;
+  finishedAt: Date;
+  latencyMs: number;
+  replayed: boolean;
+  response?: ErpConfirmationResponse;
+  httpStatus?: number;
+  errorCode?: string;
+  errorMessage?: string;
+  retryAfterMs?: number;
+  interventionScope?: "order" | "scope";
+  cause?: unknown;
+};
+
+export type ErpLookupOutcome =
+  | {
+      disposition: "succeeded";
+      operation: "status_lookup";
+      lookup: ErpLookupResponse;
+      startedAt: Date;
+      finishedAt: Date;
+      latencyMs: number;
+    }
+  | {
+      disposition: "temporarily_unavailable" | "intervention_required";
+      operation: "status_lookup";
+      startedAt: Date;
+      finishedAt: Date;
+      latencyMs: number;
+      httpStatus?: number;
+      errorCode?: string;
+      errorMessage?: string;
+      interventionScope?: "scope" | "order";
+      cause?: unknown;
+    };
+
 export class ErpConfirmationFailedError extends Error {
   override readonly name = "ErpConfirmationFailedError";
-
   constructor(
     readonly response: ErpConfirmationResponse,
     readonly attemptRecorded = true,
+    readonly outcome?: ErpConfirmationOutcome,
   ) {
     super(response.errorMessage ?? "The ERP rejected the confirmation request.");
   }
@@ -66,26 +116,32 @@ export class ErpConfirmationFailedError extends Error {
 
 export class ErpConfirmationInvalidResponseError extends Error {
   override readonly name = "ErpConfirmationInvalidResponseError";
-
-  constructor(readonly httpStatus: number) {
+  constructor(
+    readonly httpStatus: number,
+    readonly attemptRecorded = true,
+    readonly outcome?: ErpConfirmationOutcome,
+  ) {
     super("The ERP returned an invalid confirmation response.");
   }
 }
 
 export class ErpConfirmationRequestError extends Error {
   override readonly name = "ErpConfirmationRequestError";
-
-  constructor(cause: unknown) {
+  constructor(
+    cause: unknown,
+    readonly attemptRecorded = true,
+    readonly outcome?: ErpConfirmationOutcome,
+  ) {
     super("The ERP confirmation request failed before a valid response was received.", { cause });
   }
 }
 
 export class ErpConfirmationTimeoutError extends Error {
   override readonly name = "ErpConfirmationTimeoutError";
-
   constructor(
     readonly timeoutMs: number,
     readonly attemptRecorded = true,
+    readonly outcome?: ErpConfirmationOutcome,
   ) {
     super(`The ERP confirmation request timed out after ${timeoutMs}ms.`);
   }
@@ -93,7 +149,6 @@ export class ErpConfirmationTimeoutError extends Error {
 
 export class ErpAttemptPersistenceError extends Error {
   override readonly name: string = "ErpAttemptPersistenceError";
-
   constructor(cause: unknown, message = "The ERP attempt result could not be persisted.") {
     super(message, { cause });
   }
@@ -101,7 +156,6 @@ export class ErpAttemptPersistenceError extends Error {
 
 export class ErpAcceptedConfirmationPersistenceError extends ErpAttemptPersistenceError {
   override readonly name = "ErpAcceptedConfirmationPersistenceError";
-
   constructor(
     cause: unknown,
     readonly record: ErpAttemptRecord,
@@ -123,72 +177,76 @@ export function isAcceptedErpConfirmationPersistenceError(
   return error instanceof ErpAcceptedConfirmationPersistenceError;
 }
 
+/** Temporary task-04 adapter classification; task 05 removes delivery retry ownership. */
 export function isTemporaryErpConfirmationError(error: unknown): boolean {
-  if (
-    isErpAttemptPersistenceError(error) ||
-    error instanceof ErpConfirmationTimeoutError ||
-    error instanceof ErpConfirmationRequestError ||
-    error instanceof ErpConfirmationInvalidResponseError
-  ) {
-    return true;
-  }
-
-  if (!(error instanceof ErpConfirmationFailedError)) {
-    return false;
-  }
-
-  const httpStatus = error.response.httpStatus;
-  return httpStatus === undefined || httpStatus === 408 || httpStatus === 429 || httpStatus >= 500;
+  if (isErpAttemptPersistenceError(error)) return true;
+  const disposition = confirmationErrorOutcome(error)?.disposition;
+  return (
+    disposition === "capacity_rejected" ||
+    disposition === "temporarily_unavailable" ||
+    disposition === "uncertain_result"
+  );
 }
 
 export function isTemporaryErpDependencyError(error: unknown): boolean {
-  if (isErpAttemptPersistenceError(error)) {
-    return false;
-  }
+  if (isErpAttemptPersistenceError(error)) return false;
+  const disposition = confirmationErrorOutcome(error)?.disposition;
+  return disposition === "temporarily_unavailable" || disposition === "uncertain_result";
+}
 
-  return isTemporaryErpConfirmationError(error);
+/** Temporary adapter guard: only a shared permanent rejection may terminalize an order. */
+export function shouldRetainOrderForErpOutcome(error: unknown): boolean {
+  const outcome = confirmationErrorOutcome(error);
+  return outcome !== undefined && outcome.disposition !== "permanent_rejection";
 }
 
 export interface HttpErpOrderConfirmationOptions {
   baseUrl: string;
   requestTimeoutMs: number;
+  retryAfterPolicy: { fallbackDelayMs: number; maximumDelayMs: number };
   attemptPersistence: ErpAttemptPersistence;
   fetch?: typeof fetch;
   now?: () => Date;
   runConfigReader?: RunConfigReader;
+  logger?: Pick<CheckoutSurgeLogger, "warn">;
 }
 
 export class HttpErpOrderConfirmation implements OrderConfirmation {
   private readonly confirmationUrl: URL;
-  private readonly requestTimeoutMs: number;
-  private readonly attemptPersistence: ErpAttemptPersistence;
+  private readonly lookupUrl: URL;
   private readonly fetch: typeof fetch;
   private readonly now: () => Date;
-  private readonly runConfigReader: RunConfigReader | undefined;
 
-  constructor(options: HttpErpOrderConfirmationOptions) {
+  constructor(private readonly options: HttpErpOrderConfirmationOptions) {
     this.confirmationUrl = new URL(erpConfirmationPath, options.baseUrl);
-    this.requestTimeoutMs = options.requestTimeoutMs;
-    this.attemptPersistence = options.attemptPersistence;
+    this.lookupUrl = new URL(erpConfirmationLookupPath, options.baseUrl);
     this.fetch = options.fetch ?? fetch;
     this.now = options.now ?? (() => new Date());
-    this.runConfigReader = options.runConfigReader;
   }
 
+  /** Temporary adapter until task 05 moves the live handler to explicit outcomes. */
   async confirm(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-  ): Promise<ErpConfirmationResponse | undefined> {
-    const reusableAttempt = await this.findSuccessfulAttempt(job);
-    if (reusableAttempt) {
-      return;
+  ): Promise<ErpHealthLearningResult> {
+    if (await this.findSuccessfulAttempt(job)) return { erpHealthLearningEligible: false };
+    const outcome = await this.dispatch(job, delivery);
+    if (outcome.disposition === "succeeded") {
+      return {
+        erpHealthLearningEligible: !outcome.replayed,
+        ...(outcome.response ? { response: outcome.response } : {}),
+      };
     }
+    throw outcomeToLegacyError(outcome, this.options.requestTimeoutMs);
+  }
 
-    const runConfig = job.runId ? await this.runConfigReader?.read(job.runId) : null;
-    const requestTimeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.requestTimeoutMs;
+  async dispatch(
+    job: OrderProcessJob,
+    delivery: OrderProcessDeliveryMetadata,
+  ): Promise<ErpConfirmationOutcome> {
+    const runConfig = job.runId ? await this.options.runConfigReader?.read(job.runId) : null;
+    const timeoutMs = runConfig?.erpConfig.requestTimeoutMs ?? this.options.requestTimeoutMs;
     const startedAt = this.now();
-    // Dispatch intent precedes the HTTP request: the durable per-call identity
-    // exists even if this process dies before a response arrives.
     const call = await this.recordDispatchIntent({
       job,
       idempotencyKey: toConfirmationIdempotencyKey(job),
@@ -196,8 +254,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
       expectedProcessingGeneration: requireProcessingGeneration(delivery),
     });
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
-
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetch(this.confirmationUrl, {
         method: "POST",
@@ -208,90 +265,139 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
         body: JSON.stringify(toConfirmationRequest(job, runConfig)),
         signal: controller.signal,
       });
-      const parsed = await parseConfirmationResponse(response);
+      const body = await readResponseJson(response);
       const finishedAt = this.now();
-      const record = toAttemptRecord({
-        job,
-        delivery,
+      const outcome = classifyConfirmationResponse({
+        response,
+        body,
         call,
-        response: parsed,
-        fallbackHttpStatus: response.status,
         startedAt,
         finishedAt,
+        ...optional(
+          "retryAfterMs",
+          this.retryAfterMs(response.headers.get("retry-after"), finishedAt),
+        ),
       });
-      if (parsed.status === "succeeded") {
-        Object.defineProperty(record, "response", { value: parsed, enumerable: false });
+      const record = toAttemptRecord(job, delivery, outcome);
+      if (outcome.response?.status === "succeeded") {
+        Object.defineProperty(record, "response", { value: outcome.response, enumerable: false });
       }
-      const attemptRecorded = await this.recordAttempt(record);
-
-      if (parsed.status !== "succeeded") {
-        throw new ErpConfirmationFailedError(parsed, attemptRecorded);
-      }
-
-      return parsed;
+      await this.recordAttempt(record);
+      return outcome;
     } catch (error) {
-      if (isAbortError(error)) {
-        const finishedAt = this.now();
-        const attemptRecorded = await this.recordAttempt({
-          job,
-          delivery,
-          call,
-          status: "timed_out",
-          terminal: !hasRemainingAttempts(delivery),
-          errorCode: "erp_request_timeout",
-          errorMessage: `The ERP confirmation request timed out after ${requestTimeoutMs}ms.`,
-          latencyMs: elapsedMs(startedAt, finishedAt),
-          startedAt,
-          finishedAt,
-        });
-        throw new ErpConfirmationTimeoutError(requestTimeoutMs, attemptRecorded);
-      }
-
-      if (
-        error instanceof ErpConfirmationFailedError ||
-        error instanceof ErpAttemptPersistenceError
-      ) {
-        throw error;
-      }
-
-      if (error instanceof ErpConfirmationInvalidResponseError) {
-        const finishedAt = this.now();
-        const attemptRecorded = await this.recordAttempt({
-          job,
-          delivery,
-          call,
-          status: "failed",
-          terminal: !hasRemainingAttempts(delivery),
-          httpStatus: error.httpStatus,
-          errorCode: "erp_invalid_response",
-          errorMessage: error.message,
-          latencyMs: elapsedMs(startedAt, finishedAt),
-          startedAt,
-          finishedAt,
-        });
-        Object.defineProperty(error, "attemptRecorded", { value: attemptRecorded });
-        throw error;
-      }
-
+      if (isKnownClientError(error)) throw error;
       const finishedAt = this.now();
-      const attemptRecorded = await this.recordAttempt({
-        job,
-        delivery,
+      const timedOut = isAbortError(error);
+      const outcome: ErpConfirmationOutcome = {
+        disposition: timedOut ? "uncertain_result" : "temporarily_unavailable",
+        operation: "dispatched_confirmation",
         call,
-        status: "failed",
-        terminal: !hasRemainingAttempts(delivery),
-        errorCode: "erp_request_failed",
-        errorMessage: error instanceof Error ? error.message : "The ERP request failed.",
-        latencyMs: elapsedMs(startedAt, finishedAt),
         startedAt,
         finishedAt,
-      });
-      const requestError = new ErpConfirmationRequestError(error);
-      Object.defineProperty(requestError, "attemptRecorded", { value: attemptRecorded });
-      throw requestError;
+        latencyMs: elapsedMs(startedAt, finishedAt),
+        replayed: false,
+        errorCode: timedOut ? "erp_request_timeout" : "erp_request_failed",
+        errorMessage: timedOut
+          ? `The ERP confirmation request timed out after ${timeoutMs}ms.`
+          : error instanceof Error
+            ? error.message
+            : "The ERP request failed.",
+        cause: error,
+      };
+      await this.recordAttempt(toAttemptRecord(job, delivery, outcome));
+      return outcome;
     } finally {
       clearTimeout(timeout);
     }
+  }
+
+  async lookup(idempotencyKey: string, correlationId: string): Promise<ErpLookupOutcome> {
+    const startedAt = this.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs);
+    try {
+      const url = new URL(this.lookupUrl);
+      url.pathname = erpConfirmationLookupPath.replace(
+        ":idempotencyKey",
+        encodeURIComponent(idempotencyKey),
+      );
+      const response = await this.fetch(url, {
+        headers: { [correlationIdHeaderName]: correlationId },
+        signal: controller.signal,
+      });
+      const body = await readResponseJson(response);
+      const finishedAt = this.now();
+      const parsed = erpLookupResponseSchema.safeParse(body);
+      if (response.ok && parsed.success) {
+        return {
+          disposition: "succeeded",
+          operation: "status_lookup",
+          lookup: parsed.data,
+          startedAt,
+          finishedAt,
+          latencyMs: elapsedMs(startedAt, finishedAt),
+        };
+      }
+      const scopeIntervention = response.status === 401 || response.status === 403;
+      const availability = erpConfirmationResponseSchema.safeParse(body);
+      const recognizedAvailability =
+        availability.success &&
+        availability.data.status === "failed" &&
+        availability.data.httpStatus === response.status &&
+        recognizedStatusMatches(availability.data.errorCode, response.status) &&
+        recognizedErpErrorCodeDispositions[
+          availability.data.errorCode as keyof typeof recognizedErpErrorCodeDispositions
+        ] === "temporarily_unavailable";
+      return {
+        disposition: recognizedAvailability ? "temporarily_unavailable" : "intervention_required",
+        operation: "status_lookup",
+        startedAt,
+        finishedAt,
+        latencyMs: elapsedMs(startedAt, finishedAt),
+        httpStatus: response.status,
+        errorCode: readErrorCode(body) ?? "erp_invalid_lookup_response",
+        errorMessage: "The ERP returned an invalid status lookup response.",
+        interventionScope: scopeIntervention ? "scope" : "order",
+      };
+    } catch (error) {
+      const finishedAt = this.now();
+      return {
+        disposition: "temporarily_unavailable",
+        operation: "status_lookup",
+        startedAt,
+        finishedAt,
+        latencyMs: elapsedMs(startedAt, finishedAt),
+        errorCode: isAbortError(error) ? "erp_lookup_timeout" : "erp_lookup_failed",
+        errorMessage: error instanceof Error ? error.message : "The ERP lookup failed.",
+        cause: error,
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null> {
+    return this.readSuccessfulAttempt(job);
+  }
+
+  recordLookupResult(record: ErpAttemptRecord): Promise<boolean> {
+    return this.recordAttempt(record);
+  }
+
+  private retryAfterMs(value: string | null, now: Date): number | undefined {
+    if (value === null) return undefined;
+    const parsed = parseRetryAfter(value, now);
+    const requested = parsed ?? this.options.retryAfterPolicy.fallbackDelayMs;
+    if (requested <= this.options.retryAfterPolicy.maximumDelayMs) return requested;
+    this.options.logger?.warn(
+      {
+        retryAfter: value,
+        requestedDelayMs: requested,
+        maximumDelayMs: this.options.retryAfterPolicy.maximumDelayMs,
+      },
+      "ERP Retry-After exceeded the policy maximum and was capped.",
+    );
+    return this.options.retryAfterPolicy.maximumDelayMs;
   }
 
   private async recordDispatchIntent(input: {
@@ -301,7 +407,7 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     expectedProcessingGeneration: number;
   }): Promise<ErpCallReference> {
     try {
-      return await this.attemptPersistence.recordDispatchIntent(input);
+      return await this.options.attemptPersistence.recordDispatchIntent(input);
     } catch (error) {
       throw new ErpAttemptPersistenceError(
         error,
@@ -312,8 +418,23 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
 
   private async recordAttempt(record: ErpAttemptRecord): Promise<boolean> {
     try {
-      return await this.attemptPersistence.recordAttempt(record);
+      return await this.options.attemptPersistence.recordAttempt(record);
     } catch (error) {
+      if (error instanceof Error && error.name === "ErpAttemptContradictionError") {
+        throw new ErpConfirmationInvalidResponseError(record.httpStatus ?? 500, false, {
+          disposition: "intervention_required",
+          operation: "dispatched_confirmation",
+          call: record.call as ErpCallReference,
+          startedAt: record.startedAt,
+          finishedAt: record.finishedAt,
+          latencyMs: record.latencyMs,
+          replayed: record.replayed ?? false,
+          errorCode: "erp_attempt_contradiction",
+          errorMessage: error.message,
+          interventionScope: "order",
+          cause: error,
+        });
+      }
       if (record.status === "succeeded") {
         throw new ErpAcceptedConfirmationPersistenceError(error, record);
       }
@@ -321,15 +442,208 @@ export class HttpErpOrderConfirmation implements OrderConfirmation {
     }
   }
 
-  private async findSuccessfulAttempt(
+  private async readSuccessfulAttempt(
     job: OrderProcessJob,
   ): Promise<ReusableErpConfirmationAttempt | null> {
     try {
-      return await this.attemptPersistence.findSuccessfulAttempt(job);
+      return await this.options.attemptPersistence.findSuccessfulAttempt(job);
     } catch (error) {
       throw new ErpAttemptPersistenceError(error);
     }
   }
+}
+
+function classifyConfirmationResponse(input: {
+  response: Response;
+  body: unknown;
+  call: ErpCallReference;
+  startedAt: Date;
+  finishedAt: Date;
+  retryAfterMs?: number;
+}): ErpConfirmationOutcome {
+  const parsed = erpConfirmationResponseSchema.safeParse(input.body);
+  const errorCode = parsed.success ? parsed.data.errorCode : readErrorCode(input.body);
+  const common = {
+    operation: "dispatched_confirmation" as const,
+    call: input.call,
+    startedAt: input.startedAt,
+    finishedAt: input.finishedAt,
+    latencyMs: elapsedMs(input.startedAt, input.finishedAt),
+    replayed:
+      input.response.headers.get(erpReplayedResponseHeaderName) === erpReplayedResponseHeaderValue,
+    httpStatus: input.response.status,
+    ...(input.retryAfterMs === undefined ? {} : { retryAfterMs: input.retryAfterMs }),
+  };
+  if (parsed.success && parsed.data.httpStatus === input.response.status) {
+    if (parsed.data.status === "succeeded") {
+      return { ...common, disposition: "succeeded", response: parsed.data };
+    }
+    const failed = parsed.data;
+    if (erpPermanentRejectionCodeSchema.safeParse(failed.errorCode).success) {
+      return {
+        ...common,
+        disposition: "permanent_rejection",
+        response: failed,
+        errorCode: failed.errorCode,
+      };
+    }
+    const disposition =
+      recognizedErpErrorCodeDispositions[
+        failed.errorCode as keyof typeof recognizedErpErrorCodeDispositions
+      ];
+    if (disposition && recognizedStatusMatches(failed.errorCode, input.response.status)) {
+      return {
+        ...common,
+        disposition,
+        response: failed,
+        errorCode: failed.errorCode,
+        errorMessage: failed.errorMessage,
+        ...(disposition === "intervention_required" ? { interventionScope: "order" as const } : {}),
+      };
+    }
+  }
+  if (input.response.status === 409 && errorCode === "erp_idempotency_conflict") {
+    return {
+      ...common,
+      disposition: "intervention_required",
+      errorCode,
+      ...optional("errorMessage", readErrorMessage(input.body)),
+      interventionScope: "order",
+    };
+  }
+  if (input.response.status === 401 || input.response.status === 403) {
+    return {
+      ...common,
+      disposition: "intervention_required",
+      errorCode: errorCode ?? `erp_http_${input.response.status}`,
+      ...optional("errorMessage", readErrorMessage(input.body)),
+      interventionScope: "scope",
+    };
+  }
+  return {
+    ...common,
+    disposition: "intervention_required",
+    errorCode: errorCode ?? "erp_invalid_response",
+    errorMessage: readErrorMessage(input.body) ?? "The ERP returned an invalid response.",
+    interventionScope: "order",
+  };
+}
+
+function toAttemptRecord(
+  job: OrderProcessJob,
+  delivery: OrderProcessDeliveryMetadata,
+  outcome: ErpConfirmationOutcome,
+): ErpAttemptRecord {
+  return {
+    job,
+    delivery,
+    call: outcome.call,
+    operation: outcome.operation,
+    replayed: outcome.replayed,
+    disposition: outcome.disposition,
+    status:
+      outcome.disposition === "succeeded"
+        ? "succeeded"
+        : outcome.disposition === "uncertain_result"
+          ? "timed_out"
+          : "failed",
+    terminal: outcome.disposition === "succeeded" || outcome.disposition === "permanent_rejection",
+    ...(outcome.httpStatus === undefined ? {} : { httpStatus: outcome.httpStatus }),
+    ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+    ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),
+    latencyMs: outcome.latencyMs,
+    startedAt: outcome.startedAt,
+    finishedAt: outcome.finishedAt,
+    ...(outcome.response ? { response: outcome.response } : {}),
+  };
+}
+
+function outcomeToLegacyError(outcome: ErpConfirmationOutcome, timeoutMs: number): Error {
+  if (outcome.disposition === "uncertain_result") {
+    return new ErpConfirmationTimeoutError(timeoutMs, true, outcome);
+  }
+  if (outcome.disposition === "temporarily_unavailable" && !outcome.response) {
+    return new ErpConfirmationRequestError(outcome.cause, true, outcome);
+  }
+  if (outcome.response) return new ErpConfirmationFailedError(outcome.response, true, outcome);
+  return new ErpConfirmationInvalidResponseError(outcome.httpStatus ?? 500, true, outcome);
+}
+
+function confirmationErrorOutcome(error: unknown): ErpConfirmationOutcome | undefined {
+  if (
+    error instanceof ErpConfirmationFailedError ||
+    error instanceof ErpConfirmationInvalidResponseError ||
+    error instanceof ErpConfirmationRequestError ||
+    error instanceof ErpConfirmationTimeoutError
+  ) {
+    return error.outcome;
+  }
+  return undefined;
+}
+
+function recognizedStatusMatches(code: string, status: number): boolean {
+  if (code === "erp_capacity_exceeded") return status === 429;
+  if (code === "erp_forced_outage" || code === "erp_injected_error") return status === 503;
+  if (code === "erp_idempotency_conflict") return status === 409;
+  return false;
+}
+
+export function parseRetryAfter(value: string, now: Date): number | null {
+  if (/^\d+$/.test(value)) return Number(value) * 1_000;
+  if (
+    !/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), (?:0[1-9]|[12]\d|3[01]) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} (?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d GMT$/.test(
+      value,
+    )
+  ) {
+    return null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) || new Date(timestamp).toUTCString() !== value
+    ? null
+    : Math.max(0, timestamp - now.getTime());
+}
+
+async function readResponseJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) return null;
+    throw error;
+  }
+}
+
+function readErrorCode(body: unknown): string | undefined {
+  return isRecord(body) && typeof body.code === "string"
+    ? body.code
+    : isRecord(body) && typeof body.errorCode === "string"
+      ? body.errorCode
+      : undefined;
+}
+
+function readErrorMessage(body: unknown): string | undefined {
+  return isRecord(body) && typeof body.message === "string"
+    ? body.message
+    : isRecord(body) && typeof body.errorMessage === "string"
+      ? body.errorMessage
+      : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function optional<Key extends string, Value>(
+  key: Key,
+  value: Value | undefined,
+): { [K in Key]?: Value } {
+  return value === undefined ? {} : ({ [key]: value } as { [K in Key]: Value });
+}
+
+function isKnownClientError(error: unknown): boolean {
+  return (
+    error instanceof ErpAttemptPersistenceError ||
+    error instanceof ErpConfirmationInvalidResponseError
+  );
 }
 
 function requireProcessingGeneration(delivery: OrderProcessDeliveryMetadata): number {
@@ -359,49 +673,8 @@ function toConfirmationRequest(
   });
 }
 
-function toConfirmationIdempotencyKey(job: OrderProcessJob): string {
+export function toConfirmationIdempotencyKey(job: OrderProcessJob): string {
   return `erp-confirmation:${job.orderId}`;
-}
-
-async function parseConfirmationResponse(response: Response): Promise<ErpConfirmationResponse> {
-  const body = await response.json().catch(() => null);
-  const parsed = erpConfirmationResponseSchema.safeParse(body);
-
-  if (!parsed.success) {
-    throw new ErpConfirmationInvalidResponseError(response.status);
-  }
-
-  return parsed.data;
-}
-
-function toAttemptRecord(options: {
-  job: OrderProcessJob;
-  delivery: OrderProcessDeliveryMetadata;
-  call: ErpCallReference;
-  response: ErpConfirmationResponse;
-  fallbackHttpStatus: number;
-  startedAt: Date;
-  finishedAt: Date;
-}): ErpAttemptRecord {
-  const status = options.response.status === "succeeded" ? "succeeded" : "failed";
-  const terminal =
-    status === "succeeded" ||
-    !isTemporaryErpConfirmationError(new ErpConfirmationFailedError(options.response)) ||
-    !hasRemainingAttempts(options.delivery);
-
-  return {
-    job: options.job,
-    delivery: options.delivery,
-    call: options.call,
-    status,
-    terminal,
-    httpStatus: options.response.httpStatus ?? options.fallbackHttpStatus,
-    ...(options.response.errorCode ? { errorCode: options.response.errorCode } : {}),
-    ...(options.response.errorMessage ? { errorMessage: options.response.errorMessage } : {}),
-    latencyMs: elapsedMs(options.startedAt, options.finishedAt),
-    startedAt: options.startedAt,
-    finishedAt: options.finishedAt,
-  };
 }
 
 function elapsedMs(startedAt: Date, finishedAt: Date): number {

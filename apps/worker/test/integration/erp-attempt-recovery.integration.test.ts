@@ -1,6 +1,7 @@
 import {
   type ErpConfirmationRequest,
   type ErpConfirmationResponse,
+  erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   type OrderProcessJob,
@@ -20,6 +21,7 @@ import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
+import { ErpUnresolvedCallReconciler } from "../../src/application/erp-reconciliation.js";
 import {
   createOrderProcessJobHandler,
   type OrderConfirmation,
@@ -29,6 +31,7 @@ import {
   ErpAttemptContradictionError,
   PostgresErpAttemptPersistence,
 } from "../../src/persistence/postgres-erp-attempt-persistence.js";
+import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -287,17 +290,106 @@ run("PostgreSQL ERP attempt recovery", () => {
       await replacementErp.close();
     }
   });
+
+  it.each([
+    "lookup_success",
+    "unknown_replay",
+  ] as const)("reconciles %s without duplicating the external effect", async (scenario) => {
+    const transition = new PostgresOrderTransitionPersistence(
+      requireConnection().db,
+      () => new Date("2026-06-22T00:00:00.500Z"),
+    );
+    const processing = await transition.transitionToProcessing(job, {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      maxAttempts: 4,
+      deliveryId: "uncertain-delivery",
+    });
+    const delivery = {
+      attemptNumber: 2,
+      attemptsMade: 1,
+      maxAttempts: 4,
+      deliveryId: "reconciliation-delivery",
+      processingGeneration: processing.processingGeneration ?? 0,
+    };
+    const call = await requirePersistence().recordDispatchIntent({
+      job,
+      idempotencyKey: `erp-confirmation:${job.orderId}`,
+      dispatchedAt: new Date("2026-06-22T00:00:01.000Z"),
+      expectedProcessingGeneration: delivery.processingGeneration,
+    });
+    await requirePersistence().recordAttempt({
+      job,
+      delivery,
+      call,
+      status: "timed_out",
+      terminal: false,
+      errorCode: "erp_request_timeout",
+      latencyMs: 1_000,
+      startedAt: new Date("2026-06-22T00:00:01.000Z"),
+      finishedAt: new Date("2026-06-22T00:00:02.000Z"),
+    });
+    const erp = await startInMemoryErpService("reconciliation");
+    try {
+      if (scenario === "lookup_success") {
+        await fetch(`${erp.baseUrl}${erpConfirmationPath}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            orderId: job.orderId,
+            publicOrderId: job.publicOrderId,
+            reservationId: job.reservationId,
+            saleOfferId: job.saleOfferId,
+            idempotencyKey: call.idempotencyKey,
+            correlationId: job.correlationId,
+            quantity: job.quantity,
+          }),
+        });
+      }
+      const client = createHttpConfirmation(erp.baseUrl, requirePersistence());
+      const reconciler = new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: new PostgresOrderRecoveryPersistence(requireConnection().db),
+        lookupAvailabilityCircuit: { assertAvailable: () => undefined },
+        lookupConcurrency: 1,
+      });
+
+      const result = await reconciler.reconcile({
+        job,
+        delivery,
+        call,
+        replayAdmission: {
+          dispatchReplay: async ({ dispatch }) => dispatch(),
+        },
+      });
+
+      expect(result.disposition).toBe("succeeded");
+      expect(erp.receivedRequests).toHaveLength(1);
+      await expect(readRecoveryState(requireConnection())).resolves.toMatchObject({
+        successfulAttemptCount: 1,
+        confirmationIds: expect.arrayContaining([null, "reconciliation-confirmation-1"]),
+      });
+    } finally {
+      await erp.close();
+    }
+  });
 });
 
 function createHttpConfirmation(
   baseUrl: string,
   attemptPersistence: PostgresErpAttemptPersistence,
 ): HttpErpOrderConfirmation {
+  let now = new Date("2026-06-22T00:00:01.000Z");
   return new HttpErpOrderConfirmation({
     baseUrl,
     requestTimeoutMs: 1_000,
+    retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
     attemptPersistence,
-    now: sequenceClock(new Date("2026-06-22T00:00:01.000Z"), new Date("2026-06-22T00:00:01.020Z")),
+    now: () => {
+      const current = now;
+      now = new Date(now.getTime() + 20);
+      return current;
+    },
   });
 }
 
@@ -318,14 +410,17 @@ async function startInMemoryErpService(instanceName: string): Promise<{
   close(): Promise<void>;
 }> {
   const receivedRequests: ErpConfirmationRequest[] = [];
-  const confirmationsByIdempotencyKey = new Map<string, ErpConfirmationResponse>();
+  const confirmationsByIdempotencyKey = new Map<
+    string,
+    { request: ErpConfirmationRequest; response: ErpConfirmationResponse }
+  >();
   const server = fastify({ logger: false });
 
   server.post(erpConfirmationPath, async (request) => {
     const confirmationRequest = erpConfirmationRequestSchema.parse(request.body);
     receivedRequests.push(confirmationRequest);
     const existing = confirmationsByIdempotencyKey.get(confirmationRequest.idempotencyKey);
-    if (existing) return existing;
+    if (existing) return existing.response;
 
     const response: ErpConfirmationResponse = {
       status: "succeeded",
@@ -334,8 +429,34 @@ async function startInMemoryErpService(instanceName: string): Promise<{
       latencyMs: 20,
       timestamp: "2026-06-22T00:00:01.020Z",
     };
-    confirmationsByIdempotencyKey.set(confirmationRequest.idempotencyKey, response);
+    confirmationsByIdempotencyKey.set(confirmationRequest.idempotencyKey, {
+      request: confirmationRequest,
+      response,
+    });
     return response;
+  });
+
+  server.get(erpConfirmationLookupPath, async (request) => {
+    const { idempotencyKey } = request.params as { idempotencyKey: string };
+    const existing = confirmationsByIdempotencyKey.get(idempotencyKey);
+    return {
+      lookup: existing
+        ? {
+            status: "succeeded",
+            identity: {
+              orderId: existing.request.orderId,
+              publicOrderId: existing.request.publicOrderId,
+              reservationId: existing.request.reservationId,
+              saleOfferId: existing.request.saleOfferId,
+              ...(existing.request.runId ? { runId: existing.request.runId } : {}),
+              idempotencyKey,
+              quantity: existing.request.quantity,
+            },
+            result: existing.response,
+          }
+        : { status: "unknown", idempotencyKey },
+      timestamp: "2026-06-22T00:00:02.000Z",
+    };
   });
 
   const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });

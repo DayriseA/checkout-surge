@@ -18,7 +18,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Rejected reservation persistence | Do not create a PostgreSQL row for every immediate sold-out rejection in the current model | At surge scale, persisting every reject would create noise without improving business recovery or operator understanding. |
 | Order model | Create an order only from a successful reservation | Orders represent the asynchronous business process, not every attempted click. |
 | ERP attempt model | Store ERP calls as append-only attempt records per order | Retry behavior, latency analysis, and failure diagnosis all require attempt history, not just a final outcome. |
-| ERP result model | Keep durable accepted-result idempotency in worker-owned `ErpAttempt` records and process-local replay in the Mock ERP | Checkout durability survives retries and restarts without turning the simulated downstream service into a second database authority. |
+| ERP result model | Keep worker attempt evidence separate from the Mock ERP's durable terminal-outcome ledger | Status lookup and same-key replay can settle a lost response across process restarts without treating worker-local evidence as proof of the external effect. |
 | Order recovery model | Store retryable/accepted-result handoff recovery and poison-job evidence independently from the live queue | An accepted ERP result must not be lost because local persistence failed, and malformed jobs need durable audit evidence. |
 | Order event model | Keep an append-only event timeline for reservation and order facts | The operator dashboard, run recap, and post-incident debugging all benefit from a durable event history. |
 | Demo preset model | Store public and admin preset definitions as durable database rows | Presets are the public/admin control contract; operators edit accepted configurations rather than raw k6 parameters. |
@@ -242,7 +242,7 @@ Notes:
 
 ### 6. ErpAttempt
 
-`ErpAttempt` is an append-only record of a worker interaction with the Mock ERP.
+`ErpAttempt` is an append-only record of a dispatched confirmation or adopted status-lookup result from the Mock ERP. Every actual confirmation POST first receives a durable `ErpCallReference`; status lookups create no call identity and consume no confirmation permit.
 
 Primary responsibilities:
 
@@ -279,9 +279,10 @@ Canonical statuses:
 
 Notes:
 
-- `attemptNumber` is monotonic within an order delivery; `(orderId, deliveryId, attemptNumber)` is unique so a recovery delivery can start its own attempt sequence without contradicting the original delivery.
+- `erpCallId` is unique for actual POST results. The legacy `(orderId, deliveryId, attemptNumber)` identity remains only for records without a durable call identity, including lookup-adopted canonical results.
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
-- `terminal` records the worker's disposition at call time: success and non-retryable rejection are terminal, while a temporary failure is nonterminal only when the delivery has a known remaining attempt. An absent maximum is conservatively terminal. The marker is mirrored into the attempt event payload and exposed only in protected admin run-history rows; anonymous detail exposes closed status counts and nullable aggregate latency metrics. It does not prohibit later manual or recovery replay.
+- `terminal` records a definitive business result at observation time: canonical success or a code declared in the shared permanent-rejection vocabulary. Capacity, recognized unavailability, timeout uncertainty, malformed protocol, identity contradiction, and unknown codes remain nonterminal regardless of the queue delivery count. The marker is mirrored into the attempt event payload and exposed only in protected admin run-history rows; anonymous detail exposes closed status counts and nullable aggregate latency metrics.
+- Attempt event diagnostics distinguish dispatched confirmations from status lookups and capture the replay response header separately from canonical JSON. Local, lookup-adopted, and replayed successes do not provide controller health or latency-learning evidence.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
 - PostgreSQL requires `finishedAt >= startedAt` and uses a composite foreign key to bind `orderId` and `correlationId` to the referenced order. The worker validates the complete delivered order identity, including nullable `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
 
@@ -302,7 +303,7 @@ Implemented statuses:
 - `escalated`
 - `resolved`
 
-Key fields include `recoveryKey`, recovery/source job IDs, `orderId`, validated payload, optional captured result, reason, attempt count, last error, next-attempt/claim/resolution/escalation timestamps, and creation/update timestamps.
+Key fields include `recoveryKey`, recovery/source job IDs, `orderId`, validated payload, optional captured result, reason, attempt count, last error, next-attempt/claim/resolution/escalation timestamps, processing generation, lease expiry, waiting/intervention reasons, publication ownership, unresolved ERP call identity, cumulative attempt categories, and creation/update timestamps.
 
 ### 8. OrderDeadLetter
 
@@ -721,9 +722,9 @@ Redis is intentionally not the final historical source for:
 - ERP attempt history
 - durable simulation timelines
 
-### Process-local Mock ERP state
+### Mock ERP terminal-outcome ledger
 
-The Mock ERP keeps successful confirmation responses in memory so concurrent and repeated calls with the same immutable order identity replay one response during a process lifetime. Failed decisions are not cached. A restart may forget this simulated confirmation history; the worker's durable successful `ErpAttempt` idempotency key and accepted-result recovery prevent that from creating a second durable checkout outcome.
+The Mock ERP durably stores canonical successes and explicitly declared permanent rejections by business idempotency key and immutable request identity. Same-process duplicates still share one running promise; cross-process duplicates converge through the ledger's unique key. Capacity, outage, injected-error, and in-progress state are not stored. `GET /confirmations/:idempotencyKey` returns `succeeded`, `rejected`, or `unknown`; `unknown` is never proof that the original POST had no effect. A same-key replay returns the stored canonical JSON and signals reuse only through `x-erp-replayed: true`.
 
 ### Derived UI Projections
 

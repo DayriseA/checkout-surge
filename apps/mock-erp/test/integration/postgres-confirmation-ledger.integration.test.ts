@@ -207,6 +207,35 @@ run("PostgreSQL confirmation ledger", () => {
     expect(lookupResult.lookup.status).toBe("unknown");
     expect(rows[0]?.count).toBe(0);
   });
+
+  it("emits delay-seconds Retry-After on capacity and recognized outage responses", async () => {
+    const capacityRuntime = await startMockErpProcess(runtimes, { maxTps: 1 });
+    const first = await postConfirmation(capacityRuntime.baseUrl, {
+      ...request,
+      orderId: "85000000-0000-4000-8000-000000000001",
+      idempotencyKey: "erp-confirmation:retry-after-capacity-first",
+    });
+    const capacity = await postConfirmation(capacityRuntime.baseUrl, {
+      ...request,
+      orderId: "85000000-0000-4000-8000-000000000002",
+      idempotencyKey: "erp-confirmation:retry-after-capacity-second",
+    });
+    await capacityRuntime.close();
+
+    const outageRuntime = await startMockErpProcess(runtimes, { forcedOutage: true });
+    const outage = await postConfirmation(outageRuntime.baseUrl, {
+      ...request,
+      orderId: "85000000-0000-4000-8000-000000000003",
+      idempotencyKey: "erp-confirmation:retry-after-outage",
+    });
+    await outageRuntime.close();
+
+    expect(first.status).toBe(200);
+    expect(capacity.status).toBe(429);
+    expect(capacity.headers.get("retry-after")).toBe("1");
+    expect(outage.status).toBe(503);
+    expect(outage.headers.get("retry-after")).toBe("1");
+  });
 });
 
 interface MockErpProcess {
@@ -217,7 +246,7 @@ interface MockErpProcess {
 
 async function startMockErpProcess(
   runtimes: MockErpProcess[],
-  options: { forcedOutage?: boolean; latencyMs?: number } = {},
+  options: { forcedOutage?: boolean; latencyMs?: number; maxTps?: number } = {},
 ): Promise<MockErpProcess> {
   const port = await availablePort();
   const child = spawn(process.execPath, ["--import", "tsx", mockErpEntryPoint], {
@@ -231,7 +260,7 @@ async function startMockErpProcess(
       PORT: String(port),
       LOG_LEVEL: "info",
       LATENCY_MS: String(options.latencyMs ?? 0),
-      MAX_TPS: "100",
+      MAX_TPS: String(options.maxTps ?? 100),
       ERROR_RATE: "0",
       FORCED_OUTAGE: String(options.forcedOutage ?? false),
       ADMIN_MAX_LATENCY_MS: "5000",
@@ -280,6 +309,14 @@ async function startMockErpProcess(
     () => output,
   );
   return runtime;
+}
+
+function postConfirmation(baseUrl: string, payload: ErpConfirmationRequest): Promise<Response> {
+  return fetch(`${baseUrl}${erpConfirmationPath}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 async function waitUntil(

@@ -57,7 +57,7 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     this.reportSnapshot();
   }
 
-  async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void> {
+  async confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<unknown> {
     this.enterHalfOpenIfReady();
 
     if (this.state === "open") {
@@ -75,8 +75,9 @@ export class ErpCircuitBreaker implements OrderConfirmation {
     }
 
     try {
-      await this.confirmation.confirm(job, delivery);
-      this.close();
+      const result = await this.confirmation.confirm(job, delivery);
+      if (isHealthLearningEligible(result)) this.close();
+      return result;
     } catch (error) {
       if (this.isCountedFailure(error)) {
         this.recordFailure();
@@ -87,6 +88,14 @@ export class ErpCircuitBreaker implements OrderConfirmation {
         this.halfOpenProbeInFlight = false;
         this.reportSnapshot();
       }
+    }
+  }
+
+  /** Lookups obey an outage circuit but never probe, close, or otherwise learn from it. */
+  assertAvailable(): void {
+    this.enterHalfOpenIfReady();
+    if (this.state !== "closed") {
+      throw new ErpCircuitOpenError(this.retryAfterMs());
     }
   }
 
@@ -179,4 +188,13 @@ export class ErpCircuitBreaker implements OrderConfirmation {
       // State reporting is best-effort and must not break order processing.
     }
   }
+}
+
+function isHealthLearningEligible(result: unknown): boolean {
+  return !(
+    typeof result === "object" &&
+    result !== null &&
+    "erpHealthLearningEligible" in result &&
+    result.erpHealthLearningEligible === false
+  );
 }

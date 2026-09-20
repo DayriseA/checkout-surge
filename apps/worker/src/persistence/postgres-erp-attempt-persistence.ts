@@ -335,6 +335,8 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
           ...(record.httpStatus ? { httpStatus: record.httpStatus } : {}),
           ...(record.errorCode ? { errorCode: record.errorCode } : {}),
           ...(record.errorMessage ? { errorMessage: record.errorMessage } : {}),
+          ...(record.operation ? { operation: record.operation } : {}),
+          ...(record.replayed !== undefined ? { replayed: record.replayed } : {}),
           ...(record.response?.confirmationId
             ? { confirmationId: record.response.confirmationId }
             : {}),
@@ -422,10 +424,11 @@ function isCanonicalTerminalOutcome(record: ErpAttemptRecord): boolean {
 
 function isDefinitiveCallOutcome(record: ErpAttemptRecord): boolean {
   if (isCanonicalTerminalOutcome(record)) return true;
-  const recognizedCode = erpErrorCodeSchema.safeParse(record.errorCode);
-  if (!recognizedCode.success) return false;
-  const disposition = recognizedErpErrorCodeDispositions[recognizedCode.data];
-  return disposition === "capacity_rejected" || disposition === "temporarily_unavailable";
+  return (
+    record.disposition === "capacity_rejected" ||
+    // Availability also includes transport failures without authoritative ERP evidence.
+    (record.disposition === "temporarily_unavailable" && record.response !== undefined)
+  );
 }
 
 /**
@@ -433,6 +436,7 @@ function isDefinitiveCallOutcome(record: ErpAttemptRecord): boolean {
  * the shared `ErpOutcomeDisposition` vocabulary (D03/D09).
  */
 function attemptCountCategory(record: ErpAttemptRecord): ErpOutcomeDisposition {
+  if (record.disposition !== undefined) return record.disposition;
   if (record.status === "succeeded") return "succeeded";
   if (record.status === "timed_out") return "uncertain_result";
   if (record.errorCode === "erp_request_failed") return "temporarily_unavailable";

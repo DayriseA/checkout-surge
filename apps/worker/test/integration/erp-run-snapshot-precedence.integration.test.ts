@@ -59,6 +59,7 @@ describe("worker and Mock ERP precedence", () => {
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
       requestTimeoutMs: 1000,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       runConfigReader: { read: vi.fn().mockResolvedValue(snapshot) },
       fetch: async (_input, init) => {
@@ -89,6 +90,6 @@ describe("worker and Mock ERP precedence", () => {
         },
         { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 },
       ),
-    ).resolves.toMatchObject({ status: "succeeded" });
+    ).resolves.toMatchObject({ response: { status: "succeeded" } });
   });
 });
