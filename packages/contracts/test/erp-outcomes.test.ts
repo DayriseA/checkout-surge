@@ -19,6 +19,13 @@ const identity = {
   idempotencyKey: "idem-1",
   quantity: 1,
 };
+const canonicalSuccess = {
+  status: "succeeded" as const,
+  confirmationId: "conf-1",
+  httpStatus: 200 as const,
+  latencyMs: 25,
+  timestamp: "2026-09-20T00:00:00.000Z",
+};
 
 describe("ERP outcome vocabulary", () => {
   it("declares the closed shared error-code vocabulary", () => {
@@ -71,7 +78,18 @@ describe("ERP outcome vocabulary", () => {
   ])("never classifies %s as a business rejection", (code) => {
     expect(erpPermanentRejectionCodeSchema.safeParse(code).success).toBe(false);
     expect(
-      erpLookupResultSchema.safeParse({ identity, status: "rejected", errorCode: code }).success,
+      erpLookupResultSchema.safeParse({
+        identity,
+        status: "rejected",
+        result: {
+          status: "failed",
+          httpStatus: 422,
+          errorCode: code,
+          errorMessage: "Rejected.",
+          latencyMs: 25,
+          timestamp: "2026-09-20T00:00:00.000Z",
+        },
+      }).success,
     ).toBe(false);
   });
 });
@@ -79,8 +97,8 @@ describe("ERP outcome vocabulary", () => {
 describe("ERP status lookup contract", () => {
   it("parses a succeeded lookup with the canonical confirmation", () => {
     expect(
-      erpLookupResultSchema.parse({ identity, status: "succeeded", confirmationId: "conf-1" }),
-    ).toEqual({ identity, status: "succeeded", confirmationId: "conf-1" });
+      erpLookupResultSchema.parse({ identity, status: "succeeded", result: canonicalSuccess }),
+    ).toEqual({ identity, status: "succeeded", result: canonicalSuccess });
   });
 
   it("reports unknown from the queried key alone, without treating it as evidence of no effect", () => {
@@ -94,7 +112,7 @@ describe("ERP status lookup contract", () => {
 
   it("keeps the immutable identity on terminal results only", () => {
     expect(
-      erpLookupResultSchema.safeParse({ status: "succeeded", confirmationId: "conf-1" }).success,
+      erpLookupResultSchema.safeParse({ status: "succeeded", result: canonicalSuccess }).success,
     ).toBe(false);
     expect(erpLookupResultSchema.safeParse({ status: "unknown", ...identity }).success).toBe(false);
   });

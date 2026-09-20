@@ -1,3 +1,4 @@
+import { createDatabaseConnection } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import {
   ChaosConfirmationDecisionProvider,
@@ -5,12 +6,14 @@ import {
 } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
+import { PostgresConfirmationLedger } from "./persistence/postgres-confirmation-ledger.js";
 import { loadMockErpConfig } from "./runtime/config.js";
 import { buildMockErpServer } from "./server.js";
 
 export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);
   const logger = createServiceLogger({ service: "mock-erp" });
+  const database = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
   const chaosConfigStore = new ErpChaosConfigStore(
     config.defaultChaosConfig,
     config.chaosSafetyCaps,
@@ -21,6 +24,7 @@ export async function startMockErp(): Promise<void> {
         configStore: chaosConfigStore,
         tpsLimiter: new SlidingWindowTpsLimiter(),
       }),
+      ledger: new PostgresConfirmationLedger(database.sql),
     }),
     chaosConfigStore,
     controlServiceToken: config.controlServiceToken,
@@ -30,7 +34,13 @@ export async function startMockErp(): Promise<void> {
 
   let closePromise: Promise<void> | null = null;
   const close = (): Promise<void> => {
-    closePromise ??= server.close();
+    closePromise ??= (async () => {
+      try {
+        await server.close();
+      } finally {
+        await database.close();
+      }
+    })();
     return closePromise;
   };
 

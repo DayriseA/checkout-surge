@@ -49,6 +49,7 @@ import {
   erpChaosResetPath,
   erpChaosStatusPath,
   erpChaosStatusSchema,
+  erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
@@ -1364,6 +1365,7 @@ describe("canonical error-code vocabulary", () => {
 describe("ERP contracts", () => {
   it("defines the worker-facing confirmation endpoint and payloads", () => {
     expect(erpConfirmationPath).toBe("/confirmations");
+    expect(erpConfirmationLookupPath).toBe("/confirmations/:idempotencyKey");
     expect(
       erpConfirmationRequestSchema.parse({
         orderId: "11111111-1111-4111-8111-111111111111",

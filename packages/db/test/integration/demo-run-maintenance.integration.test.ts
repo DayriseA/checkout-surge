@@ -6,6 +6,7 @@ import {
   deleteGeneratedRunDurable,
   demoRuns,
   erpAttempts,
+  erpConfirmationLedger,
   erpDispatchCalls,
   erpScopeResilienceState,
   inspectGeneratedRunTeardown,
@@ -173,6 +174,41 @@ run("generated-run durable maintenance with processing-control data", () => {
         confirmationId: "maintenance-confirmation",
         idempotencyKey: `erp-confirmation:${ids.order}`,
       });
+    await requireConnection()
+      .db.insert(erpConfirmationLedger)
+      .values([
+        {
+          idempotencyKey: `erp-confirmation:${ids.order}`,
+          orderId: ids.order,
+          publicOrderId: "ord-maintenance-guard",
+          reservationId: ids.reservation,
+          saleOfferId: ids.saleOffer,
+          runId: ids.run,
+          quantity: 1,
+          terminalResult: {
+            status: "succeeded",
+            confirmationId: "maintenance-confirmation",
+            httpStatus: 200,
+            latencyMs: 5,
+            timestamp: "2026-06-20T00:00:03.000Z",
+          },
+        },
+        {
+          idempotencyKey: "erp-confirmation:catalog-order",
+          orderId: "71000000-0000-4000-8000-000000000099",
+          publicOrderId: "ord-catalog",
+          reservationId: "71000000-0000-4000-8000-000000000098",
+          saleOfferId: "71000000-0000-4000-8000-000000000097",
+          quantity: 1,
+          terminalResult: {
+            status: "succeeded",
+            confirmationId: "catalog-confirmation",
+            httpStatus: 200,
+            latencyMs: 5,
+            timestamp: "2026-06-20T00:00:03.000Z",
+          },
+        },
+      ]);
 
     await expect(
       deleteGeneratedRunDurable(requireConnection().db, {
@@ -184,6 +220,9 @@ run("generated-run durable maintenance with processing-control data", () => {
     const db = requireConnection().db;
     await expect(db.select().from(erpDispatchCalls)).resolves.toHaveLength(0);
     await expect(db.select().from(erpAttempts)).resolves.toHaveLength(0);
+    await expect(db.select().from(erpConfirmationLedger)).resolves.toMatchObject([
+      { idempotencyKey: "erp-confirmation:catalog-order", runId: null },
+    ]);
     await expect(db.select().from(orderRecoveryJobs)).resolves.toHaveLength(0);
     const remainingScopes = await db.select().from(erpScopeResilienceState);
     expect(remainingScopes.map((row) => row.scope).sort()).toEqual([
@@ -210,10 +249,37 @@ run("generated-run durable maintenance with processing-control data", () => {
         correlationId: runScopedCorrelationId,
         dispatchedAt: new Date("2026-06-20T00:00:02Z"),
       });
+    await requireConnection()
+      .db.insert(erpConfirmationLedger)
+      .values({
+        idempotencyKey: `erp-confirmation:${ids.order}`,
+        orderId: ids.order,
+        publicOrderId: "ord-maintenance-guard",
+        reservationId: ids.reservation,
+        saleOfferId: ids.saleOffer,
+        runId: ids.run,
+        quantity: 1,
+        terminalResult: {
+          status: "succeeded",
+          confirmationId: "maintenance-confirmation",
+          httpStatus: 200,
+          latencyMs: 5,
+          timestamp: "2026-06-20T00:00:03.000Z",
+        },
+      });
 
     await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
       outcome: "outstanding_work",
     });
+    await expect(
+      deleteGeneratedRunDurable(requireConnection().db, {
+        runId: ids.run,
+        saleOfferId: ids.saleOffer,
+      }),
+    ).resolves.toEqual({ outcome: "outstanding_work" });
+    await expect(requireConnection().db.select().from(erpConfirmationLedger)).resolves.toHaveLength(
+      1,
+    );
   });
 
   it("keeps non-terminal runs ineligible for teardown", async () => {

@@ -43,6 +43,7 @@ export const errorPayloadCodes = [
   "load_orchestrator_start_ambiguous",
   "invalid_chaos_configuration",
   "idempotency_conflict",
+  "erp_idempotency_conflict",
   "traffic_execution_conflict",
   "traffic_termination_unconfirmed",
 ] as const;

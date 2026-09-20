@@ -210,13 +210,13 @@ describe("ChaosConfirmationDecisionProvider TPS ordering", () => {
     await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(cap));
     releaseSleep();
     const results = await Promise.all(confirmations);
-    expect(results.filter((result) => result.status === "succeeded")).toHaveLength(cap);
+    expect(results.filter((result) => result.response.status === "succeeded")).toHaveLength(cap);
     expect(
       results.filter(
         (result) =>
-          result.status === "failed" &&
-          result.httpStatus === 429 &&
-          result.errorCode === "erp_capacity_exceeded",
+          result.response.status === "failed" &&
+          result.response.httpStatus === 429 &&
+          result.response.errorCode === "erp_capacity_exceeded",
       ),
     ).toHaveLength(3);
   });

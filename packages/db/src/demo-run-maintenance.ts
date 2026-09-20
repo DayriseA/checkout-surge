@@ -8,6 +8,7 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  erpConfirmationLedger,
   erpDispatchCalls,
   erpScopeResilienceState,
   orderEvents,
@@ -127,6 +128,7 @@ async function deleteGeneratedRunRows(
   const { runId, saleOfferId } = identity;
   await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
   await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
+  await tx.delete(erpConfirmationLedger).where(eq(erpConfirmationLedger.runId, runId));
   await tx.delete(erpDispatchCalls).where(eq(erpDispatchCalls.runId, runId));
   await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
   await tx.delete(orders).where(eq(orders.runId, runId));

@@ -20,6 +20,7 @@ describe("test command environment safety", () => {
       "checkout_surge_test_load_orchestrator",
       "checkout_surge_test_contracts",
       "checkout_surge_test_logger",
+      "checkout_surge_test_mock_erp",
     ]) {
       assert.doesNotThrow(() =>
         assertSafePostgresUrl(`postgresql://localhost:56432/${databaseName}`),

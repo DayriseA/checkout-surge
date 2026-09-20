@@ -1,5 +1,9 @@
 import { z } from "zod";
 import {
+  erpConfirmationFailedResponseSchema,
+  erpConfirmationSucceededResponseSchema,
+} from "./erp.js";
+import {
   idempotencyKeySchema,
   isoTimestampSchema,
   positiveIntegerSchema,
@@ -10,11 +14,8 @@ import {
  * Closed shared ERP error-code vocabulary (D03) with its HTTP statuses:
  * `erp_capacity_exceeded` (429), `erp_forced_outage` (503),
  * `erp_injected_error` (503), and `erp_idempotency_conflict` (409, identity
- * contradiction). The mock ERP still emits the 409 as unprefixed
- * `idempotency_conflict`; until it is aligned that literal is an unknown code
- * and therefore an intervention. Only codes declared
- * here — or in the permanent-rejection vocabulary below — may ever acquire a
- * classification meaning.
+ * contradiction). Only codes declared here — or in the permanent-rejection
+ * vocabulary below — may ever acquire a classification meaning.
  */
 export const erpErrorCodeValues = [
   "erp_capacity_exceeded",
@@ -102,14 +103,16 @@ export const erpLookupResultSchema = z.discriminatedUnion("status", [
     .object({
       ...erpTerminalLookupResultShape,
       status: z.literal("succeeded"),
-      confirmationId: z.string().trim().min(1),
+      result: erpConfirmationSucceededResponseSchema,
     })
     .strict(),
   z
     .object({
       ...erpTerminalLookupResultShape,
       status: z.literal("rejected"),
-      errorCode: erpPermanentRejectionCodeSchema,
+      result: erpConfirmationFailedResponseSchema.extend({
+        errorCode: erpPermanentRejectionCodeSchema,
+      }),
     })
     .strict(),
   /**

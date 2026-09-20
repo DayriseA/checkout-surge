@@ -117,7 +117,7 @@ pnpm runtime:reset
 
 `runtime:reset` executes inside the API container when the Compose runtime is running, so it works without publishing the API port. When no API container is running, it defaults to `http://localhost:4000` for the API and `http://localhost:4100` for Mock ERP. It requires `CONTROL_SERVICE_TOKEN`, generates one correlation ID, calls bodyless `POST /admin/demo/reset` first, and then attempts bodyless `POST /chaos/reset` even if the API call failed. Each complete request and response-body read has a finite positive timeout with a 30-second default, and both requests carry the same token and correlation headers. The CLI removes the exact token from bounded diagnostics and response-correlation output, reports each service outcome, and exits nonzero when either failed, so a partial result can be retried safely. The API-to-load-orchestrator abort uses its own 20-second default complete-response deadline; the orchestrator's `K6_CANCELLATION_TIMEOUT_MS` stop-and-reap bound defaults to 10 seconds and cannot exceed 15 seconds, and the existing 5-second traffic-start deadline is unchanged.
 
-For a starting, active, or draining demo run, the API fences the durable run and Redis admission, confirms exact-run k6 termination, pauses the owned queues and removes only jobs attributed to the selected reset run IDs, writes the failed immutable summary, and clears only that run's recoverable traffic metrics. Other generated runs and catalog/unscoped jobs remain intact. Mock ERP then restores all four global chaos controls to configured startup defaults. Accepted arrivals in its process-local rolling one-second TPS limiter and already in-flight confirmations are not cancelled or rewritten; each accepted arrival continues to count until it is one second old. Normal public and admin starts create isolated generated sale offers, so reset does not delete historical runs, terminal summaries, catalog inventory, or unrelated Redis state.
+For a starting, active, or draining demo run, the API fences the durable run and Redis admission, confirms exact-run k6 termination, pauses the owned queues and removes only jobs attributed to the selected reset run IDs, writes the failed immutable summary, and clears only that run's recoverable traffic metrics. Other generated runs and catalog/unscoped jobs remain intact. Mock ERP then restores all four global chaos controls to configured startup defaults. It does not clear the terminal confirmation ledger; exact generated-run teardown may remove only that run's rows after unresolved work and interventions are gone, while catalog rows remain. Accepted arrivals in its process-local rolling one-second TPS limiter and already in-flight confirmations are not cancelled or rewritten; each accepted arrival continues to count until it is one second old. Normal public and admin starts create isolated generated sale offers, so reset does not delete historical runs, terminal summaries, catalog inventory, or unrelated Redis state.
 
 Open the dashboard:
 
@@ -372,22 +372,22 @@ pnpm test:characterization
 
 Set `COMPOSITION_KEEP_RUNTIME=true` to retain a failed composition project for inspection. The 10k characterization preserves the 10,000-buyer burst and requires the exact 1,000 accepted / 9,000 sold-out result when the host delivers every planned iteration. On constrained hosts it permits k6-dropped iterations but still requires complete request accounting, zero transport failures, zero unexpected application responses, consistent inventory, and every accepted reservation to traverse the worker, ERP, notification, and Run History boundaries.
 
-For infrastructure-backed tests, start the isolated test services first — the package-isolated test databases are created and rebuilt from migrations on demand:
+For infrastructure-backed tests, start the isolated test services first — the package-isolated test databases are created and rebuilt from migrations on demand. Mock ERP integration tests use only this isolated PostgreSQL service and launch disposable entry-point child processes on ephemeral loopback ports to verify restart-safe replay, discarded-response recovery and pre-insert process termination:
 
 ```bash
 pnpm test:infra:up
 pnpm test
 ```
 
-To verify the reviewed baseline against disposable infrastructure, run the command below. It destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline, discarding any data and schema drift in that database. Tests provision their own package-isolated databases, so this remains a focused verification aid rather than a prerequisite.
+To verify the migration history against disposable infrastructure, run the command below. It destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the checked-in migrations, discarding any data and schema drift in that database. Tests provision their own package-isolated databases, so this remains a focused verification aid rather than a prerequisite.
 
 ```bash
 pnpm test:db:migrate
 ```
 
-The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. It contains exactly one baseline SQL file, one journal entry, and one linked snapshot. Drizzle snapshots describe the declarative schema in `schema.ts`; the baseline SQL must also retain only the reviewed `pgcrypto` extension and single-nonterminal-run expression index. The current baseline has no trigger functions or non-internal triggers.
+The checked-in `packages/db/drizzle` directory is part of the database package artifact and is resolved relative to that package in both TypeScript and compiled execution. It contains the reviewed `0000_baseline` plus ordered incremental SQL files, linked snapshots, and journal entries. Drizzle snapshots describe the declarative schema in `schema.ts`; the baseline SQL also retains the reviewed `pgcrypto` extension and single-nonterminal-run expression index. The baseline has no trigger functions or non-internal triggers.
 
-Before release stability is promised, amend this baseline in place for schema changes: generate a fresh declarative baseline from the current `schema.ts` into a temporary directory, review it as an empty-database final state, replace the checked-in SQL/snapshot/journal together, restore and review the required snapshot-invisible custom SQL, then run the DB unit, migration, integration, and type-check commands. Do not add a compatibility migration or old-row backfill. Existing local runtime data must first follow the selected-project wipe-and-rebuild workflow above.
+For schema changes, generate one new incremental migration from the current `schema.ts`, review the SQL and linked snapshot/journal entry, and leave earlier migrations unchanged. The migration must apply to populated databases without erasing reference data. Then run the DB unit, migration, integration, and type-check commands.
 
 Run at most one development/runtime `runtime-setup` or migration job at a time for each database; serialize that migration execution. A failed job can be retried after it exits, and already-applied entries remain no-ops. The pinned PostgreSQL migrator applies all pending entries in one transaction, but it does not provide an explicit deployment/advisory lock for competing migration processes. The isolated `test:db:migrate` rebuild is different: `resetTestDatabase` serializes it with the test database's administration-database advisory lock.
 
@@ -434,7 +434,8 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | Variable | Default / Example | Used by |
 | :-- | :-- | :-- |
 | `NODE_ENV` | `development` host-native; `production` in reference Compose; `test` in test commands | Runtime mode and strict production-only security/storage requirements |
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, db package |
+| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, Mock ERP, db package |
+| `MOCK_ERP_POSTGRES_POOL_MAX` | `5` | Mock ERP ledger PostgreSQL pool maximum |
 | `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
 | `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
 | `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |

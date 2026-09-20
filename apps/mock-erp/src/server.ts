@@ -20,7 +20,10 @@ export interface BuildMockErpServerOptions {
 }
 
 export function buildMockErpServer(options: BuildMockErpServerOptions) {
-  const app = fastify({ loggerInstance: options.logger });
+  const app = fastify({
+    loggerInstance: options.logger,
+    routerOptions: { maxParamLength: 200 },
+  });
 
   installFastifyCorrelation(app);
 
@@ -41,7 +44,7 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
     if (error instanceof ConfirmationIdempotencyConflictError) {
       return reply.status(409).send(
         createMockErpErrorPayload({
-          code: "idempotency_conflict",
+          code: "erp_idempotency_conflict",
           message: error.message,
           correlationId,
         }),

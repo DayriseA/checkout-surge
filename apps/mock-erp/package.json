@@ -13,11 +13,13 @@
     "dev": "node ../../scripts/run-with-env.mjs tsx watch src/index.ts",
     "test": "pnpm test:unit",
     "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts",
     "test:unit:watch": "vitest --watch --config vitest.unit.config.ts",
     "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",
+    "@checkout-surge/db": "workspace:*",
     "@checkout-surge/logger": "workspace:*",
     "fastify": "^5.8.5",
     "zod": "^4.4.3"

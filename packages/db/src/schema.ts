@@ -4,6 +4,7 @@ import type {
   BackpressureConfig,
   BusinessOutcomeSummary,
   DemoPresetDisplay,
+  ErpConfirmationResponse,
   ErpOutcomeDisposition,
   ErpRunConfig,
   HttpTimingBreakdownSummary,
@@ -380,6 +381,26 @@ export const erpDispatchCalls = pgTable(
     index("erp_dispatch_calls_order_id_idx").on(table.orderId),
     index("erp_dispatch_calls_run_id_idx").on(table.runId),
     index("erp_dispatch_calls_idempotency_key_idx").on(table.idempotencyKey),
+  ],
+);
+
+/** Mock ERP-owned terminal confirmation evidence (D05). */
+export const erpConfirmationLedger = pgTable(
+  "erp_confirmation_ledger",
+  {
+    idempotencyKey: text("idempotency_key").primaryKey(),
+    orderId: uuid("order_id").notNull(),
+    publicOrderId: text("public_order_id").notNull(),
+    reservationId: uuid("reservation_id").notNull(),
+    saleOfferId: uuid("sale_offer_id").notNull(),
+    runId: uuid("run_id"),
+    quantity: integer("quantity").notNull(),
+    terminalResult: jsonb("terminal_result").$type<ErpConfirmationResponse>().notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    check("erp_confirmation_ledger_quantity_positive", sql`${table.quantity} > 0`),
+    index("erp_confirmation_ledger_run_id_idx").on(table.runId),
   ],
 );
 

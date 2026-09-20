@@ -7,6 +7,8 @@ import {
 export interface MockErpConfig {
   host: string;
   port: number;
+  databaseUrl: string;
+  postgresPoolMax: number;
   controlServiceToken: string;
   defaultChaosConfig: ErpChaosConfig;
   chaosSafetyCaps: ErpChaosSafetyCaps;
@@ -21,6 +23,12 @@ export function loadMockErpConfig(env: NodeJS.ProcessEnv): MockErpConfig {
   const config: MockErpConfig = {
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4100),
+    databaseUrl: requireEnv(env, "DATABASE_URL"),
+    postgresPoolMax: parsePositiveInteger(
+      env.MOCK_ERP_POSTGRES_POOL_MAX,
+      "MOCK_ERP_POSTGRES_POOL_MAX",
+      5,
+    ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     defaultChaosConfig: erpChaosConfigSchema.parse({
       latencyMs: parseNonnegativeInteger(env.LATENCY_MS, "LATENCY_MS", 0),

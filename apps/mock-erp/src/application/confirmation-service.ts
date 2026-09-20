@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import {
   type ErpConfirmationRequest,
   type ErpConfirmationResponse,
+  type ErpLookupIdentity,
+  type ErpLookupResponse,
   erpConfirmationResponseSchema,
+  erpLookupResponseSchema,
+  erpPermanentRejectionCodeSchema,
 } from "@checkout-surge/contracts";
 
 export class ConfirmationIdempotencyConflictError extends Error {
@@ -26,19 +30,29 @@ export interface ConfirmationDecisionProvider {
   decide(request: ErpConfirmationRequest): Promise<ConfirmationDecision>;
 }
 
+export interface ConfirmationLedgerEntry {
+  identity: ErpLookupIdentity;
+  response: ErpConfirmationResponse;
+}
+
+export interface ConfirmationLedger {
+  find(idempotencyKey: string): Promise<ConfirmationLedgerEntry | null>;
+  save(entry: ConfirmationLedgerEntry): Promise<{
+    entry: ConfirmationLedgerEntry;
+    inserted: boolean;
+  }>;
+}
+
 export interface ConfirmationServiceOptions {
   decisionProvider?: ConfirmationDecisionProvider;
   generateConfirmationId?: () => string;
+  ledger?: ConfirmationLedger;
   now?: () => Date;
 }
 
-interface ConfirmationIdentity {
-  orderId: string;
-  publicOrderId: string;
-  reservationId: string;
-  saleOfferId: string;
-  runId: string | null;
-  quantity: number;
+export interface ConfirmationResult {
+  response: ErpConfirmationResponse;
+  replayed: boolean;
 }
 
 const successfulDecisionProvider: ConfirmationDecisionProvider = {
@@ -48,28 +62,32 @@ const successfulDecisionProvider: ConfirmationDecisionProvider = {
 export class ConfirmationService {
   private readonly decisionProvider: ConfirmationDecisionProvider;
   private readonly generateConfirmationId: () => string;
+  private readonly ledger: ConfirmationLedger;
   private readonly now: () => Date;
-  private readonly ledger = new InMemoryConfirmationLedger();
   private readonly inFlight = new Map<
     string,
-    { identity: ConfirmationIdentity; promise: Promise<ErpConfirmationResponse> }
+    { identity: ErpLookupIdentity; promise: Promise<ConfirmationResult> }
   >();
 
   constructor(options: ConfirmationServiceOptions = {}) {
     this.decisionProvider = options.decisionProvider ?? successfulDecisionProvider;
     this.generateConfirmationId = options.generateConfirmationId ?? randomUUID;
+    this.ledger = options.ledger ?? new InMemoryConfirmationLedger();
     this.now = options.now ?? (() => new Date());
   }
 
-  async confirm(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse> {
+  async confirm(request: ErpConfirmationRequest): Promise<ConfirmationResult> {
     const running = this.inFlight.get(request.idempotencyKey);
     if (running) {
       assertSameConfirmationIdentity(running.identity, request);
-      return running.promise;
+      const result = await running.promise;
+      return {
+        response: result.response,
+        replayed: result.replayed || isTerminalResponse(result.response),
+      };
     }
-    const existingConfirmation = this.ledger.get(request);
-    if (existingConfirmation) return existingConfirmation;
-    const operation = this.confirmFirst(request);
+
+    const operation = this.confirmOrReplay(request);
     this.inFlight.set(request.idempotencyKey, {
       identity: confirmationIdentity(request),
       promise: operation,
@@ -81,9 +99,36 @@ export class ConfirmationService {
     }
   }
 
-  private async confirmFirst(request: ErpConfirmationRequest): Promise<ErpConfirmationResponse> {
+  async lookup(idempotencyKey: string): Promise<ErpLookupResponse> {
+    const existing = await this.ledger.find(idempotencyKey);
+    return erpLookupResponseSchema.parse({
+      lookup: existing
+        ? {
+            status: existing.response.status === "succeeded" ? "succeeded" : "rejected",
+            identity: existing.identity,
+            result: existing.response,
+          }
+        : { status: "unknown", idempotencyKey },
+      timestamp: this.now().toISOString(),
+    });
+  }
+
+  private async confirmOrReplay(request: ErpConfirmationRequest): Promise<ConfirmationResult> {
+    const existing = await this.ledger.find(request.idempotencyKey);
+    if (existing) {
+      assertSameConfirmationIdentity(existing.identity, request);
+      return { response: existing.response, replayed: true };
+    }
+
     const response = await this.produceConfirmation(request);
-    return response.status === "succeeded" ? this.ledger.remember(request, response) : response;
+    if (!isTerminalResponse(response)) return { response, replayed: false };
+
+    const saved = await this.ledger.save({
+      identity: confirmationIdentity(request),
+      response,
+    });
+    assertSameConfirmationIdentity(saved.entry.identity, request);
+    return { response: saved.entry.response, replayed: !saved.inserted };
   }
 
   private async produceConfirmation(
@@ -115,59 +160,56 @@ export class ConfirmationService {
   }
 }
 
-export class InMemoryConfirmationLedger {
-  private readonly confirmations = new Map<
-    string,
-    { identity: ConfirmationIdentity; response: ErpConfirmationResponse }
-  >();
+export class InMemoryConfirmationLedger implements ConfirmationLedger {
+  private readonly confirmations = new Map<string, ConfirmationLedgerEntry>();
 
-  get(request: ErpConfirmationRequest): ErpConfirmationResponse | null {
-    const existing = this.confirmations.get(request.idempotencyKey);
-    if (!existing) return null;
-    assertSameConfirmationIdentity(existing.identity, request);
-    return existing.response;
+  async find(idempotencyKey: string): Promise<ConfirmationLedgerEntry | null> {
+    return this.confirmations.get(idempotencyKey) ?? null;
   }
 
-  remember(
-    request: ErpConfirmationRequest,
-    response: ErpConfirmationResponse,
-  ): ErpConfirmationResponse {
-    const existing = this.confirmations.get(request.idempotencyKey);
-    if (existing) {
-      assertSameConfirmationIdentity(existing.identity, request);
-      return existing.response;
-    }
-    this.confirmations.set(request.idempotencyKey, {
-      identity: confirmationIdentity(request),
-      response,
-    });
-    return response;
+  async save(entry: ConfirmationLedgerEntry): Promise<{
+    entry: ConfirmationLedgerEntry;
+    inserted: boolean;
+  }> {
+    const existing = this.confirmations.get(entry.identity.idempotencyKey);
+    if (existing) return { entry: existing, inserted: false };
+    this.confirmations.set(entry.identity.idempotencyKey, entry);
+    return { entry, inserted: true };
   }
 }
 
+function isTerminalResponse(response: ErpConfirmationResponse): boolean {
+  return (
+    response.status === "succeeded" ||
+    erpPermanentRejectionCodeSchema.safeParse(response.errorCode).success
+  );
+}
+
 function assertSameConfirmationIdentity(
-  existing: ConfirmationIdentity,
+  existing: ErpLookupIdentity,
   request: ErpConfirmationRequest,
 ): void {
+  const received = confirmationIdentity(request);
   if (
-    existing.orderId !== request.orderId ||
-    existing.publicOrderId !== request.publicOrderId ||
-    existing.reservationId !== request.reservationId ||
-    existing.saleOfferId !== request.saleOfferId ||
-    (existing.runId ?? null) !== (request.runId ?? null) ||
-    existing.quantity !== request.quantity
+    existing.orderId !== received.orderId ||
+    existing.publicOrderId !== received.publicOrderId ||
+    existing.reservationId !== received.reservationId ||
+    existing.saleOfferId !== received.saleOfferId ||
+    (existing.runId ?? null) !== (received.runId ?? null) ||
+    existing.quantity !== received.quantity
   ) {
     throw new ConfirmationIdempotencyConflictError(request.idempotencyKey);
   }
 }
 
-function confirmationIdentity(request: ErpConfirmationRequest): ConfirmationIdentity {
+function confirmationIdentity(request: ErpConfirmationRequest): ErpLookupIdentity {
   return {
-    orderId: request.orderId,
+    orderId: request.orderId.toLowerCase(),
     publicOrderId: request.publicOrderId,
-    reservationId: request.reservationId,
-    saleOfferId: request.saleOfferId,
-    runId: request.runId ?? null,
+    reservationId: request.reservationId.toLowerCase(),
+    saleOfferId: request.saleOfferId.toLowerCase(),
+    ...(request.runId ? { runId: request.runId.toLowerCase() } : {}),
+    idempotencyKey: request.idempotencyKey,
     quantity: request.quantity,
   };
 }

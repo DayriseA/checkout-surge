@@ -7,6 +7,7 @@ const allowedDatabaseNames = new Set([
   "checkout_surge_test_load_orchestrator",
   "checkout_surge_test_contracts",
   "checkout_surge_test_logger",
+  "checkout_surge_test_mock_erp",
 ]);
 
 export interface ValidatedTestDatabaseTarget {

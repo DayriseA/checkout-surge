@@ -4,8 +4,11 @@ import {
   erpChaosResetPath,
   erpChaosStatusPath,
   erpChaosStatusSchema,
+  erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationResponseSchema,
+  erpLookupResponseSchema,
+  erpReplayedResponseHeaderName,
   errorPayloadSchema,
   healthResponseSchema,
   livenessResponseSchema,
@@ -49,13 +52,19 @@ const testSafetyCaps = {
 };
 const controlServiceToken = "test-control-token";
 const loadMockErpConfig = (environment: Record<string, string | undefined>) =>
-  loadProductionMockErpConfig({ ...environment, NODE_ENV: "test" });
+  loadProductionMockErpConfig({
+    DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
+    ...environment,
+    NODE_ENV: "test",
+  });
 
 describe("Mock ERP configuration", () => {
   it("loads host-native defaults and explicit overrides", () => {
     expect(loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken })).toEqual({
       host: "0.0.0.0",
       port: 4100,
+      databaseUrl: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
+      postgresPoolMax: 5,
       controlServiceToken,
       defaultChaosConfig,
       chaosSafetyCaps: testSafetyCaps,
@@ -77,6 +86,8 @@ describe("Mock ERP configuration", () => {
     ).toEqual({
       host: "127.0.0.1",
       port: 5100,
+      databaseUrl: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
+      postgresPoolMax: 5,
       controlServiceToken,
       defaultChaosConfig: {
         latencyMs: 25,
@@ -164,11 +175,14 @@ describe("confirmation service", () => {
     });
 
     await expect(service.confirm(confirmationRequest)).resolves.toEqual({
-      status: "succeeded",
-      confirmationId: "erp_confirmation_test",
-      httpStatus: 200,
-      latencyMs: 25,
-      timestamp: "2026-06-22T00:00:00.025Z",
+      replayed: false,
+      response: {
+        status: "succeeded",
+        confirmationId: "erp_confirmation_test",
+        httpStatus: 200,
+        latencyMs: 25,
+        timestamp: "2026-06-22T00:00:00.025Z",
+      },
     });
   });
 
@@ -191,7 +205,9 @@ describe("confirmation service", () => {
       correlationId: "corr-mock-erp-replay",
     });
 
-    expect(replay).toEqual(first);
+    expect(replay.response).toEqual(first.response);
+    expect(first.replayed).toBe(false);
+    expect(replay.replayed).toBe(true);
     expect(generateConfirmationId).toHaveBeenCalledOnce();
   });
 
@@ -212,12 +228,15 @@ describe("confirmation service", () => {
     });
 
     await expect(service.confirm(confirmationRequest)).resolves.toEqual({
-      status: "failed",
-      httpStatus: 503,
-      errorCode: "erp_capacity_exceeded",
-      errorMessage: "The ERP cannot accept more confirmations right now.",
-      latencyMs: 40,
-      timestamp: "2026-06-22T00:00:00.040Z",
+      replayed: false,
+      response: {
+        status: "failed",
+        httpStatus: 503,
+        errorCode: "erp_capacity_exceeded",
+        errorMessage: "The ERP cannot accept more confirmations right now.",
+        latencyMs: 40,
+        timestamp: "2026-06-22T00:00:00.040Z",
+      },
     });
   });
 
@@ -242,11 +261,10 @@ describe("confirmation service", () => {
     });
 
     await expect(service.confirm(confirmationRequest)).resolves.toMatchObject({
-      status: "failed",
+      response: { status: "failed" },
     });
     await expect(service.confirm(confirmationRequest)).resolves.toMatchObject({
-      status: "succeeded",
-      confirmationId: "erp_confirmation_after_retry",
+      response: { status: "succeeded", confirmationId: "erp_confirmation_after_retry" },
     });
     expect(decisions).toBe(2);
   });
@@ -264,9 +282,39 @@ describe("confirmation service", () => {
       service.confirm(confirmationRequest),
     ]);
 
-    expect(first).toEqual(second);
+    expect(first.response).toEqual(second.response);
+    expect(first.replayed).toBe(false);
+    expect(second.replayed).toBe(true);
     expect(decide).toHaveBeenCalledOnce();
     expect(generateConfirmationId).toHaveBeenCalledOnce();
+  });
+
+  it("shares concurrent transient failures without marking either response as replayed", async () => {
+    let releaseDecision!: () => void;
+    const decisionReady = new Promise<void>((resolve) => {
+      releaseDecision = resolve;
+    });
+    const decide = vi.fn(async () => {
+      await decisionReady;
+      return {
+        status: "failed" as const,
+        httpStatus: 503,
+        errorCode: "erp_injected_error",
+        errorMessage: "Try again.",
+      };
+    });
+    const service = new ConfirmationService({ decisionProvider: { decide } });
+    const confirmations = [
+      service.confirm(confirmationRequest),
+      service.confirm(confirmationRequest),
+    ];
+
+    releaseDecision();
+    const results = await Promise.all(confirmations);
+
+    expect(results.map((result) => result.replayed)).toEqual([false, false]);
+    expect(results.every((result) => result.response.status === "failed")).toBe(true);
+    expect(decide).toHaveBeenCalledOnce();
   });
 
   it("rejects an immutable mismatch even while the first request is in flight", async () => {
@@ -297,6 +345,43 @@ describe("confirmation service", () => {
     await expect(service.confirm({ ...confirmationRequest, quantity: 2 })).rejects.toBeInstanceOf(
       ConfirmationIdempotencyConflictError,
     );
+  });
+
+  it("looks up the exact canonical result and leaves transient failures unknown", async () => {
+    let decisions = 0;
+    const service = new ConfirmationService({
+      decisionProvider: {
+        decide: async () => {
+          decisions += 1;
+          return decisions === 1
+            ? {
+                status: "failed" as const,
+                httpStatus: 503,
+                errorCode: "erp_injected_error",
+                errorMessage: "Try again.",
+              }
+            : { status: "succeeded" as const };
+        },
+      },
+      generateConfirmationId: () => "erp_confirmation_lookup",
+      now: () => new Date("2026-06-22T00:00:00.000Z"),
+    });
+
+    await service.confirm(confirmationRequest);
+    await expect(service.lookup(confirmationRequest.idempotencyKey)).resolves.toMatchObject({
+      lookup: { status: "unknown" },
+    });
+    const confirmation = await service.confirm(confirmationRequest);
+    const lookup = await service.lookup(confirmationRequest.idempotencyKey);
+
+    expect(lookup.lookup).toMatchObject({
+      status: "succeeded",
+      identity: {
+        orderId: confirmationRequest.orderId,
+        idempotencyKey: confirmationRequest.idempotencyKey,
+      },
+      result: confirmation.response,
+    });
   });
 });
 
@@ -596,7 +681,104 @@ describe("Mock ERP HTTP service", () => {
     await server.close();
 
     expect(conflict.statusCode).toBe(409);
-    expect(conflict.json()).toMatchObject({ code: "idempotency_conflict" });
+    expect(conflict.json()).toMatchObject({ code: "erp_idempotency_conflict" });
+  });
+
+  it("signals replay only by header and exposes the canonical result through lookup", async () => {
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService({
+        generateConfirmationId: () => "erp_confirmation_replayed",
+        now: () => new Date("2026-06-22T00:00:00.010Z"),
+      }),
+    });
+    const first = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: confirmationRequest,
+    });
+    const replay = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: { ...confirmationRequest, correlationId: "corr-replay" },
+    });
+    const lookup = await server.inject({
+      method: "GET",
+      url: erpConfirmationLookupPath.replace(
+        ":idempotencyKey",
+        encodeURIComponent(confirmationRequest.idempotencyKey),
+      ),
+    });
+    await server.close();
+
+    expect(first.headers[erpReplayedResponseHeaderName]).toBeUndefined();
+    expect(replay.headers[erpReplayedResponseHeaderName]).toBe("true");
+    expect(replay.body).toBe(first.body);
+    expect(erpLookupResponseSchema.parse(lookup.json())).toMatchObject({
+      lookup: { status: "succeeded", result: first.json() },
+    });
+  });
+
+  it("accepts the contract maximum idempotency key in POST and lookup routes", async () => {
+    const idempotencyKey = "k".repeat(200);
+    const server = buildTestServer({ confirmationService: new ConfirmationService() });
+    const confirmation = await server.inject({
+      method: "POST",
+      url: erpConfirmationPath,
+      payload: { ...confirmationRequest, idempotencyKey },
+    });
+    const lookup = await server.inject({
+      method: "GET",
+      url: erpConfirmationLookupPath.replace(":idempotencyKey", idempotencyKey),
+    });
+    await server.close();
+
+    expect(confirmation.statusCode).toBe(200);
+    expect(lookup.statusCode).toBe(200);
+    expect(erpLookupResponseSchema.parse(lookup.json())).toMatchObject({
+      lookup: { status: "succeeded", identity: { idempotencyKey } },
+    });
+  });
+
+  it("keeps lookup outside chaos and TPS decisions", async () => {
+    const store = new ErpChaosConfigStore(
+      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
+      testSafetyCaps,
+    );
+    const decide = new ChaosConfirmationDecisionProvider({
+      configStore: store,
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
+    });
+    const server = buildTestServer({
+      confirmationService: new ConfirmationService({ decisionProvider: decide }),
+      chaosConfigStore: store,
+    });
+    const lookupUrl = erpConfirmationLookupPath.replace(
+      ":idempotencyKey",
+      encodeURIComponent("erp-confirmation:unknown"),
+    );
+
+    expect((await server.inject({ method: "GET", url: lookupUrl })).statusCode).toBe(200);
+    expect(
+      (
+        await server.inject({
+          method: "POST",
+          url: erpConfirmationPath,
+          payload: confirmationRequest,
+        })
+      ).statusCode,
+    ).toBe(200);
+    store.update({ latencyMs: 5000, maxTps: 1, errorRate: 1, forcedOutage: true });
+    const lookup = await server.inject({
+      method: "GET",
+      url: erpConfirmationLookupPath.replace(
+        ":idempotencyKey",
+        encodeURIComponent(confirmationRequest.idempotencyKey),
+      ),
+    });
+    await server.close();
+
+    expect(lookup.statusCode).toBe(200);
+    expect(erpLookupResponseSchema.parse(lookup.json()).lookup.status).toBe("succeeded");
   });
 
   it("rejects invalid requests with the shared error contract", async () => {

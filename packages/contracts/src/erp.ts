@@ -11,6 +11,10 @@ import {
 } from "./primitives.js";
 
 export const erpConfirmationPath = "/confirmations" as const;
+export const erpConfirmationLookupPath = "/confirmations/:idempotencyKey" as const;
+export const erpConfirmationLookupParamsSchema = z
+  .object({ idempotencyKey: idempotencyKeySchema })
+  .strict();
 export const erpChaosStatusPath = "/chaos" as const;
 export const erpChaosResetPath = "/chaos/reset" as const;
 export const erpResilienceStatusPath = "/erp/status" as const;
@@ -56,27 +60,35 @@ const erpConfirmationResponseBaseShape = {
   timestamp: isoTimestampSchema,
 };
 
+export const erpConfirmationSucceededResponseSchema = z
+  .object({
+    ...erpConfirmationResponseBaseShape,
+    status: z.literal("succeeded"),
+    confirmationId: z.string().trim().min(1),
+    httpStatus: z.literal(200),
+    errorCode: z.never().optional(),
+    errorMessage: z.never().optional(),
+  })
+  .strict();
+export type ErpConfirmationSucceededResponse = z.infer<
+  typeof erpConfirmationSucceededResponseSchema
+>;
+
+export const erpConfirmationFailedResponseSchema = z
+  .object({
+    ...erpConfirmationResponseBaseShape,
+    status: z.literal("failed"),
+    confirmationId: z.never().optional(),
+    httpStatus: z.number().int().min(400).max(599),
+    errorCode: z.string().trim().min(1),
+    errorMessage: z.string().trim().min(1),
+  })
+  .strict();
+export type ErpConfirmationFailedResponse = z.infer<typeof erpConfirmationFailedResponseSchema>;
+
 export const erpConfirmationResponseSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      ...erpConfirmationResponseBaseShape,
-      status: z.literal("succeeded"),
-      confirmationId: z.string().trim().min(1),
-      httpStatus: z.literal(200),
-      errorCode: z.never().optional(),
-      errorMessage: z.never().optional(),
-    })
-    .strict(),
-  z
-    .object({
-      ...erpConfirmationResponseBaseShape,
-      status: z.literal("failed"),
-      confirmationId: z.never().optional(),
-      httpStatus: z.number().int().min(400).max(599),
-      errorCode: z.string().trim().min(1),
-      errorMessage: z.string().trim().min(1),
-    })
-    .strict(),
+  erpConfirmationSucceededResponseSchema,
+  erpConfirmationFailedResponseSchema,
 ]);
 export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSchema>;
 

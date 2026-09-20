@@ -25,6 +25,7 @@ describe("destructive database helper safety", () => {
     "checkout_surge_test_load_orchestrator",
     "checkout_surge_test_contracts",
     "checkout_surge_test_logger",
+    "checkout_surge_test_mock_erp",
   ])("accepts approved database %s", (databaseName) => {
     process.env.ALLOW_TEST_DEFAULT_PORTS = "";
     expect(() =>
