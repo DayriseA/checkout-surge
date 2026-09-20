@@ -3,10 +3,8 @@ import {
   isValidPublicVisitorCredentialSecret,
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
-import { runSaleEligibilityTtlSeconds } from "@checkout-surge/db";
 import { pendingPersistenceRecoveryDefaults } from "./pending-persistence-recovery-policy.js";
 
-export const runSaleEligibilitySafetyMarginSeconds = 24 * 60 * 60;
 export const composeApiHealthcheckTimeoutMs = 3_000;
 
 export interface ApiConfig {
@@ -255,7 +253,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   if (config.deploymentHardCaps.maxPreAllocatedVus > config.deploymentHardCaps.maxVus) {
     throw new Error("DEMO_MAX_PRE_ALLOCATED_VUS must not exceed DEMO_MAX_VUS.");
   }
-  validateRunSaleEligibilityLifetime(config);
   if (config.dashboardRecoveryPerSourceMaxRequests > config.dashboardRecoveryGlobalMaxRequests) {
     throw new Error(
       "DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS must not exceed DASHBOARD_RECOVERY_GLOBAL_MAX_REQUESTS.",
@@ -267,30 +264,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     );
   }
   return config;
-}
-
-function validateRunSaleEligibilityLifetime(config: ApiConfig): void {
-  const configuredLifecycleSeconds = [
-    config.deploymentHardCaps.maxTrafficStartDelaySeconds,
-    config.deploymentHardCaps.maxTrafficDurationSeconds,
-    config.demoRunDrainTimeoutSeconds,
-    config.pendingPersistenceRecoveryWindowSeconds,
-    config.demoRunFinalizationPollIntervalSeconds,
-  ].reduce((total, value) => {
-    const next = total + value;
-    if (!Number.isSafeInteger(next)) {
-      throw new Error("Demo-run lifecycle duration configuration exceeds safe integer arithmetic.");
-    }
-    return next;
-  }, 0);
-  const maximumLifecycleSeconds =
-    runSaleEligibilityTtlSeconds - runSaleEligibilitySafetyMarginSeconds;
-
-  if (configuredLifecycleSeconds >= maximumLifecycleSeconds) {
-    throw new Error(
-      `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS + DEMO_MAX_TRAFFIC_DURATION_SECONDS + DEMO_RUN_DRAIN_TIMEOUT_SECONDS + PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS + DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS must total less than ${maximumLifecycleSeconds} seconds so the ${runSaleEligibilityTtlSeconds}-second run-sale eligibility TTL retains its ${runSaleEligibilitySafetyMarginSeconds}-second safety margin.`,
-    );
-  }
 }
 
 function requireStrongSecret(env: NodeJS.ProcessEnv, name: string): string {

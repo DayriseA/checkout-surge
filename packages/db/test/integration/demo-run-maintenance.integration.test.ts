@@ -11,6 +11,7 @@ import {
   erpScopeResilienceState,
   inspectGeneratedRunTeardown,
   orderRecoveryJobs,
+  simulatedNotifications,
 } from "../../src/index.js";
 import { resetTestDatabase } from "../../src/testing.js";
 
@@ -85,6 +86,14 @@ async function seedGeneratedRunWithTerminalOrder(sql: TestSql): Promise<void> {
       '2026-06-20T00:00:03Z'::timestamptz
     )
   `;
+  await sql`
+    INSERT INTO "simulated_notifications" (
+      "order_id", "sale_offer_id", "run_id", "correlation_id", "recipient_placeholder", "recorded_at"
+    ) VALUES (
+      ${ids.order}, ${ids.saleOffer}, ${ids.run}, ${runScopedCorrelationId},
+      'buyer@example.invalid', '2026-06-20T00:00:04Z'::timestamptz
+    )
+  `;
 }
 
 run("generated-run durable maintenance with processing-control data", () => {
@@ -129,6 +138,28 @@ run("generated-run durable maintenance with processing-control data", () => {
       }),
     ).resolves.toEqual({ outcome: "outstanding_work" });
     await expect(requireConnection().db.select().from(orderRecoveryJobs)).resolves.toHaveLength(1);
+  });
+
+  it("refuses teardown while a confirmed order still needs notification", async () => {
+    await requireConnection().db.delete(simulatedNotifications);
+
+    await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
+      outcome: "outstanding_work",
+    });
+  });
+
+  it("refuses teardown while the run scope requires intervention", async () => {
+    await requireConnection()
+      .db.insert(erpScopeResilienceState)
+      .values({
+        scope: `run:${ids.run}`,
+        interventionReason: "authentication_failed",
+        interventionOpenedAt: new Date("2026-06-20T00:00:03Z"),
+      });
+
+    await expect(inspectGeneratedRunTeardown(requireConnection().db, ids.run)).resolves.toEqual({
+      outcome: "outstanding_work",
+    });
   });
 
   it("deletes dispatch-call and attempt evidence after control records are settled", async () => {

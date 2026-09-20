@@ -432,6 +432,7 @@ Notes:
 - Every normal run creates a generated run-scoped `SaleOffer` with isolated PostgreSQL and Redis inventory.
 - The generated sale offer is bound to the run through `DemoRunSaleContext`; a composite foreign key requires the context's `(runId, saleOfferId)` to match `DemoRun`, and run-owned business rows must use that same pair.
 - The load orchestrator owns only traffic execution status; the API owns traffic-delivery quality classification, business draining, and final terminal state.
+- Traffic completion moves the run to `draining` and closes new run traffic; elapsed drain time is not a terminal condition. Normal completion requires no queued/processing orders, unresolved ERP call, open order/scope intervention, pending control record, or confirmed order missing its simulated notification. Missing accepted-estimate metadata remains unavailable rather than being reconstructed from the retired drain timeout.
 - A hand-authored PostgreSQL partial unique index permits at most one `starting`, `active`, or `draining` run even when concurrent callers bypass the API's fast overlap check.
 - Lifecycle changes use expected-status compare-and-set transitions. Traffic-start acknowledgement can move only `starting -> active`; a late acknowledgement reads the authoritative winner and cannot resurrect a draining or terminal run.
 - A `starting` row is a durable traffic intent. The API poller replays its exact ID and immutable snapshot against the load orchestrator's journal after ambiguous start outcomes or API restart.
@@ -611,6 +612,7 @@ Notes:
 - `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization captures it only after every pending-persistence hold has converged and after the fresh Redis sold-out count agrees with the paired durable business aggregate; disagreement remains draining. Traffic-completion enrichment remains separate earlier evidence. Admin reset and early-failure workflows may capture their own terminal observations. Startup repair does not synthesize a terminal projection for orchestrator-owned or draining work.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.
+- Newly written `businessOutcomeSummary` values retain `failedOrders` for compatibility and also separate `businessRejectedOrders` from `administrativelyDisposedOrders`. Historical immutable summaries without the additive split remain readable and are not rewritten.
 
 ### 18. PublicRuntimePolicy
 

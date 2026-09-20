@@ -251,6 +251,10 @@ export const businessOutcomeSummarySchema = z
     retryingOrders: nonnegativeIntegerSchema.default(0),
     confirmedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
+    /** Permanent ERP rejections. Optional for immutable historical summaries. */
+    businessRejectedOrders: nonnegativeIntegerSchema.optional(),
+    /** Explicit administrative dispositions. Optional for immutable historical summaries. */
+    administrativelyDisposedOrders: nonnegativeIntegerSchema.optional(),
     pendingPersistenceCount: nonnegativeIntegerSchema,
     notificationsRecorded: nonnegativeIntegerSchema,
   })

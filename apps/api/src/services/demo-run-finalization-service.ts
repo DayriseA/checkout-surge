@@ -18,7 +18,7 @@ import {
   type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRuns,
-  erpAttempts,
+  erpScopeResilienceState,
   getInventoryStatus,
   orderRecoveryJobs,
   orders,
@@ -61,7 +61,7 @@ export interface DemoRunFinalizationController {
   finalizeReadyRuns(): Promise<number>;
 }
 
-type FinalizationDecision = { ready: false; blockers: string[]; timeoutAt: Date } | { ready: true };
+type FinalizationDecision = { ready: false; blockers: string[] } | { ready: true };
 type FinalizationActor = "completion-report" | "sweep";
 
 export class DemoRunFinalizationService implements DemoRunFinalizationController {
@@ -150,19 +150,15 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         {
           runId,
           blockers: decision.blockers,
-          timeoutAt: decision.timeoutAt.toISOString(),
         },
         "Demo run remains draining.",
       );
       return toDemoRunSnapshot(row.run);
     }
 
-    const timeoutAt = this.drainTimeoutAt(row.run);
-    const timedOut = now.getTime() >= timeoutAt.getTime();
     const evidence = parseFinalizationEvidence(row.run, finalization);
-    let pendingAtTrafficCompletion: boolean;
     try {
-      pendingAtTrafficCompletion = hadPendingPersistenceAtTrafficCompletion(finalization, runId);
+      validateTrafficCompletionInventoryEvidence(finalization, runId);
     } catch (error) {
       this.options.logger.warn(
         { err: error, runId },
@@ -192,7 +188,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         }
         if (latestInventory.pendingPersistenceCount > 0) {
           this.options.logger.debug(
-            { runId, pendingPersistenceCount: latestInventory.pendingPersistenceCount, timedOut },
+            { runId, pendingPersistenceCount: latestInventory.pendingPersistenceCount },
             "Demo run remains draining until every pending Redis hold is classified.",
           );
           return null;
@@ -211,14 +207,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           return null;
         }
 
-        const latestRecoveryPressure = await readRecoveryPressure(lockedDb, row.run.id);
+        const latestRecoveryObligations = await readRecoveryObligations(lockedDb, row.run.id);
         const latestBusinessBlockers = businessDrainBlockers(
           latestBusinessOutcome,
           latestInventory.pendingPersistenceCount,
-          latestRecoveryPressure.pendingCount,
-          latestRecoveryPressure.escalatedProcessingCount,
-          latestRecoveryPressure.escalatedRetryingCount,
-          latestRecoveryPressure.escalatedQueuedCount,
+          latestRecoveryObligations,
         );
         const latestAccounting = reconcileAcceptedResponses({
           ...evidence,
@@ -231,7 +224,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           ...latestBusinessBlockers,
           ...(latestAccounting.accounted ? [] : ["accepted_response_accounting"]),
         ];
-        if (latestBlockers.length > 0 && !timedOut) {
+        if (latestBlockers.length > 0) {
           this.options.logger.debug(
             { runId, blockers: latestBlockers },
             "Demo run remains draining after late business work was observed.",
@@ -244,11 +237,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           http: evidence.http,
           transportAttemptCounts: evidence.transportAttemptCounts,
           trafficFailed: row.run.trafficStatus === "failed" || Boolean(finalization.errorMessage),
-          businessTimedOut: latestBusinessBlockers.length > 0 && timedOut,
-          accountingTimedOut:
-            latestBusinessBlockers.length === 0 && !latestAccounting.accounted && timedOut,
-          escalatedRecoveryCount: latestRecoveryPressure.escalatedCount,
-          reconciliationTimedOut: timedOut && pendingAtTrafficCompletion,
         });
         const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
         const loadRunDiagnosticsSummary = accountingWarning
@@ -312,7 +300,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     finalization: typeof demoRunFinalizations.$inferSelect;
     now: Date;
   }): Promise<FinalizationDecision> {
-    const timeoutAt = this.drainTimeoutAt(input.run);
     const businessOutcome = await readBusinessOutcomeSummary(this.options.db, {
       saleOfferId: requireSaleOfferId(input.run),
       runId: input.run.id,
@@ -329,14 +316,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       );
       pendingRedisCount = Number.POSITIVE_INFINITY;
     }
-    const recoveryPressure = await readRecoveryPressure(this.options.db, input.run.id);
+    const recoveryObligations = await readRecoveryObligations(this.options.db, input.run.id);
     const businessBlockers = businessDrainBlockers(
       businessOutcome,
       pendingRedisCount,
-      recoveryPressure.pendingCount,
-      recoveryPressure.escalatedProcessingCount,
-      recoveryPressure.escalatedRetryingCount,
-      recoveryPressure.escalatedQueuedCount,
+      recoveryObligations,
     );
     const evidence = parseFinalizationEvidence(input.run, input.finalization);
     const accounting = reconcileAcceptedResponses({
@@ -347,18 +331,11 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       ...businessBlockers,
       ...(accounting.accounted ? [] : ["accepted_response_accounting"]),
     ];
-    const timedOut = input.now.getTime() >= timeoutAt.getTime();
-
-    if (blockers.length > 0 && !timedOut) {
-      return { ready: false, blockers, timeoutAt };
+    if (blockers.length > 0) {
+      return { ready: false, blockers };
     }
 
     return { ready: true };
-  }
-
-  private drainTimeoutAt(run: typeof demoRuns.$inferSelect): Date {
-    const startedAt = run.trafficEndedAt ?? run.updatedAt;
-    return new Date(startedAt.getTime() + this.options.drainTimeoutSeconds * 1000);
   }
 
   private async readTerminalInventory(
@@ -391,23 +368,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     http: TrafficHttpSummary;
     transportAttemptCounts: TransportAttemptCounts;
     trafficFailed: boolean;
-    businessTimedOut: boolean;
-    accountingTimedOut: boolean;
-    escalatedRecoveryCount?: number;
-    reconciliationTimedOut?: boolean;
   }): InternalRunFailureReason | null {
-    if ((input.escalatedRecoveryCount ?? 0) > 0) {
-      return "reconciliation_escalated";
-    }
-    if (input.reconciliationTimedOut) {
-      return "pending_persistence_reconciliation_timeout";
-    }
-    if (input.businessTimedOut) {
-      return "business_drain_timeout";
-    }
-    if (input.accountingTimedOut) {
-      return "accepted_response_accounting_timeout";
-    }
     if (input.delivery.trafficDeliveryStatus === "failed") {
       return "traffic_delivery_major_shortfall";
     }
@@ -527,21 +488,6 @@ function parseFinalizationEvidence(
   };
 }
 
-function hadPendingPersistenceAtTrafficCompletion(
-  finalization: typeof demoRunFinalizations.$inferSelect,
-  runId: string,
-): boolean {
-  if (!("terminalInventorySnapshot" in finalization.trafficOutcomeSummary)) {
-    return false;
-  }
-  return (
-    parsePersistedTerminalInventorySnapshot(
-      finalization.trafficOutcomeSummary.terminalInventorySnapshot,
-      `demo run ${runId} finalization trafficOutcomeSummary`,
-    ).pendingPersistenceCount > 0
-  );
-}
-
 function appendAccountingWarning(
   diagnostics: Record<string, unknown>,
   warning: Record<string, unknown>,
@@ -552,13 +498,21 @@ function appendAccountingWarning(
   return { ...diagnostics, accountingWarnings: [...existingWarnings, warning] };
 }
 
+function validateTrafficCompletionInventoryEvidence(
+  finalization: typeof demoRunFinalizations.$inferSelect,
+  runId: string,
+): void {
+  if (!("terminalInventorySnapshot" in finalization.trafficOutcomeSummary)) return;
+  parsePersistedTerminalInventorySnapshot(
+    finalization.trafficOutcomeSummary.terminalInventorySnapshot,
+    `demo run ${runId} finalization trafficOutcomeSummary`,
+  );
+}
+
 function businessDrainBlockers(
   outcome: BusinessOutcomeSummary,
   pendingRedisCount = 0,
-  pendingRecoveryCount = 0,
-  escalatedProcessingCount = 0,
-  escalatedRetryingCount = 0,
-  escalatedQueuedCount = 0,
+  recovery: RecoveryObligations = emptyRecoveryObligations,
 ): string[] {
   const parsed = businessOutcomeSummarySchema.parse(outcome);
   const blockers: string[] = [];
@@ -566,16 +520,22 @@ function businessDrainBlockers(
   if (pendingRedisCount > 0) {
     blockers.push("pending_persistence");
   }
-  if (pendingRecoveryCount > 0) {
+  if (recovery.pendingCount > 0) {
     blockers.push("reconciliation_pending");
   }
-  if (parsed.queuedOrders > escalatedQueuedCount) {
+  if (recovery.unresolvedCallCount > 0) {
+    blockers.push("uncertain_calls");
+  }
+  if (recovery.interventionCount > 0 || recovery.scopeInterventionCount > 0) {
+    blockers.push("open_intervention");
+  }
+  if (parsed.queuedOrders > 0) {
     blockers.push("queued_orders");
   }
-  if (parsed.processingOrders > escalatedProcessingCount) {
+  if (parsed.processingOrders > 0) {
     blockers.push("processing_orders");
   }
-  if (parsed.retryingOrders > escalatedRetryingCount) {
+  if (parsed.retryingOrders > 0) {
     blockers.push("retrying_orders");
   }
   if (parsed.notificationsRecorded < parsed.confirmedOrders) {
@@ -585,50 +545,44 @@ function businessDrainBlockers(
   return blockers;
 }
 
-async function readRecoveryPressure(
+interface RecoveryObligations {
+  pendingCount: number;
+  unresolvedCallCount: number;
+  interventionCount: number;
+  scopeInterventionCount: number;
+}
+
+const emptyRecoveryObligations: RecoveryObligations = {
+  pendingCount: 0,
+  unresolvedCallCount: 0,
+  interventionCount: 0,
+  scopeInterventionCount: 0,
+};
+
+async function readRecoveryObligations(
   db: CheckoutSurgeDatabase,
   runId: string,
-): Promise<{
-  pendingCount: number;
-  escalatedCount: number;
-  escalatedProcessingCount: number;
-  escalatedRetryingCount: number;
-  escalatedQueuedCount: number;
-}> {
-  const rows = await db
-    .select({
-      status: orderRecoveryJobs.status,
-      orderId: orderRecoveryJobs.orderId,
-      orderStatus: orders.status,
-      attemptStatus: erpAttempts.status,
-    })
-    .from(orderRecoveryJobs)
-    .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
-    .leftJoin(erpAttempts, eq(erpAttempts.orderId, orderRecoveryJobs.orderId))
-    .where(eq(orders.runId, runId));
-  const escalated = rows.filter((row) => row.status === "escalated");
-  const escalatedProcessingIds = new Set(
-    escalated.filter((row) => row.orderStatus === "processing").map((row) => row.orderId),
-  );
-  const escalatedQueuedIds = new Set(
-    escalated.filter((row) => row.orderStatus === "queued").map((row) => row.orderId),
-  );
-  const escalatedRetryingIds = new Set(
-    escalated
-      .filter(
-        (row) =>
-          row.orderStatus === "processing" &&
-          (row.attemptStatus === "failed" || row.attemptStatus === "timed_out"),
-      )
-      .map((row) => row.orderId),
-  );
+): Promise<RecoveryObligations> {
+  const [rows, scopeRows] = await Promise.all([
+    db
+      .select({
+        status: orderRecoveryJobs.status,
+        interventionReason: orderRecoveryJobs.interventionReason,
+        unresolvedErpCallId: orderRecoveryJobs.unresolvedErpCallId,
+      })
+      .from(orderRecoveryJobs)
+      .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
+      .where(eq(orders.runId, runId)),
+    db
+      .select({ interventionReason: erpScopeResilienceState.interventionReason })
+      .from(erpScopeResilienceState)
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`)),
+  ]);
   return {
-    pendingCount: rows.filter((row) => row.status === "pending" || row.status === "enqueued")
-      .length,
-    escalatedCount: rows.filter((row) => row.status === "escalated").length,
-    escalatedProcessingCount: escalatedProcessingIds.size,
-    escalatedRetryingCount: escalatedRetryingIds.size,
-    escalatedQueuedCount: escalatedQueuedIds.size,
+    pendingCount: rows.filter((row) => row.status !== "resolved").length,
+    unresolvedCallCount: rows.filter((row) => row.unresolvedErpCallId !== null).length,
+    interventionCount: rows.filter((row) => row.interventionReason !== null).length,
+    scopeInterventionCount: scopeRows.filter((row) => row.interventionReason !== null).length,
   };
 }
 

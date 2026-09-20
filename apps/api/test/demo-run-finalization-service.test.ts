@@ -25,6 +25,7 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  erpScopeResilienceState,
   getInventoryStatus,
   initializeInventory,
   inventoryKeys,
@@ -41,6 +42,9 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { createSilentLogger } from "@checkout-surge/logger";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PostgresGeneratedRunPublicationFence } from "../../worker/src/persistence/postgres-generated-run-publication-fence.js";
+import { PostgresNotificationRecordPersistence } from "../../worker/src/persistence/postgres-notification-record-persistence.js";
+import { createNotificationRecordPublisher } from "../../worker/src/queue/bullmq-notification-record-publisher.js";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import {
@@ -62,8 +66,10 @@ const ids = {
   saleOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   reservation1: "11111111-1111-4111-8111-111111111111",
   reservation2: "22222222-2222-4222-8222-222222222222",
+  reservation3: "22222222-2222-4222-8222-222222222223",
   order1: "44444444-4444-4444-8444-444444444441",
   order2: "44444444-4444-4444-8444-444444444442",
+  order3: "44444444-4444-4444-8444-444444444443",
   erpAttempt: "88888888-8888-4888-8888-888888888888",
   notification: "99999999-9999-4999-8999-999999999999",
 } as const;
@@ -215,13 +221,21 @@ describe("demo run finalization service", () => {
     );
     await db
       .insert(reservations)
-      .values([reservationFixture(ids.reservation1), reservationFixture(ids.reservation2)]);
-    await db
-      .insert(orders)
       .values([
-        orderFixture(ids.order1, ids.reservation1, "confirmed"),
-        orderFixture(ids.order2, ids.reservation2, "failed"),
+        reservationFixture(ids.reservation1),
+        reservationFixture(ids.reservation2),
+        reservationFixture(ids.reservation3),
       ]);
+    await db.insert(orders).values([
+      orderFixture(ids.order1, ids.reservation1, "confirmed"),
+      orderFixture(ids.order2, ids.reservation2, "failed"),
+      {
+        ...orderFixture(ids.order3, ids.reservation3, "failed"),
+        failureCategory: "administrative",
+        failureCode: "admin_reset",
+        failureMessage: "Administratively disposed for final report coverage.",
+      },
+    ]);
     await db.insert(simulatedNotifications).values({
       id: ids.notification,
       orderId: ids.order1,
@@ -249,11 +263,13 @@ describe("demo run finalization service", () => {
     expect(summaries[0]?.createdAt).toEqual(new Date("2026-06-20T00:00:10.000Z"));
     expect(summaries[0]?.failureReason).toBeNull();
     expect(summaries[0]?.businessOutcomeSummary as BusinessOutcomeSummary).toMatchObject({
-      acceptedReservations: 2,
-      reservedUnits: 2,
+      acceptedReservations: 3,
+      reservedUnits: 3,
       soldOutRejections: 7,
       confirmedOrders: 1,
-      failedOrders: 1,
+      failedOrders: 2,
+      businessRejectedOrders: 1,
+      administrativelyDisposedOrders: 1,
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
@@ -262,7 +278,7 @@ describe("demo run finalization service", () => {
       startingStock: 10,
       remainingStock: 10,
       reservedStock: 0,
-      acceptedReservations: 2,
+      acceptedReservations: 3,
       soldOutRejections: 7,
       pendingPersistenceCount: 0,
       capturedAt: "2026-06-20T00:00:10.000Z",
@@ -270,10 +286,10 @@ describe("demo run finalization service", () => {
     });
     expect(summaries[0]?.runSignalTimelineSummary).toMatchObject({
       window: { anchoredAt: "2026-06-20T00:00:01.500Z", bucketCount: 120 },
-      queueBacklog: { peakBacklog: 2 },
+      queueBacklog: { peakBacklog: 3 },
       confirmationConvergence: {
         confirmedOrderCount: 1,
-        failedOrderCount: 1,
+        failedOrderCount: 2,
         pendingAtCaptureCount: 0,
       },
     });
@@ -293,17 +309,17 @@ describe("demo run finalization service", () => {
       expect.objectContaining({
         terminalStatus: "completed",
         businessOutcome: expect.objectContaining({
-          acceptedReservations: 2,
-          reservedUnits: 2,
+          acceptedReservations: 3,
+          reservedUnits: 3,
           soldOutRejections: 7,
         }),
         terminalInventorySnapshot: expect.objectContaining({
-          acceptedReservations: 2,
+          acceptedReservations: 3,
           soldOutRejections: 7,
           capturedAt: "2026-06-20T00:00:10.000Z",
         }),
         runSignalTimelineSummary: expect.objectContaining({
-          queueBacklog: expect.objectContaining({ peakBacklog: 2 }),
+          queueBacklog: expect.objectContaining({ peakBacklog: 3 }),
         }),
         allowedCurrentStatuses: ["draining"],
         finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
@@ -546,7 +562,7 @@ describe("demo run finalization service", () => {
     ).toHaveLength(0);
   });
 
-  it("allows escalated processing orders to fail terminally while unrelated work still blocks", async () => {
+  it("keeps escalated processing and intervention-required work nonterminal", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
@@ -582,6 +598,7 @@ describe("demo run finalization service", () => {
       reason: "recovery_attempt_limit_exceeded",
       status: "escalated",
       attempts: 3,
+      interventionReason: "configuration_invalid",
     });
 
     await expect(service.finalizeRun(ids.run, "corr-finalize-unrelated")).resolves.toMatchObject({
@@ -601,14 +618,33 @@ describe("demo run finalization service", () => {
       recordedAt: new Date("2026-06-20T00:00:08.000Z"),
     });
 
-    const finalized = await service.finalizeRun(ids.run, "corr-finalize-escalated");
-    expect(finalized).toMatchObject({
-      status: "failed",
-      failureCategory: "reconciliation",
+    await expect(service.finalizeRun(ids.run, "corr-finalize-escalated")).resolves.toMatchObject({
+      status: "draining",
     });
+    expect(
+      await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
+    ).toHaveLength(0);
   });
 
-  it("captures a pre-fence buy through the locked facade without a nested pool checkout", async () => {
+  it("keeps a run-scoped intervention nonterminal without inventing an order status", async () => {
+    const db = requireConnection(connection).db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db.insert(erpScopeResilienceState).values({
+      scope: `run:${ids.run}`,
+      interventionReason: "authentication_failed",
+      interventionOpenedAt: new Date("2026-06-20T00:00:08.000Z"),
+    });
+
+    await expect(
+      createService(connection, redis).finalizeRun(ids.run, "corr-scope-intervention"),
+    ).resolves.toMatchObject({ status: "draining" });
+    expect(
+      await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
+    ).toHaveLength(0);
+  });
+
+  it("keeps a pre-fence confirmation draining until its notification is published", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const persistenceConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
@@ -628,21 +664,44 @@ describe("demo run finalization service", () => {
 
         await tx.insert(reservations).values(reservationFixture(ids.reservation1));
         await tx.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "confirmed"));
-        await tx.insert(simulatedNotifications).values({
-          id: ids.notification,
-          orderId: ids.order1,
-          saleOfferId: ids.saleOffer,
-          runId: ids.run,
-          correlationId: "corr-finalize-test",
-          recipientPlaceholder: "buyer@example.invalid",
-          recordedAt: new Date("2026-06-20T00:00:08.000Z"),
-          createdAt: new Date("2026-06-20T00:00:08.000Z"),
-        });
       });
 
       await expect(
         requireStartedPromise(finalizationPromise, "finalization"),
       ).resolves.toMatchObject({
+        status: "draining",
+      });
+      expect(
+        await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
+      ).toHaveLength(0);
+
+      const notificationPersistence = new PostgresNotificationRecordPersistence(
+        persistenceConnection.db,
+        () => new Date("2026-06-20T00:00:08.000Z"),
+      );
+      const publisher = createNotificationRecordPublisher(
+        {
+          add: async (_name, payload) => notificationPersistence.record(payload),
+          close: async () => undefined,
+        },
+        { publicationFence: new PostgresGeneratedRunPublicationFence(db) },
+      );
+      await publisher.publishForConfirmedOrder(
+        {
+          orderId: ids.order1,
+          publicOrderId: `ord_${ids.order1}`,
+          reservationId: ids.reservation1,
+          saleOfferId: ids.saleOffer,
+          runId: ids.run,
+          correlationId: "corr-finalize-test",
+          quantity: 1,
+          queuedAt: "2026-06-20T00:00:01.000Z",
+          processingGeneration: 0,
+        },
+        "2026-06-20T00:00:05.000Z",
+      );
+
+      await expect(service.finalizeRun(ids.run, "corr-post-notification")).resolves.toMatchObject({
         status: "completed",
       });
       const [summary] = await db
@@ -656,6 +715,9 @@ describe("demo run finalization service", () => {
         notificationsRecorded: 1,
       });
       expect(summary?.terminalInventorySnapshot).toMatchObject({ acceptedReservations: 1 });
+      await expect(
+        db.select().from(simulatedNotifications).where(eq(simulatedNotifications.runId, ids.run)),
+      ).resolves.toHaveLength(summary?.businessOutcomeSummary.notificationsRecorded ?? 0);
     } finally {
       await persistenceConnection.close();
       await observerConnection.close();
@@ -1388,7 +1450,7 @@ describe("demo run finalization service", () => {
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "draining" });
   });
 
-  it("times out with accepted-response accounting when durable PostgreSQL evidence is missing", async () => {
+  it("keeps missing accepted-response accounting nonterminal after the old deadline", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
@@ -1403,8 +1465,7 @@ describe("demo run finalization service", () => {
         now: () => new Date("2026-06-20T00:10:00.000Z"),
       }).finalizeRun(ids.run),
     ).resolves.toMatchObject({
-      status: "failed",
-      failureCategory: "business",
+      status: "draining",
     });
   });
 
@@ -1442,7 +1503,7 @@ describe("demo run finalization service", () => {
     );
   });
 
-  it("uses the current API drain timeout for an already-draining run", async () => {
+  it("does not let runtime or historical drain timeouts terminalize unresolved work", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis, { drainTimeoutSeconds: 1 });
@@ -1460,16 +1521,12 @@ describe("demo run finalization service", () => {
 
     const finalized = await service.finalizeRun(ids.run, "corr-finalize-test");
 
-    expect(finalized?.status).toBe("failed");
-    expect(finalized?.failureCategory).toBe("business");
-    const [summary] = await db
+    expect(finalized?.status).toBe("draining");
+    const summaries = await db
       .select()
       .from(demoRunSummaries)
       .where(eq(demoRunSummaries.runId, ids.run));
-    expect(summary?.runSignalTimelineSummary).toMatchObject({
-      confirmationConvergence: { pendingAtCaptureCount: 1 },
-      convergenceDurationSeconds: null,
-    });
+    expect(summaries).toHaveLength(0);
   });
 });
 
@@ -1696,6 +1753,7 @@ function orderFixture(
       ? {
           processingAt: new Date("2026-06-20T00:00:04.000Z"),
           failedAt: new Date("2026-06-20T00:00:05.000Z"),
+          failureCategory: "business_rejection" as const,
           failureCode: "erp_failed",
           failureMessage: "ERP failed.",
         }

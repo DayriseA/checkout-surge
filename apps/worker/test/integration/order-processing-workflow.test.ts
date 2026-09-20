@@ -25,11 +25,16 @@ import {
   erpDispatchCalls,
   getInventoryStatus,
   initializeInventory,
+  inventoryKeys,
+  markReservationPendingPersistence,
   orderEvents,
   orderRecoveryJobs,
   orders,
   products,
+  promoteReservationIdempotencyToAccepted,
   reservations,
+  reserveInventoryStock,
+  runSaleEligibilityKey,
   saleOffers,
   simulatedNotifications,
 } from "@checkout-surge/db";
@@ -40,6 +45,8 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
+import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
+import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
@@ -48,6 +55,7 @@ import {
 } from "../../src/application/erp-reconciliation.js";
 import { createNotificationRecordJobHandler as createProductionNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
+import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import {
   createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
@@ -62,6 +70,7 @@ import {
   PostgresNotificationRecordPersistence,
 } from "../../src/persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "../../src/persistence/postgres-notification-recovery-persistence.js";
+import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import {
   OrderJobIdentityMismatchError,
@@ -677,6 +686,187 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       "order.processing",
       "order.confirmed",
     ]);
+  });
+
+  it("confirms accepted run work after sale eligibility expires", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    await connection.db.delete(orderEvents);
+    await connection.db.delete(orders);
+    await connection.db.delete(reservations);
+    await initializeInventory(redis, {
+      saleOfferId: ids.saleOffer,
+      allocatedStock: 1,
+      run: { runId: ids.run, status: "accepting" },
+    });
+    const accepted = await new ReserveOrderService({
+      persistence: new PostgresBuyPersistence(connection.db),
+      stockReservations: {
+        reserve: (input) => reserveInventoryStock(redis, input),
+        markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
+        promoteAccepted: (input) =>
+          promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
+      },
+      orderProcessJobPublisher: { enqueue: async () => undefined },
+      reservationHoldMinutes: 5,
+      idempotencyTtlSeconds: 1_800,
+      pendingPersistenceRetryAfterSeconds: 5,
+      pendingPersistenceRecovery: { recoverReservation: async () => null },
+    }).reserve({
+      request: {
+        saleOfferId: ids.saleOffer,
+        runId: ids.run,
+        idempotencyKey: "accepted-before-expiry",
+        quantity: 1,
+      },
+      correlationId: job.correlationId,
+      now: queuedAt,
+    });
+    expect(accepted.outcome).toBe("reservation_secured");
+    if (!accepted.order || !accepted.reservation) {
+      throw new Error("Expected a durable accepted reservation and order.");
+    }
+
+    await redis.del(runSaleEligibilityKey(ids.run));
+    const afterExpiry = new Date(Date.parse(accepted.reservation.expiresAt) + 1);
+    const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      attempts: 1,
+      publicationFence: new PostgresGeneratedRunPublicationFence(connection.db),
+    });
+    const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler: createNotificationRecordJobHandler({
+        persistence: new PostgresNotificationRecordPersistence(connection.db),
+        logger: createSilentLogger("worker"),
+      }),
+      logger: createSilentLogger("worker"),
+    });
+    const orderPublisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      undefined,
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
+    const scanner = createOrderDispatchScanner({
+      persistence: new PostgresOrderDispatchPersistence(connection.db),
+      publisher: orderPublisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 10_000,
+      batchSize: 10,
+      minimumQueuedAgeMs: 0,
+      now: () => afterExpiry,
+    });
+    consumer = buildConsumer(
+      connection,
+      { confirm: vi.fn().mockResolvedValue(undefined) },
+      { notificationRecordPublisher },
+    );
+
+    try {
+      notificationRecordConsumer.start();
+      consumer.start();
+      await expect(scanner.scanOnce()).resolves.toEqual({
+        candidates: 1,
+        published: 1,
+        failed: 0,
+      });
+      await waitForOrderStatus(connection, "confirmed", accepted.order.id);
+      await waitForNotificationCount(connection, 1, accepted.order.id);
+
+      const inventory = await getInventoryStatus(redis, ids.saleOffer, afterExpiry);
+      expect(inventory).toMatchObject({
+        remainingStock: 0,
+        reservedStock: 1,
+        expiredReservationCount: 1,
+      });
+      const redisReservation = JSON.parse(
+        (await redis.hget(inventoryKeys(ids.saleOffer).reservations, accepted.reservation.id)) ??
+          "{}",
+      );
+      expect(redisReservation).toMatchObject({
+        id: accepted.reservation.id,
+        runId: ids.run,
+        reservationToken: accepted.reservation.reservationToken,
+      });
+      const [durableReservation] = await connection.db
+        .select()
+        .from(reservations)
+        .where(eq(reservations.id, accepted.reservation.id));
+      expect(durableReservation).toMatchObject({
+        id: accepted.reservation.id,
+        runId: ids.run,
+        reservationToken: accepted.reservation.reservationToken,
+      });
+
+      await expect(
+        reserveInventoryStock(redis, {
+          idempotencyKey: "rejected-after-expiry",
+          idempotencyTtlSeconds: 1_800,
+          reservation: {
+            id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1",
+            saleOfferId: ids.saleOffer,
+            runId: ids.run,
+            correlationId: "corr-after-expiry",
+            quantity: 1,
+            reservationToken: "res_after_expiry",
+            securedAt: afterExpiry.toISOString(),
+            expiresAt: new Date(afterExpiry.getTime() + 300_000).toISOString(),
+          },
+        }),
+      ).resolves.toMatchObject({ outcome: "run_not_accepting_traffic" });
+      await expect(getInventoryStatus(redis, ids.saleOffer, afterExpiry)).resolves.toMatchObject({
+        remainingStock: 0,
+        reservedStock: 1,
+      });
+    } finally {
+      await scanner.close();
+      await orderPublisher.close();
+      await notificationRecordConsumer.close();
+      await notificationRecordPublisher.close();
+    }
+
+    expect(await redis.exists(runSaleEligibilityKey(ids.run))).toBe(0);
+    expect(await redis.hget(inventoryKeys(ids.saleOffer).state, "runSaleStatus")).toBe("accepting");
+  });
+
+  it("filters terminal notification work before applying the recovery batch limit", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    await seedAdditionalQueuedOrder(connection, freshJob);
+    await connection.db
+      .update(orders)
+      .set({
+        status: "confirmed",
+        processingAt: new Date("2026-06-21T00:00:01.000Z"),
+        confirmedAt: new Date("2026-06-21T00:00:02.000Z"),
+      })
+      .where(eq(orders.id, ids.order));
+    await connection.db
+      .update(orders)
+      .set({
+        status: "confirmed",
+        processingAt: new Date("2026-06-21T00:00:02.000Z"),
+        confirmedAt: new Date("2026-06-21T00:00:03.000Z"),
+      })
+      .where(eq(orders.id, freshIds.order));
+    await connection.db
+      .update(demoRuns)
+      .set({
+        status: "completed",
+        finalizedAt: new Date("2026-06-21T00:00:04.000Z"),
+      })
+      .where(eq(demoRuns.id, ids.run));
+
+    const candidates = await new PostgresNotificationRecoveryPersistence(
+      connection.db,
+    ).findConfirmedOrdersMissingNotifications({ limit: 1 });
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.job.orderId).toBe(freshIds.order);
   });
 
   it("keeps an active order confirmation durable when reset rejects its notification publication", async () => {
@@ -2044,10 +2234,11 @@ async function waitForOrderStatus(
 async function waitForNotificationCount(
   connection: ReturnType<typeof createDatabaseConnection>,
   expectedCount: number,
+  orderId: string = ids.order,
 ): Promise<void> {
   await vi.waitFor(
     async () => {
-      await expect(readNotificationCount(connection)).resolves.toBe(expectedCount);
+      await expect(readNotificationCount(connection, orderId)).resolves.toBe(expectedCount);
     },
     { timeout: 10_000, interval: 25 },
   );
@@ -2055,11 +2246,12 @@ async function waitForNotificationCount(
 
 async function readNotificationCount(
   connection: ReturnType<typeof createDatabaseConnection>,
+  orderId: string = ids.order,
 ): Promise<number> {
   const notifications = await connection.db
     .select()
     .from(simulatedNotifications)
-    .where(eq(simulatedNotifications.orderId, ids.order));
+    .where(eq(simulatedNotifications.orderId, orderId));
 
   return notifications.length;
 }

@@ -73,6 +73,8 @@ export async function readBusinessOutcomeSummary(
     retryingOrders,
     confirmedOrders,
     failedOrders,
+    businessRejectedOrders,
+    administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   ] = await Promise.all([
@@ -88,6 +90,20 @@ export async function readBusinessOutcomeSummary(
     countRetryingOrders(db, orderFilter),
     countRows(db, orders, and(orderFilter, eq(orders.status, "confirmed"))),
     countRows(db, orders, and(orderFilter, eq(orders.status, "failed"))),
+    countRows(
+      db,
+      orders,
+      and(
+        orderFilter,
+        eq(orders.status, "failed"),
+        eq(orders.failureCategory, "business_rejection"),
+      ),
+    ),
+    countRows(
+      db,
+      orders,
+      and(orderFilter, eq(orders.status, "failed"), eq(orders.failureCategory, "administrative")),
+    ),
     countRows(
       db,
       reservationPendingPersistence,
@@ -108,6 +124,8 @@ export async function readBusinessOutcomeSummary(
     retryingOrders,
     confirmedOrders,
     failedOrders,
+    businessRejectedOrders,
+    administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   });

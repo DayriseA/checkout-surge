@@ -4,8 +4,12 @@ import {
   erpAttemptHistoryRetentionLimit,
   type OrderProcessJob,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
+  demoPresets,
+  demoRunSaleContexts,
+  demoRuns,
   erpAttempts,
   erpDispatchCalls,
   orderEvents,
@@ -89,6 +93,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
   async function seedOrder(input: {
     createdAt: Date;
     status?: "queued" | "processing" | "failed";
+    runId?: string;
   }): Promise<SeededOrder> {
     const suffix = (sequence * 100 + ++seedOrderCounter).toString().padStart(12, "0");
     const orderId = `dddddddd-dddd-4ddd-8ddd-${suffix}`;
@@ -100,6 +105,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       reservationId,
       saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       correlationId,
+      ...(input.runId ? { runId: input.runId } : {}),
       quantity: 1,
       queuedAt: input.createdAt.toISOString(),
       processingGeneration: 0,
@@ -111,6 +117,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       correlationId,
       quantity: 1,
       reservationToken: `token-${reservationId}`,
+      ...(input.runId ? { runId: input.runId } : {}),
       securedAt: input.createdAt,
       expiresAt: new Date(input.createdAt.getTime() + 900_000),
       createdAt: input.createdAt,
@@ -120,6 +127,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       publicOrderId: job.publicOrderId,
       saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       reservationId,
+      ...(input.runId ? { runId: input.runId } : {}),
       correlationId,
       quantity: 1,
       status: input.status ?? "queued",
@@ -628,7 +636,40 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     );
   });
 
-  it("keeps future-due, leased, intervention, and terminal work out of a limited batch", async () => {
+  it("keeps ineligible work, including terminal-run work, out of a limited batch", async () => {
+    const terminalRunId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+    const snapshot = previewRunConfigSnapshotFixture();
+    await requireConnection()
+      .db.insert(demoPresets)
+      .values({
+        id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+        slug: `terminal-recovery-${sequence}`,
+        visibility: "public",
+        isEditable: false,
+        isCustom: false,
+        display: {
+          name: "Terminal recovery",
+          description: "Recovery eligibility fixture.",
+          sortOrder: 1,
+          outcomeFocus: ["run_history"],
+        },
+        ...snapshot,
+      });
+    await requireConnection().db.insert(demoRuns).values({
+      id: terminalRunId,
+      presetId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      presetName: "Terminal recovery",
+      operatorMode: "public",
+      status: "completed",
+      trafficStatus: "succeeded",
+      configSnapshot: snapshot,
+      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      finalizedAt: baseTime,
+    });
+    await requireConnection().db.insert(demoRunSaleContexts).values({
+      runId: terminalRunId,
+      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    });
     const eligibleOld = await seedOrder({ createdAt: new Date(baseTime.getTime() - 40_000) });
     const eligibleNew = await seedOrder({ createdAt: new Date(baseTime.getTime() - 20_000) });
     const futureDue = await seedOrder({ createdAt: new Date(baseTime.getTime() - 30_000) });
@@ -638,9 +679,26 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       createdAt: new Date(baseTime.getTime() - 30_000),
       status: "failed",
     });
+    const terminalRunOld = await seedOrder({
+      createdAt: new Date(baseTime.getTime() - 60_000),
+      runId: terminalRunId,
+    });
+    const terminalRunNew = await seedOrder({
+      createdAt: new Date(baseTime.getTime() - 50_000),
+      runId: terminalRunId,
+    });
 
     const due = new Date(baseTime.getTime() - 10_000);
-    for (const seeded of [eligibleOld, eligibleNew, futureDue, leased, intervened, terminal]) {
+    for (const seeded of [
+      eligibleOld,
+      eligibleNew,
+      futureDue,
+      leased,
+      intervened,
+      terminal,
+      terminalRunOld,
+      terminalRunNew,
+    ]) {
       await requireConnection()
         .db.insert(orderRecoveryJobs)
         .values({

@@ -1,6 +1,6 @@
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
-import { orders, simulatedNotifications } from "@checkout-surge/db";
-import { and, asc, eq, isNotNull, isNull } from "drizzle-orm";
+import { demoRuns, orders, simulatedNotifications } from "@checkout-surge/db";
+import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type {
   NotificationRecoveryPersistence,
   RecoverableNotificationOrder,
@@ -16,11 +16,13 @@ export class PostgresNotificationRecoveryPersistence implements NotificationReco
       .select({ order: orders })
       .from(orders)
       .leftJoin(simulatedNotifications, eq(simulatedNotifications.orderId, orders.id))
+      .leftJoin(demoRuns, eq(demoRuns.id, orders.runId))
       .where(
         and(
           eq(orders.status, "confirmed"),
           isNotNull(orders.confirmedAt),
           isNull(simulatedNotifications.id),
+          or(isNull(orders.runId), inArray(demoRuns.status, ["starting", "active", "draining"])),
         ),
       )
       .orderBy(asc(orders.confirmedAt), asc(orders.createdAt))

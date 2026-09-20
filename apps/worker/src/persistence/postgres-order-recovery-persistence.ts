@@ -96,6 +96,14 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
           isNull(orderRecoveryJobs.interventionReason),
+          sql`(
+            ${orders.runId} is null
+            or exists (
+              select 1 from demo_runs eligible_run
+              where eligible_run.id = ${orders.runId}
+                and eligible_run.status in ('starting', 'active', 'draining')
+            )
+          )`,
           sql`not exists (
             select 1 from erp_scope_resilience_state scope_state
             where scope_state.scope = case

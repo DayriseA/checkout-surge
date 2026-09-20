@@ -26,6 +26,14 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
         and(
           eq(orders.status, "queued"),
           lte(orders.queuedAt, input.queuedBefore),
+          sql`(
+            ${orders.runId} is null
+            or exists (
+              select 1 from demo_runs eligible_run
+              where eligible_run.id = ${orders.runId}
+                and eligible_run.status in ('starting', 'active', 'draining')
+            )
+          )`,
           sql`not exists (
             select 1 from order_recovery_jobs control
             where control.order_id = ${orders.id}
