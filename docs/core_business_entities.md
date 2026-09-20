@@ -612,7 +612,7 @@ Notes:
 - `terminalInventorySnapshot` carries the Redis-derived terminal observation produced by the applicable terminal workflow, so completed runs stay auditable after live Redis state is reset. Normal post-traffic finalization captures it only after every pending-persistence hold has converged and after the fresh Redis sold-out count agrees with the paired durable business aggregate; disagreement remains draining. Traffic-completion enrichment remains separate earlier evidence. Admin reset and early-failure workflows may capture their own terminal observations. Startup repair does not synthesize a terminal projection for orchestrator-owned or draining work.
 - Run History displays traffic delivery quality from `trafficDeliverySummary.trafficDeliveryStatus` next to the terminal run status, rather than encoding warning/degraded delivery as separate demo-run lifecycle states.
 - A terminal run should have one summary-backed history record whether it ended through normal finalization, admin recovery, traffic-start failure, or initialization failure.
-- Newly written `businessOutcomeSummary` values retain `failedOrders` for compatibility and also separate `businessRejectedOrders` from `administrativelyDisposedOrders`. Historical immutable summaries without the additive split remain readable and are not rewritten.
+- Newly written `businessOutcomeSummary` values retain `failedOrders` for compatibility and also separate `businessRejectedOrders` from `technicallyFailedOrders`. Historical immutable summaries remain readable and are not rewritten.
 
 ### 18. PublicRuntimePolicy
 

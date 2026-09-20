@@ -81,7 +81,7 @@ describe("BullMQ exact-run maintenance", () => {
     }
   });
 
-  it("uses one elapsed settlement budget and keeps timeout, malformed attribution and restoration failure distinct", async () => {
+  it("uses one elapsed settlement budget, removes non-active work, and leaves active work", async () => {
     const first = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
     const second = new FakeQueue(
       "notifications:record",
@@ -98,12 +98,13 @@ describe("BullMQ exact-run maintenance", () => {
         now += ms;
       },
     });
-    await expect(maintenance.cleanRuns([runId], { deadline: 250 })).rejects.toMatchObject({
-      code: "active_settlement_timeout",
+    await expect(maintenance.cleanRuns([runId], { deadline: 250 })).resolves.toEqual({
+      cleanedQueueCount: 2,
+      cleanedJobCount: 1,
     });
     expect(now).toBe(250);
     expect(active.removed).toBe(false);
-    expect(waiting.removed).toBe(false);
+    expect(waiting.removed).toBe(true);
     expect(first.paused).toBe(false);
     expect(second.paused).toBe(true);
     const malformed = second.add("waiting", { runId });
@@ -113,11 +114,7 @@ describe("BullMQ exact-run maintenance", () => {
     second.remove(malformed);
     first.resumeError = new Error("restoration failed");
     await expect(maintenance.cleanRuns([runId], { deadline: now })).rejects.toMatchObject({
-      errors: [
-        expect.objectContaining({ code: "active_settlement_timeout" }),
-        first.resumeError,
-        first.resumeError,
-      ],
+      errors: [first.resumeError, first.resumeError],
     });
   });
 

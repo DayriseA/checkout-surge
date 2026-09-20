@@ -6,7 +6,7 @@ import {
   orderRecoveryJobs,
   orders,
 } from "@checkout-surge/db";
-import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type {
   ConfirmedTransitionResult,
   FailedTransitionResult,
@@ -294,13 +294,6 @@ async function claimExecutionOwnership(
         eq(orderRecoveryJobs.orderId, job.orderId),
         eq(orderRecoveryJobs.processingGeneration, job.processingGeneration ?? 0),
         inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
-        job.runId
-          ? sql`not exists (
-              select 1 from demo_runs stopped_run
-              where stopped_run.id = ${job.runId}
-                and stopped_run.administrative_stop is not null
-            )`
-          : undefined,
         or(isNull(orderRecoveryJobs.nextAttemptAt), lte(orderRecoveryJobs.nextAttemptAt, now)),
         eq(orderRecoveryJobs.publicationOwner, deliveryId),
       ),

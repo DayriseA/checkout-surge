@@ -43,6 +43,7 @@ export interface OrderControlRecord {
 }
 
 export interface OrderRecoveryPersistence {
+  isTerminalResetRun?(runId: string): Promise<boolean>;
   recordRecoverable(input: RecoverableOrderHandoff): Promise<void>;
   findRecoverable(input: { limit: number; now: Date }): Promise<RecoverableOrderJob[]>;
   readControlRecord(input: { orderId: string }): Promise<OrderControlRecord | null>;

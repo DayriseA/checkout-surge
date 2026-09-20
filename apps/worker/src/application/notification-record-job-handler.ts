@@ -2,6 +2,7 @@ import type { NotificationRecordJob } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
 
 export interface NotificationRecordPersistence {
+  isTerminalResetRun?(runId: string): Promise<boolean>;
   record(job: NotificationRecordJob): Promise<{ recorded: boolean }>;
 }
 
@@ -17,7 +18,20 @@ export function createNotificationRecordJobHandler(dependencies: {
   return {
     handle: async (job) => {
       const logger = childLoggerWithCorrelationId(dependencies.logger, job.correlationId);
-      const result = await dependencies.persistence.record(job);
+      let result: { recorded: boolean };
+      try {
+        result = await dependencies.persistence.record(job);
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.name === "NotificationOrderNotFoundError" &&
+          job.runId &&
+          (await dependencies.persistence.isTerminalResetRun?.(job.runId)) === true
+        ) {
+          return;
+        }
+        throw error;
+      }
 
       logger.info(
         {

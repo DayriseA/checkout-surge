@@ -48,6 +48,15 @@ interface RunHistoryDetailProps {
 
 export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistoryDetailProps) {
   const { run, summary } = detail;
+  if (summary.dataDiscarded) {
+    return (
+      <DiscardedRunDetail
+        actions={actions}
+        navigation={navigation}
+        presetName={summary.presetName}
+      />
+    );
+  }
   const config = run.configSnapshot;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
   const runPresentation = deriveTerminalSummaryPresentation(result);
@@ -935,6 +944,18 @@ function trafficConfigFacts(
 
 export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
   const { run, summary } = detail;
+  if (summary.dataDiscarded) {
+    return (
+      <DiscardedRunDetail
+        navigation={
+          <Link className={neutralLinkButtonClassName} href="/run-history">
+            Back to run history
+          </Link>
+        }
+        presetName={summary.presetName}
+      />
+    );
+  }
   const result = detail.result;
   const config = run.configSnapshot;
   const transportObservation = deriveTransportObservation(
@@ -1338,6 +1359,30 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         </a>
       </nav>
     </div>
+  );
+}
+
+function DiscardedRunDetail({
+  actions,
+  navigation,
+  presetName,
+}: {
+  actions?: ReactNode;
+  navigation?: ReactNode;
+  presetName: string;
+}) {
+  return (
+    <section className="rounded-lg border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        {navigation}
+        {actions}
+      </div>
+      <p className="m-0 mt-3 text-xs font-bold uppercase text-muted">Cancelled</p>
+      <h1 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">{presetName}</h1>
+      <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
+        This run was cancelled by an admin reset. Its experiment data was discarded.
+      </p>
+    </section>
   );
 }
 

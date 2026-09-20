@@ -13,6 +13,28 @@ const job: NotificationRecordJob = {
 };
 
 describe("notification-record job handler", () => {
+  it("ignores a missing order only when its reset run is terminal", async () => {
+    const missingOrder = Object.assign(new Error("missing"), {
+      name: "NotificationOrderNotFoundError",
+    });
+    const persistence = {
+      record: vi.fn().mockRejectedValue(missingOrder),
+      isTerminalResetRun: vi.fn().mockResolvedValue(true),
+    };
+    const publishBusinessOutcomeUpdate = vi.fn();
+    const handler = createNotificationRecordJobHandler({
+      persistence,
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate,
+    });
+
+    await expect(handler.handle(job)).resolves.toBeUndefined();
+    expect(publishBusinessOutcomeUpdate).not.toHaveBeenCalled();
+
+    persistence.isTerminalResetRun.mockResolvedValue(false);
+    await expect(handler.handle(job)).rejects.toBe(missingOrder);
+  });
+
   it("keeps a durable notification record successful when dashboard publication fails", async () => {
     const publishError = new Error("dashboard publish unavailable");
     const logger = createSilentLogger("worker");

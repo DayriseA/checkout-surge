@@ -75,7 +75,6 @@ export async function readBusinessOutcomeSummary(
     failedOrders,
     businessRejectedOrders,
     technicallyFailedOrders,
-    administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   ] = await Promise.all([
@@ -107,11 +106,6 @@ export async function readBusinessOutcomeSummary(
     ),
     countRows(
       db,
-      orders,
-      and(orderFilter, eq(orders.status, "failed"), eq(orders.failureCategory, "administrative")),
-    ),
-    countRows(
-      db,
       reservationPendingPersistence,
       and(
         pendingFilter,
@@ -132,7 +126,6 @@ export async function readBusinessOutcomeSummary(
     failedOrders,
     businessRejectedOrders,
     technicallyFailedOrders,
-    administrativelyDisposedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   });

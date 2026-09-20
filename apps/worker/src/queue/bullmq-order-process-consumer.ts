@@ -20,7 +20,10 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   concurrency: number;
   handler: OrderProcessJobHandler;
   logger: CheckoutSurgeLogger;
-  recovery: Pick<OrderRecoveryPersistence, "recordRecoverable" | "recordDeadLetter">;
+  recovery: Pick<
+    OrderRecoveryPersistence,
+    "isTerminalResetRun" | "recordRecoverable" | "recordDeadLetter"
+  >;
 }
 
 export const orderProcessQueueNotReadyMessage =
@@ -220,6 +223,13 @@ export async function processJob(
       ...(recovery ? { recoveryKey: recovery.recoveryKey, deliveryId: recovery.deliveryId } : {}),
     });
   } catch (error) {
+    if (
+      error instanceof OrderNotFoundError &&
+      job.data.runId &&
+      (await options.recovery.isTerminalResetRun?.(job.data.runId)) === true
+    ) {
+      return;
+    }
     if (error instanceof OrderNotFoundError || error instanceof OrderJobIdentityMismatchError) {
       await recordDeadLetter(options, job, {
         jobId: String(job.id ?? `unknown:${job.name}`),

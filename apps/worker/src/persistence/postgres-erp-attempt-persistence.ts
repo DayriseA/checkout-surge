@@ -12,7 +12,6 @@ import {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
-  demoRuns,
   erpAttempts,
   erpDispatchCalls,
   orderEvents,
@@ -127,18 +126,10 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
         );
       }
       const generation = input.expectedProcessingGeneration;
-      const [run] = input.job.runId
-        ? await tx
-            .select({ administrativeStop: demoRuns.administrativeStop })
-            .from(demoRuns)
-            .where(eq(demoRuns.id, input.job.runId))
-            .limit(1)
-        : [];
       if (
         generation !== control.generation ||
         (control.status !== "pending" && control.status !== "enqueued") ||
         (order?.status !== "queued" && order?.status !== "processing") ||
-        run?.administrativeStop != null ||
         (control.nextAttemptAt !== null && control.nextAttemptAt > eligibilityAt) ||
         (control.leaseExpiresAt !== null && control.leaseExpiresAt <= eligibilityAt)
       ) {

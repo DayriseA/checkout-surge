@@ -38,11 +38,6 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
             select 1 from order_recovery_jobs control
             where control.order_id = ${orders.id}
           )`,
-          sql`not exists (
-            select 1 from demo_runs stopped_run
-            where stopped_run.id = ${orders.runId}
-              and stopped_run.administrative_stop is not null
-          )`,
         ),
       )
       .orderBy(asc(orders.queuedAt), asc(orders.id))

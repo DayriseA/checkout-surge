@@ -98,11 +98,10 @@ export function createDemoQueueMaintenance(
             )
               throw error;
             const remaining = settlement.deadline - clock.now();
-            if (remaining <= 0)
-              throw new DemoQueueMaintenanceConflict(
-                "active_settlement_timeout",
-                "Reset work cleanup is incomplete. Active worker work may still settle after queue availability is restored. Retry Reset; successor starts remain blocked until work cleanup and history complete.",
-              );
+            if (remaining <= 0) {
+              result = await cleanExactJobs(queues, targets, true);
+              break;
+            }
             await clock.delay(Math.min(100, remaining));
           }
         }
@@ -194,6 +193,7 @@ async function closeQueues(
 async function cleanExactJobs(
   queues: TargetQueueBoundary[],
   runIds: ReadonlySet<string>,
+  leaveActiveJobs = false,
 ): Promise<QueueCleanupSummary> {
   let activeConflict: DemoQueueMaintenanceConflict | undefined;
   const jobsToRemove: Array<{ queue: TargetQueueBoundary; job: TargetQueueJob; runId: string }> =
@@ -220,7 +220,7 @@ async function cleanExactJobs(
     }
   }
 
-  if (activeConflict) throw activeConflict;
+  if (activeConflict && !leaveActiveJobs) throw activeConflict;
   for (const { job } of jobsToRemove) {
     await job.remove();
   }

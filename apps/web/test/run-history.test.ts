@@ -46,6 +46,39 @@ function publicReport(detail: PublicRunHistoryDetailResponse) {
 }
 
 describe("run history", () => {
+  it("presents reset history as cancelled with discarded data", () => {
+    const history = listFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a run summary fixture.");
+    summary.dataDiscarded = true;
+    const list = renderToStaticMarkup(createElement(RunHistoryList, { history }));
+    expect(list).toContain("Cancelled");
+
+    const publicDetail = detailFixture("failed");
+    publicDetail.summary.dataDiscarded = true;
+    const publicMarkup = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, { detail: publicDetail }),
+    );
+    expect(publicMarkup).toContain("cancelled by an admin reset");
+    expect(publicMarkup).toContain("experiment data was discarded");
+    expect(publicMarkup).not.toContain("Final stock and orders");
+    expect(publicMarkup).toContain("Back to run history");
+
+    const adminDetail = adminDetailFixture();
+    adminDetail.summary.dataDiscarded = true;
+    const adminMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, {
+        detail: adminDetail,
+        actions: createElement("button", { type: "button" }, "Delete run"),
+        navigation: createElement("a", { href: "/admin/run-history" }, "Back to admin history"),
+      }),
+    );
+    expect(adminMarkup).toContain("experiment data was discarded");
+    expect(adminMarkup).toContain("Delete run");
+    expect(adminMarkup).toContain("Back to admin history");
+    expect(adminMarkup).not.toContain("Evidence and reconciliation proof");
+  });
+
   it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
     const detail = detailFixture("failed");
     detail.summary.failureCategory = "operator";

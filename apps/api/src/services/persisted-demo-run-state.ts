@@ -24,9 +24,15 @@ export function parsePersistedBusinessOutcomeSummary(
   value: unknown,
   context: string,
 ): BusinessOutcomeSummary {
+  const persisted =
+    typeof value === "object" && value !== null && !Array.isArray(value)
+      ? Object.fromEntries(
+          Object.entries(value).filter(([key]) => key !== "administrativelyDisposedOrders"),
+        )
+      : value;
   return parsePersistedState(
     materializedBusinessOutcomeSummarySchema,
-    value,
+    persisted,
     context,
     "businessOutcomeSummary",
   );

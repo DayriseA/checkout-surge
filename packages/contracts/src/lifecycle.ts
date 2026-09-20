@@ -40,11 +40,7 @@ export type OrderWaitingReason = z.infer<typeof orderWaitingReasonSchema>;
 /**
  * Terminal order failure categories (D01/D03).
  */
-export const orderFailureCategoryValues = [
-  "business_rejection",
-  "technical",
-  "administrative",
-] as const;
+export const orderFailureCategoryValues = ["business_rejection", "technical"] as const;
 export const orderFailureCategorySchema = z.enum(orderFailureCategoryValues);
 export type OrderFailureCategory = z.infer<typeof orderFailureCategorySchema>;
 
@@ -61,10 +57,6 @@ export const technicalOrderFailureCodeValues = [
 ] as const;
 export const technicalOrderFailureCodeSchema = z.enum(technicalOrderFailureCodeValues);
 export type TechnicalOrderFailureCode = z.infer<typeof technicalOrderFailureCodeSchema>;
-
-export const administrativeOrderFailureCodeValues = ["admin_reset"] as const;
-export const administrativeOrderFailureCodeSchema = z.enum(administrativeOrderFailureCodeValues);
-export type AdministrativeOrderFailureCode = z.infer<typeof administrativeOrderFailureCodeSchema>;
 
 export const recoveryJobStatusValues = ["pending", "enqueued", "escalated", "resolved"] as const;
 

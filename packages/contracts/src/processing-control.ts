@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { administrativeOrderFailureCodeSchema } from "./lifecycle.js";
 import {
   idempotencyKeySchema,
   isoTimestampSchema,
@@ -37,22 +36,6 @@ export const erpCallReferenceSchema = z
   })
   .strict();
 export type ErpCallReference = z.infer<typeof erpCallReferenceSchema>;
-
-/**
- * Evidence persisted with an administrative stop (D02): the stop marker itself
- * plus the exact disposition accounting observed when it was written. Reset
- * never guesses; the counts are the reconciliation input, not a claim that the
- * run is settled.
- */
-export const administrativeStopEvidenceSchema = z
-  .object({
-    code: administrativeOrderFailureCodeSchema,
-    stoppedAt: isoTimestampSchema,
-    disposedOrderCount: nonnegativeIntegerSchema,
-    uncertainCallCount: nonnegativeIntegerSchema,
-  })
-  .strict();
-export type AdministrativeStopEvidence = z.infer<typeof administrativeStopEvidenceSchema>;
 
 /**
  * Versioned engine-policy identity (D13). Engine constants live in a versioned

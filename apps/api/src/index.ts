@@ -13,6 +13,7 @@ import {
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
   publishDashboardProjectionDirtySignal,
+  purgeResetRunDurable,
   reserveInventoryStock,
   reverseReservation,
   setRunSaleEligibility,
@@ -263,6 +264,8 @@ export async function startApiServer(): Promise<void> {
     reservationTiming,
     resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
     maintenanceAuthority,
+    deleteGeneratedRunRedisState,
+    purgeResetRunDurable,
     logger,
   });
   const runHistoryService = new RunHistoryService({ db: connection.db });

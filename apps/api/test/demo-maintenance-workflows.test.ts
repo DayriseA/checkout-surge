@@ -22,15 +22,19 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
+  erpDispatchCalls,
   initializeInventory,
   inspectGeneratedRunTeardown,
   inventoryKeys,
   isRunSaleEligible,
   markReservationPendingPersistence,
+  orderDeadLetters,
   orderEvents,
+  orderRecoveryJobs,
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
+  purgeResetRunDurable,
   reservationPendingPersistence,
   reservations,
   reserveInventoryStock,
@@ -115,6 +119,7 @@ type ResetTestOptions = MaintenanceTestContext & {
     typeof AdminDemoResetService
   >[0]["dashboardLiveStateReset"];
   resetWorkflowFence?: ConstructorParameters<typeof AdminDemoResetService>[0]["resetWorkflowFence"];
+  purgeResetRunDurable?: typeof purgeResetRunDurable;
 };
 
 function createTeardownService(options: TeardownTestOptions): GeneratedRunTeardownService {
@@ -171,6 +176,7 @@ function createResetService(options: ResetTestOptions): AdminDemoResetService {
     },
     maintenanceAuthority:
       options.maintenanceAuthority ?? new ProcessLocalDemoMaintenanceAuthority(),
+    ...(options.purgeResetRunDurable ? { purgeResetRunDurable: options.purgeResetRunDurable } : {}),
     ...(options.now ? { now: options.now } : {}),
   });
 }
@@ -652,7 +658,93 @@ describe("focused demo maintenance workflows", () => {
   });
 
   describe("admin reset workflow", () => {
-    it("settles a held real order after timeout and captures immutable completion evidence with fresh boundaries", async () => {
+    it("purges queued, processing, and unresolved dispatched work without ERP coordination", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      const queuedReservationId = "77777777-7777-4777-8777-777777777773";
+      const queuedOrderId = "88888888-8888-4888-8888-888888888883";
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "active",
+        trafficStatus: "active",
+        failureReason: null,
+        runInventoryStatus: "accepting",
+      });
+      await seedActiveRunBusinessState(db, redisClient);
+      await db
+        .update(orders)
+        .set({ status: "processing", processingAt: new Date("2026-06-20T00:00:04.000Z") })
+        .where(eq(orders.id, ids.activeOrder));
+      await db.insert(orderRecoveryJobs).values({
+        recoveryKey: `order:${ids.activeOrder}`,
+        jobId: "active-processing-job",
+        orderId: ids.activeOrder,
+        payload: {},
+        reason: "initial_dispatch_ownership",
+        status: "enqueued",
+      });
+      await db.insert(erpDispatchCalls).values({
+        orderId: ids.activeOrder,
+        processingGeneration: 0,
+        idempotencyKey: `erp-confirmation:${ids.activeOrder}`,
+        publicOrderId: "active-order",
+        reservationId: ids.activeReservation,
+        saleOfferId: ids.activeOffer,
+        runId: ids.activeRun,
+        quantity: 1,
+        correlationId: "corr-active-business",
+        dispatchedAt: new Date("2026-06-20T00:00:05.000Z"),
+      });
+      await db.insert(reservations).values({
+        id: queuedReservationId,
+        saleOfferId: ids.activeOffer,
+        runId: ids.activeRun,
+        correlationId: "corr-queued-business",
+        quantity: 1,
+        reservationToken: "queued-token",
+        securedAt: new Date("2026-06-20T00:00:02.000Z"),
+        expiresAt: new Date("2026-06-20T00:15:02.000Z"),
+      });
+      await db.insert(orders).values({
+        id: queuedOrderId,
+        publicOrderId: "queued-order",
+        saleOfferId: ids.activeOffer,
+        reservationId: queuedReservationId,
+        runId: ids.activeRun,
+        correlationId: "corr-queued-business",
+        quantity: 1,
+        status: "queued",
+        queuedAt: new Date("2026-06-20T00:00:03.000Z"),
+      });
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+      });
+
+      await expect(service.reset("corr-destructive-reset")).resolves.toMatchObject({
+        failedRunCount: 1,
+      });
+      await expect(db.select().from(orders)).resolves.toHaveLength(0);
+      await expect(db.select().from(reservations)).resolves.toHaveLength(0);
+      await expect(db.select().from(orderRecoveryJobs)).resolves.toHaveLength(0);
+      await expect(db.select().from(erpDispatchCalls)).resolves.toHaveLength(0);
+      await expect(db.select().from(demoRunSummaries)).resolves.toHaveLength(1);
+      await expect(
+        db.select().from(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, ids.activeRun)),
+      ).resolves.toHaveLength(1);
+      await expect(
+        db.select().from(saleOffers).where(eq(saleOffers.id, ids.activeOffer)),
+      ).resolves.toHaveLength(1);
+      expect(await redisClient.keys(`inventory:${ids.activeOffer}:*`)).toEqual([]);
+      expect(await redisClient.keys(`demo-run:${ids.activeRun}:*`)).toEqual([]);
+    });
+
+    it("purges a held real order after bounded queue settlement and keeps its summary", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       await seedBase(db);
@@ -704,31 +796,6 @@ describe("focused demo maintenance workflows", () => {
         { connection: queueConnection },
       );
       const maintenance = createBullMqDemoQueueMaintenance(queueConnection);
-      const incompleteObserved = releaseBarrier();
-      const logger = createSilentLogger("api");
-      const projectionService = new DashboardProjectionService({
-        logger,
-        openOperation: createDashboardRecoveryOperationFactory({
-          databaseUrl: requireTestDatabaseUrl(),
-          redisUrl: requireTestRedisUrl(),
-          timeoutMs: 2_000,
-          logger,
-        }),
-      });
-      const scheduler = new DashboardProjectionPublicationScheduler({
-        projectionService,
-        logger,
-        buildTimeoutMs: 2_000,
-        publish: (projection) => {
-          if (projection.resetRecovery === "incomplete") incompleteObserved.resolve();
-        },
-      });
-      const subscriberRedis = redisClient.duplicate();
-      const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
-        onDirty: (signal) => scheduler.markDirty(signal),
-      });
-      await subscriber.start();
-      let timeout = true;
       const abortCurrent = vi.fn(async () => ({ outcome: "no_current_run" as const }));
       const service = createResetService({
         db,
@@ -737,8 +804,7 @@ describe("focused demo maintenance workflows", () => {
         now: () => observedAt,
         trafficAborter: { abortCurrent },
         queueMaintenance: {
-          cleanRuns: (ids, settlement) =>
-            maintenance.cleanRuns(ids, timeout ? { deadline: performance.now() - 1 } : settlement),
+          cleanRuns: (ids) => maintenance.cleanRuns(ids, { deadline: performance.now() - 1 }),
         },
         terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
       });
@@ -755,27 +821,9 @@ describe("focused demo maintenance workflows", () => {
           processingGeneration: 0,
         });
         await boundedResetBarrier(processing.promise);
-        await expect(service.reset("held-timeout")).rejects.toMatchObject({
-          code: "run_cleanup_conflict",
-          details: { conflictReason: "active_settlement_timeout" },
-        });
+        const failed = once(events, "failed", { signal: AbortSignal.timeout(5_000) });
+        await expect(service.reset("held-active")).resolves.toMatchObject({ failedRunCount: 1 });
         expect(await queue.isPaused()).toBe(false);
-        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
-        expect(
-          (await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun)))[0]
-            ?.adminResetCompletedAt,
-        ).toBeNull();
-        await boundedResetBarrier(incompleteObserved.promise);
-        expect(
-          (await projectionService.build({ correlationId: "fresh-timeout-read" })).resetRecovery,
-        ).toBe("incomplete");
-        timeout = false;
-        const paused = once(events, "paused", { signal: AbortSignal.timeout(5_000) });
-        const repair = service.reset("held-repair");
-        await paused;
-        expect(await db.select().from(demoRunSummaries)).toHaveLength(0);
-        release.resolve();
-        await expect(repair).resolves.toMatchObject({ failedRunCount: 1 });
         const summaries = await db.select().from(demoRunSummaries);
         expect(summaries).toHaveLength(1);
         expect(summaries[0]).toMatchObject({
@@ -783,38 +831,42 @@ describe("focused demo maintenance workflows", () => {
           failureReason: "admin_reset",
           endedAt: new Date("2026-06-20T00:00:10.000Z"),
           capturedAt: observedAt,
-          businessOutcomeSummary: { confirmedOrders: 1, notificationsRecorded: 0 },
+          businessOutcomeSummary: { processingOrders: 1, notificationsRecorded: 0 },
         });
         const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun));
         expect(run?.adminResetCompletedAt).toEqual(observedAt);
-        expect((await db.select().from(orders))[0]?.confirmedAt).toEqual(
-          new Date("2026-06-20T00:00:11.000Z"),
-        );
+        expect(await db.select().from(orders)).toHaveLength(0);
         const historyService = new RunHistoryService({ db, now: () => observedAt });
         const history = await historyService.detail(ids.activeRun);
         expect(history?.run.adminResetCompletedAt).toBe(observedAt.toISOString());
         expect(history?.summary.businessOutcomeSummary).toMatchObject({
-          confirmedOrders: 1,
+          processingOrders: 1,
           notificationsRecorded: 0,
         });
-        expect(history?.result.reconciliations).toContainEqual(
-          expect.objectContaining({ code: "notifications_below_confirmations" }),
-        );
         expect(await historyService.detail(ids.activeRun)).toEqual(history);
-        expect(
-          (await projectionService.build({ correlationId: "fresh-repaired-read" })).resetRecovery,
-        ).toBe("ready");
         await service.reset("held-repeated");
         expect(await db.select().from(demoRunSummaries)).toEqual(summaries);
-        expect(abortCurrent).toHaveBeenCalledTimes(2);
+        expect(abortCurrent).toHaveBeenCalledOnce();
+        await expect(
+          db.insert(demoRuns).values({
+            id: ids.startingRun,
+            presetId: ids.preset,
+            presetName: "Reset Preset",
+            operatorMode: "admin",
+            status: "starting",
+            trafficStatus: "starting",
+            configSnapshot: configSnapshotFixture(),
+            startedAt: observedAt,
+          }),
+        ).resolves.toBeDefined();
+        release.resolve();
+        await failed;
+        expect(await db.select().from(orders)).toHaveLength(0);
+        expect(await db.select().from(simulatedNotifications)).toHaveLength(0);
+        expect(await db.select().from(orderDeadLetters)).toHaveLength(0);
       } finally {
         release.resolve();
         await worker.close();
-        await subscriber.close();
-        await scheduler.flush();
-        await scheduler.flush();
-        await scheduler.close();
-        subscriberRedis.disconnect();
         await Promise.all([maintenance.close(), queue.close(), events.close()]);
       }
     });
@@ -826,7 +878,8 @@ describe("focused demo maintenance workflows", () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       const logger = createSilentLogger("api");
-      const now = () => new Date("2026-06-20T00:00:10.000Z");
+      let observedAt = new Date("2026-06-20T00:00:10.000Z");
+      const now = () => observedAt;
       await seedBase(db);
       await seedRun(db, redisClient, {
         runId: ids.activeRun,
@@ -874,6 +927,7 @@ describe("focused demo maintenance workflows", () => {
       const active = await projectionService.build({ correlationId: "corr-active" });
       expect(active.currentRun?.status).toBe("active");
       expect(active.recentMetrics).toHaveLength(1);
+      observedAt = new Date("2026-06-20T00:00:11.000Z");
       const buildRelease = releaseBarrier();
       if (delivery === "immediate") buildRelease.resolve();
       const frames: DashboardProjection[] = [];
@@ -931,26 +985,24 @@ describe("focused demo maintenance workflows", () => {
         await scheduler.flush();
         await boundedResetBarrier(finalFrame.promise);
         await scheduler.flush();
-        expect(onDirty.mock.calls).toEqual(
-          Array.from({ length: 3 }, () => [
+        expect(onDirty.mock.calls).toEqual([
+          ...Array.from({ length: 2 }, () => [
             {
               type: "dashboard.projection.dirty",
               correlationId: "corr-reset-stream",
               scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
             },
           ]),
-        );
+          [{ type: "dashboard.projection.dirty", correlationId: "corr-reset-stream" }],
+        ]);
         expect(frames.length).toBeGreaterThan(0);
-        expect(frames.every((frame) => frame.scopeId === active.scopeId)).toBe(true);
         const terminal = frames.at(-1);
         if (!terminal) throw new Error("Reset projection was not published");
         expect(observer.acceptedProjection).toEqual(terminal);
-        expect(observer.retainedTerminalRun?.runId).toBe(ids.activeRun);
+        expect(observer.retainedTerminalRun).toBeNull();
         expect(terminal.resetRecovery).toBe("ready");
         expect(terminal.resetRecoveryRunId).toBe(ids.activeRun);
-        // An idle observer still rejects foreign terminals, then recovers the
-        // durable result identity even if it never saw the incomplete marker.
-        expect(idleObserver.acceptedProjection).toBeNull();
+        expect(idleObserver.acceptedProjection).toEqual(terminal);
         const recovered = await projectionService.build({ correlationId: "idle-observer-read" });
         idleObserver = dashboardProjectionStateReducer(idleObserver, {
           type: "refresh-completed",
@@ -958,14 +1010,9 @@ describe("focused demo maintenance workflows", () => {
           preserveAvailableRecoveryOnFailure: false,
         });
         expect(idleObserver.acceptedProjection?.resetRecoveryRunId).toBe(ids.activeRun);
-        expect(terminal.scope).toEqual(active.scope);
-        expect(terminal.scopeId).toBe(active.scopeId);
-        expect(terminal.revision).toBeGreaterThan(active.revision);
-        expect(terminal.currentRun).toMatchObject({
-          status: "failed",
-          trafficStatus: "failed",
-          failureCategory: "operator",
-        });
+        expect(terminal.scope).toBeNull();
+        expect(terminal.scopeId).toBe("idle");
+        expect(terminal.currentRun).toBeNull();
         expect(terminal.recentMetrics).toEqual([]);
         expect((await db.select().from(demoRunSummaries))[0]?.transportAttemptCounts).toMatchObject(
           { startedRequests: 0 },
@@ -1512,8 +1559,9 @@ describe("focused demo maintenance workflows", () => {
       failClear = false;
       await expect(service.reset("corr-clear-retry")).resolves.toMatchObject({ failedRunCount: 0 });
       expect(publish).toHaveBeenCalledTimes(3);
-      expect(JSON.parse(String(publish.mock.calls[2]?.[1]))).toMatchObject({
-        scope: { runId: ids.activeRun, saleOfferId: ids.activeOffer },
+      expect(JSON.parse(String(publish.mock.calls[2]?.[1]))).toEqual({
+        type: "dashboard.projection.dirty",
+        correlationId: "corr-clear-retry",
       });
       expect(publish.mock.invocationCallOrder[2]).toBeGreaterThan(
         cleanupComplete.mock.invocationCallOrder[0] ?? 0,
@@ -1590,6 +1638,88 @@ describe("focused demo maintenance workflows", () => {
       await expect(
         db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.activeRun)),
       ).resolves.toHaveLength(1);
+    });
+
+    it("retries a purge failure after writing one summary", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      await seedRun(db, redisClient, {
+        runId: ids.activeRun,
+        saleOfferId: ids.activeOffer,
+        status: "active",
+        trafficStatus: "active",
+        failureReason: null,
+        runInventoryStatus: "accepting",
+      });
+      await seedActiveRunBusinessState(db, redisClient);
+      let failPurge = true;
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+        purgeResetRunDurable: async (...args) => {
+          if (failPurge) throw new Error("purge unavailable");
+          await purgeResetRunDurable(...args);
+        },
+      });
+
+      await expect(service.reset("corr-purge-failure")).rejects.toThrow("purge unavailable");
+      expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+      expect(await db.select().from(orders)).not.toHaveLength(0);
+      expect(
+        (await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun)))[0]
+          ?.adminResetCompletedAt,
+      ).toBeNull();
+
+      failPurge = false;
+      await expect(service.reset("corr-purge-retry")).resolves.toMatchObject({
+        failedRunCount: 0,
+      });
+      expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+      expect(await db.select().from(orders)).toHaveLength(0);
+      expect(
+        (await db.select().from(demoRuns).where(eq(demoRuns.id, ids.activeRun)))[0]
+          ?.adminResetCompletedAt,
+      ).not.toBeNull();
+    });
+
+    it("resets a starting run before it owns a generated sale offer", async () => {
+      const db = requireConnection(connection).db;
+      const redisClient = requireRedis(redis);
+      await seedBase(db);
+      await db.insert(demoRuns).values({
+        id: ids.startingRun,
+        presetId: ids.preset,
+        presetName: "Reset Preset",
+        operatorMode: "admin",
+        status: "starting",
+        trafficStatus: "starting",
+        configSnapshot: configSnapshotFixture(),
+        startedAt: new Date("2026-06-20T00:00:00.000Z"),
+      });
+      const service = createResetService({
+        db,
+        redis: redisClient,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+      });
+
+      await expect(service.reset("corr-no-offer")).resolves.toMatchObject({
+        failedRunCount: 1,
+        closedSaleOfferCount: 0,
+      });
+      expect(await db.select().from(demoRunSummaries)).toHaveLength(1);
+      expect(
+        (await db.select().from(demoRuns).where(eq(demoRuns.id, ids.startingRun)))[0],
+      ).toMatchObject({
+        status: "failed",
+        failureReason: "admin_reset",
+        saleOfferId: null,
+      });
     });
 
     it("leaves a fenced run resumable when admission closure fails", async () => {
@@ -1717,7 +1847,7 @@ describe("focused demo maintenance workflows", () => {
         now: new Date("2026-06-20T00:00:02.000Z"),
       });
       await expect(reservePromise).resolves.toMatchObject({
-        outcome: "run_not_accepting_traffic",
+        outcome: "inventory_not_initialized",
       });
       expect(await db.select().from(reservations)).toHaveLength(0);
       expect(await db.select().from(orders)).toHaveLength(0);
@@ -1906,7 +2036,7 @@ describe("focused demo maintenance workflows", () => {
         expect(queuePublisher.enqueue).toHaveBeenCalledOnce();
         expect(queueMaintenance.cleanRuns).toHaveBeenCalledOnce();
         await expect(db.select().from(demoRunSummaries)).resolves.toHaveLength(1);
-        await expect(db.select().from(orders)).resolves.toHaveLength(1);
+        await expect(db.select().from(orders)).resolves.toHaveLength(0);
       } finally {
         await enqueueConnection.close();
       }

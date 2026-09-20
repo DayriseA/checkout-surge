@@ -29,7 +29,9 @@ export function registerAdminMaintenanceRoutes(
       return unauthorized;
     }
 
-    return reply.status(200).send(await options.adminDemoReset.reset(request.correlationId));
+    return reply
+      .status(200)
+      .send(await options.adminDemoReset.reset(request.correlationId, "admin_reset"));
   });
 
   app.post(adminMaintenanceCleanupRunsPath, async (request, reply) => {

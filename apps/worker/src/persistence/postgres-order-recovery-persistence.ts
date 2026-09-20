@@ -1,6 +1,7 @@
 import type { OrderProcessJob, OrderWaitingReason } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRuns,
   erpDispatchCalls,
   type JsonValue,
   orderDeadLetters,
@@ -21,6 +22,21 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
     private readonly db: CheckoutSurgeDatabase,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  async isTerminalResetRun(runId: string): Promise<boolean> {
+    const [run] = await this.db
+      .select({ id: demoRuns.id })
+      .from(demoRuns)
+      .where(
+        and(
+          eq(demoRuns.id, runId),
+          eq(demoRuns.status, "failed"),
+          eq(demoRuns.failureReason, "admin_reset"),
+        ),
+      )
+      .limit(1);
+    return run !== undefined;
+  }
 
   async recordRecoverable(input: RecoverableOrderHandoff): Promise<void> {
     const recoveryKey = `order:${input.job.orderId}`;

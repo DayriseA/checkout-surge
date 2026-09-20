@@ -12,10 +12,7 @@ export interface ExactRunQueueMaintenance {
 
 export type DemoQueueMaintenance = ExactRunQueueMaintenance;
 
-export type DemoQueueMaintenanceConflictCode =
-  | "active_job"
-  | "active_settlement_timeout"
-  | "malformed_claimed_job";
+export type DemoQueueMaintenanceConflictCode = "active_job" | "malformed_claimed_job";
 
 export class DemoQueueMaintenanceConflict extends Error {
   constructor(

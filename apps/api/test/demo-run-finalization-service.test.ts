@@ -269,7 +269,6 @@ describe("demo run finalization service", () => {
       failedOrders: 2,
       businessRejectedOrders: 1,
       technicallyFailedOrders: 1,
-      administrativelyDisposedOrders: 0,
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });

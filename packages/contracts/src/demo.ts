@@ -255,8 +255,6 @@ export const businessOutcomeSummarySchema = z
     businessRejectedOrders: nonnegativeIntegerSchema.optional(),
     /** Non-transient integration failures. Optional for immutable historical summaries. */
     technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
-    /** Explicit administrative dispositions. Optional for immutable historical summaries. */
-    administrativelyDisposedOrders: nonnegativeIntegerSchema.optional(),
     pendingPersistenceCount: nonnegativeIntegerSchema,
     notificationsRecorded: nonnegativeIntegerSchema,
   })
@@ -291,6 +289,7 @@ export const runHistorySummarySchema = demoRunSummaryShapeSchema
     businessOutcomeSummary: businessOutcomeSummarySchema,
     terminalInventorySnapshot: terminalInventorySnapshotSchema.optional(),
     runSignalTimelineSummary: runSignalTimelineHeadlineSchema.nullable(),
+    dataDiscarded: z.boolean().optional(),
   })
   .strict();
 export type RunHistorySummary = z.infer<typeof runHistorySummarySchema>;
@@ -311,6 +310,7 @@ export const runHistoryListItemSchema = z
     technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
     failedOrders: nonnegativeIntegerSchema,
     convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
+    dataDiscarded: z.boolean().optional(),
   })
   .strict();
 export type RunHistoryListItem = z.infer<typeof runHistoryListItemSchema>;
@@ -584,6 +584,7 @@ export const publicRunHistorySummarySchema = z
     terminalInventorySnapshot: publicTerminalInventorySnapshotSchema.optional(),
     runSignalTimelineSummary: runSignalTimelineHeadlineSchema.nullable(),
     capturedAt: isoTimestampSchema,
+    dataDiscarded: z.boolean().optional(),
   })
   .strict()
   .superRefine((value, context) => {

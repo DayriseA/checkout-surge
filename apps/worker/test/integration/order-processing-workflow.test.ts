@@ -27,11 +27,13 @@ import {
   initializeInventory,
   inventoryKeys,
   markReservationPendingPersistence,
+  orderDeadLetters,
   orderEvents,
   orderRecoveryJobs,
   orders,
   products,
   promoteReservationIdempotencyToAccepted,
+  purgeResetRunDurable,
   reservations,
   reserveInventoryStock,
   runSaleEligibilityKey,
@@ -1152,37 +1154,43 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(candidates[0]?.job.orderId).toBe(freshIds.order);
   });
 
-  it("keeps an active order confirmation durable when reset rejects its notification publication", async () => {
+  it("completes a purged reset job without dead-lettering and preserves genuine missing-order evidence", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     await seedQueuedOrder(connection, { runScoped: true });
     const entered = releaseBarrier();
     const release = releaseBarrier();
-    const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
-      connection: { url: redisUrl, maxRetriesPerRequest: null },
-      attempts: 1,
-      publicationFence: new PostgresGeneratedRunPublicationFence(connection.db),
-    });
-    const notificationQueue = new Queue(notificationRecordBullMqQueueName, {
-      connection: { url: redisUrl },
-    });
     const logger = createSilentLogger("worker");
-    const rejectedPublication = vi.spyOn(logger, "error");
-    vi.spyOn(logger, "child").mockReturnValue(logger as never);
-    const handler = createOrderProcessJobHandler({
+    const recovery = new PostgresOrderRecoveryPersistence(connection.db);
+    const publishForConfirmedOrder = vi.fn();
+    const confirmation = vi.fn(async () => {
+      entered.resolve();
+      await release.promise;
+    });
+    const handler = createProductionOrderProcessJobHandler({
       confirmation: {
-        confirm: async () => {
-          entered.resolve();
-          await release.promise;
-        },
+        confirm: confirmation,
       },
       persistence: new PostgresOrderTransitionPersistence(connection.db),
       logger,
-      notificationRecordPublisher,
+      publishBusinessOutcomeUpdate: async () => undefined,
+      notificationRecordPublisher: { publishForConfirmedOrder },
+      recovery: {
+        handoff: (input) => recovery.recordRecoverable(input),
+        resolve: (input) => recovery.markResolved(input),
+      },
     });
-    const processing = handler.handle(runScopedJob, {
-      attemptNumber: 1,
-      attemptsMade: 0,
-      maxAttempts: 1,
+    consumer = createBullMqOrderProcessConsumer({
+      connection: { url: redisUrl, maxRetriesPerRequest: null },
+      concurrency: 1,
+      handler,
+      logger,
+      recovery,
+    });
+    consumer.start();
+    await queue.add(orderProcessJobName, runScopedJob, {
+      jobId: "purged-reset-order",
+      attempts: 2,
+      backoff: { type: "fixed", delay: 10 },
     });
     try {
       const signal = AbortSignal.timeout(5_000);
@@ -1200,25 +1208,141 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         allowedCurrentStatuses: ["draining"],
         terminalTrafficStatus: "failed",
       });
-      release.resolve();
-      await processing;
-      expect(
-        (await connection.db.select().from(orders).where(eq(orders.id, ids.order)))[0]?.status,
-      ).toBe("confirmed");
-      expect(await connection.db.select().from(simulatedNotifications)).toHaveLength(0);
-      expect(await notificationQueue.getJobCounts()).toMatchObject({
-        waiting: 0,
-        active: 0,
-        completed: 0,
+      await purgeResetRunDurable(connection.db, {
+        runId: ids.run,
+        failureReason: "admin_reset",
       });
-      expect(rejectedPublication).toHaveBeenCalledWith(
-        expect.objectContaining({ orderId: ids.order }),
-        "Order confirmed but notification-recording job publication failed.",
+      release.resolve();
+      await vi.waitFor(
+        async () => {
+          expect(await (await queue.getJob("purged-reset-order"))?.getState()).toBe("completed");
+        },
+        { timeout: 5_000 },
       );
+      expect((await queue.getJob("purged-reset-order"))?.attemptsMade).toBe(1);
+      expect(confirmation).toHaveBeenCalledOnce();
+      expect(await connection.db.select().from(orders).where(eq(orders.id, ids.order))).toEqual([]);
+      expect(await connection.db.select().from(orderRecoveryJobs)).toHaveLength(0);
+      expect(await connection.db.select().from(simulatedNotifications)).toHaveLength(0);
+      expect(await connection.db.select().from(orderDeadLetters)).toHaveLength(0);
+      expect(publishForConfirmedOrder).not.toHaveBeenCalled();
+      expect(
+        await connection.db
+          .select({ status: demoRuns.status })
+          .from(demoRuns)
+          .where(eq(demoRuns.id, ids.run)),
+      ).toEqual([{ status: "failed" }]);
+
+      await queue.add(orderProcessJobName, freshJob, {
+        jobId: "genuine-missing-order",
+        attempts: 2,
+        backoff: { type: "fixed", delay: 10 },
+      });
+      await vi.waitFor(async () => {
+        expect(await connection.db.select().from(orderDeadLetters)).toEqual([
+          expect.objectContaining({
+            jobId: "genuine-missing-order",
+            claimedOrderId: freshIds.order,
+            reason: "order_not_found",
+          }),
+        ]);
+      });
+      expect(await (await queue.getJob("genuine-missing-order"))?.getState()).toBe("completed");
     } finally {
       release.resolve();
-      await processing;
-      await Promise.all([notificationRecordPublisher.close(), notificationQueue.close()]);
+      await consumer?.close();
+      consumer = null;
+    }
+  });
+
+  it("waits for an in-flight order transaction before purging run rows", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    await new PostgresTerminalDemoRunSummaryWriter(connection.db).claimTerminalRun({
+      runId: ids.run,
+      terminalStatus: "failed",
+      failureReason: "admin_reset",
+      finalizedAt: new Date(),
+      allowedCurrentStatuses: ["draining"],
+      terminalTrafficStatus: "failed",
+    });
+
+    const workerConnection = createDatabaseConnection(databaseUrl, { max: 1 });
+    const purgeConnection = createDatabaseConnection(databaseUrl, { max: 1 });
+    const orderLocked = releaseBarrier();
+    const releaseWorker = releaseBarrier();
+    let workerWrite: Promise<void> | undefined;
+    let purge: Promise<void> | undefined;
+    try {
+      const [purgeBackend] = await purgeConnection.sql`SELECT pg_backend_pid() AS pid`;
+      workerWrite = workerConnection.db.transaction(async (tx) => {
+        await tx.select().from(orders).where(eq(orders.id, ids.order)).for("update");
+        orderLocked.resolve();
+        await releaseWorker.promise;
+        // Same run lock a run-scoped foreign-key insert (ERP attempt, dispatch call) takes.
+        await tx.select().from(demoRuns).where(eq(demoRuns.id, ids.run)).for("key share");
+        await tx.insert(orderEvents).values({
+          orderId: ids.order,
+          reservationId: ids.reservation,
+          saleOfferId: ids.saleOffer,
+          runId: ids.run,
+          correlationId: runScopedJob.correlationId,
+          eventName: "order.confirmed",
+          payload: { source: "held-worker" },
+          source: "worker",
+          occurredAt: new Date(),
+        });
+      });
+      await orderLocked.promise;
+
+      purge = purgeResetRunDurable(purgeConnection.db, {
+        runId: ids.run,
+        failureReason: "admin_reset",
+      });
+      await vi.waitFor(async () => {
+        const [activity] = await connection.sql`
+          SELECT wait_event_type FROM pg_stat_activity WHERE pid = ${purgeBackend?.pid}
+        `;
+        expect(activity?.wait_event_type).toBe("Lock");
+      });
+
+      releaseWorker.resolve();
+      await workerWrite;
+      await purge;
+
+      const [remaining] = await connection.sql`
+        SELECT
+          (SELECT count(*)::int FROM simulated_notifications WHERE run_id = ${ids.run}) AS notifications,
+          (SELECT count(*)::int FROM erp_attempts WHERE run_id = ${ids.run}) AS attempts,
+          (SELECT count(*)::int FROM erp_confirmation_ledger WHERE run_id = ${ids.run}) AS ledger,
+          (SELECT count(*)::int FROM erp_dispatch_calls WHERE run_id = ${ids.run}) AS dispatch_calls,
+          (SELECT count(*)::int FROM order_events WHERE run_id = ${ids.run}) AS events,
+          (SELECT count(*)::int FROM orders WHERE run_id = ${ids.run}) AS orders,
+          (SELECT count(*)::int FROM reservations WHERE run_id = ${ids.run}) AS reservations,
+          (SELECT count(*)::int FROM reservation_pending_persistence WHERE run_id = ${ids.run}) AS pending_reservations,
+          (SELECT count(*)::int FROM demo_run_sold_out_counts WHERE run_id = ${ids.run}) AS sold_out_counts,
+          (SELECT count(*)::int FROM demo_run_finalizations WHERE run_id = ${ids.run}) AS finalizations,
+          (SELECT count(*)::int FROM erp_scope_resilience_state WHERE scope = ${`run:${ids.run}`}) AS resilience,
+          (SELECT count(*)::int FROM order_recovery_jobs) AS recovery_jobs
+      `;
+      expect(remaining).toEqual({
+        notifications: 0,
+        attempts: 0,
+        ledger: 0,
+        dispatch_calls: 0,
+        events: 0,
+        orders: 0,
+        reservations: 0,
+        pending_reservations: 0,
+        sold_out_counts: 0,
+        finalizations: 0,
+        resilience: 0,
+        recovery_jobs: 0,
+      });
+    } finally {
+      releaseWorker.resolve();
+      await Promise.allSettled([workerWrite, purge].filter(Boolean));
+      await Promise.all([workerConnection.close(), purgeConnection.close()]);
     }
   });
 

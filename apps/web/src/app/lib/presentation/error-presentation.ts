@@ -53,7 +53,6 @@ export interface ErrorPresentationContext {
   cause?:
     | "active_run_exists"
     | "reset_incomplete"
-    | "active_settlement_timeout"
     | "projection_cleanup_incomplete"
     | "slug_in_use"
     | "not_archivable";
@@ -301,14 +300,6 @@ function codePresentation(
         tone: "warning",
       };
     case "run_cleanup_conflict":
-      if (context.cause === "active_settlement_timeout")
-        return {
-          headline: "Reset work cleanup is incomplete",
-          explanation:
-            "Worker work may still settle. New runs remain blocked until work cleanup and history complete. Retry Reset.",
-          action: { kind: "contact-operator", label: "Retry Reset" },
-          tone: "warning",
-        };
       if (context.cause === "projection_cleanup_incomplete")
         return {
           headline: "Work cleanup and history completed",
@@ -449,7 +440,6 @@ function withBoundedCause(
   const boundedCause =
     cause === "active_run_exists" ||
     cause === "reset_incomplete" ||
-    cause === "active_settlement_timeout" ||
     cause === "projection_cleanup_incomplete" ||
     cause === "slug_in_use" ||
     cause === "not_archivable"

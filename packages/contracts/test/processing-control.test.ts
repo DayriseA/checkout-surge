@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  administrativeStopEvidenceSchema,
   enginePolicyIdentitySchema,
   erpCallReferenceSchema,
   erpProfileAnchorSchema,
@@ -23,19 +22,6 @@ describe("processing control contracts", () => {
     expect(processingGenerationSchema.parse(3)).toBe(3);
     expect(
       erpCallReferenceSchema.safeParse({ ...reference, processingGeneration: -1 }).success,
-    ).toBe(false);
-  });
-
-  it("parses administrative-stop evidence with exact disposition accounting", () => {
-    const evidence = {
-      code: "admin_reset" as const,
-      stoppedAt: dispatchedAt,
-      disposedOrderCount: 12,
-      uncertainCallCount: 3,
-    };
-    expect(administrativeStopEvidenceSchema.parse(evidence)).toEqual(evidence);
-    expect(
-      administrativeStopEvidenceSchema.safeParse({ ...evidence, code: "user_cancel" }).success,
     ).toBe(false);
   });
 

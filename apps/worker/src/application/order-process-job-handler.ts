@@ -278,6 +278,7 @@ export function createOrderProcessJobHandler(dependencies: {
             );
           }
         } catch (persistenceError) {
+          if (isOrderPoisonError(persistenceError)) throw persistenceError;
           await handoffOrThrow(
             dependencies.recovery,
             {
@@ -305,6 +306,7 @@ export function createOrderProcessJobHandler(dependencies: {
           );
         }
       } catch (persistenceError) {
+        if (isOrderPoisonError(persistenceError)) throw persistenceError;
         await handoffOrThrow(
           dependencies.recovery,
           {

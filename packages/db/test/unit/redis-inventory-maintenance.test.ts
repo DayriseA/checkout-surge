@@ -95,6 +95,20 @@ describe("generated-run Redis cleanup", () => {
     ).rejects.toBe(failure);
   });
 
+  it("deletes run-scoped keys before a sale offer exists", async () => {
+    const evalCommand = vi.fn();
+    const scan = vi.fn();
+    const unlink = vi.fn().mockResolvedValueOnce(1).mockResolvedValueOnce(2);
+
+    await expect(
+      deleteGeneratedRunRedisState(redisStub({ eval: evalCommand, scan, unlink }), { runId }),
+    ).resolves.toEqual({ deletedKeyCount: 3 });
+
+    expect(evalCommand).not.toHaveBeenCalled();
+    expect(scan).not.toHaveBeenCalled();
+    expect(unlink).toHaveBeenNthCalledWith(1, `demo-run:${runId}:dashboard-projection-revision`);
+  });
+
   it("validates both generated-run identifiers before scanning", async () => {
     const evalCommand = vi.fn();
     const scan = vi.fn();

@@ -77,6 +77,27 @@ export async function deleteGeneratedRunDurable(
   });
 }
 
+/** Deletes a reset run's internal data while retaining its history identity. */
+export async function purgeResetRunDurable(
+  db: CheckoutSurgeDatabase,
+  input: { runId: string; failureReason: "admin_reset" },
+): Promise<void> {
+  const runId = uuidSchema.parse(input.runId);
+  await db.transaction(async (tx) => {
+    const [run] = await tx
+      .select({ status: demoRuns.status, failureReason: demoRuns.failureReason })
+      .from(demoRuns)
+      .where(eq(demoRuns.id, runId))
+      // Workers holding an order lock take KEY SHARE on the run through foreign keys.
+      .for("no key update");
+    if (run?.status !== "failed" || run.failureReason !== input.failureReason) {
+      throw new Error(`Demo run ${runId} is not a ${input.failureReason} run.`);
+    }
+    await tx.select({ id: orders.id }).from(orders).where(eq(orders.runId, runId)).for("update");
+    await deleteGeneratedRunInternalRows(tx as CheckoutSurgeDatabase, runId);
+  });
+}
+
 async function inspectLockedGeneratedRunTeardown(
   db: CheckoutSurgeDatabase,
   runId: string,
@@ -126,21 +147,9 @@ async function deleteGeneratedRunRows(
   identity: GeneratedRunIdentity,
 ): Promise<void> {
   const { runId, saleOfferId } = identity;
-  await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
-  await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
-  await tx.delete(erpConfirmationLedger).where(eq(erpConfirmationLedger.runId, runId));
-  await tx.delete(erpDispatchCalls).where(eq(erpDispatchCalls.runId, runId));
-  await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
-  await tx.delete(orders).where(eq(orders.runId, runId));
-  await tx.delete(reservations).where(eq(reservations.runId, runId));
-  await tx
-    .delete(reservationPendingPersistence)
-    .where(eq(reservationPendingPersistence.runId, runId));
-  await tx.delete(demoRunSoldOutCounts).where(eq(demoRunSoldOutCounts.runId, runId));
-  await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
+  await deleteGeneratedRunInternalRows(tx, runId);
   await tx.delete(demoRunSummaries).where(eq(demoRunSummaries.runId, runId));
   await tx.delete(demoRunSaleContexts).where(eq(demoRunSaleContexts.runId, runId));
-  await tx.delete(erpScopeResilienceState).where(eq(erpScopeResilienceState.scope, `run:${runId}`));
 
   const deletedRuns = await tx
     .delete(demoRuns)
@@ -163,6 +172,25 @@ async function deleteGeneratedRunRows(
   if (deletedSaleOffers.length !== 1) {
     throw new Error(`Generated sale offer ${saleOfferId} changed during durable deletion.`);
   }
+}
+
+async function deleteGeneratedRunInternalRows(
+  tx: CheckoutSurgeDatabase,
+  runId: string,
+): Promise<void> {
+  await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
+  await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
+  await tx.delete(erpConfirmationLedger).where(eq(erpConfirmationLedger.runId, runId));
+  await tx.delete(erpDispatchCalls).where(eq(erpDispatchCalls.runId, runId));
+  await tx.delete(orderEvents).where(eq(orderEvents.runId, runId));
+  await tx.delete(orders).where(eq(orders.runId, runId));
+  await tx.delete(reservations).where(eq(reservations.runId, runId));
+  await tx
+    .delete(reservationPendingPersistence)
+    .where(eq(reservationPendingPersistence.runId, runId));
+  await tx.delete(demoRunSoldOutCounts).where(eq(demoRunSoldOutCounts.runId, runId));
+  await tx.delete(demoRunFinalizations).where(eq(demoRunFinalizations.runId, runId));
+  await tx.delete(erpScopeResilienceState).where(eq(erpScopeResilienceState.scope, `run:${runId}`));
 }
 
 async function hasOutstandingGeneratedRunWork(

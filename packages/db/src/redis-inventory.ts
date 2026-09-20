@@ -80,22 +80,23 @@ export async function incrementDashboardProjectionRevision(
 /** Removes all persistent Redis state owned by one generated run. */
 export async function deleteGeneratedRunRedisState(
   redis: CheckoutSurgeRedis,
-  input: { runId: string; saleOfferId: string },
+  input: { runId: string; saleOfferId?: string | null },
 ): Promise<{ deletedKeyCount: number }> {
   const runId = uuidSchema.parse(input.runId);
-  const saleOfferId = uuidSchema.parse(input.saleOfferId);
+  const saleOfferId = input.saleOfferId ? uuidSchema.parse(input.saleOfferId) : null;
 
-  let deletedKeyCount = Number(
-    await redis.eval(
-      retireDashboardProjectionScopeScript,
-      2,
-      inventoryKeys(saleOfferId).state,
-      dashboardProjectionRevisionKey(runId),
-      runId,
-      saleOfferId,
-    ),
-  );
-  deletedKeyCount += await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix);
+  let deletedKeyCount = saleOfferId
+    ? Number(
+        await redis.eval(
+          retireDashboardProjectionScopeScript,
+          2,
+          inventoryKeys(saleOfferId).state,
+          dashboardProjectionRevisionKey(runId),
+          runId,
+          saleOfferId,
+        ),
+      ) + (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
+    : await redis.unlink(dashboardProjectionRevisionKey(runId));
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
     `demo-run:${runId}:traffic-metrics`,

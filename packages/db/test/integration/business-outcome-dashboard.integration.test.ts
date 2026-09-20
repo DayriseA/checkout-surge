@@ -238,7 +238,6 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       failedOrders: 1,
       businessRejectedOrders: 0,
       technicallyFailedOrders: 1,
-      administrativelyDisposedOrders: 0,
       pendingPersistenceCount: 1,
       notificationsRecorded: 1,
     });

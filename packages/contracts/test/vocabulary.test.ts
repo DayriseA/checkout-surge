@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  administrativeOrderFailureCodeSchema,
-  administrativeOrderFailureCodeValues,
   demoPresetVisibilitySchema,
   demoPresetVisibilityValues,
   demoRunStatusSchema,
@@ -67,11 +65,7 @@ describe("shared PostgreSQL vocabulary", () => {
       "erp_unavailable",
       "uncertain_result",
     ]);
-    expect(orderFailureCategoryValues).toEqual([
-      "business_rejection",
-      "technical",
-      "administrative",
-    ]);
+    expect(orderFailureCategoryValues).toEqual(["business_rejection", "technical"]);
     expect(technicalOrderFailureCodeValues).toEqual([
       "erp_authentication_failed",
       "erp_authorization_failed",
@@ -83,7 +77,6 @@ describe("shared PostgreSQL vocabulary", () => {
       "accepted_run_snapshot_invalid",
       "erp_unrecognized_client_error",
     ]);
-    expect(administrativeOrderFailureCodeValues).toEqual(["admin_reset"]);
   });
 
   it.each([
@@ -97,7 +90,6 @@ describe("shared PostgreSQL vocabulary", () => {
     [orderWaitingReasonSchema, orderWaitingReasonValues],
     [orderFailureCategorySchema, orderFailureCategoryValues],
     [technicalOrderFailureCodeSchema, technicalOrderFailureCodeValues],
-    [administrativeOrderFailureCodeSchema, administrativeOrderFailureCodeValues],
   ] as const)("derives schema %# from its tuple", (schema, values) => {
     expect(schema.options).toEqual(values);
     for (const value of values) expect(schema.parse(value)).toBe(value);

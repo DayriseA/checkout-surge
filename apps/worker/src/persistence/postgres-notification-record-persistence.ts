@@ -1,11 +1,12 @@
 import type { NotificationRecordJob } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRuns,
   orderEvents,
   orders,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { NotificationRecordPersistence } from "../application/notification-record-job-handler.js";
 
 type DurableOrder = typeof orders.$inferSelect;
@@ -45,6 +46,21 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
     private readonly db: CheckoutSurgeDatabase,
     private readonly now: () => Date = () => new Date(),
   ) {}
+
+  async isTerminalResetRun(runId: string): Promise<boolean> {
+    const [run] = await this.db
+      .select({ id: demoRuns.id })
+      .from(demoRuns)
+      .where(
+        and(
+          eq(demoRuns.id, runId),
+          eq(demoRuns.status, "failed"),
+          eq(demoRuns.failureReason, "admin_reset"),
+        ),
+      )
+      .limit(1);
+    return run !== undefined;
+  }
 
   record(job: NotificationRecordJob): Promise<{ recorded: boolean }> {
     return this.db.transaction(async (tx) => {

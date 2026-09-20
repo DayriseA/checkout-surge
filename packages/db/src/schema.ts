@@ -1,6 +1,5 @@
 import type {
   AcceptedRunConfigSnapshot,
-  AdministrativeStopEvidence,
   BackpressureConfig,
   BusinessOutcomeSummary,
   DemoPresetDisplay,
@@ -200,7 +199,6 @@ export const demoRuns = pgTable(
     trafficEndedAt: timestamp("traffic_ended_at", { withTimezone: true }),
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     adminResetCompletedAt: timestamp("admin_reset_completed_at", { withTimezone: true }),
-    administrativeStop: jsonb("administrative_stop").$type<AdministrativeStopEvidence>(),
     failureReason: text("failure_reason"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

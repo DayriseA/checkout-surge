@@ -70,10 +70,14 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         <div className="min-w-0 break-words">
           <p className="m-0 text-xs font-bold uppercase text-muted">Result</p>
           <StatusPill
-            status={{
-              label: runResultOutcomeLabel(summary.resultOutcome),
-              tone: runResultOutcomeTone(summary.resultOutcome),
-            }}
+            status={
+              summary.dataDiscarded
+                ? { label: "Cancelled", tone: "idle" }
+                : {
+                    label: runResultOutcomeLabel(summary.resultOutcome),
+                    tone: runResultOutcomeTone(summary.resultOutcome),
+                  }
+            }
           />
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">

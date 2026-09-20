@@ -8,7 +8,7 @@ import {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { demoRunSummaries, demoRuns, terminalDemoRunTransitionLockKey } from "@checkout-surge/db";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type {
   TerminalDemoRunStatus,
   TerminalDemoRunSummaryInput,
@@ -125,7 +125,6 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
           .limit(1);
 
         if (existingSummary) {
-          await this.ensureAdminResetCompletedAt(tx, input);
           continue;
         }
 
@@ -140,7 +139,6 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
         }
 
         await this.insertTerminalSummaryInsideLock(tx, input);
-        await this.ensureAdminResetCompletedAt(tx, input);
         wroteSummaryCount += 1;
       }
 
@@ -214,19 +212,5 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
     });
 
     return true;
-  }
-
-  private async ensureAdminResetCompletedAt(
-    tx: TerminalDemoRunTransitionTransaction,
-    input: TerminalDemoRunSummaryInput,
-  ): Promise<void> {
-    if (!input.adminResetCompletedAt) {
-      return;
-    }
-
-    await tx
-      .update(demoRuns)
-      .set({ adminResetCompletedAt: input.adminResetCompletedAt })
-      .where(and(eq(demoRuns.id, input.run.id), isNull(demoRuns.adminResetCompletedAt)));
   }
 }
