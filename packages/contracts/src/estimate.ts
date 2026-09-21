@@ -1,12 +1,7 @@
 import { z } from "zod";
 import { largestAllowedErpLatencyMs } from "./erp.js";
 import { inventoryConfigSchema, trafficConfigSchema } from "./load.js";
-import {
-  isoTimestampSchema,
-  nonnegativeNumberSchema,
-  percentageSchema,
-  positiveIntegerSchema,
-} from "./primitives.js";
+import { nonnegativeNumberSchema, percentageSchema, positiveIntegerSchema } from "./primitives.js";
 import { type EnginePolicyIdentity, enginePolicyIdentitySchema } from "./processing-control.js";
 
 /**
@@ -186,82 +181,33 @@ export const estimatorResultSchema = z
   });
 export type EstimatorResult = z.infer<typeof estimatorResultSchema>;
 
-/**
- * Preview fingerprint (D12): a hash of the resolved snapshot, policy version,
- * estimator version, and effective ceiling. The hash algorithm is an
- * estimator-service choice and is not fixed by this contract.
- */
-export const estimateFingerprintSchema = z.string().trim().min(1);
-export type EstimateFingerprint = z.infer<typeof estimateFingerprintSchema>;
-
-export const estimatePreviewSchema = z
-  .object({
-    fingerprint: estimateFingerprintSchema,
-    result: estimatorResultSchema,
-  })
-  .strict();
+export const estimatePreviewSchema = z.object({ result: estimatorResultSchema }).strict();
 export type EstimatePreview = z.infer<typeof estimatePreviewSchema>;
 
-/**
- * Structured stale-preview rejection (D12): returned before any side effect
- * when the fingerprint presented at start does not match the recomputation. It
- * always carries the fresh preview so the caller can re-confirm explicitly.
- */
-export const estimateStaleRejectionSchema = z
-  .object({
-    code: z.literal("estimate_stale"),
-    message: z.string().trim().min(1),
-    presentedFingerprint: estimateFingerprintSchema,
-    freshPreview: estimatePreviewSchema,
-  })
-  .strict();
-export type EstimateStaleRejection = z.infer<typeof estimateStaleRejectionSchema>;
-
-/**
- * Estimate persisted with an admitted run (D12): the decision input at start,
- * kept for later comparison with actual timing. Only an admitted estimable
- * result can be accepted: the snapshot has no unestimable reason field and its
- * conservative duration must respect the ceiling it was admitted against.
- */
-export const acceptedEstimateSnapshotSchema = z
-  .object({
-    fingerprint: estimateFingerprintSchema,
-    policyIdentity: enginePolicyIdentitySchema,
-    estimatorIdentity: enginePolicyIdentitySchema,
-    effectiveCeilingSeconds: nonnegativeNumberSchema,
-    conservativeDurationSeconds: nonnegativeNumberSchema,
-    acceptedAt: isoTimestampSchema,
-  })
-  .strict()
-  .superRefine((snapshot, context) => {
-    if (snapshot.conservativeDurationSeconds > snapshot.effectiveCeilingSeconds) {
-      context.addIssue({
-        code: "custom",
-        path: ["conservativeDurationSeconds"],
-        message: "An accepted estimate snapshot records an admitted, within-ceiling duration.",
-      });
-    }
-  });
-export type AcceptedEstimateSnapshot = z.infer<typeof acceptedEstimateSnapshotSchema>;
-
-/**
- * Operational run-timing observations (D13). Neither observation terminalizes
- * a run: a run over its accepted estimate or over the occupancy ceiling stays
- * visible, recoverable, and nonterminal.
- */
-export const estimateObservationKindValues = [
-  "over_accepted_estimate",
-  "over_occupancy_ceiling",
-] as const;
-export const estimateObservationKindSchema = z.enum(estimateObservationKindValues);
-export type EstimateObservationKind = z.infer<typeof estimateObservationKindSchema>;
-
-export const estimateObservationSchema = z
-  .object({
-    kind: estimateObservationKindSchema,
-    observedAt: isoTimestampSchema,
-    thresholdSeconds: nonnegativeNumberSchema,
-    observedSeconds: nonnegativeNumberSchema,
-  })
-  .strict();
-export type EstimateObservation = z.infer<typeof estimateObservationSchema>;
+/** Start rejection details, consumed by the dashboard before any run exists. */
+export const estimateAdmissionRejectionDetailsSchema = z.discriminatedUnion("reason", [
+  z
+    .object({
+      ...estimatorResultBaseShape,
+      reasons: z.array(z.string().trim().min(1)).min(1),
+      reason: z.literal("over_ceiling"),
+      conservativeDurationSeconds: nonnegativeNumberSchema,
+    })
+    .strict()
+    .refine(
+      (value) => value.conservativeDurationSeconds > value.effectiveCeilingSeconds,
+      "An over-ceiling rejection requires a duration above the ceiling.",
+    ),
+  z
+    .object({
+      ...estimatorResultBaseShape,
+      reasons: z.array(z.string().trim().min(1)).min(1),
+      reason: z.literal("unestimable"),
+      bottleneck: z.literal("unestimable"),
+      unestimableReason: estimatorUnestimableReasonSchema,
+    })
+    .strict(),
+]);
+export type EstimateAdmissionRejectionDetails = z.infer<
+  typeof estimateAdmissionRejectionDetailsSchema
+>;

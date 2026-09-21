@@ -3629,6 +3629,7 @@ function runnerDiagnostics() {
 
 function semanticRuntimePolicy(): PublicRuntimePolicy {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: { windowSeconds: 300, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
     publicCustomDefaults: acceptedRunSnapshot(),
@@ -3649,6 +3650,7 @@ function semanticRuntimePolicy(): PublicRuntimePolicy {
       allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100,
       maxTotalRequests: 100,
       maxRequestsPerSecond: 100,

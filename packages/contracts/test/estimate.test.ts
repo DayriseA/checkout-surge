@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptedEstimateSnapshotSchema,
   conservativeDurationEstimatorIdentity,
   enginePolicyIdentitySchema,
+  estimateAdmissionRejectionDetailsSchema,
   estimatedDemoOccupancyCeilingSeconds,
-  estimateObservationSchema,
   estimatePreviewSchema,
-  estimateStaleRejectionSchema,
   estimatorBottleneckSchema,
   estimatorInputSchema,
   estimatorResultSchema,
   largestAllowedErpLatencyMs,
+  previewDemoRunRequestSchema,
+  startDemoRunRequestSchema,
 } from "../src/index.js";
 
 const input = {
@@ -173,48 +173,56 @@ describe("duration estimator contracts", () => {
     ).toBe(false);
   });
 
-  it("parses the structured estimate_stale rejection carrying a fresh preview", () => {
-    const rejection = {
-      code: "estimate_stale" as const,
-      message: "The scenario changed since the displayed preview.",
-      presentedFingerprint: "sha-256:abc123",
-      freshPreview: {
-        fingerprint: "sha-256:def456",
-        result: { ...estimable, conservativeDurationSeconds: 600, decision: "admitted" as const },
-      },
-    };
-    expect(estimateStaleRejectionSchema.parse(rejection)).toEqual(rejection);
-    expect(estimatePreviewSchema.parse(rejection.freshPreview)).toEqual(rejection.freshPreview);
-    expect(
-      estimateStaleRejectionSchema.safeParse({ ...rejection, code: "other_reason" }).success,
-    ).toBe(false);
+  it("shares strict preview/start intent and rejects browser estimate authority", () => {
+    const request = { presetSlug: "public-custom" };
+    for (const schema of [previewDemoRunRequestSchema, startDemoRunRequestSchema]) {
+      expect(schema.parse(request)).toEqual(request);
+      expect(
+        schema.safeParse({ ...request, conservativeDurationSeconds: 0, decision: "admitted" })
+          .success,
+      ).toBe(false);
+    }
+    const preview = { result: { ...estimable, decision: "admitted" } };
+    expect(estimatePreviewSchema.parse(preview)).toEqual(preview);
+    expect(estimatePreviewSchema.safeParse({ ...preview, fingerprint: "obsolete" }).success).toBe(
+      false,
+    );
   });
 
-  it("accepts only within-ceiling snapshots and parses over-budget observations", () => {
-    const snapshot = {
-      fingerprint: "sha-256:abc123",
-      policyIdentity: { name: "adaptive-erp-engine", version: 1 },
-      estimatorIdentity: { name: "conservative-envelope", version: 1 },
-      effectiveCeilingSeconds: 600,
-      conservativeDurationSeconds: 600,
-      acceptedAt: "2026-09-19T00:00:00.000Z",
+  it("validates finite and unestimable admission rejection details", () => {
+    const { explanatoryDurationSeconds: _explanatory, ...base } = estimable;
+    const finite = {
+      ...base,
+      conservativeDurationSeconds: 601,
+      reason: "over_ceiling",
+      reasons: ["Reduce stock."],
     };
-    expect(acceptedEstimateSnapshotSchema.parse(snapshot)).toEqual(snapshot);
+    expect(estimateAdmissionRejectionDetailsSchema.parse(finite)).toEqual(finite);
     expect(
-      acceptedEstimateSnapshotSchema.safeParse({
-        ...snapshot,
-        conservativeDurationSeconds: 601,
+      estimateAdmissionRejectionDetailsSchema.safeParse({
+        ...finite,
+        conservativeDurationSeconds: 600,
       }).success,
     ).toBe(false);
-    const observation = {
-      kind: "over_accepted_estimate" as const,
-      observedAt: "2026-09-19T00:05:00.000Z",
-      thresholdSeconds: 210,
-      observedSeconds: 300,
+    const { conservativeDurationSeconds: _duration, ...withoutDuration } = finite;
+    const unestimable = {
+      ...withoutDuration,
+      reason: "unestimable",
+      bottleneck: "unestimable",
+      unestimableReason: "declared_permanent_outage",
     };
-    expect(estimateObservationSchema.parse(observation)).toEqual(observation);
+    expect(estimateAdmissionRejectionDetailsSchema.parse(unestimable)).toEqual(unestimable);
     expect(
-      estimateObservationSchema.safeParse({ ...observation, kind: "under_budget" }).success,
+      estimateAdmissionRejectionDetailsSchema.safeParse({
+        ...unestimable,
+        conservativeDurationSeconds: 0,
+      }).success,
+    ).toBe(false);
+    expect(
+      estimateAdmissionRejectionDetailsSchema.safeParse({
+        ...unestimable,
+        unestimableReason: undefined,
+      }).success,
     ).toBe(false);
   });
 });

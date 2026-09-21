@@ -32,7 +32,10 @@ export interface DemoPresetController {
 }
 
 export interface ActiveDemoPresetReader {
-  readActivePreset(slug: string): Promise<DemoPresetContract>;
+  readActivePreset(
+    slug: string,
+    db?: Pick<CheckoutSurgeDatabase, "select">,
+  ): Promise<DemoPresetContract>;
 }
 
 export class DemoPresetService implements DemoPresetController, ActiveDemoPresetReader {
@@ -237,8 +240,11 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
     });
   }
 
-  async readActivePreset(slug: string): Promise<DemoPresetContract> {
-    const [preset] = await this.options.db
+  async readActivePreset(
+    slug: string,
+    db: Pick<CheckoutSurgeDatabase, "select"> = this.options.db,
+  ): Promise<DemoPresetContract> {
+    const [preset] = await db
       .select()
       .from(demoPresets)
       .where(and(eq(demoPresets.slug, slug), isNull(demoPresets.archivedAt)))

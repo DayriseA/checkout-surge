@@ -9,6 +9,7 @@ import {
   erpCumulativeOutcomeCountsSchema,
   largestAllowedErpLatencyMs,
 } from "./erp.js";
+import { estimatedDemoOccupancyCeilingSeconds, estimatePreviewSchema } from "./estimate.js";
 import { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
@@ -59,6 +60,7 @@ import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const publicPresetListPath = "/demo/presets/public" as const;
 export const publicRuntimePolicyPath = "/demo/runtime-policy" as const;
+export const previewDemoRunPath = "/demo/runs/estimate" as const;
 export const startDemoRunPath = "/demo/runs/start" as const;
 export const runHistoryPath = "/demo/runs/history" as const;
 export const runHistoryDetailPathTemplate = "/demo/runs/history/:runId" as const;
@@ -130,6 +132,11 @@ export const startDemoRunRequestSchema = z
   })
   .strict();
 export type StartDemoRunRequest = z.infer<typeof startDemoRunRequestSchema>;
+
+export const previewDemoRunRequestSchema = startDemoRunRequestSchema;
+export type PreviewDemoRunRequest = z.infer<typeof previewDemoRunRequestSchema>;
+export const previewDemoRunResponseSchema = estimatePreviewSchema;
+export type PreviewDemoRunResponse = z.infer<typeof previewDemoRunResponseSchema>;
 
 const demoRunSnapshotBaseShape = {
   runId: uuidSchema,
@@ -670,6 +677,11 @@ export const publicCustomLimitsSchema = z
 
 export const deploymentHardCapsSchema = z
   .object({
+    estimatedDemoOccupancyCeilingSeconds: z
+      .number()
+      .positive()
+      .max(estimatedDemoOccupancyCeilingSeconds)
+      .default(estimatedDemoOccupancyCeilingSeconds),
     maxBuyers: positiveIntegerSchema,
     maxTotalRequests: positiveIntegerSchema,
     maxRequestsPerSecond: positiveIntegerSchema,
@@ -683,6 +695,10 @@ export type DeploymentHardCaps = z.infer<typeof deploymentHardCapsSchema>;
 
 export const publicRuntimePolicyMutableSchema = z
   .object({
+    estimatedDemoOccupancyCeilingSeconds: z
+      .number()
+      .positive()
+      .default(estimatedDemoOccupancyCeilingSeconds),
     isPublicRunBudgetEnforced: z.boolean(),
     publicRunBudget: publicRunBudgetSchema,
     publicCustomDefaults: acceptedRunConfigSnapshotSchema,

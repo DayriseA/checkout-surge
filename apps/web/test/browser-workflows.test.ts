@@ -3176,6 +3176,7 @@ function publicRuntimePolicyResponseFixture(): PublicRuntimePolicyResponse {
 
 function publicRuntimePolicyFixture(): PublicRuntimePolicy {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: 300,
@@ -3200,6 +3201,7 @@ function publicRuntimePolicyFixture(): PublicRuntimePolicy {
       allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,

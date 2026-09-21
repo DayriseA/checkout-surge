@@ -13,7 +13,9 @@ import {
   type InternalRunFailureReason,
   isReplayPossible,
   type OperatorMode,
+  type PreviewDemoRunResponse,
   type PublicRuntimePolicy,
+  previewDemoRunResponseSchema,
   type StartDemoRunRequest,
   type StartDemoRunResponse,
   startDemoRunResponseSchema,
@@ -36,6 +38,10 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
+import {
+  estimateAcceptedDemoRun,
+  requireEstimatedDurationAdmission,
+} from "./demo-duration-admission-service.js";
 import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
 import {
   emptyBusinessOutcomeSummary,
@@ -63,6 +69,7 @@ const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
 const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 
 export interface DemoRunLifecycleController {
+  previewRun(request: StartDemoRunCommand): Promise<PreviewDemoRunResponse>;
   startRun(request: StartDemoRunCommand, correlationId: string): Promise<StartDemoRunResponse>;
 }
 
@@ -120,33 +127,14 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     correlationId: string,
   ): Promise<StartDemoRunResponse> {
     const now = this.now();
-    const verifiedVisitor =
-      request.operatorMode === "public"
-        ? verifyPublicVisitorCredential(
-            this.options.publicClientCookieSecret,
-            request.publicVisitorCredential,
-          )
-        : null;
-    if (request.operatorMode === "public" && !verifiedVisitor) {
-      throw new DemoRunValidationError(
-        "public_visitor_forbidden",
-        "A valid public visitor credential is required.",
-      );
-    }
-    const policy = await this.options.runtimePolicyReader.readEffectivePolicy();
-    const acceptedConfig = await this.resolveAcceptedConfig(request, policy);
-    validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
-      operatorMode: request.operatorMode,
-      enforcePublicCustomLimits:
-        request.operatorMode === "public" && acceptedConfig.preset.isCustom,
-    });
+    const verifiedVisitor = this.verifyVisitor(request);
+    await this.resolveValidatedConfig(request);
 
     let reservation: PublicRunBudgetReservation | undefined;
-    let reservePublicBudget: (() => Promise<void>) | undefined;
-    if (request.operatorMode === "public" && policy.isPublicRunBudgetEnforced) {
-      if (!verifiedVisitor) throw new Error("Verified public visitor invariant failed.");
-      const publicVisitorId = verifiedVisitor.visitorId;
-      reservePublicBudget = async () => {
+    const reservePublicBudget = async (policy: PublicRuntimePolicy) => {
+      if (request.operatorMode === "public" && policy.isPublicRunBudgetEnforced) {
+        if (!verifiedVisitor) throw new Error("Verified public visitor invariant failed.");
+        const publicVisitorId = verifiedVisitor.visitorId;
         const decision = await this.options.publicRunBudgetStore.reserve({
           budget: policy.publicRunBudget,
           publicVisitorId,
@@ -163,14 +151,12 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         }
         reservation = decision.reservation;
-      };
-    }
+      }
+    };
 
     try {
       const accepted = await this.createAcceptedRun(
         request,
-        acceptedConfig.preset,
-        acceptedConfig.snapshot,
         correlationId,
         now,
         reservePublicBudget,
@@ -180,7 +166,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       try {
         await initializeInventory(this.options.redis, {
           saleOfferId,
-          allocatedStock: acceptedConfig.snapshot.inventoryConfig.startingStock,
+          allocatedStock: accepted.run.configSnapshot.inventoryConfig.startingStock,
           source: "demo_run_start",
           initializedAt: now,
           run: { runId: accepted.run.runId, status: "accepting" },
@@ -202,7 +188,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           saleOfferId,
           apiBaseUrl: this.options.apiBaseUrl,
           correlationId,
-          configSnapshot: acceptedConfig.snapshot,
+          configSnapshot: accepted.run.configSnapshot,
         });
       } catch (error) {
         if (
@@ -244,13 +230,50 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     }
   }
 
+  async previewRun(request: StartDemoRunCommand): Promise<PreviewDemoRunResponse> {
+    this.verifyVisitor(request);
+    const { snapshot, policy } = await this.resolveValidatedConfig(request);
+    return previewDemoRunResponseSchema.parse({
+      result: estimateAcceptedDemoRun(snapshot, policy),
+    });
+  }
+
+  private verifyVisitor(request: StartDemoRunCommand) {
+    const verifiedVisitor =
+      request.operatorMode === "public"
+        ? verifyPublicVisitorCredential(
+            this.options.publicClientCookieSecret,
+            request.publicVisitorCredential,
+          )
+        : null;
+    if (request.operatorMode === "public" && !verifiedVisitor) {
+      throw new DemoRunValidationError(
+        "public_visitor_forbidden",
+        "A valid public visitor credential is required.",
+      );
+    }
+    return verifiedVisitor;
+  }
+
+  private async resolveValidatedConfig(
+    request: StartDemoRunCommand,
+    db?: Pick<CheckoutSurgeDatabase, "select">,
+  ) {
+    const policy = await this.options.runtimePolicyReader.readEffectivePolicy(db);
+    const acceptedConfig = await this.resolveAcceptedConfig(request, policy, db);
+    validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
+      operatorMode: request.operatorMode,
+      enforcePublicCustomLimits:
+        request.operatorMode === "public" && acceptedConfig.preset.isCustom,
+    });
+    return { ...acceptedConfig, policy };
+  }
+
   private async createAcceptedRun(
     request: StartDemoRunCommand,
-    preset: DemoPresetContract,
-    snapshot: AcceptedRunConfigSnapshot,
     correlationId: string,
     now: Date,
-    beforeInsert?: () => Promise<void>,
+    beforeInsert: (policy: PublicRuntimePolicy) => Promise<void>,
   ): Promise<{ run: DemoRunSnapshot }> {
     const runId = this.generateId();
     const saleOfferId = this.generateId();
@@ -291,7 +314,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         }
 
-        await beforeInsert?.();
+        const { preset, snapshot, policy } = await this.resolveValidatedConfig(request, tx);
+        requireEstimatedDurationAdmission(estimateAcceptedDemoRun(snapshot, policy));
+        await beforeInsert(policy);
 
         const [product] = await tx
           .select({ id: products.id })
@@ -368,8 +393,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   private async resolveAcceptedConfig(
     request: StartDemoRunCommand,
     policy: PublicRuntimePolicy,
+    db?: Pick<CheckoutSurgeDatabase, "select">,
   ): Promise<{ preset: DemoPresetContract; snapshot: AcceptedRunConfigSnapshot }> {
-    const preset = await this.options.presetReader.readActivePreset(request.presetSlug);
+    const preset = await this.options.presetReader.readActivePreset(request.presetSlug, db);
 
     if (request.operatorMode === "public" && preset.visibility !== "public") {
       throw new DemoRunValidationError(

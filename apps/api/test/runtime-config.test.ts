@@ -74,6 +74,7 @@ describe("API runtime configuration", () => {
   it("loads documented deployment caps and maps every override", () => {
     const defaults = loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" });
     expect(defaults.deploymentHardCaps).toEqual({
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,
@@ -93,8 +94,10 @@ describe("API runtime configuration", () => {
       DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
       DEMO_MAX_PRE_ALLOCATED_VUS: "15",
       DEMO_MAX_VUS: "16",
+      DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS: "450",
     });
     expect(overridden.deploymentHardCaps).toEqual({
+      estimatedDemoOccupancyCeilingSeconds: 450,
       maxBuyers: 11,
       maxTotalRequests: 12,
       maxRequestsPerSecond: 13,
@@ -103,6 +106,16 @@ describe("API runtime configuration", () => {
       maxPreAllocatedVus: 15,
       maxVus: 16,
     });
+  });
+
+  it("rejects an occupancy deployment ceiling above 600 seconds", () => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS: "601",
+      }),
+    ).toThrow();
   });
 
   it("loads every pending-persistence recovery default and override", () => {

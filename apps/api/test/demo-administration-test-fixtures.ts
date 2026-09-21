@@ -5,6 +5,7 @@ import type {
 } from "@checkout-surge/contracts";
 
 export const deploymentHardCapsFixture: DeploymentHardCaps = {
+  estimatedDemoOccupancyCeilingSeconds: 600,
   maxBuyers: 100_000,
   maxTotalRequests: 100_000,
   maxRequestsPerSecond: 10_000,
@@ -46,6 +47,7 @@ export function acceptedRunConfigSnapshotFixture(): AcceptedRunConfigSnapshot {
 
 export function publicRuntimePolicyMutableFixture(): PublicRuntimePolicyMutable {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: 300,

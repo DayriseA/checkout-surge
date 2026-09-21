@@ -191,8 +191,9 @@ describe("admin drafts", () => {
     expect(valid.values?.trafficConfig).toMatchObject({ buyerCount: 100000 });
   });
 
-  it("merges editable runtime policy fields without losing deployment hard caps", () => {
+  it("preserves the lowered server occupancy ceiling while saving editable policy fields", () => {
     const policy = policyFixture();
+    policy.estimatedDemoOccupancyCeilingSeconds = 123.456;
     policy.publicCustomDefaults.erpConfig.forcedOutage = true;
     policy.publicCustomLimits.allowForcedOutage = true;
     const draft = draftFromRuntimePolicy(policy);
@@ -201,11 +202,13 @@ describe("admin drafts", () => {
     const next = buildPolicyFromDraft(draft, policy).values;
     expect(next).toBeDefined();
     if (!next) throw new Error("Expected valid fixture policy.");
+    expect(next.estimatedDemoOccupancyCeilingSeconds).toBe(123.456);
     expect(next.publicCustomLimits.maxBuyers).toBe(4321);
     expect(next.publicCustomLimits.allowedTrafficModes).toEqual(["buyer-spike"]);
     expect(next.publicCustomDefaults.erpConfig.forcedOutage).toBe(true);
     expect(next.publicCustomLimits.allowForcedOutage).toBe(true);
     expect(policy.deploymentHardCaps).toEqual({
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,
@@ -372,6 +375,7 @@ function presetFixture(mode: "buyer-spike" | "constant-arrival-rate"): DemoPrese
 function policyFixture(): PublicRuntimePolicy {
   const preset = presetFixture("buyer-spike");
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: { windowSeconds: 300, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
     publicCustomDefaults: preset,
@@ -392,6 +396,7 @@ function policyFixture(): PublicRuntimePolicy {
       allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,

@@ -217,6 +217,7 @@ export function buildPolicyFromDraft(
   const number = parsed.values;
   const configResult = buildConfigFromParsed(draft, currentPolicy.publicCustomDefaults, number);
   const policy: PublicRuntimePolicyMutable = {
+    estimatedDemoOccupancyCeilingSeconds: currentPolicy.estimatedDemoOccupancyCeilingSeconds,
     isPublicRunBudgetEnforced: draft.isPublicRunBudgetEnforced,
     publicRunBudget: {
       windowSeconds: requiredNumber(number, "budgetWindowSeconds"),

@@ -35,6 +35,7 @@ import {
   emptyServerReservationTimingSummary,
   erpResilienceStatusPath,
   errorPayloadSchema,
+  estimateAdmissionRejectionDetailsSchema,
   healthResponseSchema,
   inventoryStatusSchema,
   livenessResponseSchema,
@@ -45,6 +46,8 @@ import {
   orderProcessJobName,
   orderStatusResponseSchema,
   type PublicRunHistoryDetailResponse,
+  previewDemoRunPath,
+  previewDemoRunResponseSchema,
   publicPresetListPath,
   publicPresetListResponseSchema,
   publicRunHistoryDetailResponseSchema,
@@ -121,6 +124,10 @@ import {
   type DashboardRecoveryContextReader,
 } from "../src/services/dashboard-recovery-service.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
+import {
+  estimateAcceptedDemoRun,
+  requireEstimatedDurationAdmission,
+} from "../src/services/demo-duration-admission-service.js";
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
@@ -574,6 +581,12 @@ function publicRuntimePolicyControllerFixture(): PublicRuntimePolicyController {
 
 function demoRunLifecycleControllerFixture(): DemoRunLifecycleController {
   return {
+    previewRun: async () => ({
+      result: estimateAcceptedDemoRun(
+        demoRunSnapshotFixture().configSnapshot,
+        publicRuntimePolicyFixture(),
+      ),
+    }),
     startRun: async (_request, correlationId) => ({
       run: demoRunSnapshotFixture(),
       recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },
@@ -911,6 +924,7 @@ function failedAdminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResp
 
 function publicRuntimePolicyFixture() {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: 300,
@@ -935,6 +949,7 @@ function publicRuntimePolicyFixture() {
       allowedTrafficModes: ["buyer-spike" as const, "constant-arrival-rate" as const],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,
@@ -949,6 +964,7 @@ function publicRuntimePolicyFixture() {
 function publicRuntimePolicyMutableFixture() {
   const policy = publicRuntimePolicyFixture();
   return {
+    estimatedDemoOccupancyCeilingSeconds: policy.estimatedDemoOccupancyCeilingSeconds,
     isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
     publicRunBudget: {
       windowSeconds: 120,
@@ -1970,6 +1986,97 @@ describe("API gateway routes", () => {
       { deleteAllConfirmation: "DELETE" },
       expect.any(String),
     );
+  });
+
+  it.each([
+    previewDemoRunPath,
+    startDemoRunPath,
+  ])("protects %s and rejects browser-supplied estimate decisions", async (url) => {
+    const previewRun = vi.fn(demoRunLifecycleControllerFixture().previewRun);
+    const startRun = vi.fn(demoRunLifecycleControllerFixture().startRun);
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunLifecycleService: { previewRun, startRun },
+    });
+    const payload = { presetSlug: "preview-1k" };
+    for (const token of [undefined, "invalid-token"]) {
+      const response = await server.inject({
+        method: "POST",
+        url,
+        payload,
+        headers: {
+          [demoRunOperatorModeHeaderName]: "admin",
+          ...(token ? { [controlServiceTokenHeaderName]: token } : {}),
+        },
+      });
+      expect(response.statusCode).toBe(401);
+    }
+    const missingMode = await server.inject({
+      method: "POST",
+      url,
+      payload,
+      headers: { [controlServiceTokenHeaderName]: "test-control-token" },
+    });
+    expect(missingMode.statusCode).toBe(400);
+    expect(missingMode.json().code).toBe("operator_mode_required");
+    const tampered = await server.inject({
+      method: "POST",
+      url,
+      payload: { ...payload, conservativeDurationSeconds: 0, decision: "admitted" },
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "admin",
+      },
+    });
+    expect(tampered.statusCode).toBe(400);
+    expect(previewRun).not.toHaveBeenCalled();
+    expect(startRun).not.toHaveBeenCalled();
+  });
+
+  it("returns rejected previews as 200 and structured start rejection as 400", async () => {
+    const result = estimateAcceptedDemoRun(acceptedRunConfigSnapshotFixture(), {
+      ...publicRuntimePolicyFixture(),
+      estimatedDemoOccupancyCeilingSeconds: 1,
+    });
+    const previewRun = vi.fn(async () => ({ result }));
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunLifecycleService: {
+        previewRun,
+        startRun: async () => {
+          requireEstimatedDurationAdmission(result);
+          throw new Error("Expected rejection");
+        },
+      },
+    });
+    const headers = {
+      [controlServiceTokenHeaderName]: "test-control-token",
+      [demoRunOperatorModeHeaderName]: "public",
+      [publicVisitorIdHeaderName]: "signed-visitor-1",
+    };
+    const payload = { presetSlug: "preview-1k" };
+    const preview = await server.inject({
+      method: "POST",
+      url: previewDemoRunPath,
+      headers,
+      payload,
+    });
+    expect(preview.statusCode).toBe(200);
+    expect(previewDemoRunResponseSchema.parse(preview.json()).result.decision).toBe("rejected");
+    expect(previewRun).toHaveBeenCalledWith({
+      ...payload,
+      operatorMode: "public",
+      publicVisitorCredential: "signed-visitor-1",
+    });
+    const start = await server.inject({ method: "POST", url: startDemoRunPath, headers, payload });
+    expect(start.statusCode).toBe(400);
+    expect(start.json().code).toBe("estimated_duration_rejected");
+    expect(estimateAdmissionRejectionDetailsSchema.parse(start.json().details)).toMatchObject({
+      reason: "over_ceiling",
+      effectiveCeilingSeconds: 1,
+      estimatorIdentity: { name: "conservative-duration-estimator", version: 1 },
+      policyIdentity: { name: "adaptive-erp-admission", version: 1 },
+    });
   });
 
   it("starts a demo run through the API run lifecycle and propagates correlation IDs", async () => {

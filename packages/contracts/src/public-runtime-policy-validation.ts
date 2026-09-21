@@ -34,6 +34,7 @@ export const directSnapshotViolationCodes = [
 
 const runtimePolicyDefinitionViolationCodes = [
   "public_erp_tps_limit_invalid",
+  "public_limit_estimated_demo_occupancy_exceeds_deployment_cap",
   "public_limit_buyers_exceeds_deployment_cap",
   "public_limit_duration_exceeds_deployment_cap",
   "public_limit_max_vus_exceeds_deployment_cap",
@@ -215,6 +216,13 @@ function collectPublicLimitCapViolations(
   const caps = policy.deploymentHardCaps;
   const limits = policy.publicCustomLimits;
 
+  addCapViolation(
+    violations,
+    policy.estimatedDemoOccupancyCeilingSeconds,
+    caps.estimatedDemoOccupancyCeilingSeconds,
+    "public_limit_estimated_demo_occupancy_exceeds_deployment_cap",
+    ["estimatedDemoOccupancyCeilingSeconds"],
+  );
   addCapViolation(
     violations,
     limits.maxTotalRequests,

@@ -12,6 +12,7 @@ import {
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
+import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
   createRedisClient,
@@ -19,6 +20,7 @@ import {
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
+  getInventoryStatus,
   isRunSaleEligible,
   products,
   publicRuntimePolicies,
@@ -26,7 +28,7 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
@@ -36,6 +38,7 @@ import { DemoPresetService } from "../src/services/demo-preset-service.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
   DemoRunLifecycleService,
+  demoRunStartLockKey,
   isSingleNonTerminalRunViolation,
   validateAcceptedRunSnapshot,
 } from "../src/services/demo-run-service.js";
@@ -102,6 +105,13 @@ describe("demo-run lifecycle validation", () => {
         },
         "credential-correlation",
       ),
+    ).rejects.toMatchObject({ code: "public_visitor_forbidden" });
+    await expect(
+      service.previewRun({
+        presetSlug: "preview-1k",
+        operatorMode: "public",
+        ...(credential ? { publicVisitorCredential: credential } : {}),
+      }),
     ).rejects.toMatchObject({ code: "public_visitor_forbidden" });
     expect(select).not.toHaveBeenCalled();
     expect(reserve).not.toHaveBeenCalled();
@@ -206,6 +216,323 @@ describe("demo-run lifecycle start gating", () => {
       await redis.flushdb();
       redis.disconnect();
     }
+  });
+
+  it.each([
+    ["public", "preview-1k"],
+    ["admin", "preview-1k"],
+    ["public", "public-custom"],
+    ["admin", "custom"],
+  ] as const)("uses the unrounded inclusive ceiling for %s %s starts and previews", async (operatorMode, presetSlug) => {
+    const db = requireConnection(connection).db;
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+    }));
+    const trafficStart = vi.fn(async (request: TrafficExecutionStartRequest) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+      trafficExecutionGateway: { start: trafficStart },
+    });
+    const request = {
+      presetSlug,
+      operatorMode,
+      ...(presetSlug.includes("custom")
+        ? {
+            configOverride: {
+              inventoryConfig: { ...surge10kSnapshot().inventoryConfig, startingStock: 90 },
+            },
+          }
+        : {}),
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+    const preview = await service.previewRun(request);
+    const duration = preview.result.conservativeDurationSeconds;
+    if (duration === undefined) throw new Error("Expected finite estimate");
+    for (const offset of [0.000001, 0, -0.000001]) {
+      await db.update(publicRuntimePolicies).set({
+        policy: {
+          ...publicRuntimePolicyMutable(),
+          estimatedDemoOccupancyCeilingSeconds: duration + offset,
+        },
+      });
+      expect((await service.previewRun(request)).result.decision).toBe(
+        offset < 0 ? "rejected" : "admitted",
+      );
+    }
+    expect(await db.select().from(demoRuns)).toHaveLength(0);
+    expect(await db.select().from(saleOffers)).toHaveLength(0);
+    expect(await requireRedis(redis).dbsize()).toBe(0);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(trafficStart).not.toHaveBeenCalled();
+    await expect(service.startRun(request, "over-ceiling")).rejects.toMatchObject({
+      code: "estimated_duration_rejected",
+      details: {
+        reason: "over_ceiling",
+        conservativeDurationSeconds: duration,
+        effectiveCeilingSeconds: duration - 0.000001,
+      },
+    });
+    expect(await db.select().from(demoRuns)).toHaveLength(0);
+    expect(await db.select().from(saleOffers)).toHaveLength(0);
+    expect(await requireRedis(redis).dbsize()).toBe(0);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(trafficStart).not.toHaveBeenCalled();
+    await db.update(publicRuntimePolicies).set({
+      policy: { ...publicRuntimePolicyMutable(), estimatedDemoOccupancyCeilingSeconds: duration },
+    });
+    const accepted = await service.startRun(request, "equal-ceiling");
+    expect(accepted.run.status).toBe("active");
+    expect(accepted.run).not.toHaveProperty("estimate");
+    expect(trafficStart).toHaveBeenCalledOnce();
+    expect(reserve).toHaveBeenCalledTimes(operatorMode === "public" ? 1 : 0);
+  });
+
+  it.each([
+    [true, 0, "declared_permanent_outage"],
+    [false, 0.31, "error_rate_above_policy_maximum"],
+  ] as const)("rejects unestimable scenarios (%s, %s) without durations or side effects", async (forcedOutage, errorRate, unestimableReason) => {
+    const db = requireConnection(connection).db;
+    await db
+      .update(demoPresets)
+      .set({ erpConfig: { ...surge10kSnapshot().erpConfig, forcedOutage, errorRate } });
+    const reserve = vi.fn();
+    const release = vi.fn();
+    const start = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release },
+      trafficExecutionGateway: { start },
+    });
+    for (const operatorMode of ["public", "admin"] as const) {
+      const request = {
+        presetSlug: "preview-1k",
+        operatorMode,
+        publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      };
+      const preview = await service.previewRun(request);
+      expect(preview.result).toMatchObject({ decision: "rejected", unestimableReason });
+      expect(preview.result).not.toHaveProperty("conservativeDurationSeconds");
+      const error = await service.startRun(request, "unestimable").catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "estimated_duration_rejected",
+        details: { reason: "unestimable", unestimableReason, reasons: [expect.any(String)] },
+      });
+      expect((error as DemoRunValidationError).details).not.toHaveProperty(
+        "conservativeDurationSeconds",
+      );
+    }
+    expect(await db.select().from(demoRuns)).toHaveLength(0);
+    expect(await db.select().from(saleOffers)).toHaveLength(0);
+    expect(await requireRedis(redis).dbsize()).toBe(0);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(release).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
+  it("uses the same visibility, override and cap validation in preview without taking the start lock", async () => {
+    const primary = requireConnection(connection);
+    const blocker = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const service = createStartService(primary, requireRedis(redis));
+    const request = {
+      presetSlug: "preview-1k",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+    try {
+      await blocker.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+        expect((await service.previewRun(request)).result.decision).toBe("admitted");
+      });
+      await expect(service.previewRun({ ...request, presetSlug: "custom" })).rejects.toMatchObject({
+        code: "preset_operation_not_allowed",
+      });
+      const inventoryConfig = { ...surge10kSnapshot().inventoryConfig, startingStock: 1001 };
+      await expect(
+        service.previewRun({ ...request, configOverride: { inventoryConfig } }),
+      ).rejects.toMatchObject({ code: "public_override_not_allowed" });
+      await expect(
+        service.previewRun({
+          ...request,
+          presetSlug: "public-custom",
+          configOverride: { inventoryConfig },
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid_run_configuration",
+        details: { violationCode: "public_starting_stock_exceeded" },
+      });
+      const trafficConfig = {
+        ...expectBuyerSpikeTrafficConfig(surge10kSnapshot().trafficConfig),
+        buyerCount: 100001,
+      };
+      await expect(
+        service.previewRun({
+          ...request,
+          operatorMode: "admin",
+          configOverride: { trafficConfig },
+        }),
+      ).rejects.toMatchObject({
+        code: "invalid_run_configuration",
+        details: { violationCode: "deployment_total_requests_exceeded" },
+      });
+    } finally {
+      await blocker.close();
+    }
+    expect(await primary.db.select().from(demoRuns)).toHaveLength(0);
+    expect(await primary.db.select().from(saleOffers)).toHaveLength(0);
+    expect(await requireRedis(redis).dbsize()).toBe(0);
+  });
+
+  it("previews duplicate-aware unique work and admits the incident through preview and start", async () => {
+    const db = requireConnection(connection).db;
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    const request = { presetSlug: "preview-1k", operatorMode: "admin" as const };
+    const base = surge10kSnapshot();
+    const traffic = expectBuyerSpikeTrafficConfig(base.trafficConfig);
+    const single = await service.previewRun(request);
+    const duplicate = await service.previewRun({
+      ...request,
+      configOverride: { trafficConfig: { ...traffic, duplicateEachBuyerAttempt: true } },
+    });
+    expect(duplicate).toEqual(single);
+    const incident = acceptanceScenarioFixtures()[0]?.config;
+    if (!incident) throw new Error("Missing incident fixture");
+    await db.update(demoPresets).set(incident).where(eq(demoPresets.slug, request.presetSlug));
+    expect((await service.previewRun(request)).result).toMatchObject({
+      decision: "admitted",
+      conservativeDurationSeconds: 316.6,
+    });
+    expect((await service.startRun(request, "incident")).run.configSnapshot).toEqual(incident);
+  });
+
+  it.each([
+    ["preset", false],
+    ["preset", true],
+    ["policy", false],
+    ["policy", true],
+  ] as const)("re-reads changed %s under start serialization (rejected: %s)", async (changed, rejected) => {
+    const primary = requireConnection(connection);
+    const blocker = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+    }));
+    const trafficStart = vi.fn(async (request: TrafficExecutionStartRequest) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const presetReader = new DemoPresetService({ db: primary.db });
+    const service = createStartService(primary, requireRedis(redis), {
+      presetReader,
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+      trafficExecutionGateway: { start: trafficStart },
+    });
+    const request = {
+      presetSlug: "preview-1k",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+    expect((await service.previewRun(request)).result.decision).toBe("admitted");
+    let signalRead!: () => void;
+    const initialRead = new Promise<void>((resolve) => {
+      signalRead = resolve;
+    });
+    const originalRead = presetReader.readActivePreset.bind(presetReader);
+    const read = vi.spyOn(presetReader, "readActivePreset").mockImplementation(async (slug, db) => {
+      const preset = await originalRead(slug, db);
+      if (!db) signalRead();
+      return preset;
+    });
+    let startResult!: Promise<
+      Awaited<ReturnType<typeof service.startRun>> | DemoRunValidationError
+    >;
+    try {
+      await blocker.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+        startResult = service
+          .startRun(request, "changed")
+          .catch((error: DemoRunValidationError) => error);
+        await initialRead;
+        if (changed === "policy") {
+          await tx.update(publicRuntimePolicies).set({
+            policy: {
+              ...publicRuntimePolicyMutable(),
+              estimatedDemoOccupancyCeilingSeconds: rejected ? 1 : 599,
+            },
+          });
+        } else {
+          await tx
+            .update(demoPresets)
+            .set({
+              erpConfig: { ...surge10kSnapshot().erpConfig, maxTps: rejected ? 1 : 200 },
+              ...(!rejected
+                ? { inventoryConfig: { ...surge10kSnapshot().inventoryConfig, startingStock: 90 } }
+                : {}),
+            })
+            .where(eq(demoPresets.slug, request.presetSlug));
+        }
+      });
+      const result = await startResult;
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(read.mock.calls[1]?.[1]).toBeDefined();
+      if (rejected) {
+        expect(result).toMatchObject({ code: "estimated_duration_rejected" });
+        expect(await primary.db.select().from(demoRuns)).toHaveLength(0);
+        expect(await primary.db.select().from(saleOffers)).toHaveLength(0);
+        expect(await requireRedis(redis).dbsize()).toBe(0);
+        expect(reserve).not.toHaveBeenCalled();
+        expect(trafficStart).not.toHaveBeenCalled();
+      } else {
+        expect(result).toMatchObject({ run: { status: "active" } });
+        if (changed === "preset") {
+          const expectedSnapshot = {
+            ...surge10kSnapshot(),
+            erpConfig: { ...surge10kSnapshot().erpConfig, maxTps: 200 },
+            inventoryConfig: { ...surge10kSnapshot().inventoryConfig, startingStock: 90 },
+          };
+          expect(result).toMatchObject({ run: { configSnapshot: expectedSnapshot } });
+          const offers = await primary.db.select().from(saleOffers);
+          expect(offers).toHaveLength(1);
+          const offer = offers[0];
+          if (!offer) throw new Error("Expected generated sale offer.");
+          expect(offer.allocatedStock).toBe(90);
+          expect(await getInventoryStatus(requireRedis(redis), offer.id)).toMatchObject({
+            allocatedStock: 90,
+            remainingStock: 90,
+          });
+          expect(trafficStart).toHaveBeenCalledWith(
+            expect.objectContaining({
+              saleOfferId: offer.id,
+              configSnapshot: expectedSnapshot,
+            }),
+          );
+        }
+        expect(reserve).toHaveBeenCalledOnce();
+        expect(trafficStart).toHaveBeenCalledOnce();
+      }
+    } finally {
+      await blocker.close();
+    }
+  });
+
+  it("keeps run conflict ahead of duration rejection", async () => {
+    const primary = requireConnection(connection);
+    await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
+    await primary.db.update(publicRuntimePolicies).set({
+      policy: { ...publicRuntimePolicyMutable(), estimatedDemoOccupancyCeilingSeconds: 1 },
+    });
+    await expect(
+      createStartService(primary, requireRedis(redis)).startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "conflict-first",
+      ),
+    ).rejects.toMatchObject({ code: "run_conflict" });
   });
 
   it("rejects an archived preset before creating a run", async () => {
@@ -1371,6 +1698,7 @@ function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
+    presetReader?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["presetReader"];
     trafficExecutionGateway?: ConstructorParameters<
       typeof DemoRunLifecycleService
     >[0]["trafficExecutionGateway"];
@@ -1399,7 +1727,7 @@ function createStartService(
   const logger = overrides.logger ?? createSilentLogger("api");
   return new DemoRunLifecycleService({
     db: connection.db,
-    presetReader: new DemoPresetService({ db: connection.db }),
+    presetReader: overrides.presetReader ?? new DemoPresetService({ db: connection.db }),
     runtimePolicyReader: new PublicRuntimePolicyService({
       db: connection.db,
       deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
@@ -1616,6 +1944,7 @@ async function seedPresetFixtures(
 
 function publicRuntimePolicy(): PublicRuntimePolicy {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: 300,
@@ -1662,6 +1991,7 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
       allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,
@@ -1677,6 +2007,7 @@ function publicRuntimePolicyMutable() {
   const policy = publicRuntimePolicy();
 
   return {
+    estimatedDemoOccupancyCeilingSeconds: policy.estimatedDemoOccupancyCeilingSeconds,
     isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
     publicRunBudget: policy.publicRunBudget,
     publicCustomDefaults: policy.publicCustomDefaults,

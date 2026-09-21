@@ -13,6 +13,8 @@ import {
   internalTrafficCompletionPath,
   loadMetricIngestRequestSchema,
   operatorModeSchema,
+  previewDemoRunPath,
+  previewDemoRunRequestSchema,
   publicPresetListPath,
   publicRuntimePolicyPath,
   publicVisitorIdHeaderName,
@@ -152,6 +154,19 @@ export function registerDemoRunRoutes(
           copyDemoPresetToCustomRequestSchema.parse(request.body),
         ),
       );
+  });
+
+  app.post(previewDemoRunPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
+    if (unauthorized) return unauthorized;
+    const parsedRequest = previewDemoRunRequestSchema.parse(request.body);
+    replaceFastifyCorrelation(request, reply, parsedRequest.correlationId ?? request.correlationId);
+    return reply.status(200).send(
+      await options.demoRunLifecycleService.previewRun({
+        ...parsedRequest,
+        ...deriveRunStartPrincipal(request),
+      }),
+    );
   });
 
   app.post(startDemoRunPath, async (request, reply) => {

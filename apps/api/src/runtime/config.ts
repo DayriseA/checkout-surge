@@ -120,6 +120,11 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     publicClientCookieSecret: requireStrongSecret(env, "PUBLIC_CLIENT_COOKIE_SECRET"),
     deploymentHardCaps: deploymentHardCapsSchema.parse({
+      estimatedDemoOccupancyCeilingSeconds: parsePositiveInteger(
+        env.DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS,
+        "DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS",
+        600,
+      ),
       maxBuyers: parsePositiveInteger(env.DEMO_MAX_BUYERS, "DEMO_MAX_BUYERS", 100_000),
       maxTotalRequests: parsePositiveInteger(
         env.DEMO_MAX_TOTAL_REQUESTS,

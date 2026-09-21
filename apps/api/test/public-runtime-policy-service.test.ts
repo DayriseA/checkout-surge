@@ -1,6 +1,6 @@
 import { createDatabaseConnection, publicRuntimePolicies } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   PublicRuntimePolicyService,
@@ -30,6 +30,39 @@ describe("public runtime policy service", () => {
 
   afterAll(async () => {
     await connection?.close();
+  });
+
+  it("defaults legacy rows to 600, allows lowering, and rejects exceeding the deployment ceiling", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(requireConnection(connection));
+    await db.execute(
+      sql`update public_runtime_policies set policy = policy - 'estimatedDemoOccupancyCeilingSeconds' where id = 'active'`,
+    );
+    expect((await service.readEffectivePolicy()).estimatedDemoOccupancyCeilingSeconds).toBe(600);
+    const policy = {
+      ...publicRuntimePolicyMutableFixture(),
+      estimatedDemoOccupancyCeilingSeconds: 123.456,
+    };
+    expect(
+      (await service.updateAdminPublicRuntimePolicy({ policy }, "lower")).policy
+        .estimatedDemoOccupancyCeilingSeconds,
+    ).toBe(123.456);
+    await expect(
+      service.updateAdminPublicRuntimePolicy(
+        { policy: { ...policy, estimatedDemoOccupancyCeilingSeconds: 601 } },
+        "raise",
+      ),
+    ).rejects.toMatchObject({
+      code: "invalid_runtime_policy",
+      details: {
+        violationCode: "public_limit_estimated_demo_occupancy_exceeds_deployment_cap",
+        value: 601,
+        cap: 600,
+      },
+    });
+    expect((await service.readEffectivePolicy()).estimatedDemoOccupancyCeilingSeconds).toBe(
+      123.456,
+    );
   });
 
   it("hydrates strict mutable persistence with current environment hard caps", async () => {

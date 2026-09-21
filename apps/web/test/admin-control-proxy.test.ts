@@ -989,6 +989,7 @@ function demoPresetPayload(slug: string) {
 
 function publicRuntimePolicyPayload() {
   return {
+    estimatedDemoOccupancyCeilingSeconds: 600,
     isPublicRunBudgetEnforced: true,
     publicRunBudget: {
       windowSeconds: 300,
@@ -1013,6 +1014,7 @@ function publicRuntimePolicyPayload() {
       allowedTrafficModes: ["buyer-spike" as const, "constant-arrival-rate" as const],
     },
     deploymentHardCaps: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       maxBuyers: 100_000,
       maxTotalRequests: 100_000,
       maxRequestsPerSecond: 10_000,
@@ -1028,6 +1030,7 @@ function publicRuntimePolicyMutablePayload() {
   const policy = publicRuntimePolicyPayload();
 
   return {
+    estimatedDemoOccupancyCeilingSeconds: policy.estimatedDemoOccupancyCeilingSeconds,
     isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
     publicRunBudget: {
       windowSeconds: 120,

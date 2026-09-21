@@ -8,6 +8,7 @@ import {
 } from "@checkout-surge/contracts";
 import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import { describe, expect, it, vi } from "vitest";
+import { estimatorInputFromSnapshot as fromConfig } from "../../src/services/demo-duration-admission-service.js";
 import {
   conservativeDurationEstimatorConstants as constants,
   effectiveEstimatorWorkerConcurrency,
@@ -51,20 +52,6 @@ vi.mock("../../../../packages/db/src/redis-inventory.js", () => ({
   initializeInventory: async () => {},
 }));
 
-function fromConfig(config: AcceptedRunConfigSnapshot): EstimatorInput {
-  return estimatorInputSchema.parse({
-    trafficConfig: config.trafficConfig,
-    inventoryConfig: config.inventoryConfig,
-    effectiveWorkerConcurrency: effectiveEstimatorWorkerConcurrency(
-      config.backpressureConfig.orderProcessConcurrency,
-    ),
-    declaredErpCapacityPerSecond: config.erpConfig.maxTps,
-    declaredErpLatencyMs: config.erpConfig.latencyMs,
-    declaredErpForcedOutage: config.erpConfig.forcedOutage,
-    errorRateAssumption: config.erpConfig.errorRate,
-  });
-}
-
 function input(overrides: Partial<EstimatorInput> = {}): EstimatorInput {
   return estimatorInputSchema.parse({
     trafficConfig: { mode: "constant-arrival-rate", ratePerSecond: 10, durationSeconds: 10 },
@@ -87,18 +74,22 @@ function estimate(value: EstimatorInput, ceiling = 600) {
 }
 
 describe("pure conservative duration estimator", () => {
-  it("admits the real acceptance fixtures and every seeded public preset", async () => {
+  it("admits the real acceptance fixtures and every seeded preset", async () => {
     await import("../../../../packages/db/src/scripts/seed.js");
     expect(seededPresets.filter((preset) => preset.visibility === "public")).toHaveLength(5);
     for (const preset of seededPresets) {
       const result = estimate(fromConfig(preset));
-      expect(result.decision, preset.slug).toBe(
-        preset.slug === "admin-failure-path" ? "rejected" : "admitted",
-      );
+      expect(result.decision, preset.slug).toBe("admitted");
       if (preset.slug === "admin-failure-path") {
-        expect(result.unestimableReason).toBeUndefined();
-        expect(result.bottleneck).toBe("worker_concurrency");
-        expect(result.reasons?.[0]).toContain("Lower the error rate");
+        const previous = estimate(
+          fromConfig({
+            ...preset,
+            inventoryConfig: { ...preset.inventoryConfig, startingStock: 200 },
+          }),
+        );
+        expect(previous.decision).toBe("rejected");
+        expect(previous.conservativeDurationSeconds).toBe(747);
+        expect(result.conservativeDurationSeconds).toBeLessThanOrEqual(450);
       }
     }
     for (const fixture of acceptanceScenarioFixtures()) {

@@ -489,6 +489,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DEMO_MAX_TRAFFIC_DURATION_SECONDS` | `300` | API safety cap for constant-arrival duration and buyer-spike max duration |
 | `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS` | `30` | API safety cap for buyer-spike start delay |
 | `DEMO_MAX_PRE_ALLOCATED_VUS` | `10000` | API hard cap for resolved constant-arrival preallocated VUs, whether automatic or explicit |
+| `DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS` | `600` | Deployment estimated occupancy ceiling in seconds (positive integer, at most 600); mutable policy may lower it for public and admin starts |
 | `DEMO_MAX_VUS` | `10000` | API hard cap for resolved constant-arrival max VUs, whether automatic or explicit |
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |

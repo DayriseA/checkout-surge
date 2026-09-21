@@ -25,7 +25,7 @@ export interface PublicRuntimePolicyController {
 }
 
 export interface EffectivePublicRuntimePolicyReader {
-  readEffectivePolicy(): Promise<PublicRuntimePolicy>;
+  readEffectivePolicy(db?: Pick<CheckoutSurgeDatabase, "select">): Promise<PublicRuntimePolicy>;
 }
 
 type EffectivePolicyRow = Omit<typeof publicRuntimePolicies.$inferSelect, "policy"> & {
@@ -98,8 +98,10 @@ export class PublicRuntimePolicyService
     );
   }
 
-  async readEffectivePolicy(): Promise<PublicRuntimePolicy> {
-    return (await this.readEffectivePolicyRow()).policy;
+  async readEffectivePolicy(
+    db?: Pick<CheckoutSurgeDatabase, "select">,
+  ): Promise<PublicRuntimePolicy> {
+    return (await this.readEffectivePolicyRow(db)).policy;
   }
 
   async validateActivePolicyAtStartup(): Promise<void> {
@@ -126,8 +128,10 @@ export class PublicRuntimePolicyService
     }
   }
 
-  private async readEffectivePolicyRow(): Promise<EffectivePolicyRow> {
-    const [row] = await this.options.db
+  private async readEffectivePolicyRow(
+    db: Pick<CheckoutSurgeDatabase, "select"> = this.options.db,
+  ): Promise<EffectivePolicyRow> {
+    const [row] = await db
       .select()
       .from(publicRuntimePolicies)
       .where(eq(publicRuntimePolicies.id, "active"))

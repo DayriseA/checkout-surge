@@ -70,8 +70,11 @@ Public mutation should be narrow:
 - Reject requests when a run is already active or draining.
 - Use a server-issued visitor identity rather than trusting browser-supplied forwarding headers.
 - Apply shared-store run-budget limiting in the API layer.
+- Reject over-ceiling or unestimable starts before reserving any visitor/global budget.
 - Reserve visitor/global budget atomically and release the exact reservation when a later synchronous start step rejects, so denied or failed starts do not burn capacity.
-- Keep public starts inside API-enforced traffic caps.
+- Keep public starts inside API-enforced traffic caps. Public and admin preset/custom starts also require a finite conservative occupancy estimate at or below the effective `estimatedDemoOccupancyCeilingSeconds` (600-second default/deployment maximum); admin has no bypass. Recompute from current policy/preset under the global start lock, after run-conflict checks and before budget reservation or creation.
+
+The API preview `POST /demo/runs/estimate` uses the same strict request intent, control-service token, operator-mode assertion, and signed public visitor verification as start. It returns HTTP 200 for allowed or rejected estimates without a lock, budget consumption, or run side effects. Start rejects with HTTP 400 `estimated_duration_rejected`; its details contain the reason, finite duration only when estimable, bottleneck, effective ceiling, estimator/engine identities and adjustment guidance. Browser estimate fields cannot influence start. The web preview proxy and its Origin/read-limiting controls belong to task 17; existing start CSRF checks remain unchanged.
 
 Examples of acceptable public controls:
 

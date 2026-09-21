@@ -3506,6 +3506,7 @@ function runtimePolicyFixture(
   return {
     id: "active",
     policy: {
+      estimatedDemoOccupancyCeilingSeconds: 600,
       isPublicRunBudgetEnforced: true,
       publicRunBudget: { windowSeconds, perVisitorMaxStarts: 2, globalMaxStarts: 6 },
       publicCustomDefaults,
@@ -3526,6 +3527,7 @@ function runtimePolicyFixture(
         allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
       },
       deploymentHardCaps: {
+        estimatedDemoOccupancyCeilingSeconds: 600,
         maxBuyers: 100_000,
         maxTotalRequests: 100_000,
         maxRequestsPerSecond: 10_000,
