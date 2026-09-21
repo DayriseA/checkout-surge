@@ -254,9 +254,17 @@ The choices below resolve the questions Part I left open. They are binding for P
 - The ledger lives in tables owned by the mock ERP. The worker reaches it only over HTTP, even when both use the same PostgreSQL server.
 - Same-process duplicate requests keep sharing the running promise, as today.
 
-#### D06 — Additive-increase / multiplicative-decrease controller with paced starts
+#### D06 — Dispatch at the declared ERP capacity through the queue's native rate limit (revised 2026-09-21)
 
-**Decision.** Option A.
+**Revision (user decision, 2026-09-21).** The original D06 below is superseded. It made the worker discover the ERP's capacity from responses alone, starting at 2 launches/s, and its custom pacing and deferral path capped real throughput near one launch per second (diagnosis summarized in task 17b). The demo now follows the common industry case: the downstream limit is known and published, as it is for mainstream ERP and SaaS APIs, so the client is configured with it. Tasks 07 and 09 implemented the original decision; task [17b](backlog/adaptive_erp/17b_pace_erp_dispatch_at_declared_capacity.md) replaces that part.
+
+- The accepted run's declared ERP capacity is the dispatch rate. It is enforced by the order-process queue's native rate limit (BullMQ global rate limit), evenly spaced, from the first second; the per-run concurrency is enforced by the queue's native global concurrency. No learned rate, observation window, additive step, reduction factor, rate floor or rate ceiling remains.
+- A small safety margin below the declared capacity is the only pacing constant (D14).
+- A capacity response (`429`) pauses queue delivery natively for the `Retry-After` duration, is never an order failure and never consumes a retry budget. `Retry-After` parsing, the capped maximum and the local fallback are unchanged from the original text.
+- Unchanged from the original text: recognized unavailability, connection errors and timeouts feed the availability circuit only; circuit probes are the only traffic during an outage, at the policy cadence; a locally reused success is not evidence of ERP health.
+- When the downstream limit is unknown or variable, an adaptive client-side limiter (for example the adaptive retry mode of the AWS SDKs) is the appropriate technique. The demo deliberately does not implement it; the dashboard's About section says so.
+
+**Original decision (superseded).** Option A.
 
 - Per downstream scope (one run, or the catalog): a target launch rate, evenly spaced starts, and an in-flight ceiling equal to the smaller of the configured concurrency and the policy ceiling. No burst allowance accumulates during idle or outage periods.
 - Additive increase after one observation window without capacity responses. Multiplicative decrease on the first capacity response of a wave; further capacity responses inside the same wave window apply no additional reduction.
@@ -268,7 +276,7 @@ The choices below resolve the questions Part I left open. They are binding for P
 
 #### D07 — Restore safety state after restart; relearn throughput
 
-**Decision.** Option B.
+**Decision.** Option B. Revised with D06 (2026-09-21): there is no learned rate to relearn. After a restart the queue limits are re-applied from the accepted run snapshot, and the persisted cooldown and circuit expiries below are honored as before.
 
 - Persisted: dispatched-call intents (D04), cooldown and circuit-open expiries per scope, next eligible times. Not persisted: learned rate, observation windows, latency samples.
 - Startup order: reconcile dispatched calls first (D05), then resume from the initial conservative rate. A still-running persisted cooldown or circuit-open expiry is honored; otherwise the circuit starts closed at the initial rate.

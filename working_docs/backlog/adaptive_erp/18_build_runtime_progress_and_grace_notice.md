@@ -4,7 +4,7 @@
 
 - Status: Pending.
 - Branch: `feat/adaptive-erp-and-admission`.
-- Sequence: 18 of 21. Execute after [17](17_build_dashboard_estimate_and_admission_flow.md); settlement-based finalization, terminal technical failures, both resets and the admission flow are available.
+- Sequence: 18 of 21. Execute after [17c](17c_refit_estimator_to_declared_capacity.md); settlement-based finalization, terminal technical failures, both resets and the admission flow are available.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), Phase 6, D01, D02, D09, D10 and D13. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.
 - Ownership: API dashboard projection services and contracts, web live dashboard and run-history presentation.
 
@@ -23,7 +23,7 @@ The automatic reset deadline is invisible until 600 seconds after acceptance. Fr
 ## Implementation work
 
 - [ ] Project outstanding orders and oldest outstanding age from durable records, and the observed confirmation rate over a stated window. Report unavailable or stale telemetry explicitly rather than as zero.
-- [ ] Project one downstream status derived from the worker's existing protection state: `erp_limiting` while capacity pacing or cooldown is reducing the rate, `erp_unavailable` while the availability circuit is open, `nominal` otherwise. Expose the status only, not the underlying numbers.
+- [ ] Project one downstream status derived from the worker's existing protection state: `erp_limiting` while a capacity cooldown is pausing dispatch (revised D06: there is no learned rate), `erp_unavailable` while the availability circuit is open, `nominal` otherwise. Expose the status only, not the underlying numbers.
 - [ ] Integrate through the current projection fanout. Preserve bounded public queries, pagination/retention and the existing SSE initial-snapshot, reconnect and missed-update recovery. Add no parallel realtime stream and no per-order public feed.
 - [ ] Show these facts in the live dashboard with plain labels, so a slow drain reads as "still processing, the ERP is limiting the rate" or "ERP unavailable, processing resumes automatically".
 - [ ] Separate traffic outcome from business settlement. Show confirmed, business-rejected and technically failed totals distinctly; settled processing does not imply every order confirmed. No read-model race may present a run as completed while required work remains.

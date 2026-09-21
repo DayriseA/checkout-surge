@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Status: Done (pending commit). Browser verification performed by the orchestrator on 2026-09-21.
+- Status: Done (commit `a17b43c8`). Browser verification performed by the orchestrator on 2026-09-21.
 - Branch: `feat/adaptive-erp-and-admission`.
 - Sequence: 17 of 21. Execute after [16](16_enforce_estimated_duration_admission.md), which supplies the authoritative preview/start contracts.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), Phase 6, D11–D13. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.
@@ -38,7 +38,7 @@ Read [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality
 
 ## Completion handoff
 
-Deliver the complete preview/start UX and tests. Record the out-of-order response protection, rejection copy and browser evidence. Next: [18 — runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md).
+Deliver the complete preview/start UX and tests. Record the out-of-order response protection, rejection copy and browser evidence. Next: [17b — declared-capacity dispatch](17b_pace_erp_dispatch_at_declared_capacity.md) and [17c — estimator re-fit](17c_refit_estimator_to_declared_capacity.md), then [18 — runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md).
 
 
 ## Completion notes (2026-09-21)

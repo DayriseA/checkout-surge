@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: implementation backlog prepared; tasks 01 to 15 are completed and committed; task 16 is Done (pending commit); task 17 is Done (pending commit); tasks 18–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
+Status: implementation backlog prepared; tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); tasks 17b, 17c and 18–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Creating these documents implements no runtime behavior and certifies no performance result.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -36,7 +36,9 @@ Task 20 contains the source plan's mandatory user-approval gate. After calibrati
 | 14 | [Retire scenario engine controls](14_retire_scenario_engine_controls.md) | 1/4 completion | Coordinated configuration retirement/history reads |
 | 15 | [Conservative duration estimator](15_implement_conservative_duration_estimator.md) | 5 | Done (pending commit): pure API model and provisional measured margins |
 | 16 | [Estimated-duration admission](16_enforce_estimated_duration_admission.md) | 5 | Done: effective ceiling, advisory preview, authoritative start recomputation, minimal web policy-save compatibility |
-| 17 | [Dashboard estimate/admission flow](17_build_dashboard_estimate_and_admission_flow.md) | 6 | Done (pending commit): shared current-input preview, start gating and actionable rejection |
+| 17 | [Dashboard estimate/admission flow](17_build_dashboard_estimate_and_admission_flow.md) | 6 | Done: shared current-input preview, start gating and actionable rejection |
+| 17b | [Declared-capacity dispatch](17b_pace_erp_dispatch_at_declared_capacity.md) | 3 revision | Queue-native rate limit at the declared ERP capacity; learned-rate machinery removed (inserted 2026-09-21, revised D06) |
+| 17c | [Estimator re-fit and About copy](17c_refit_estimator_to_declared_capacity.md) | 5/6 revision | D11 envelope without a pacing ramp, `adaptive_pacing` removed, `admin-failure-path` stock revisited, design choice stated in About |
 | 18 | [Runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md) | 6 | Minimal progress projection/UX and the grace-period notice |
 | 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Full 16-scenario coverage and isolated evidence |
 | 20 | [Calibration and explicit approval](20_calibrate_policy_and_obtain_approval.md) | 7 | Measured constants/report; mandatory user gate |
@@ -53,12 +55,12 @@ The sequence splits broad source phases by ownership but preserves their depende
 | D03 Automatic transient recovery; any other error fails the order | 01, 04, 05, 11 | 19, 21 |
 | D04 One durable owner from first dispatch | 02, 05, 09 | 19, 21 |
 | D05 Terminal ERP ledger, lookup and idempotent replay | 03, 04, 05 | 19, 21 |
-| D06 Paced AIMD, separate capacity/availability feedback | 04, 07, 09 | 19, 20, 21 |
-| D07 Persist safety state; relearn on restart | 02, 05, 09, 11, 14 | 19, 21 |
+| D06 (revised 2026-09-21) Dispatch at declared capacity via the queue's native rate limit; separate capacity/availability feedback | 04, 07 and 09 (original, superseded for pacing), 17b | 19, 20, 21 |
+| D07 Persist safety state; re-apply queue limits on restart (revised with D06) | 02, 05, 09, 11, 14, 17b | 19, 21 |
 | D08 Bounded observed-latency deadlines | 04, 08, 09, 14 | 19, 20, 21 |
 | D09 Bounded history and cumulative aggregates | 02, 06, 18 | 19, 20, 21 |
 | D10 Automatic reset 900 seconds after acceptance | 13, 18 | 19, 20, 21 |
-| D11 Conservative API-owned envelope | 01, 15, 16 | 19, 20, 21 |
+| D11 Conservative API-owned envelope | 01, 15, 16, 17c | 19, 20, 21 |
 | D12 Start-time recomputation is the only authority | 16, 17 | 19, 21 |
 | D13 Internal versioned engine policy; retire scenario knobs; minimal runtime view | 01, 07, 08, 10, 14, 18 | 19, 20, 21 |
 | D14 Bounded calibration and user approval | Criteria in 01; provisional values in 07, 08, 13, 15 | 19, 20 mandatory gate, 21 closure |
