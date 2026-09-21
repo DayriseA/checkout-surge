@@ -30,6 +30,8 @@ Do not start closure on an unapproved calibration candidate. Missing evidence or
 - [ ] Squash the incremental migrations added after `0005` by this backlog into one migration (user decision, 2026-09-20). Follow the [current runtime and evidence rules](index.md#common-guardrails-and-reporting): rebuild the disposable development database if it has applied the replaced migrations, rather than preserving its rows or manually reconciling its old journal. Update the migration-metadata entry count, validate the isolated migration from both an empty database and one populated with test fixtures at the retained migration boundary, and correct the single-baseline wording in `docs/local_development.md`.
 - [ ] Review contracts, current code, tests, UI wording and documentation together. Search remaining retry-exhaustion/drain-timeout claims and correct active documentation without presenting historical measurements as new results. Historical database rows are not required. Update execution status/evidence only for work actually completed.
 
+- [ ] Verify that authoritative `docs/` explicitly state accepted-run snapshot precedence: global ERP chaos controls affect only catalog/non-run fallback calls, never an active run. Describe task 19's real stop/start outage, stable-latency snapshot and in-process capacity test without implying a dynamic ERP profile or production injection mode.
+
 ## Final completion checklist
 
 - [ ] Incident fixture: 888 confirmations and notifications, correct reservation/sold-out totals, admissible and approved timing target met.

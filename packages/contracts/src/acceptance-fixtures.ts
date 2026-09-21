@@ -125,8 +125,9 @@ export function lowCapacityFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Finite outage window applied through the mock ERP's chaos controls, followed
- * by recovery to base; admin scope only. Dimensioning: service rate
+ * Finite outage window applied by stopping and restarting the mock-erp service;
+ * accepted run snapshots override global chaos controls. Admin scope only.
+ * Dimensioning: service rate
  * r = min(200, 5 / 1.0 s) = 5 confirmations/s, so the 200 accepted orders need
  * an ideal 40 s; the outage opens at 10 s with 150 orders still outstanding
  * and lifts at 40 s, exercising degradation and the recovery tail.
@@ -170,14 +171,13 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Latency increase applied through the mock ERP's chaos controls, followed by
- * recovery to base; admin scope only. Dimensioning: base service rate
- * r = min(10, 5 / 0.25 s) = 10/s while arrivals run at 20/s, so accepted work
- * is continuously outstanding; the raised 3000 ms latency exceeds the base
- * 250 ms per order and the adaptive policy's 2000 ms initial request deadline,
- * exercising the section 11 latency-degradation case while the segment
- * (15 s–45 s) overlaps the backlog and recovery drains the rest at the base
- * rate.
+ * Baseline for the latency acceptance case; admin scope only. Accepted run
+ * snapshots override global chaos controls, so changing /chaos cannot produce
+ * the historical 15 s–45 s latency segment during a run. Runtime verification
+ * derives a separate stable 3000 ms snapshot from this baseline to exceed the
+ * adaptive policy's 2000 ms initial deadline for the whole run. This exported
+ * fixture's configuration and exact 600-order accounting remain unchanged.
+ * No dynamic ERP profile or production injection mechanism is introduced.
  */
 export function latencyIncreaseFixture(): AdaptiveErpScenarioFixture {
   return {

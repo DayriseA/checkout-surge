@@ -23,6 +23,9 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
   const app = fastify({
     loggerInstance: options.logger,
     routerOptions: { maxParamLength: 200 },
+    // Finish already-connected calls through the normal protocol while closing;
+    // Fastify's generic shutdown 503 is not a valid ERP lookup response.
+    return503OnClosing: false,
   });
 
   installFastifyCorrelation(app);

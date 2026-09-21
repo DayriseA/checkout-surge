@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); task 17b is implemented and measured, with the high-rate envelope criterion left for the project owner's acknowledgement (bounded by concurrency / full job time, not by pacing; input to 17c); task 17c is implemented, with the estimate-ratio criterion explicitly partial and carried to task 20 by user decision; task 18 is implemented, validated and browser-verified on the nominal path, with the full API matrix and non-nominal browser states carried to task 19; tasks 19–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Task 17b records reference-runtime results and limitations; policy constants remain provisional until task 20.
+Status: tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); task 17b is implemented and measured, with the high-rate envelope criterion left for the project owner's acknowledgement (bounded by concurrency / full job time, not by pacing; input to 17c); task 17c is implemented, with the estimate-ratio criterion explicitly partial and carried to task 20 by user decision; task 18 is implemented, validated and browser-verified on the nominal path, with the full API matrix and non-nominal browser states carried to task 19; task 19 records runtime verification; acceptance is blocked by the recovery publication/lease failure assigned to task 19a; tasks 20–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Task 17b records reference-runtime results and limitations; policy constants remain provisional until task 20.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -40,7 +40,8 @@ Task 20 contains the source plan's mandatory user-approval gate. After calibrati
 | 17b | [Declared-capacity dispatch](17b_pace_erp_dispatch_at_declared_capacity.md) | 3 revision | Native rate/global concurrency implemented and measured; exact accounting and scenario durations pass, high-rate envelope remains partial; measurements ready for 17c (revised D06) |
 | 17c | [Estimator re-fit and About copy](17c_refit_estimator_to_declared_capacity.md) | 5/6 revision | Implemented: estimator v2, D11 declared-capacity envelope, 130 ms overhead, 1 s excess-attempt pause, stock restored to 200, About copy; ratios remain 1.74–5.38× under the required sequential envelope |
 | 18 | [Runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md) | 6 | Implemented and validated; nominal browser path verified, remaining matrix/non-nominal states carried to 19 |
-| 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Full acceptance matrix, including 17b/17c revisions, and isolated evidence |
+| 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Recap retained; stable-high-latency recovery failure delegated to 19a |
+| 19a | [Fix recovery publication lease starvation](19a_fix_recovery_publication_lease_starvation.md) | 7 follow-up | Pending; recover queued work without lease-driven generation churn; blocks acceptance closure |
 | 20 | [Calibration and explicit approval](20_calibrate_policy_and_obtain_approval.md) | 7 | Measured constants/report; mandatory user gate |
 | 21 | [Authoritative docs and delivery closure](21_update_authoritative_docs_and_close_delivery.md) | 7 | Approved claims, evidence and consistency review |
 
@@ -115,6 +116,8 @@ Task 01 refined this map with concrete current symbols and test names, verified 
 | Bounded diagnostics, history, notifications and SSE | DB dashboard/timeline readers; API ERP/history/projection fanout; web live/history views (coarse pending task 06/16 inspection) | `packages/db/test/integration/business-outcome-dashboard.integration.test.ts`, `apps/api/test/run-history-service.test.ts` | 06, 10, 18 |
 
 ## Common guardrails and reporting
+
+- Global mock ERP chaos controls apply only to catalog/non-run calls (fallback when no run snapshot is supplied). A run always follows its accepted ERP snapshot; task 19 uses real service outages, stable high-latency snapshots and an in-process `resolveConfig` test for capacity changes.
 
 Read [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality_checklists.md). Keep routes thin, application policy in services and infrastructure construction in composition roots. Do not broaden public capabilities, add replicas/services, introduce stock release/payment expiry, or silently change a locked decision.
 

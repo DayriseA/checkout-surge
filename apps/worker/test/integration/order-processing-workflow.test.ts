@@ -53,7 +53,14 @@ import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-f
 import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
+import {
+  ChaosConfirmationDecisionProvider,
+  ErpChaosConfigStore,
+} from "../../../mock-erp/src/application/chaos-control-service.js";
+import { ConfirmationService } from "../../../mock-erp/src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-limiter.js";
+import { PostgresConfirmationLedger } from "../../../mock-erp/src/persistence/postgres-confirmation-ledger.js";
+import { buildMockErpServer } from "../../../mock-erp/src/server.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
@@ -2071,6 +2078,161 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     }
   }, 45_000);
 
+  it("recovers a test-composed capacity decrease through resolveConfig with native Retry-After pacing", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    const snapshot = configSnapshotFixture();
+    snapshot.trafficConfig = {
+      ...snapshot.trafficConfig,
+      buyerCount: 20,
+    } as AcceptedRunConfigSnapshot["trafficConfig"];
+    snapshot.inventoryConfig.startingStock = 20;
+    await connection.db
+      .update(demoRuns)
+      .set({ configSnapshot: snapshot })
+      .where(eq(demoRuns.id, ids.run));
+    await connection.db
+      .update(saleOffers)
+      .set({ allocatedStock: 20 })
+      .where(eq(saleOffers.id, ids.saleOffer));
+    const jobs = [runScopedJob];
+    for (let index = 1; index < 20; index++) {
+      const additional = {
+        ...runScopedJob,
+        orderId: randomUUID(),
+        reservationId: randomUUID(),
+        publicOrderId: `ord_capacity_seam_${index}`,
+      };
+      await seedAdditionalQueuedOrder(connection, additional);
+      jobs.push(additional);
+    }
+    let effectiveCapacity = 10;
+    const starts: number[] = [];
+    const responses: Array<{ at: number; status: number }> = [];
+    const store = new ErpChaosConfigStore(snapshot.erpConfig, {
+      maxLatencyMs: 5000,
+      minMaxTps: 1,
+      maxErrorRate: 1,
+      allowForcedOutage: true,
+    });
+    const server = buildMockErpServer({
+      chaosConfigStore: store,
+      confirmationService: new ConfirmationService({
+        ledger: new PostgresConfirmationLedger(connection.sql),
+        decisionProvider: new ChaosConfirmationDecisionProvider({
+          configStore: store,
+          tpsLimiter: new SlidingWindowTpsLimiter(),
+          // Test composition only. Production always honors the accepted snapshot.
+          resolveConfig: (request) => {
+            expect(request.erpConfig).toEqual(snapshot.erpConfig);
+            return { ...snapshot.erpConfig, maxTps: effectiveCapacity };
+          },
+        }),
+      }),
+      controlServiceToken: "capacity-seam-test",
+      logger: createSilentLogger("mock-erp"),
+    });
+    server.addHook("onRequest", async () => {
+      starts.push(Date.now());
+    });
+    server.addHook("onResponse", async (_request, reply) => {
+      responses.push({ at: Date.now(), status: reply.statusCode });
+      if (responses.length === 3) effectiveCapacity = 2;
+    });
+    const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });
+    const client = new HttpErpOrderConfirmation({
+      baseUrl,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
+      retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60_000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+    });
+    const rate = erpDispatchRateLimit(10);
+    await queue.setGlobalRateLimit(rate.max, rate.duration);
+    await queue.setGlobalConcurrency(1);
+    let pausedAt = 0;
+    const pauseDelivery = vi.fn(async (durationMs: number) => {
+      pausedAt = Date.now();
+      await queue.rateLimit(durationMs);
+    });
+    consumer = buildConsumer(connection, client, { concurrency: 1, pauseDelivery });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      { url: redisUrl, maxRetriesPerRequest: null },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
+    const scanner = createOrderRecoveryScanner({
+      persistence: new PostgresOrderRecoveryPersistence(connection.db),
+      handler: { handle: vi.fn() },
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 100,
+      batchSize: 20,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+    });
+    try {
+      await queue.addBulk(
+        jobs.map((data) => ({
+          name: orderProcessJobName,
+          data,
+          opts: { jobId: data.orderId, attempts: 1 },
+        })),
+      );
+      scanner.start();
+      consumer.start();
+      await vi.waitFor(() => expect(pauseDelivery).toHaveBeenCalledOnce(), { timeout: 5000 });
+      const pauseMs = pauseDelivery.mock.calls[0]?.[0] ?? 0;
+      expect(pauseMs).toBeGreaterThan(0);
+      expect(pauseMs).toBeLessThanOrEqual(1000);
+      expect(await queue.getRateLimitTtl()).toBeGreaterThan(0);
+      await vi.waitFor(async () => {
+        const retained = await connection.db
+          .select()
+          .from(orderRecoveryJobs)
+          .where(eq(orderRecoveryJobs.waitingReason, "erp_capacity"));
+        expect(retained).toHaveLength(1);
+        expect(retained[0]?.nextAttemptAt?.getTime()).toBeGreaterThan(pausedAt);
+      });
+      expect(
+        (await connection.db.select().from(orders)).some((order) => order.status === "failed"),
+      ).toBe(false);
+      effectiveCapacity = 10;
+      await vi.waitFor(
+        async () => {
+          const settled = await connection.db.select().from(orders);
+          expect(settled).toHaveLength(20);
+          expect(settled.every((order) => order.status === "confirmed")).toBe(true);
+        },
+        { timeout: 10_000 },
+      );
+      await waitForQueueToSettle(queue);
+      const rejectedIndex = responses.findIndex((response) => response.status === 429);
+      expect(rejectedIndex).toBe(3);
+      // Native pause uses the remainder after response persistence, not a fresh
+      // full second. The next actual POST must still respect the response deadline.
+      expect(
+        (starts[rejectedIndex + 1] ?? 0) - (responses[rejectedIndex]?.at ?? 0),
+      ).toBeGreaterThanOrEqual(1000);
+      expect(responses.filter((response) => response.status === 429)).toHaveLength(1);
+      expect(starts).toHaveLength(21);
+      expect(pauseDelivery).toHaveBeenCalledOnce();
+      expect(await queue.getGlobalRateLimit()).toEqual(rate);
+      const resumed = starts.slice(rejectedIndex + 1);
+      const resumedRate =
+        ((resumed.length - 1) * 1000) / ((resumed.at(-1) ?? 0) - (resumed[0] ?? 0));
+      expect(resumedRate).toBeGreaterThanOrEqual(8);
+      expect(resumedRate).toBeLessThanOrEqual(10);
+      expect(
+        await connection.sql`SELECT count(*)::int AS count FROM erp_confirmation_ledger WHERE run_id=${ids.run}`,
+      ).toMatchObject([{ count: 20 }]);
+    } finally {
+      await scanner.close();
+      await consumer?.close();
+      consumer = null;
+      await publisher.close();
+      await server.close();
+    }
+  }, 20_000);
+
   async function runCapacityFixture(concurrency: number) {
     await consumer?.close();
     consumer = null;
@@ -2615,6 +2777,7 @@ async function seedAdditionalQueuedOrder(
   await connection.db.insert(reservations).values({
     id: additionalJob.reservationId,
     saleOfferId: additionalJob.saleOfferId,
+    ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
     correlationId: additionalJob.correlationId,
     quantity: additionalJob.quantity,
     reservationToken: `token-${additionalJob.orderId}`,
@@ -2626,6 +2789,7 @@ async function seedAdditionalQueuedOrder(
     publicOrderId: additionalJob.publicOrderId,
     saleOfferId: additionalJob.saleOfferId,
     reservationId: additionalJob.reservationId,
+    ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
     correlationId: additionalJob.correlationId,
     quantity: additionalJob.quantity,
     status: "queued",
@@ -2636,6 +2800,7 @@ async function seedAdditionalQueuedOrder(
       orderId: additionalJob.orderId,
       reservationId: additionalJob.reservationId,
       saleOfferId: additionalJob.saleOfferId,
+      ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
       correlationId: additionalJob.correlationId,
       eventName: "reservation.secured",
       payload: { quantity: additionalJob.quantity },
@@ -2646,6 +2811,7 @@ async function seedAdditionalQueuedOrder(
       orderId: additionalJob.orderId,
       reservationId: additionalJob.reservationId,
       saleOfferId: additionalJob.saleOfferId,
+      ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
       correlationId: additionalJob.correlationId,
       eventName: "order.queued",
       payload: { quantity: additionalJob.quantity },

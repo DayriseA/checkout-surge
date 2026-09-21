@@ -135,7 +135,7 @@ run("PostgreSQL confirmation ledger", () => {
     }
   });
 
-  it("recovers a discarded terminal response through lookup and replay", async () => {
+  it("recovers a discarded terminal response through lookup and replay after SIGKILL", async () => {
     const lostResponseRequest = {
       ...request,
       orderId: "83000000-0000-4000-8000-000000000001",
@@ -146,21 +146,23 @@ run("PostgreSQL confirmation ledger", () => {
     const runtime = await startMockErpProcess(runtimes);
 
     await discardResponse(`${runtime.baseUrl}${erpConfirmationPath}`, lostResponseRequest);
+    await runtime.close("SIGKILL");
+    const restarted = await startMockErpProcess(runtimes, { forcedOutage: true });
 
     const lookup = await fetch(
-      `${runtime.baseUrl}${erpConfirmationLookupPath.replace(
+      `${restarted.baseUrl}${erpConfirmationLookupPath.replace(
         ":idempotencyKey",
         encodeURIComponent(lostResponseRequest.idempotencyKey),
       )}`,
     );
     const lookupResult = erpLookupResponseSchema.parse(await lookup.json());
-    const replay = await fetch(`${runtime.baseUrl}${erpConfirmationPath}`, {
+    const replay = await fetch(`${restarted.baseUrl}${erpConfirmationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(lostResponseRequest),
     });
     const replayBody = await replay.text();
-    await runtime.close();
+    await restarted.close();
 
     expect(lookupResult.lookup.status).toBe("succeeded");
     expect(replay.headers.get(erpReplayedResponseHeaderName)).toBe("true");

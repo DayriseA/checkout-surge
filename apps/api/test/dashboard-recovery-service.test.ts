@@ -38,6 +38,7 @@ import {
   PostgresDashboardTransportObservationReader,
 } from "../src/services/dashboard-recovery-service.js";
 import { emptyBusinessOutcomeSummary as businessOutcomeFixture } from "../src/services/demo-run-projections.js";
+import { RunRuntimeProgressService } from "../src/services/run-runtime-progress-service.js";
 
 const now = new Date("2026-07-14T12:00:00.000Z");
 const runId = "11111111-1111-4111-8111-111111111111";
@@ -482,6 +483,103 @@ describe("DashboardProjectionService", () => {
     expect(recovery.recoveredAt).toBe(now.toISOString());
   });
 
+  it("projects limiting, outage, reconciliation, technical failure and late settlement without ending at traffic completion", async () => {
+    const currentRun = runSnapshot({
+      status: "draining",
+      trafficStatus: "succeeded",
+      trafficEndedAt: now.toISOString(),
+    });
+    let observedAt = now;
+    const harness = serviceHarness({ currentRun, saleOfferId }, undefined, {
+      now: () => observedAt,
+    });
+    let status: RunRuntimeProgress["downstreamErpStatus"] = "nominal";
+    let outstanding = 3;
+    let confirmed = 0;
+    let failed = 0;
+    const progress = new RunRuntimeProgressService({
+      progressReader: {
+        read: async () => ({
+          outstandingOrders: outstanding,
+          oldestOutstandingAgeSeconds: outstanding
+            ? (observedAt.getTime() - now.getTime()) / 1000 + 30
+            : 0,
+          confirmedOrdersInWindow: confirmed,
+          processingStartedAt: new Date(now.getTime() - 30_000),
+        }),
+      },
+      downstreamStatusReader: {
+        read: async () => {
+          if (status === null) throw new Error("status temporarily unreadable");
+          return status;
+        },
+      },
+      logger: { error: vi.fn() } as never,
+      now: () => observedAt,
+    });
+    harness.runtimeProgress.mockImplementation(() => progress.getProgress(runId));
+    harness.business.mockImplementation(async () => ({
+      ...businessOutcomeFixture(),
+      acceptedReservations: 3,
+      reservedUnits: 3,
+      processingOrders: outstanding,
+      confirmedOrders: confirmed,
+      notificationsRecorded: confirmed,
+      failedOrders: failed,
+      technicallyFailedOrders: failed,
+    }));
+
+    // Upstream DB/worker suites prove state production; this boundary proves their
+    // combined public projection, including recovery from a failed status read.
+    for (const next of ["nominal", "erp_limiting", "erp_unavailable", null, "nominal"] as const) {
+      status = next;
+      const projection = await harness.service.build({ correlationId: "corr-runtime-matrix" });
+      expect(projection.currentRun?.status).toBe("draining");
+      expect(projection.runtimeProgress).toMatchObject({
+        outstandingOrders: 3,
+        confirmationRatePerSecond: 0,
+        downstreamErpStatus: next,
+        downstreamErpStatusReadStatus: next === null ? "unavailable" : "available",
+      });
+      expect(projection.businessOutcome).toMatchObject({ confirmedOrders: 0, failedOrders: 0 });
+    }
+
+    // A reconciled confirmation and a terminal technical failure leave the third
+    // accepted order recoverable even beyond the former five-minute drain target.
+    observedAt = new Date(now.getTime() + 301_000);
+    confirmed = 1;
+    failed = 1;
+    outstanding = 1;
+    const draining = await harness.service.build({ correlationId: "corr-late-work" });
+    expect(draining.currentRun?.status).toBe("draining");
+    expect(draining.runtimeProgress).toMatchObject({
+      outstandingOrders: 1,
+      oldestOutstandingAgeSeconds: 331,
+    });
+    expect(draining.businessOutcome).toMatchObject({
+      confirmedOrders: 1,
+      technicallyFailedOrders: 1,
+      businessRejectedOrders: 0,
+    });
+
+    confirmed = 2;
+    outstanding = 0;
+    currentRun.status = "completed";
+    currentRun.finalizedAt = observedAt.toISOString();
+    const settled = await harness.service.build({ correlationId: "corr-late-settlement" });
+    expect(settled.currentRun?.status).toBe("completed");
+    expect(settled.runtimeProgress).toMatchObject({
+      outstandingOrders: 0,
+      oldestOutstandingAgeSeconds: 0,
+    });
+    expect(settled.businessOutcome).toMatchObject({
+      confirmedOrders: 2,
+      notificationsRecorded: 2,
+      failedOrders: 1,
+    });
+    expect(settled.revision).toBeGreaterThan(draining.revision);
+  });
+
   it("builds the same complete schema for an explicitly selected terminal live scope", async () => {
     const terminalRun = runSnapshot({
       status: "completed",
@@ -883,6 +981,7 @@ function serviceHarness(
     transportAttemptCountsError?: Error;
     trafficDeliveryStatus?: "complete" | "warning";
     runtimeProgressError?: Error;
+    now?: () => Date;
   } = {},
 ) {
   const inventory = vi.fn(async () => inventoryStatusFixture());
@@ -961,7 +1060,7 @@ function serviceHarness(
       close,
     }),
     logger: { warn: loggerWarn } as never,
-    now: () => now,
+    now: options.now ?? (() => now),
   });
   return {
     service,

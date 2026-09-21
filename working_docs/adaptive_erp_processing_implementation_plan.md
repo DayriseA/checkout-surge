@@ -186,7 +186,7 @@ For the incident, `min(10, 5 / 0.25) = 10` confirmations/second and `888 / 10 = 
 - Keep the existing service topology and queue technology. No new orchestration service or multi-worker deployment is required.
 - Preserve the public 10,000-buyer burst target; do not lower traffic to make resilience checks pass.
 - Keep the experiment finite and resource-bounded at admission. Indefinite recovery support is not unlimited intake.
-- Add no dynamic ERP profile feature. Tests that need degradation and recovery change the mock's conditions through its existing chaos controls. A general chaos platform and public forced-outage controls are out of scope.
+- Add no dynamic ERP profile feature. Accepted run snapshots override global chaos controls. Verify outage by stopping/starting mock-erp, latency beyond the initial deadline with a stable high-latency snapshot, and capacity decrease/recovery only through the existing `resolveConfig` seam in an in-process integration test with real PostgreSQL, Redis and BullMQ. Capacity changes are not reachable in Compose because the mock honors the accepted snapshot. A general chaos platform and public forced-outage controls are out of scope.
 - Do not turn this into real payments, customer messaging, stock-release business logic, or a production-readiness claim.
 - Preserve legitimate terminal failures. Only the transient classes of D03 are retried; do not make every error retry forever, and do not park orders for an operator.
 - Reproduce the incident from the versioned acceptance fixture; historical development rows may be discarded under the current runtime rules. Preserve recorded measurements as historical evidence.
@@ -372,7 +372,7 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 - [ ] Define the ERP-call identity and uncertain-result lifecycle separately from BullMQ delivery counters.
 - [ ] Define the estimator response, admission rejection, effective 600-second policy, and the 900-second automatic reset deadline.
 - [ ] Inventory uses of `maxAttempts`, `drainTimeoutSeconds`, `requestTimeoutMs`, recovery attempt limits, run status, and terminal publication guards; identify every consumer requiring coordinated changes.
-- [ ] Add a named fixture reproducing the incident configuration and small deterministic fixtures for low capacity, latency change, and finite outage driven through the mock's existing chaos controls.
+- [ ] Add a named fixture reproducing the incident configuration and small deterministic fixtures for low capacity, latency beyond the initial deadline using a stable snapshot, and finite outage using mock-erp stop/start. Accepted snapshots override global chaos controls; capacity decrease/recovery belongs to an in-process `resolveConfig` integration test with real PostgreSQL, Redis and BullMQ.
 - [ ] Document the policy defaults to calibrate and their measurable acceptance criteria before selecting constants.
 
 **Validation / exit:** contract tests cover valid public/API-reachable states and the new distinctions; existing seeded scenario contracts still parse. An implementation checklist maps every changed behavior to an owning service and test. No public capability expansion is accidentally introduced.
@@ -454,7 +454,7 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 **Depends on:** Phases 1–6. **Ownership:** boundary tests, runtime verification tooling, documentation.
 
 - [ ] Implement the acceptance matrix below with deterministic tests for policy/timing and isolated infrastructure tests for durable boundaries.
-- [ ] Add focused runtime verification for the original incident and for conditions changed during a run through the mock's existing chaos controls; retain exact generated-run cleanup and attributable failures.
+- [ ] Add focused runtime verification for the original incident, actual mock-erp stop/start outages, and stable latency exceeding the initial deadline; retain exact generated-run cleanup and attributable failures. Accepted snapshots override global chaos controls. Verify capacity decrease/recovery only in-process through the existing `resolveConfig` seam with real PostgreSQL, Redis and BullMQ, and mark it blocked in Compose because the mock honors the accepted snapshot.
 - [ ] Keep routine verification short. Separate explicitly invoked long-running resilience experiments from the ordinary smoke path; do not silently enlarge composition/characterization suites.
 - [ ] Measure completion, progress, pacing, 429 pressure, restart behavior, and estimate error. A run that eventually finishes by hammering the ERP does not pass.
 - [ ] Update README, architecture, lifecycle/entity documentation, scope/caveats, local configuration reference, project description, and delivery constraints to describe the implemented guarantee and its limits.

@@ -593,6 +593,37 @@ describe("chaos control service", () => {
 });
 
 describe("Mock ERP HTTP service", () => {
+  it("keeps a lookup response contract-valid while graceful shutdown begins", async () => {
+    const server = buildTestServer({ confirmationService: new ConfirmationService() });
+    let markClosing = () => {};
+    let releaseClose = () => {};
+    const closingStarted = new Promise<void>((resolve) => {
+      markClosing = resolve;
+    });
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    // Hold the real closing phase so the public HTTP race is deterministic.
+    server.addHook("preClose", async () => {
+      markClosing();
+      await closeGate;
+    });
+    const address = await server.listen({ host: "127.0.0.1", port: 0 });
+    const closing = server.close();
+    await closingStarted;
+    try {
+      const response = await fetch(`${address}/confirmations/unknown-during-shutdown`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      expect(response.status).toBe(200);
+      expect(erpLookupResponseSchema.parse(await response.json()).lookup.status).toBe("unknown");
+      expect(response.headers.get("connection")).toBe("close");
+    } finally {
+      releaseClose();
+      await closing;
+    }
+  });
+
   it("serves contract-valid liveness and readiness endpoints", async () => {
     const server = buildTestServer({
       confirmationService: new ConfirmationService(),
