@@ -29,6 +29,11 @@ import {
 import { InventoryStatusService } from "../services/inventory-status-service.js";
 import { QueueStatusService } from "../services/queue-status-service.js";
 import {
+  PostgresRunDownstreamErpStatusReader,
+  PostgresRunRuntimeProgressReader,
+  RunRuntimeProgressService,
+} from "../services/run-runtime-progress-service.js";
+import {
   createOperationResourceCleanup,
   failAfterResourceConstruction,
   type ResourceCleanup,
@@ -137,6 +142,11 @@ export function createDashboardRecoveryOperationFactory(
         transportObservationReader: new PostgresDashboardTransportObservationReader(
           operationDatabase.db,
         ),
+        runtimeProgressService: new RunRuntimeProgressService({
+          progressReader: new PostgresRunRuntimeProgressReader(operationDatabase.db),
+          downstreamStatusReader: new PostgresRunDownstreamErpStatusReader(operationDatabase.db),
+          logger: config.logger,
+        }),
         revisionAllocator: new RedisDashboardProjectionRevisionAllocator(operationRedis),
       },
       close: createOperationResourceCleanup({

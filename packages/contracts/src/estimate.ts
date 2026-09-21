@@ -13,6 +13,11 @@ import { type EnginePolicyIdentity, enginePolicyIdentitySchema } from "./process
  */
 export const estimatedDemoOccupancyCeilingSeconds = 600 as const;
 export const automaticRunResetDeadlineSeconds = 900 as const;
+/**
+ * From this many seconds after acceptance (D10), and only then, the dashboard
+ * shows the grace-period notice with the time left before the automatic reset.
+ */
+export const automaticRunResetGraceNoticeSeconds = estimatedDemoOccupancyCeilingSeconds;
 
 /** Single estimator identity; provisional constants are frozen only by task 20. */
 export const conservativeDurationEstimatorIdentity = {

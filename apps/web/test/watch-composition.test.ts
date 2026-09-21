@@ -190,6 +190,7 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     scope,
     revision: 1,
     recoveredAt: "2026-07-30T12:00:03.000Z",
+    runtimeProgress: null,
     currentRun,
     inventory: null,
     recentMetrics: [],

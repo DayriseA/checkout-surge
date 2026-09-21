@@ -1,5 +1,6 @@
 import type {
   DemoRunStatus,
+  DownstreamErpStatus,
   ErpAttemptStatus,
   ErpCircuitState,
   PublicRunFailureCategory,
@@ -251,6 +252,22 @@ export function circuitStateLabel(state: ErpCircuitState): string {
       return "Calls paused to protect the ERP";
     case "half_open":
       return "Testing recovery";
+  }
+}
+
+/**
+ * The one public label for the projected downstream status (D13). The status is the only fact the
+ * server exposes — never cooldown times or protection internals — so the label carries the whole
+ * explanation: a limited or unavailable downstream keeps processing and recovers on its own.
+ */
+export function downstreamErpStatusLabel(status: DownstreamErpStatus): string {
+  switch (status) {
+    case "nominal":
+      return "Processing normally";
+    case "erp_limiting":
+      return "Still processing — the ERP is limiting the rate";
+    case "erp_unavailable":
+      return "ERP unavailable — processing resumes automatically";
   }
 }
 

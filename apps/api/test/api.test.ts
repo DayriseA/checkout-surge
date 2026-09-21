@@ -60,6 +60,7 @@ import {
   type RunErpOutcomeSummary,
   type RunHistoryListResponse,
   type RunHistorySummary,
+  type RunRuntimeProgress,
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
@@ -347,6 +348,7 @@ async function buildTestServer(options: {
             runErpOutcomeService: createStaticRunErpOutcomeService(runErpOutcomeFixture()),
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
+            runtimeProgressService: { getProgress: async () => runtimeProgressFixture() },
             revisionAllocator: { allocate: async () => 1 },
           },
           close: async () => undefined,
@@ -459,6 +461,19 @@ function staticRecoveryContextReader(saleOfferId: string): DashboardRecoveryCont
       currentRun: demoRunSnapshotFixture(),
       saleOfferId,
     }),
+  };
+}
+
+function runtimeProgressFixture(): RunRuntimeProgress {
+  return {
+    runId: fixtureIds.run,
+    outstandingOrders: 2,
+    oldestOutstandingAgeSeconds: 8.5,
+    confirmationRatePerSecond: 0.4,
+    confirmationRateWindowSeconds: 10,
+    downstreamErpStatus: "nominal",
+    downstreamErpStatusReadStatus: "available",
+    observedAt: "2026-06-20T00:00:10.000Z",
   };
 }
 
@@ -1496,6 +1511,7 @@ describe("API gateway routes", () => {
       httpSummary: null,
       requestArrivalSummary: null,
       runSignalTimelineSummary: null,
+      runtimeProgress: null,
     };
 
     try {

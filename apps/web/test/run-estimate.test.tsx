@@ -493,6 +493,7 @@ function recovery(currentRun: DashboardProjection["currentRun"] = null): Dashboa
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
     recoveredAt: timestamp,
+    runtimeProgress: null,
   };
 }
 function publicSurface(): PublicDemoSurface {

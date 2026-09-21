@@ -12,6 +12,7 @@ import {
   type InventoryStatus,
   type QueueStatus,
   type RunErpOutcomeSummary,
+  type RunRuntimeProgress,
   runSignalBucketCount,
   type SharedErpProtectionStatus,
   type TransportAttemptCounts,
@@ -451,11 +452,13 @@ describe("DashboardProjectionService", () => {
     expect(harness.lag).not.toHaveBeenCalled();
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
+    expect(harness.runtimeProgress).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
     expect(harness.sharedErp).toHaveBeenCalledOnce();
     expect(harness.runErp).not.toHaveBeenCalled();
     expect(recovery.systemStatus).not.toBeNull();
     expect(recovery.erp).toBeNull();
+    expect(recovery.runtimeProgress).toBeNull();
   });
 
   it("passes one selected run scope and one captured time to every owned projection", async () => {
@@ -473,7 +476,9 @@ describe("DashboardProjectionService", () => {
     expect(harness.lag).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.metrics).toHaveBeenCalledWith(runId);
     expect(harness.runErp).toHaveBeenCalledWith(expectedScope);
+    expect(harness.runtimeProgress).toHaveBeenCalledWith(runId);
     expect(recovery.erp?.runId).toBe(runId);
+    expect(recovery.runtimeProgress?.runId).toBe(runId);
     expect(recovery.recoveredAt).toBe(now.toISOString());
   });
 
@@ -572,6 +577,23 @@ describe("DashboardProjectionService", () => {
     expect(harness.business).toHaveBeenCalledOnce();
     expect(harness.loggerWarn).toHaveBeenCalledWith(
       { err: projectionError, projection: "dashboard_consistency_lag" },
+      "Dashboard recovery projection unavailable.",
+    );
+  });
+
+  it("degrades a runtime-progress read failure to null without losing the scope", async () => {
+    const projectionError = new Error("runtime progress unavailable");
+    const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
+      runtimeProgressError: projectionError,
+    });
+
+    const recovery = await harness.service.build({ correlationId: "corr-progress-failure" });
+
+    expect(recovery.scope).toEqual({ runId, saleOfferId });
+    expect(recovery.runtimeProgress).toBeNull();
+    expect(harness.business).toHaveBeenCalledOnce();
+    expect(harness.loggerWarn).toHaveBeenCalledWith(
+      { err: projectionError, projection: "dashboard_runtime_progress" },
       "Dashboard recovery projection unavailable.",
     );
   });
@@ -715,6 +737,7 @@ describe("DashboardProjectionService", () => {
             runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
+            runtimeProgressService: { getProgress: async () => runtimeProgressFixture() },
             revisionAllocator: { allocate: async () => 1 },
           },
           close,
@@ -838,6 +861,7 @@ function projectionDependencies(options: {
     runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
     trafficMetricReader: { readRecent: async () => [] },
     transportObservationReader: { read: async () => null },
+    runtimeProgressService: { getProgress: async () => runtimeProgressFixture() },
     revisionAllocator: { allocate: async () => 1 },
   };
 }
@@ -858,6 +882,7 @@ function serviceHarness(
     transportAttemptCounts?: TransportAttemptCounts | null;
     transportAttemptCountsError?: Error;
     trafficDeliveryStatus?: "complete" | "warning";
+    runtimeProgressError?: Error;
   } = {},
 ) {
   const inventory = vi.fn(async () => inventoryStatusFixture());
@@ -865,6 +890,9 @@ function serviceHarness(
   const lag = options.lagError
     ? vi.fn(async () => Promise.reject(options.lagError))
     : vi.fn(async () => consistencyLagFixture());
+  const runtimeProgress = options.runtimeProgressError
+    ? vi.fn(async () => Promise.reject(options.runtimeProgressError))
+    : vi.fn(async () => runtimeProgressFixture());
   const metrics = vi.fn(async () => []);
   const transportAttemptCounts = options.transportAttemptCountsError
     ? vi.fn(async () => Promise.reject(options.transportAttemptCountsError))
@@ -927,6 +955,7 @@ function serviceHarness(
         runErpOutcomeService: { getOutcomes: runErp },
         trafficMetricReader: { readRecent: metrics },
         transportObservationReader: { read: transportAttemptCounts },
+        runtimeProgressService: { getProgress: runtimeProgress },
         revisionAllocator: { allocate: allocateRevision },
       },
       close,
@@ -944,6 +973,7 @@ function serviceHarness(
     queue,
     sharedErp,
     runErp,
+    runtimeProgress,
     loggerWarn,
     allocateRevision,
     close,
@@ -1099,6 +1129,19 @@ function runErpOutcomeFixture(scopedRunId = runId): RunErpOutcomeSummary {
     recentAttemptCount: 0,
     recentFailureCount: 0,
     recentTimeoutCount: 0,
+    observedAt: now.toISOString(),
+  };
+}
+
+function runtimeProgressFixture(): RunRuntimeProgress {
+  return {
+    runId,
+    outstandingOrders: 2,
+    oldestOutstandingAgeSeconds: 8.5,
+    confirmationRatePerSecond: 0.4,
+    confirmationRateWindowSeconds: 10,
+    downstreamErpStatus: "nominal",
+    downstreamErpStatusReadStatus: "available",
     observedAt: now.toISOString(),
   };
 }

@@ -4,6 +4,8 @@ Status: proposed implementation plan; no runtime changes are implemented by this
 
 Date: 2026-09-19.
 
+Execution update (2026-09-21): follow the backlog's [current runtime and evidence rules](backlog/adaptive_erp/index.md#common-guardrails-and-reporting). Development data is disposable; the reference runtime may be wiped and reused for isolated verification. Neither the original machine nor historical run rows are prerequisites. Preserve fixture definitions and exported verification results, and document the current measurement environment. Numeric targets and the calibration approval gate remain unchanged. The backlog index records delivered task status and superseding execution decisions.
+
 ## Part I — Context, problem, and intended design
 
 ### 1. Why this work is necessary
@@ -187,7 +189,7 @@ For the incident, `min(10, 5 / 0.25) = 10` confirmations/second and `888 / 10 = 
 - Add no dynamic ERP profile feature. Tests that need degradation and recovery change the mock's conditions through its existing chaos controls. A general chaos platform and public forced-outage controls are out of scope.
 - Do not turn this into real payments, customer messaging, stock-release business logic, or a production-readiness claim.
 - Preserve legitimate terminal failures. Only the transient classes of D03 are retried; do not make every error retry forever, and do not park orders for an operator.
-- Do not change or delete the incident's historical records as part of implementing the fix.
+- Reproduce the incident from the versioned acceptance fixture; historical development rows may be discarded under the current runtime rules. Preserve recorded measurements as historical evidence.
 
 ## Part II — Locked design decisions
 
@@ -331,7 +333,7 @@ The choices below resolve the questions Part I left open. They are binding for P
 - Removed from presets, accepted snapshots, forms, readers, and the load-orchestrator journal: `retryPolicy` (`maxAttempts`, `initialBackoffMs`), `drainTimeoutSeconds`, `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and `erpConfig.requestTimeoutMs`.
 - Kept: traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency, capacity, error rate, forced outage (admin), `orderProcessConcurrency`, and `pendingPersistenceRetryAfterSeconds`, which belongs to reservation persistence and is unrelated to this work.
 - Engine constants live in a versioned worker policy; its version is persisted with each run. None of them is editable from the dashboard.
-- Persisted snapshots of earlier runs may still contain retired fields. History readers accept and ignore them; the incident's records are neither migrated nor rewritten.
+- Persisted snapshots of earlier runs may still contain retired fields. History readers accept and ignore them; prove compatibility with old-format test fixtures rather than requiring historical development rows.
 - Runtime view: outstanding orders, oldest outstanding age, observed confirmation rate, and one downstream status (`nominal`, `erp_limiting`, or `erp_unavailable`). Controller internals (in-flight ceiling, cooldown, probes) and per-reason waiting counts are not projected. The only run timing indication is the grace-period notice of D10. The 300-second drain timeout and `business_drain_timeout` disappear entirely.
 
 #### D14 — Bounded calibration against pre-approved criteria
@@ -489,9 +491,9 @@ Format only touched supported files with `pnpm exec biome check --write <files>`
 
 For implementation phases, run relevant focused tests, then `pnpm type-check` and the affected unit/API/integration lanes. Infrastructure-backed verification uses isolated test resources: `pnpm test:infra:up`, then the relevant test command or `pnpm test`. Follow the documented Linux/Dev Container execution path for application services and tests; Windows remains the Docker host.
 
-Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly requested. Runtime smoke/reset can mutate a current run, so do not use the user's active reference runtime as an unannounced test fixture. Prefer an isolated verification runtime; preserve incident evidence before any intentional runtime rebuild.
+Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly requested. Identify the selected runtime/resources and avoid interference with concurrent work. The disposable development reference runtime may be wiped and used for isolated verification. Preserve unfinished obligations during recovery assertions, then export diagnostics and the actual verification result before reset/teardown; cleanup cannot convert failure into success.
 
-Schema work must follow the repository's pre-release baseline policy in [local development](../docs/local_development.md): regenerate and review the baseline artifacts together, preserve required custom SQL, and validate the isolated test migration. Do not add a compatibility migration or silently wipe the user's reference data.
+Schema work follows the superseding incremental-migration decision in the [backlog guardrails](backlog/adaptive_erp/index.md#common-guardrails-and-reporting), with the requested final squash owned by task 21. Preserve required custom SQL and validate isolated migrations against empty and fixture-populated databases. Development database contents need not be preserved.
 
 ### 13. Completion checklist
 

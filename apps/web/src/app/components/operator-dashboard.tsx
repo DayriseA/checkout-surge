@@ -46,6 +46,7 @@ import {
 } from "./dashboard-panels";
 import { ErrorNotice } from "./error-notice";
 import { deriveGoldSignalCharts, type GoldSignalInput, GoldSignals } from "./gold-signals";
+import { GracePeriodNotice } from "./grace-period-notice";
 import { LiveTechnicalBoard } from "./live-technical-board";
 import { useAcceptedRunResult } from "./realtime/use-accepted-run-result";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
@@ -169,6 +170,7 @@ export function OperatorDashboard({
             : null
         }
         composition={composition}
+        now={() => now.getTime()}
         onAcceptedRetry={() => void accepted.retryNow()}
         onRetry={() => void retryNow()}
         onRevealTechnicalDetails={revealTechnicalDetails}
@@ -227,6 +229,7 @@ const phaseSteps: Record<RunWatchComposition["phase"], number> = {
 export function WatchNarrative({
   accepted = null,
   composition,
+  now,
   onAcceptedRetry,
   onRetry,
   onRevealTechnicalDetails = () => undefined,
@@ -235,6 +238,7 @@ export function WatchNarrative({
 }: {
   accepted?: TrackedAcceptedResult | null;
   composition: WatchComposition;
+  now?: (() => number) | undefined;
   onAcceptedRetry?: () => void;
   onRetry?: () => void;
   onRevealTechnicalDetails?: (targetId: string) => void;
@@ -275,6 +279,7 @@ export function WatchNarrative({
         <RunCard
           accepted={accepted}
           composition={composition}
+          now={now}
           onAcceptedRetry={onAcceptedRetry}
           onRevealTechnicalDetails={onRevealTechnicalDetails}
           savedEvidence={savedEvidence}
@@ -291,6 +296,7 @@ export function WatchNarrative({
 function RunCard({
   accepted,
   composition,
+  now,
   onAcceptedRetry,
   onRevealTechnicalDetails,
   savedEvidence,
@@ -298,6 +304,7 @@ function RunCard({
 }: {
   accepted: TrackedAcceptedResult | null;
   composition: RunWatchComposition;
+  now?: (() => number) | undefined;
   onAcceptedRetry?: (() => void) | undefined;
   onRevealTechnicalDetails: (targetId: string) => void;
   savedEvidence: AcceptedRunReportEvidence | null;
@@ -365,7 +372,8 @@ function RunCard({
           </p>
         ) : null}
       </div>
-      <CountsRow {...counts} />
+      <GracePeriodNotice now={now} run={composition.run} />
+      <CountsRow {...counts} liveOutcome={terminal ? undefined : outcome} />
       {erpWaiting ? (
         <p className="m-0 text-sm font-semibold leading-6 text-muted-strong" role="status">
           {erpWaiting.sentence}
@@ -514,6 +522,7 @@ function CountsRow({
   awaiting,
   confirmed,
   failed,
+  liveOutcome,
   progressDenominator,
   remainingStock,
   reserved,
@@ -521,6 +530,7 @@ function CountsRow({
   awaiting: number | null;
   confirmed: number | null;
   failed: number | null;
+  liveOutcome: DashboardProjection["businessOutcome"] | undefined;
   progressDenominator: number | null;
   remainingStock: number | null;
   reserved: number | null;
@@ -534,7 +544,9 @@ function CountsRow({
     confirmed !== null &&
     confirmed <= progressDenominator;
   return (
-    <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2">
+    <div
+      className={`grid ${liveOutcome === undefined ? "grid-cols-4" : "grid-cols-5"} gap-3 max-[700px]:grid-cols-2`}
+    >
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(remainingStock)}</p>
         <p className={tileLabelClassName}>Units left</p>
@@ -558,10 +570,27 @@ function CountsRow({
         <p className={tileValueClassName}>{format(awaiting)}</p>
         <p className={tileLabelClassName}>Awaiting confirmation</p>
       </div>
-      <div className={tileClassName}>
-        <p className={tileValueClassName}>{format(failed)}</p>
-        <p className={tileLabelClassName}>Orders failed</p>
-      </div>
+      {liveOutcome === undefined ? (
+        <div className={tileClassName}>
+          <p className={tileValueClassName}>{format(failed)}</p>
+          <p className={tileLabelClassName}>Orders failed</p>
+        </div>
+      ) : (
+        <>
+          <div className={tileClassName}>
+            <p className={tileValueClassName}>
+              {format(liveOutcome?.businessRejectedOrders ?? null)}
+            </p>
+            <p className={tileLabelClassName}>Business-rejected orders</p>
+          </div>
+          <div className={tileClassName}>
+            <p className={tileValueClassName}>
+              {format(liveOutcome?.technicallyFailedOrders ?? null)}
+            </p>
+            <p className={tileLabelClassName}>Technically failed orders</p>
+          </div>
+        </>
+      )}
     </div>
   );
 }

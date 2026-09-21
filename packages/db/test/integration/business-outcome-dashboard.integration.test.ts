@@ -1,9 +1,12 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   readBusinessOutcomeSummary,
   readConsistencyLagSummary,
+  readDownstreamErpStatus,
+  readRunRuntimeProgress,
 } from "../../src/business-outcome-dashboard.js";
 import { createDatabaseConnection } from "../../src/client.js";
 import {
@@ -12,6 +15,7 @@ import {
   demoRunSoldOutCounts,
   demoRuns,
   erpAttempts,
+  erpScopeResilienceState,
   orders,
   products,
   reservationPendingPersistence,
@@ -260,6 +264,107 @@ describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
       oldestPendingAgeSeconds: 6,
       measuredAt: now.toISOString(),
     });
+
+    // Runtime progress reads the same durable order records: three outstanding orders, the
+    // oldest secured 6 s ago, and one confirmation inside the last 10 s divided by the 6 s of
+    // elapsed processing time rather than the full window.
+    await expect(
+      readRunRuntimeProgress(connection.db, { runId }, new Date(now.getTime() - 10_000), now),
+    ).resolves.toEqual({
+      outstandingOrders: 3,
+      oldestOutstandingAgeSeconds: 6,
+      confirmedOrdersInWindow: 1,
+      processingStartedAt: new Date(now.getTime() - 6_000),
+    });
+
+    // A confirmation committed after the measurement instant belongs to the next window.
+    await connection.db
+      .update(orders)
+      .set({ confirmedAt: new Date(now.getTime() + 1) })
+      .where(eq(orders.publicOrderId, "ord-confirmed"));
+    await expect(
+      readRunRuntimeProgress(connection.db, { runId }, new Date(now.getTime() - 10_000), now),
+    ).resolves.toMatchObject({ confirmedOrdersInWindow: 0 });
+  });
+
+  it("derives one downstream status from the run's durable protection state only", async () => {
+    const now = new Date("2026-06-21T00:00:00.000Z");
+    const runId = "44444444-4444-4444-8444-444444444444";
+
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("nominal");
+
+    const cooldownFuture = new Date(now.getTime() + 30_000);
+    await connection.db.insert(erpScopeResilienceState).values({
+      scope: `run:${runId}`,
+      cooldownExpiresAt: cooldownFuture,
+    });
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("erp_limiting");
+
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        availabilityCircuitOpen: true,
+        circuitOpenExpiresAt: new Date(now.getTime() + 60_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe(
+      "erp_unavailable",
+    );
+
+    // Circuit expiry permits a probe; its future deadline still protects an ongoing outage.
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        circuitOpenExpiresAt: new Date(now.getTime() - 1_000),
+        nextProbeAt: new Date(now.getTime() + 10_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe(
+      "erp_unavailable",
+    );
+
+    // The retry deadline independently keeps the circuit open too.
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        nextProbeAt: new Date(now.getTime() - 1_000),
+        availabilityRetryAt: new Date(now.getTime() + 10_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe(
+      "erp_unavailable",
+    );
+
+    // An open flag with every availability deadline expired falls through to capacity state.
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        availabilityRetryAt: new Date(now.getTime() - 1_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("erp_limiting");
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        cooldownExpiresAt: new Date(now.getTime() - 1_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("nominal");
+
+    // Successful recovery closes the circuit even if a previous probe deadline is still future.
+    await connection.db
+      .update(erpScopeResilienceState)
+      .set({
+        availabilityCircuitOpen: false,
+        nextProbeAt: new Date(now.getTime() + 10_000),
+      })
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("nominal");
+
+    await connection.db
+      .delete(erpScopeResilienceState)
+      .where(eq(erpScopeResilienceState.scope, `run:${runId}`));
+    await expect(readDownstreamErpStatus(connection.db, runId, now)).resolves.toBe("nominal");
   });
 });
 

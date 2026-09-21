@@ -1,12 +1,67 @@
 import { describe, expect, it } from "vitest";
 import {
   deriveOversoldUnits,
+  type RunRuntimeProgress,
   type RunSignalTimelineSummary,
+  runRuntimeProgressSchema,
   runSignalBucketCount,
   runSignalTimelineSummarySchema,
 } from "../src/index.js";
 
 const anchoredAt = "2026-06-20T00:00:00.000Z";
+
+describe("run runtime progress contract", () => {
+  it("accepts nominal progress with a genuine zero rate inside a positive window", () => {
+    const progress = runtimeProgressFixture({ confirmationRatePerSecond: 0 });
+    expect(runRuntimeProgressSchema.parse(progress)).toEqual(progress);
+  });
+
+  it("rejects a status that disagrees with its read state", () => {
+    expect(
+      runRuntimeProgressSchema.safeParse(runtimeProgressFixture({ downstreamErpStatus: null }))
+        .success,
+    ).toBe(false);
+    expect(
+      runRuntimeProgressSchema.safeParse(
+        runtimeProgressFixture({
+          downstreamErpStatus: "erp_limiting",
+          downstreamErpStatusReadStatus: "unavailable",
+        }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("accepts an explicitly unavailable status read and an unavailable rate", () => {
+    const progress = runtimeProgressFixture({
+      confirmationRatePerSecond: null,
+      downstreamErpStatus: null,
+      downstreamErpStatusReadStatus: "unavailable",
+    });
+    expect(runRuntimeProgressSchema.parse(progress)).toEqual(progress);
+  });
+
+  it("rejects a measurable rate over a zero-length window", () => {
+    expect(
+      runRuntimeProgressSchema.safeParse(
+        runtimeProgressFixture({ confirmationRateWindowSeconds: 0 }),
+      ).success,
+    ).toBe(false);
+  });
+});
+
+function runtimeProgressFixture(overrides: Partial<RunRuntimeProgress> = {}): RunRuntimeProgress {
+  return {
+    runId: "11111111-1111-4111-8111-111111111111",
+    outstandingOrders: 3,
+    oldestOutstandingAgeSeconds: 12.5,
+    confirmationRatePerSecond: 0.5,
+    confirmationRateWindowSeconds: 10,
+    downstreamErpStatus: "nominal",
+    downstreamErpStatusReadStatus: "available",
+    observedAt: "2026-06-20T00:00:30.000Z",
+    ...overrides,
+  };
+}
 
 describe("run signal timeline contract", () => {
   it("accepts completed terminal evidence", () => {

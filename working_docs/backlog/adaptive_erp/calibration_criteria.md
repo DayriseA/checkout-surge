@@ -4,6 +4,8 @@ Recorded by task 01 before any constant is chosen, as required by decision D14 a
 
 ## Pre-approved measurable criteria (D14)
 
+The local reference runtime is the current verification environment documented in the calibration report, not a requirement to recover the original machine or its database. Follow the [runtime and evidence rules](index.md#common-guardrails-and-reporting): development data may be wiped, fixture inputs and numeric targets remain unchanged, and new measurements must identify their actual host/configuration. Earlier measurements remain historical observations.
+
 | Domain | Target | Measurement basis |
 | --- | --- | --- |
 | Accounting | Acceptance-matrix totals exact; zero tolerance for duplicates or saturation-induced abandonment. | Durable business totals per scenario in the acceptance matrix (plan section 11). |

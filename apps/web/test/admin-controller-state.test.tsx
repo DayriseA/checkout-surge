@@ -1190,6 +1190,26 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it("explains the destructive reset before the action and cancels without side effects", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(<AdminMaintenancePanel onResetComplete={vi.fn().mockResolvedValue(undefined)} />);
+
+    await user.click(screen.getByRole("button", { name: "Reset demo" }));
+
+    const dialog = screen.getByRole("alertdialog");
+    // The pre-action explanation states every consequence before anything runs.
+    expect(dialog.textContent).toContain("stops all demo work immediately");
+    expect(dialog.textContent).toContain("discards the current run's data");
+    expect(dialog.textContent).toContain("One basic history line marked as cancelled");
+    expect(dialog.textContent).toContain("frees the demo for the next run");
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(dialog).not.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("clears a previous maintenance success notice when the next reset fails", async () => {
     const fetchMock = vi
       .fn()
@@ -3361,6 +3381,7 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
     recoveredAt: "2026-06-20T00:00:10.000Z",
+    runtimeProgress: null,
   };
 }
 

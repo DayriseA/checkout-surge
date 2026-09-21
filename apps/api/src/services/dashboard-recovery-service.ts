@@ -36,6 +36,7 @@ import type { RunErpOutcomeService, SharedErpProtectionService } from "./erp-sta
 import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
+import type { RunRuntimeProgressService } from "./run-runtime-progress-service.js";
 import {
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
@@ -336,6 +337,7 @@ export class DashboardProjectionService {
       consistencyLagResult,
       trafficMetricResult,
       transportObservationResult,
+      runtimeProgressResult,
     ] = await Promise.all([
       saleScope
         ? readSafely("dashboard_inventory", signal, () =>
@@ -371,6 +373,11 @@ export class DashboardProjectionService {
             dependencies.transportObservationReader.read(scope.runId),
           )
         : Promise.resolve({ ok: true as const, value: null }),
+      scope
+        ? readSafely("dashboard_runtime_progress", signal, () =>
+            dependencies.runtimeProgressService.getProgress(scope.runId),
+          )
+        : Promise.resolve({ ok: true as const, value: null }),
     ]);
     const transportObservation = transportObservationResult.ok
       ? transportObservationResult.value
@@ -395,6 +402,7 @@ export class DashboardProjectionService {
       consistencyLagResult,
       trafficMetricResult,
       transportObservationResult,
+      runtimeProgressResult,
       requestArrivalResult,
     ]) {
       if (!result.ok) {
@@ -438,6 +446,7 @@ export class DashboardProjectionService {
       runSignalTimelineSummary: transportObservationResult.ok
         ? (transportObservationResult.value?.runSignalTimelineSummary ?? null)
         : null,
+      runtimeProgress: runtimeProgressResult.ok ? runtimeProgressResult.value : null,
       recoveredAt: now.toISOString(),
     });
   }
@@ -453,6 +462,7 @@ export interface DashboardRecoveryDependencies {
   runErpOutcomeService: Pick<RunErpOutcomeService, "getOutcomes">;
   trafficMetricReader: DashboardTrafficMetricReader;
   transportObservationReader: DashboardTransportObservationReader;
+  runtimeProgressService: Pick<RunRuntimeProgressService, "getProgress">;
   revisionAllocator: DashboardProjectionRevisionAllocator;
 }
 

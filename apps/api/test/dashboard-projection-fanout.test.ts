@@ -468,6 +468,7 @@ function projection(revision: number): DashboardProjection {
     consistencyLag: null,
     transportAttemptCounts: null,
     httpSummary: null,
+    runtimeProgress: null,
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
   };

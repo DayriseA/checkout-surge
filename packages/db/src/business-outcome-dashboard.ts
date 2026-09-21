@@ -3,6 +3,7 @@ import {
   businessOutcomeSummarySchema,
   type ConsistencyLagSummary,
   consistencyLagSummarySchema,
+  type DownstreamErpStatus,
   type ErpCumulativeOutcomeCounts,
 } from "@checkout-surge/contracts";
 import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
@@ -10,6 +11,7 @@ import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunSoldOutCounts,
   erpAttempts,
+  erpScopeResilienceState,
   orderRecoveryJobs,
   orders,
   reservationPendingPersistence,
@@ -182,6 +184,106 @@ export async function readConsistencyLagSummary(
       : null,
     measuredAt: measuredAt.toISOString(),
   });
+}
+
+/**
+ * Runtime-progress read model for one run (D13), read from the same durable
+ * order records as the business-outcome and lag projections. `processingStartedAt`
+ * is the earliest moment one of the run's orders entered processing; it bounds
+ * the confirmation-rate window so a run that started processing moments ago is
+ * not divided by the full stated window.
+ */
+export interface RunRuntimeProgressReadModel {
+  outstandingOrders: number;
+  oldestOutstandingAgeSeconds: number | null;
+  confirmedOrdersInWindow: number;
+  processingStartedAt: Date | null;
+}
+
+export async function readRunRuntimeProgress(
+  db: CheckoutSurgeDatabase,
+  scope: { runId: string },
+  windowStartedAt: Date,
+  measuredAt: Date = new Date(),
+): Promise<RunRuntimeProgressReadModel> {
+  const orderFilter = eq(orders.runId, scope.runId);
+
+  const [outstandingRow, windowRow] = await Promise.all([
+    db
+      .select({
+        outstandingOrders: sql<number>`count(*)::int`,
+        oldestOutstandingSecuredAt: sql<Date | null>`min(${reservations.securedAt})`,
+      })
+      .from(orders)
+      .innerJoin(reservations, eq(reservations.id, orders.reservationId))
+      .where(and(orderFilter, inArray(orders.status, ["queued", "processing"]))),
+    db
+      .select({
+        confirmedOrdersInWindow: sql<number>`(count(*) filter (
+          where ${orders.status} = 'confirmed' and ${orders.confirmedAt} >= ${windowStartedAt.toISOString()}::timestamptz
+            and ${orders.confirmedAt} <= ${measuredAt.toISOString()}::timestamptz
+        ))::int`,
+        processingStartedAt: sql<Date | null>`min(${orders.processingAt})`,
+      })
+      .from(orders)
+      .where(orderFilter),
+  ]);
+
+  const oldestOutstandingSecuredAt = toDateOrNull(
+    outstandingRow[0]?.oldestOutstandingSecuredAt ?? null,
+  );
+
+  return {
+    outstandingOrders: outstandingRow[0]?.outstandingOrders ?? 0,
+    oldestOutstandingAgeSeconds: oldestOutstandingSecuredAt
+      ? elapsedSeconds(oldestOutstandingSecuredAt, measuredAt)
+      : null,
+    confirmedOrdersInWindow: windowRow[0]?.confirmedOrdersInWindow ?? 0,
+    processingStartedAt: toDateOrNull(windowRow[0]?.processingStartedAt ?? null),
+  };
+}
+
+/**
+ * One downstream status for the run scope, derived read-only from the worker's
+ * durable safety authority (`erp_scope_resilience_state`, scope `run:<id>`):
+ * `erp_unavailable` while the availability circuit is open with an unexpired
+ * availability retry, circuit expiry, or next-probe deadline (the worker restore
+ * predicate), else `erp_limiting` while a capacity cooldown is still
+ * in the future, else `nominal`. Exposes the status only — no cooldown times,
+ * circuit detail, or probe schedules.
+ */
+export async function readDownstreamErpStatus(
+  db: CheckoutSurgeDatabase,
+  runId: string,
+  now: Date = new Date(),
+): Promise<DownstreamErpStatus> {
+  const [row] = await db
+    .select({
+      cooldownExpiresAt: erpScopeResilienceState.cooldownExpiresAt,
+      availabilityCircuitOpen: erpScopeResilienceState.availabilityCircuitOpen,
+      circuitOpenExpiresAt: erpScopeResilienceState.circuitOpenExpiresAt,
+      availabilityRetryAt: erpScopeResilienceState.availabilityRetryAt,
+      nextProbeAt: erpScopeResilienceState.nextProbeAt,
+    })
+    .from(erpScopeResilienceState)
+    .where(eq(erpScopeResilienceState.scope, `run:${runId}`))
+    .limit(1);
+
+  if (!row) return "nominal";
+  if (
+    row.availabilityCircuitOpen &&
+    Math.max(
+      row.availabilityRetryAt?.getTime() ?? 0,
+      row.circuitOpenExpiresAt?.getTime() ?? 0,
+      row.nextProbeAt?.getTime() ?? 0,
+    ) > now.getTime()
+  ) {
+    return "erp_unavailable";
+  }
+  if (row.cooldownExpiresAt !== null && row.cooldownExpiresAt > now) {
+    return "erp_limiting";
+  }
+  return "nominal";
 }
 
 async function countRows(

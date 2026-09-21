@@ -3,6 +3,7 @@ import {
   isoTimestampSchema,
   nonnegativeIntegerSchema,
   nonnegativeNumberSchema,
+  uuidSchema,
 } from "./primitives.js";
 
 export const runSignalBucketCount = 120 as const;
@@ -10,6 +11,61 @@ export const queueBacklogDefinition = "accepted_awaiting_first_processing_start"
 export const queueBacklogDrainDurationBoundary =
   "first_order_queued_to_final_backlog_zero" as const;
 export const confirmationLagBoundary = "reservation_secured_to_order_confirmed" as const;
+
+/**
+ * One downstream status for the run scope (D13), derived read-only from the
+ * worker's durable protection state. Cooldown times, circuit detail, and probe
+ * schedules are never projected — the status enum only.
+ */
+export const downstreamErpStatusValues = ["nominal", "erp_limiting", "erp_unavailable"] as const;
+export const downstreamErpStatusSchema = z.enum(downstreamErpStatusValues);
+export type DownstreamErpStatus = z.infer<typeof downstreamErpStatusSchema>;
+
+/**
+ * Runtime progress for one run (D13). Outstanding work and the confirmation
+ * rate come from durable order records; a genuine zero rate inside a positive
+ * window stays `0`, while telemetry that cannot be read is reported explicitly
+ * as `null` (never as zero). The window is the effective measurement window:
+ * the stated window bounded by the elapsed processing time, exposed so the UI
+ * can state it.
+ */
+export const runRuntimeProgressSchema = z
+  .object({
+    runId: uuidSchema,
+    /** Orders accepted and not yet confirmed or terminally failed. */
+    outstandingOrders: nonnegativeIntegerSchema,
+    oldestOutstandingAgeSeconds: nonnegativeNumberSchema.nullable(),
+    confirmationRatePerSecond: nonnegativeNumberSchema.nullable(),
+    confirmationRateWindowSeconds: nonnegativeNumberSchema,
+    downstreamErpStatus: downstreamErpStatusSchema.nullable(),
+    downstreamErpStatusReadStatus: z.enum(["available", "unavailable"]),
+    observedAt: isoTimestampSchema,
+  })
+  .strict()
+  .superRefine((progress, context) => {
+    if (
+      (progress.downstreamErpStatus === null) !==
+      (progress.downstreamErpStatusReadStatus === "unavailable")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["downstreamErpStatus"],
+        message:
+          "An unavailable downstream status read must carry no status; an available read must carry one.",
+      });
+    }
+    if (
+      progress.confirmationRateWindowSeconds === 0 &&
+      progress.confirmationRatePerSecond !== null
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["confirmationRatePerSecond"],
+        message: "A zero-length window cannot carry a measurable confirmation rate.",
+      });
+    }
+  });
+export type RunRuntimeProgress = z.infer<typeof runRuntimeProgressSchema>;
 
 const elapsedSampleShape = {
   elapsedSeconds: nonnegativeNumberSchema,

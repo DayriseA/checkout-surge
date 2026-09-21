@@ -101,7 +101,8 @@ describe("watch narrative", () => {
       "Units left",
       "Orders confirmed",
       "Awaiting confirmation",
-      "Orders failed",
+      "Business-rejected orders",
+      "Technically failed orders",
     ]) {
       expect(output).toContain(label);
     }
@@ -148,6 +149,25 @@ describe("watch narrative", () => {
     const draining = markup(available(drainingProjection));
     expect(draining).toContain('aria-label="120 of 250 orders confirmed"');
     expect(draining).toContain("Confirming remaining orders");
+  });
+
+  it("keeps all three durable outcome totals distinct while draining", () => {
+    const current = projection(run("draining"));
+    current.businessOutcome = {
+      ...partialOutcome(),
+      failedOrders: 3,
+      businessRejectedOrders: 2,
+      technicallyFailedOrders: 1,
+    };
+    const output = markup(available(current));
+    for (const [count, label] of [
+      [120, "Orders confirmed"],
+      [2, "Business-rejected orders"],
+      [1, "Technically failed orders"],
+    ]) {
+      expect(output).toMatch(new RegExp(`>${count}</p><p[^>]*>${label}</p>`));
+    }
+    expect(output).not.toContain("Orders failed");
   });
 
   it("omits the progress bar when the confirmed count contradicts the reservation total", () => {
@@ -550,6 +570,7 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
     scope,
     revision: 1,
     recoveredAt: "2026-07-30T12:00:03.000Z",
+    runtimeProgress: null,
     currentRun,
     inventory: null,
     recentMetrics: [],

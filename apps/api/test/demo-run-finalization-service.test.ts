@@ -1199,6 +1199,11 @@ describe("demo run finalization service", () => {
               },
               trafficMetricReader: { readRecent: async () => [] },
               transportObservationReader: { read: async () => null },
+              runtimeProgressService: {
+                getProgress: async () => {
+                  throw new Error("unused runtime progress projection");
+                },
+              },
               revisionAllocator: { allocate: async () => 1 },
             },
             close: async () => undefined,

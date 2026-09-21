@@ -1,12 +1,14 @@
 import {
   type DashboardProjection,
   type DemoRunSnapshot,
+  type DownstreamErpStatus,
   deriveOversoldUnits,
 } from "@checkout-surge/contracts";
 import { useRef } from "react";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
 import { deriveRunErpStory } from "../lib/presentation/erp-story";
 import type { Freshness } from "../lib/presentation/freshness";
+import { downstreamErpStatusLabel, rateWindowLabel } from "../lib/presentation/public-vocabulary";
 import { deriveRunConfigFacts } from "../lib/presentation/run-config-presentation";
 import { deriveFreshnessPresentationState } from "../lib/presentation/run-presentation-state";
 import {
@@ -28,10 +30,15 @@ import { StatusPill } from "./status-pill";
 export interface LiveTechnicalBoardValues {
   arrivalRate: number | null;
   dispatched: [attemptsDispatched: number | null, plannedAttempts: number];
+  /** The projected downstream status, or `"unavailable"` when its read failed. */
+  downstreamErpStatus: DownstreamErpStatus | "unavailable" | null;
   erpFailures: [failures: number, timeouts: number] | null;
   erpProtection: string | null;
+  /** The observed confirmation rate with its effective window, from durable records. */
+  confirmationRate: [rate: number | null, windowSeconds: number] | null;
   confirmedOrders: number | null;
-  failedOrders: number | null;
+  businessRejectedOrders: number | null;
+  technicallyFailedOrders: number | null;
   httpFailureRate: [value: number, unit: string] | null;
   lagP95Average: [p95LagMs: number | null, averageLagMs: number | null] | null;
   latency: [value: number, unit: string] | null;
@@ -78,10 +85,20 @@ export function deriveLiveTechnicalBoardValues(
       surge.attemptsDispatched,
       deriveRunConfigFacts(run.configSnapshot).plannedAttempts,
     ],
+    downstreamErpStatus: projection.runtimeProgress
+      ? (projection.runtimeProgress.downstreamErpStatus ?? "unavailable")
+      : null,
     erpFailures: erp ? [erp.recentFailureCount, erp.recentTimeoutCount] : null,
     erpProtection: erp ? deriveRunErpStory(erp, run.status).sentence : null,
+    confirmationRate: projection.runtimeProgress
+      ? [
+          projection.runtimeProgress.confirmationRatePerSecond,
+          projection.runtimeProgress.confirmationRateWindowSeconds,
+        ]
+      : null,
     confirmedOrders: outcome?.confirmedOrders ?? null,
-    failedOrders: outcome?.failedOrders ?? null,
+    businessRejectedOrders: outcome?.businessRejectedOrders ?? null,
+    technicallyFailedOrders: outcome?.technicallyFailedOrders ?? null,
     httpFailureRate: failureRateSample ? [failureRateSample.value, failureRateSample.unit] : null,
     lagP95Average: lag ? [lag.p95LagMs, lag.averageLagMs] : null,
     latency: latencySample ? [latencySample.value, latencySample.unit] : null,
@@ -273,6 +290,16 @@ export function LiveTechnicalBoard({
           label: "ERP protection",
           value: values.erpProtection ?? "—",
         },
+        {
+          key: "downstreamErpStatus",
+          label: "Downstream ERP",
+          value:
+            values.downstreamErpStatus === null
+              ? "—"
+              : values.downstreamErpStatus === "unavailable"
+                ? "Status unavailable"
+                : downstreamErpStatusLabel(values.downstreamErpStatus),
+        },
       ],
     },
     {
@@ -285,6 +312,15 @@ export function LiveTechnicalBoard({
       },
       rows: [
         {
+          key: "confirmationRate",
+          label: values.confirmationRate
+            ? `Confirmation rate (${rateWindowLabel(values.confirmationRate[1])})`
+            : "Confirmation rate",
+          value: values.confirmationRate
+            ? formatRate(values.confirmationRate[0], "confirmations/s")
+            : "—",
+        },
+        {
           key: "pendingConfirmation",
           label: "Pending",
           value: formatNumber(values.pendingConfirmation),
@@ -294,7 +330,16 @@ export function LiveTechnicalBoard({
           label: "Oldest pending",
           value: formatDurationSeconds(values.oldestPending),
         },
-        { key: "failedOrders", label: "Failed", value: formatNumber(values.failedOrders) },
+        {
+          key: "businessRejectedOrders",
+          label: "Business-rejected orders",
+          value: formatNumber(values.businessRejectedOrders),
+        },
+        {
+          key: "technicallyFailedOrders",
+          label: "Technically failed orders",
+          value: formatNumber(values.technicallyFailedOrders),
+        },
         {
           key: "lagP95Average",
           label: "p95 · avg",

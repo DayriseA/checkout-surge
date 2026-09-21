@@ -14,13 +14,13 @@ import {
   uuidSchema,
 } from "./primitives.js";
 import { queueStatusSchema } from "./queue.js";
-import { runSignalTimelineSummarySchema } from "./run-signals.js";
+import { runRuntimeProgressSchema, runSignalTimelineSummarySchema } from "./run-signals.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
 export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
-export const dashboardProjectionSchemaVersion = 4 as const;
+export const dashboardProjectionSchemaVersion = 5 as const;
 /** Slowest expected cadence while dashboard work remains in flight. */
 export const dashboardLiveUpdateExpectedIntervalMs = 2_000;
 
@@ -104,6 +104,7 @@ export const dashboardProjectionSchema = z
     httpSummary: trafficHttpSummarySchema.nullable().default(null),
     requestArrivalSummary: requestArrivalSummarySchema.nullable().default(null),
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable().default(null),
+    runtimeProgress: runRuntimeProgressSchema.nullable().default(null),
   })
   .strict()
   .superRefine((projection, context) => {
@@ -149,6 +150,7 @@ export const dashboardProjectionSchema = z
         ["httpSummary", projection.httpSummary ?? null],
         ["requestArrivalSummary", projection.requestArrivalSummary ?? null],
         ["runSignalTimelineSummary", projection.runSignalTimelineSummary ?? null],
+        ["runtimeProgress", projection.runtimeProgress ?? null],
       ] as const;
       for (const [field, value] of runOwnedFields) {
         if (value !== null) {

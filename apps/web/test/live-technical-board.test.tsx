@@ -43,13 +43,103 @@ describe("live technical board", () => {
       retryingOrders: 2,
       erpFailures: [2, 1],
       erpProtection: "Constrained but keeping up",
+      downstreamErpStatus: null,
+      confirmationRate: null,
       confirmedOrders: 350,
       pendingConfirmation: 20,
       oldestPending: 8.5,
-      failedOrders: 8,
+      businessRejectedOrders: null,
+      technicallyFailedOrders: null,
       lagP95Average: [135, 128],
     });
     expect(values.soldOutRejections).not.toBe(projection.businessOutcome?.soldOutRejections);
+  });
+
+  it("derives the projected downstream status and confirmation rate from runtime progress", () => {
+    const projection = activeProjection();
+    projection.runtimeProgress = {
+      runId,
+      outstandingOrders: 20,
+      oldestOutstandingAgeSeconds: 8.5,
+      confirmationRatePerSecond: 0.2,
+      confirmationRateWindowSeconds: 10,
+      downstreamErpStatus: "erp_limiting",
+      downstreamErpStatusReadStatus: "available",
+      observedAt: "2026-07-30T12:00:30.000Z",
+    };
+    const values = deriveLiveTechnicalBoardValues(projection, runFixture("active"));
+
+    expect(values.downstreamErpStatus).toBe("erp_limiting");
+    expect(values.confirmationRate).toEqual([0.2, 10]);
+
+    const { container } = render(
+      createElement(LiveTechnicalBoard, {
+        freshness: liveFreshness,
+        projection,
+        run: runFixture("active"),
+      }),
+    );
+
+    // A slow drain reads as still processing, with the rate stated over its effective window.
+    expect(rowByLabel(container, "Downstream ERP")?.textContent).toContain(
+      "Still processing — the ERP is limiting the rate",
+    );
+    expect(rowByLabel(container, "Confirmation rate (10-second window)")?.textContent).toContain(
+      "0.2 confirmations/s",
+    );
+  });
+
+  it("keeps an unreadable downstream status and an unmeasurable rate distinct from zero", () => {
+    const projection = activeProjection();
+    projection.runtimeProgress = {
+      runId,
+      outstandingOrders: 20,
+      oldestOutstandingAgeSeconds: 8.5,
+      confirmationRatePerSecond: null,
+      confirmationRateWindowSeconds: 10,
+      downstreamErpStatus: null,
+      downstreamErpStatusReadStatus: "unavailable",
+      observedAt: "2026-07-30T12:00:30.000Z",
+    };
+
+    const { container } = render(
+      createElement(LiveTechnicalBoard, {
+        freshness: liveFreshness,
+        projection,
+        run: runFixture("active"),
+      }),
+    );
+
+    expect(rowByLabel(container, "Downstream ERP")?.textContent).toContain("Status unavailable");
+    const rateRow = rowByLabel(container, "Confirmation rate (10-second window)");
+    expect(rateRow?.textContent).toContain("—");
+    expect(rateRow?.textContent).not.toContain("0 confirmations/s");
+  });
+
+  it("shows business rejections and technical failures separately while draining", () => {
+    const projection = activeProjection();
+    if (!projection.businessOutcome) throw new Error("Expected business outcomes.");
+    projection.businessOutcome = {
+      ...projection.businessOutcome,
+      failedOrders: 3,
+      businessRejectedOrders: 2,
+      technicallyFailedOrders: 1,
+    };
+    const { container } = render(
+      createElement(LiveTechnicalBoard, {
+        freshness: liveFreshness,
+        projection,
+        run: runFixture("draining"),
+      }),
+    );
+    expect(
+      rowByLabel(container, "Business-rejected orders")?.querySelector("dd")?.textContent,
+    ).toBe("2");
+    expect(
+      rowByLabel(container, "Technically failed orders")?.querySelector("dd")?.textContent,
+    ).toBe("1");
+    expect(container.querySelector("#watch-signal-confirmation > p")?.textContent).toBe("350");
+    expect(rowByLabel(container, "Failed")).toBeNull();
   });
 
   it("renders every board value as absent while starting without evidence", () => {
@@ -70,7 +160,7 @@ describe("live technical board", () => {
       expect(container.querySelector(`#${id}`)).not.toBeNull();
     }
     const rows = [...container.querySelectorAll("dl > div")];
-    expect(rows).toHaveLength(16);
+    expect(rows).toHaveLength(19);
     for (const row of rows) {
       expect(row.textContent).toContain("—");
     }
@@ -213,7 +303,7 @@ function rowByLabel(container: HTMLElement, label: string): Element | null {
   );
 }
 
-function runFixture(status: "starting" | "active"): DemoRunSnapshot {
+function runFixture(status: "starting" | "active" | "draining"): DemoRunSnapshot {
   const base = {
     runId,
     presetId: "22222222-2222-4222-8222-222222222222",
@@ -224,6 +314,14 @@ function runFixture(status: "starting" | "active"): DemoRunSnapshot {
     startedAt: "2026-07-30T12:00:00.000Z",
   };
   if (status === "starting") return { ...base, status, trafficStatus: "starting" };
+  if (status === "draining")
+    return {
+      ...base,
+      status,
+      trafficStatus: "succeeded",
+      trafficStartedAt: base.startedAt,
+      trafficEndedAt: "2026-07-30T12:00:20.000Z",
+    };
   return { ...base, status, trafficStatus: "active", trafficStartedAt: base.startedAt };
 }
 
@@ -251,6 +349,7 @@ function activeProjection(): DashboardProjection {
     revision: 7,
     correlationId: "corr-live-board",
     recoveredAt: "2026-07-30T12:00:30.000Z",
+    runtimeProgress: null,
     currentRun: runFixture("active"),
     inventory: {
       saleOfferId,

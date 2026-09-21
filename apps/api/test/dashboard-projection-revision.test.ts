@@ -140,6 +140,7 @@ function operation(redis: CheckoutSurgeRedis) {
       runErpOutcomeService: { getOutcomes: unavailable },
       trafficMetricReader: { readRecent: async () => [] },
       transportObservationReader: { read: async () => null },
+      runtimeProgressService: { getProgress: unavailable },
       revisionAllocator: new RedisDashboardProjectionRevisionAllocator(redis),
     },
     close: () => redis.disconnect(),

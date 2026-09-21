@@ -1176,6 +1176,16 @@ function projectionFixture(): DashboardProjection {
     httpSummary: null,
     requestArrivalSummary: null,
     runSignalTimelineSummary: null,
+    runtimeProgress: {
+      runId,
+      outstandingOrders: 2,
+      oldestOutstandingAgeSeconds: 8.5,
+      confirmationRatePerSecond: 0.2,
+      confirmationRateWindowSeconds: 10,
+      downstreamErpStatus: "erp_unavailable",
+      downstreamErpStatusReadStatus: "available",
+      observedAt: "2026-06-20T00:00:11.000Z",
+    },
     recoveredAt: "2026-06-20T00:00:11.000Z",
   };
 }

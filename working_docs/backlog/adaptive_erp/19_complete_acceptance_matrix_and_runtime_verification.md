@@ -12,7 +12,9 @@
 
 Prove the complete narrative beyond favorable presets. Valid finite accepted work survives temporary constraints, one canonical external effect produces one notification, and final reports agree with settled records. Eventually finishing by hammering the ERP is not a pass.
 
-Keep short deterministic checks in ordinary lanes and explicitly invoked long resilience experiments separate. A harness timeout is a failed/inconclusive verification, not an application business deadline. Never lower the 10,000-buyer target, erase incident evidence or silently use the user's active runtime.
+Keep short deterministic checks in ordinary lanes and explicitly invoked long resilience experiments separate. A harness timeout is a failed/inconclusive verification, not an application business deadline. Never lower the 10,000-buyer target or discard verification results to hide a failure.
+
+Follow the [current runtime and evidence rules](index.md#common-guardrails-and-reporting): development database contents are disposable, and the reference runtime may be wiped and reused as the clean verification runtime. No historical run, UUID, volume or original machine is a prerequisite. Preserve scenario definitions and recorded verification evidence outside disposable runtime storage; identify the current environment and avoid interference with concurrent work.
 
 ## Repository entry points
 
@@ -23,9 +25,10 @@ Tests in `apps/{api,worker,mock-erp,load-orchestrator,web}/test/` and `packages/
 | Scenario | Required evidence | Primary owner/task |
 | --- | --- | --- |
 | Original incident: 1,500 attempts, 888 stock, ERP 10/s, 250 ms, concurrency 5 | 888 unique reservations, 612 sold-out, 888 confirmations, 888 notifications, no saturation-induced terminal orders, admissible estimate | Worker/DB/API; 05, 09, 10, 16 |
-| Same conditions at supported concurrency levels | Identical business totals, rate/in-flight limits respected, no overload abandonment | Worker; 07–09 |
+| Same conditions at supported concurrency levels | Identical business totals, native queue rate/global concurrency limits respected from first dispatch, no overload abandonment | API/worker; 07–09, 17b |
 | Low capacity with finite stock beyond old retry budget | Retained, draining backlog; no exhaustion failure | Worker/queue; 05–09 |
-| Capacity decrease then recovery | Prompt reduction, gradual recovery, bounded pressure and no starvation | Worker/mock; 09 |
+| Capacity decrease then recovery | Capacity responses pause native delivery for `Retry-After`; affected orders remain recoverable; delivery resumes at the configured declared-capacity limit after the pause, with bounded pressure and no starvation; no learned-rate ramp | Worker/mock; 09, 17b |
+| Queue limits across restart, settlement and reset | Accepted-snapshot rate/global concurrency limits are re-applied after API/worker restart and return to catalog defaults after terminality or reset | API/worker; 17b |
 | Latency exceeds initial deadline | Retained uncertainty, eventual reconciliation, no duplicate external effect | Worker/mock; 03–05, 08 |
 | Finite outage | Sparse probes/backoff, automatic recovery, no invented permanent rejection | Worker/mock; 07–09 |
 | ERP accepts, response lost, ERP and worker restart | One canonical confirmation, one confirmed order, one notification | Ledger/recovery; 03–05, 09 |
@@ -33,20 +36,20 @@ Tests in `apps/{api,worker,mock-erp,load-orchestrator,web}/test/` and `packages/
 | Work exceeds old drain target | Visible nonterminal processing, late notifications, report only at settlement | API/worker/web; 10, 18 |
 | Run still nonterminal 900 seconds after acceptance | Grace notice from 600 seconds only; automatic destructive reset at the deadline, including after API restart; one `auto_reset` history line; successor can start | API/web; 12, 13, 18 |
 | Permanent rejection, authentication failure, malformed response or invalid identity | Order fails terminally with the right category and code, no retry; other orders and the run complete normally | Contracts/worker; 01, 04, 11 |
-| Estimate exceeds 600 seconds or is unsupported | Actionable rejection, no run/stock/traffic or visitor-budget consumption | API/web; 15, 16, 17 |
+| Estimate exceeds 600 seconds or is unsupported | Current declared-capacity estimator (v2 from 17c, until calibrated) governs preview/start; actionable rejection, no run/stock/traffic or visitor-budget consumption | API/web; 15, 16, 17, 17c |
 | Duplicate HTTP attempts | Unique-intent estimate, unique downstream effects and notifications | API/worker; 03–05, 15 |
 | Reset/cleanup races a call or publication | Reset never waits on the ERP, purges run data, keeps one `admin_reset` history line, late worker write recreates nothing; retention/teardown delete no unfinished obligation; terminal fence preserved | API/worker/DB; 10, 12 |
 | Eligibility/hold timing expires during long-lived work | No reopening or stock release; accepted work remains recoverable | DB/Redis/lifecycle; 10 |
-| Standard presets and zero-chaos smoke | Accounting, no overselling, responsiveness, history, notifications and SSE preserved | Cross-boundary; 01–18 |
+| Standard presets and zero-chaos smoke | Accounting, no overselling, responsiveness, history, notifications and SSE preserved | Cross-boundary; 01–18, including 17b/17c |
 
 ## Implementation work
 
-- [ ] Map each row to concrete test names/fixtures and evidence paths; fill gaps at the boundary owning the behavior. Include history pruning/counters, out-of-order preview responses, restart safety and technical-failure checks from their task exit criteria. Rows that need conditions to change during a run apply the change through the mock's existing chaos controls from the test harness.
+- [ ] Map each row to concrete test names/fixtures and evidence paths; fill gaps at the boundary owning the behavior. Use revised D06/D07 and task 17b's native queue limits rather than the superseded learned-rate assertions of tasks 07/09, and task 17c's estimator envelope. Include history pruning/counters, out-of-order preview responses, restart safety and technical-failure checks from their task exit criteria, plus task 18's deferred full API matrix and non-nominal browser states. Rows that need conditions to change during a run apply the change through the mock's existing chaos controls from the test harness.
 - [ ] Use injected clocks/seeds for timing policy and small finite workloads. Use real PostgreSQL/Redis/BullMQ and isolated service restarts where durability is the assertion; a mocked restart cannot prove persisted idempotency.
 - [ ] Fault-inject before/after dispatch intent, external acceptance, local result persistence, due-time commit, queue publish/ack, notification publication and finalization. Record attribution and cleanup status even when a fixture fails.
-- [ ] Keep fixture identity separate from historic run `c04798ff-042f-43cf-b5ed-4ba48132aa80`; reproduce its parameters with a new isolated run, never mutate its evidence.
+- [ ] Reproduce the incident parameters through the `original-incident` acceptance fixture with a fresh run identity. Do not require the historical incident's stored rows or UUID.
 - [ ] Collect timing, useful confirmations, actual POST/replay/lookup counts, capacity responses, probe cadence, in-flight maxima, estimate error and durable final counts. Preserve window definitions and versions for task 20.
-- [ ] Add safeguards against targeting a reference/active runtime, and exact generated-run cleanup that refuses unresolved obligations outside a reset. Harness cleanup cannot cancel or delete work merely to produce a passing result.
+- [ ] Identify the selected runtime/resources and prevent interference with other runs. The disposable reference runtime is an allowed target. Keep exact generated-run cleanup that refuses unresolved obligations outside a reset; after recording the result and collecting diagnostics, an explicit reset or teardown of the owned disposable environment is allowed. Harness cleanup cannot turn an interrupted or failed recovery into a pass.
 - [ ] Keep explicitly invoked long runs out of ordinary smoke and composition/characterization suites. Document commands, prerequisites, expected counts, diagnostics and resource isolation.
 
 ## Validation and exit
@@ -54,7 +57,7 @@ Tests in `apps/{api,worker,mock-erp,load-orchestrator,web}/test/` and `packages/
 - [ ] Every matrix row has attributable passing evidence or is explicitly blocked; no blanket pass based on seeded zero-chaos smoke.
 - [ ] Run relevant focused tests, `pnpm type-check`, `pnpm test:infra:up`, then `pnpm test` for the default unit/API/integration lanes. Run k6 compatibility when changed contracts/scripts require it. Do not invoke composition/characterization unless the user explicitly asks.
 - [ ] Long incident/stable-window/changing-condition/restart verification is explicitly invoked against isolated resources and reported separately, with no unsupported production benchmark claim.
-- [ ] Failures retain diagnostic evidence and unfinished obligations. No result is fabricated or accepted by weakening D14 targets.
+- [ ] Preserve unfinished obligations while testing recovery. On failure, record diagnostics and outstanding counts before reset/teardown; record cleanup separately and keep the verification failed/inconclusive. No indefinite preservation of test databases is required. No result is fabricated or accepted by weakening D14 targets.
 
 Apply [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality_checklists.md). Format/check only touched supported files with Biome, use Linux/Dev Container execution and report actual/skipped checks. No unrelated testing-framework rewrite. Locked behavior changes require explicit approval.
 

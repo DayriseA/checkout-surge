@@ -2002,6 +2002,7 @@ describe("buy and dashboard contracts", () => {
       httpSummary: null,
       requestArrivalSummary: null,
       runSignalTimelineSummary: null,
+      runtimeProgress: null,
       recoveredAt: timestamp,
     };
 

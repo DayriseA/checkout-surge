@@ -1377,7 +1377,7 @@ export function AdminMaintenancePanel({
         confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
         description={
           intent === "reset"
-            ? "Fail active demo work, clear queued jobs, and reset API-owned shared demo state. This disrupts current visitors. Global ERP fault injection is not changed by this reset."
+            ? "Resetting stops all demo work immediately, discards the current run's data, and frees the demo for the next run. One basic history line marked as cancelled remains. Global ERP fault injection is not changed by this reset."
             : "Permanently remove generated runs older than 7 days while keeping the latest 15."
         }
         error={error ? <AdminNoticeView notice={error} /> : null}
