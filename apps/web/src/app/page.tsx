@@ -97,6 +97,13 @@ function TechnicalAbout() {
           </a>{" "}
           keep downstream pressure bounded while reserved work waits without being lost.
         </p>
+        <p className="mt-3 leading-7 text-muted-strong">
+          The worker is configured with the ERP’s declared capacity, as is common with mainstream
+          ERP and SaaS APIs that publish their limits. When a downstream limit is unknown or
+          variable, an adaptive client-side limiter, such as the adaptive retry mode of the AWS
+          SDKs, is the appropriate technique. This demo deliberately shows the common case of a
+          known limit.
+        </p>
       </section>
 
       <section className={sectionClassName} id="real-and-simulated" tabIndex={-1}>

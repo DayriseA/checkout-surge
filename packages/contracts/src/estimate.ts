@@ -17,7 +17,7 @@ export const automaticRunResetDeadlineSeconds = 900 as const;
 /** Single estimator identity; provisional constants are frozen only by task 20. */
 export const conservativeDurationEstimatorIdentity = {
   name: "conservative-duration-estimator",
-  version: 1,
+  version: 2,
 } as const satisfies EnginePolicyIdentity;
 
 /**
@@ -45,7 +45,6 @@ export const estimatorBottleneckValues = [
   "erp_capacity",
   "worker_concurrency",
   "erp_latency",
-  "adaptive_pacing",
   "declared_outage",
   "unestimable",
 ] as const;

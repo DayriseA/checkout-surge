@@ -2075,7 +2075,7 @@ describe("API gateway routes", () => {
     expect(estimateAdmissionRejectionDetailsSchema.parse(start.json().details)).toMatchObject({
       reason: "over_ceiling",
       effectiveCeilingSeconds: 1,
-      estimatorIdentity: { name: "conservative-duration-estimator", version: 1 },
+      estimatorIdentity: { name: "conservative-duration-estimator", version: 2 },
       policyIdentity: erpDispatchEnginePolicyIdentity,
     });
   });

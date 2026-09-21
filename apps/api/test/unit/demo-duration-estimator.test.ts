@@ -81,15 +81,9 @@ describe("pure conservative duration estimator", () => {
       const result = estimate(fromConfig(preset));
       expect(result.decision, preset.slug).toBe("admitted");
       if (preset.slug === "admin-failure-path") {
-        const previous = estimate(
-          fromConfig({
-            ...preset,
-            inventoryConfig: { ...preset.inventoryConfig, startingStock: 200 },
-          }),
-        );
-        expect(previous.decision).toBe("rejected");
-        expect(previous.conservativeDurationSeconds).toBe(747);
-        expect(result.conservativeDurationSeconds).toBeLessThanOrEqual(450);
+        expect(preset.inventoryConfig.startingStock).toBe(200);
+        expect(result.conservativeDurationSeconds).toBeCloseTo(179.25, 8);
+        expect(result.conservativeDurationSeconds).toBeLessThan(200);
       }
     }
     for (const fixture of acceptanceScenarioFixtures()) {
@@ -102,8 +96,8 @@ describe("pure conservative duration estimator", () => {
     const incident = acceptanceScenarioFixtures()[0]?.config;
     const surge = seededPresets.find((preset) => preset.slug === "surge-10k");
     if (!incident || !surge) throw new Error("Missing sanity references");
-    // Historical capacity-only sanity references; actual surge C/L is 50/s,
-    // so its concurrency-aware pre-margin base is 140 s, not 124 s.
+    // Capacity-only references remain historical; the refitted full-job rate
+    // makes surge’s sequential base 148 s before settlement.
     expect(60 + incident.inventoryConfig.startingStock / incident.erpConfig.maxTps).toBe(148.8);
     expect(120 + surge.inventoryConfig.startingStock / surge.erpConfig.maxTps).toBe(124);
     expect(estimate(fromConfig(incident)).explanatoryDurationSeconds).toBe(88.8);
@@ -113,11 +107,14 @@ describe("pure conservative duration estimator", () => {
       surgeInput.effectiveWorkerConcurrency /
         ((surgeInput.declaredErpLatencyMs + constants.latencyOverheadFloorMs) / 1000),
     );
-    expect(120 + surge.inventoryConfig.startingStock / surgeRate).toBe(140);
+    expect(120 + surge.inventoryConfig.startingStock / surgeRate).toBe(148);
     expect(estimate(surgeInput).explanatoryDurationSeconds).toBe(120);
   });
 
-  it("covers the supplied isolated measured settlement times", () => {
+  it("covers task 17b’s five measured finalization times", async () => {
+    await import("../../../../packages/db/src/scripts/seed.js");
+    const surge = seededPresets.find((preset) => preset.slug === "surge-10k");
+    if (!surge) throw new Error("Missing surge preset");
     const incident = acceptanceScenarioFixtures()[0]?.config;
     if (!incident) throw new Error("Missing incident");
     const spike = input({
@@ -135,22 +132,23 @@ describe("pure conservative duration estimator", () => {
       effectiveWorkerConcurrency: 10,
     });
     for (const [scenario, observed, expected] of [
-      [input(), 60.12, 65],
-      [fromConfig(incident), 199.2, 316.6],
-      [spike, 114.44, 145],
+      [input(), 15.252, 37.631578947368425],
+      [fromConfig(incident), 96.693, 168.4736842105263],
+      [spike, 8.075, 30.4],
       [
         input({
           declaredErpCapacityPerSecond: 10,
           declaredErpLatencyMs: 100,
           errorRateAssumption: 0.2,
         }),
-        83.89,
-        249.14392014169457,
+        20.894,
+        68.61842105263158,
       ],
+      [fromConfig(surge), 30.319, 163],
     ] as const) {
       const result = estimate(scenario);
       expect(result.conservativeDurationSeconds).toBeCloseTo(expected, 8);
-      expect(result.conservativeDurationSeconds).toBeGreaterThanOrEqual(observed);
+      expect(result.conservativeDurationSeconds).toBeGreaterThan(observed);
       expect(result.decision).toBe("admitted");
     }
   });
@@ -168,7 +166,7 @@ describe("pure conservative duration estimator", () => {
       inventoryConfig: { startingStock: 11, quantityPerCheckout: 99, reservationHoldMinutes: 15 },
       declaredErpCapacityPerSecond: 1,
     });
-    expect(estimate(spike).conservativeDurationSeconds).toBe(22); // 1 + 3*2 + 15
+    expect(estimate(spike).conservativeDurationSeconds).toBeCloseTo(16 + 3 / 0.95, 8);
     if (spike.trafficConfig.mode !== "buyer-spike") throw new Error("Expected spike");
     expect(
       estimate({
@@ -179,7 +177,7 @@ describe("pure conservative duration estimator", () => {
     expect(
       estimate({ ...spike, inventoryConfig: { ...spike.inventoryConfig, startingStock: 8 } })
         .conservativeDurationSeconds,
-    ).toBe(20);
+    ).toBeCloseTo(16 + 2 / 0.95, 8);
     const constant = input({
       ...spike,
       trafficConfig: {
@@ -190,7 +188,7 @@ describe("pure conservative duration estimator", () => {
         quantityPerAttempt: 3,
       },
     });
-    expect(estimate(constant).conservativeDurationSeconds).toBe(20); // only two intents
+    expect(estimate(constant).conservativeDurationSeconds).toBeCloseTo(16 + 2 / 0.95, 8); // only two intents
     expect(
       estimate({ ...spike, inventoryConfig: { ...spike.inventoryConfig, startingStock: 2 } })
         .conservativeDurationSeconds,
@@ -209,7 +207,10 @@ describe("pure conservative duration estimator", () => {
       explanatoryDurationSeconds: 17,
       bottleneck: "traffic_dispatch",
     });
-    expect(estimate(input({ declaredErpLatencyMs: 0 })).conservativeDurationSeconds).toBe(65);
+    expect(estimate(input({ declaredErpLatencyMs: 0 })).conservativeDurationSeconds).toBeCloseTo(
+      25 + 60 / 4.75,
+      8,
+    );
     expect(estimate(input({ errorRateAssumption: 0.3 })).unestimableReason).toBeUndefined();
     expect(effectiveEstimatorWorkerConcurrency(5)).toBe(5);
     expect(effectiveEstimatorWorkerConcurrency(20)).toBe(10);
@@ -220,7 +221,7 @@ describe("pure conservative duration estimator", () => {
     ).toBe(true);
   });
 
-  it("attributes traffic, capacity, concurrency, latency and adaptive pacing limits with actionable rejection guidance", () => {
+  it("attributes traffic, capacity, concurrency, latency limits with actionable rejection guidance", () => {
     for (const [overrides, bottleneck, guidance] of [
       [{}, "erp_capacity", "Increase declared ERP capacity"],
       [
@@ -240,11 +241,6 @@ describe("pure conservative duration estimator", () => {
         },
         "erp_latency",
         "Lower declared ERP latency",
-      ],
-      [
-        { declaredErpCapacityPerSecond: 100, declaredErpLatencyMs: 0 },
-        "adaptive_pacing",
-        "Reduce acceptable orders/stock",
       ],
       [
         {
@@ -281,7 +277,8 @@ describe("pure conservative duration estimator", () => {
     ).toMatchObject({
       decision: "rejected",
       bottleneck: "erp_capacity",
-      conservativeDurationSeconds: 2025,
+      conservativeDurationSeconds: 25 + 1000 / 0.95,
+      reasons: [expect.stringContaining("Increase declared ERP capacity")],
     });
   });
 
@@ -292,9 +289,15 @@ describe("pure conservative duration estimator", () => {
       const result = estimate(
         input({
           inventoryConfig: {
-            startingStock: 100,
+            startingStock: 200,
             quantityPerCheckout: 1,
             reservationHoldMinutes: 15,
+          },
+          trafficConfig: {
+            ...input().trafficConfig,
+            mode: "constant-arrival-rate",
+            ratePerSecond: 20,
+            durationSeconds: 10,
           },
           effectiveWorkerConcurrency: 1,
           declaredErpCapacityPerSecond: 100,

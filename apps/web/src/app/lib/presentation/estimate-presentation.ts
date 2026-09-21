@@ -10,7 +10,6 @@ export const estimateBottleneckLabels = {
   erp_capacity: "ERP capacity",
   worker_concurrency: "Concurrent order processing",
   erp_latency: "ERP response delay",
-  adaptive_pacing: "Adaptive processing pace",
   declared_outage: "ERP availability",
   unestimable: "No supported estimate",
 } satisfies Record<EstimatorBottleneck, string>;

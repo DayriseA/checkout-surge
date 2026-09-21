@@ -42,12 +42,12 @@ const estimable = {
 };
 
 describe("duration estimator contracts", () => {
-  it("validates the shared estimator identity, pacing bottleneck and deployment latency ceiling", () => {
+  it("validates the shared estimator identity, capacity bottleneck and deployment latency ceiling", () => {
     expect(enginePolicyIdentitySchema.parse(conservativeDurationEstimatorIdentity)).toEqual({
       name: "conservative-duration-estimator",
-      version: 1,
+      version: 2,
     });
-    expect(estimatorBottleneckSchema.parse("adaptive_pacing")).toBe("adaptive_pacing");
+    expect(estimatorBottleneckSchema.parse("erp_capacity")).toBe("erp_capacity");
     expect(
       estimatorInputSchema.safeParse({ ...input, declaredErpLatencyMs: largestAllowedErpLatencyMs })
         .success,

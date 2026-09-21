@@ -347,7 +347,7 @@ function buildSeedPresets(): SeedPreset[] {
         preAllocatedVus: 10,
         maxVus: 60,
       }),
-      inventoryConfig: inventoryConfig({ startingStock: 90 }),
+      inventoryConfig: inventoryConfig({ startingStock: 200 }),
       erpConfig: erpConfig({ latencyMs: 300, maxTps: 30, errorRate: 0.25 }),
       backpressureConfig: backpressureConfig({ orderProcessConcurrency: 4 }),
       overwriteOnConflict: false,

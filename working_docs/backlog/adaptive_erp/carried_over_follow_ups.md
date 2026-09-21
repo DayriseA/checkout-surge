@@ -1,6 +1,6 @@
 # Adaptive ERP — Carried-over follow-ups awaiting a decision
 
-Optional items surfaced while tasks 03 to 11 were implemented. None of them blocks a later task, and none is scheduled: each one is a judgement call for the project owner to action or reject.
+Optional items surfaced while tasks 03 to 11 and 17c were implemented. None of them blocks a later task, and none is scheduled: each one is a judgement call for the project owner to action or reject.
 
 This file is intentionally not named `xx_*.md`, so the sequential task runner never treats it as an implementation task.
 
@@ -36,3 +36,9 @@ Deferred work that a later task genuinely needs was **not** recorded here. It wa
 - Origin: task 11, terminal technical failures.
 - Observation: `apps/worker/src/queue/bullmq-notification-record-publisher.ts` publishes generated-run notifications through the publication fence, which parses the accepted run snapshot before enqueueing. Task 11 made a missing or invalid snapshot fail the affected order instead of parking it, and lets an earlier uncertain call found `succeeded` by lookup confirm the order. That confirmed order then cannot publish its notification, notification recovery meets the same failure on every pass, and the run stays `draining` because settlement requires one notification per confirmed order. The behavior predates task 11 and also affects any order confirmed before the snapshot became unreadable. Reaching it requires a stored snapshot to become missing or corrupt mid-run, which no supported workflow does.
 - Decision: accept it as an unreachable-in-practice corruption case, or let notification publication proceed without the parsed snapshot (it only needs the run's nonterminal status for the fence). Task [12](12_implement_destructive_admin_reset.md)'s destructive reset already gives an operator a way out of a stuck run.
+
+## 6. The estimator reserves the full traffic budget and sums traffic and ERP time
+
+- Origin: task 17c, estimator re-fit (user decision on 2026-09-21 to defer the estimate-ratio criterion to task 20).
+- Observation: D11's envelope adds the whole declared traffic budget to the ERP drain time. Task 17b shows both assumptions are pessimistic: traffic and ERP work overlap (the incident finalized at 96.7 s against a 148.8 s sequential base), and a buyer spike stops when stock sells out (`surge-10k` traffic ended at 13 s of its 120 s budget). The over-estimate is largest on short runs, far below the 600-second ceiling, and only 1.74x on the incident, so admission decisions are not affected today; the visible cost is a pessimistic figure wherever the conservative estimate is displayed. Overlap alone would barely change the ratios; the constants that dominate them are handed to task [20](20_calibrate_policy_and_obtain_approval.md).
+- Decision: keep D11's sequential envelope, or approve a structural change (overlap, or a sell-out-aware traffic term). An under-estimate admits a run that overstays the occupancy ceiling, while an over-estimate only costs accuracy, so any change must stay above every measurement. Altering D11 needs explicit approval before task 20 calibrates against it.

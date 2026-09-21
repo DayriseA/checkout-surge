@@ -414,7 +414,7 @@ describe("demo-run lifecycle start gating", () => {
     await db.update(demoPresets).set(incident).where(eq(demoPresets.slug, request.presetSlug));
     expect((await service.previewRun(request)).result).toMatchObject({
       decision: "admitted",
-      conservativeDurationSeconds: 316.6,
+      conservativeDurationSeconds: 75 + 888 / 9.5,
     });
     expect((await service.startRun(request, "incident")).run.configSnapshot).toEqual(incident);
   });
