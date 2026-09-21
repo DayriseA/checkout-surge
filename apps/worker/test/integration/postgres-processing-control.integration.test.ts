@@ -397,6 +397,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       persistence: controlPersistence,
       handler: { handle: vi.fn() },
       publisher: { enqueue },
+      deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1_000,
       batchSize: 1,
@@ -549,6 +550,81 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
         leaseMs: 30_000,
       }),
     ).resolves.toMatchObject({ attempt: 2, processingGeneration: 2 });
+  });
+
+  it("renews the publication lease only for the unchanged owner and generation", async () => {
+    const seeded = await seedOrder({ createdAt: now });
+    await controlPersistence.recordRecoverable({
+      job: seeded.job,
+      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 },
+      reason: "publication-retry",
+      error: new Error("queue unavailable"),
+    });
+    const claim = await controlPersistence.claimForPublication({
+      recoveryKey: `order:${seeded.orderId}`,
+      now,
+      leaseMs: 30_000,
+    });
+    if (!claim) throw new Error("Expected recovery claim");
+
+    await expect(
+      controlPersistence.renewPublicationLease({
+        recoveryKey: `order:${seeded.orderId}`,
+        processingGeneration: claim.processingGeneration,
+        publicationOwner: claim.jobId,
+        now,
+        leaseMs: 30_000,
+      }),
+    ).resolves.toBe(true);
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      status: "enqueued",
+      attempts: 1,
+      processingGeneration: 1,
+      publicationOwner: claim.jobId,
+      leaseExpiresAt: new Date(now.getTime() + 30_000),
+    });
+
+    // A cleared owner (deferred or failed publication) no longer matches.
+    await controlPersistence.defer({
+      orderId: seeded.orderId,
+      waitingReason: "erp_unavailable",
+      nextEligibleAt: now,
+      processingGeneration: claim.processingGeneration,
+    });
+    await expect(
+      controlPersistence.renewPublicationLease({
+        recoveryKey: `order:${seeded.orderId}`,
+        processingGeneration: claim.processingGeneration,
+        publicationOwner: claim.jobId,
+        now,
+        leaseMs: 30_000,
+      }),
+    ).resolves.toBe(false);
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      publicationOwner: null,
+      leaseExpiresAt: null,
+    });
+
+    // A moved generation no longer matches.
+    const nextClaim = await controlPersistence.claimForPublication({
+      recoveryKey: `order:${seeded.orderId}`,
+      now,
+      leaseMs: 30_000,
+    });
+    if (!nextClaim) throw new Error("Expected second recovery claim");
+    await expect(
+      controlPersistence.renewPublicationLease({
+        recoveryKey: `order:${seeded.orderId}`,
+        processingGeneration: claim.processingGeneration,
+        publicationOwner: claim.jobId,
+        now,
+        leaseMs: 30_000,
+      }),
+    ).resolves.toBe(false);
+    expect(await controlRow(seeded.orderId)).toMatchObject({
+      processingGeneration: nextClaim.processingGeneration,
+      publicationOwner: nextClaim.jobId,
+    });
   });
 
   it("acknowledges an old initial delivery after recovery takes ownership", async () => {

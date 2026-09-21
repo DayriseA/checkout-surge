@@ -476,7 +476,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_DISPATCH_SCAN_INTERVAL_MS` / `ORDER_DISPATCH_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for committed queued orders whose immediate enqueue may have been lost |
 | `ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS` | `1000` | Minimum queued age before dispatch recovery reasserts a deterministic job; `0` is allowed |
 | `ORDER_RECOVERY_SCAN_INTERVAL_MS` / `ORDER_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker durable ERP/order-recovery scan cadence and batch |
-| `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must cover the adaptive ERP maximum request deadline plus ownership headroom (currently 11000 ms) |
+| `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must cover the adaptive ERP maximum request deadline plus ownership headroom (currently 11000 ms). A publication still pending in the queue at expiry is renewed, not re-claimed |
 | `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
 | `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |
 | `ERROR_RATE` | `0` | Mock ERP global fallback/diagnostic chaos behavior, from `0` to `1` |

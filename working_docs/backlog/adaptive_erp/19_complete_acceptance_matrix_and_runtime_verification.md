@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Status: Verification evidence recorded; full acceptance blocked by a reachable stable-high-latency recovery failure. Runtime and integration mechanisms clarified by the user on 2026-09-21. Implementation follow-up: [19a — recovery publication starvation](19a_fix_recovery_publication_lease_starvation.md).
+- Status: Verification evidence recorded; the stable-high-latency recovery failure that blocked acceptance was fixed and re-verified by task 19a on 2026-09-21 (see its completion notes). Runtime and integration mechanisms clarified by the user on 2026-09-21. Implementation follow-up: [19a — recovery publication starvation](19a_fix_recovery_publication_lease_starvation.md).
 - Branch: `feat/adaptive-erp-and-admission`.
 - Sequence: 19 of 21. Execute after [18](18_build_runtime_progress_and_grace_notice.md); all functional slices must have their focused validation.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), Phase 7 and sections 11–13, D01–D14. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.
@@ -63,7 +63,7 @@ Apply [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/qualit
 
 ## Execution recap and handoff (2026-09-21)
 
-**Acceptance remains blocked by [task 19a](19a_fix_recovery_publication_lease_starvation.md).** The checked items above record verification work, including explicit failures, not a blanket functional pass. Resolve 19a and rerun its exact workload before closing task 19 or proceeding to task 20 approval.
+**Update 2026-09-21: [task 19a](19a_fix_recovery_publication_lease_starvation.md) fixed the starvation described below; its exact workload now settles (600/600/600 in 429.954 s, before any reset) and the comparison scenarios were rerun. The text below is the original record.** At the time of writing, acceptance was blocked by task 19a. The checked items above record verification work, including explicit failures, not a blanket functional pass. Resolve 19a and rerun its exact workload before closing task 19 or proceeding to task 20 approval.
 
 ### What was validated
 

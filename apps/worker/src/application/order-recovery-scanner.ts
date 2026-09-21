@@ -20,6 +20,8 @@ export interface RecoverableOrderJob {
   reason: string;
   attempts: number;
   createdAt: Date;
+  processingGeneration: number;
+  publicationOwner: string | null;
   sourceJobId?: string;
   sourceDisposition?: string;
 }
@@ -54,6 +56,19 @@ export interface OrderRecoveryPersistence {
     now: Date;
     leaseMs: number;
   }): Promise<{ attempt: number; processingGeneration: number; jobId: string } | null>;
+  /**
+   * Extends the publication lease of an `enqueued` row without moving its
+   * generation or attempts. The update must match the same recovery key,
+   * processing generation and publication owner; it changes nothing when the
+   * owner was cleared or the generation moved.
+   */
+  renewPublicationLease(input: {
+    recoveryKey: string;
+    processingGeneration: number;
+    publicationOwner: string;
+    now: Date;
+    leaseMs: number;
+  }): Promise<boolean>;
   markPublicationFailed(input: {
     recoveryKey: string;
     error: string;
@@ -110,6 +125,11 @@ export interface FailedOrderJobReader {
   >;
 }
 
+export interface OrderDeliveryStateReader {
+  /** True when the BullMQ job is still waiting, active, delayed or prioritized. */
+  isDeliveryPending(jobId: string): Promise<boolean>;
+}
+
 export interface OrderRecoveryScanner {
   scanOnce(): Promise<{
     candidates: number;
@@ -139,6 +159,7 @@ export function createOrderRecoveryScanner(dependencies: {
   persistence: OrderRecoveryPersistence;
   handler: OrderProcessJobHandler;
   publisher: OrderJobPublisher;
+  deliveryStateReader: OrderDeliveryStateReader;
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;
@@ -150,7 +171,8 @@ export function createOrderRecoveryScanner(dependencies: {
   let running: Promise<void> | null = null;
   let closed = false;
   // ERP request timeout defaults to 2s; this lease leaves room for DB writes,
-  // BullMQ scheduling and transient latency before another scanner can reclaim.
+  // BullMQ scheduling and transient latency. A delivery still waiting behind
+  // the queue's native limits gets its lease renewed instead of being reclaimed.
   const recoveryLeaseMs = dependencies.recoveryLeaseMs ?? 30_000;
 
   const scanOnce = async () => {
@@ -213,6 +235,31 @@ export function createOrderRecoveryScanner(dependencies: {
       0,
     );
     for (const candidate of candidates) {
+      if (candidate.publicationOwner) {
+        let deliveryPending: boolean;
+        try {
+          deliveryPending = await dependencies.deliveryStateReader.isDeliveryPending(
+            candidate.publicationOwner,
+          );
+        } catch (error) {
+          dependencies.logger.error(
+            { err: error, recoveryKey: candidate.recoveryKey, orderId: candidate.job.orderId },
+            "Order recovery delivery state could not be read.",
+          );
+          failed += 1;
+          continue;
+        }
+        if (deliveryPending) {
+          await dependencies.persistence.renewPublicationLease({
+            recoveryKey: candidate.recoveryKey,
+            processingGeneration: candidate.processingGeneration,
+            publicationOwner: candidate.publicationOwner,
+            now,
+            leaseMs: recoveryLeaseMs,
+          });
+          continue;
+        }
+      }
       const claim = await dependencies.persistence.claimForPublication({
         recoveryKey: candidate.recoveryKey,
         now,

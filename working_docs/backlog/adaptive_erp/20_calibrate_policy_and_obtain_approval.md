@@ -4,7 +4,7 @@
 
 - Status: Pending. This task contains a mandatory human approval gate.
 - Branch: `feat/adaptive-erp-and-admission`.
-- Sequence: 20 of 21. Execute after [19](19_complete_acceptance_matrix_and_runtime_verification.md); the complete acceptance matrix and isolated verification tooling must be available.
+- Sequence: 20 of 21. Execute after [19](19_complete_acceptance_matrix_and_runtime_verification.md), [19a](19a_fix_recovery_publication_lease_starvation.md) and [19b](19b_settle_orphaned_active_jobs_before_exact_run_teardown.md); the complete acceptance matrix and isolated verification tooling must be available.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), Phase 7, D06, D08, D09, D11 and especially D14. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.
 - Ownership: bounded worker/estimator constant calibration and reproducible evidence. Structural algorithm/product decisions remain locked.
 

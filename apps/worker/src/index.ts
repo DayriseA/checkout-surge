@@ -159,6 +159,7 @@ export async function startWorker(): Promise<void> {
     batchSize: config.orderRecoveryBatchSize,
     recoveryLeaseMs: config.orderRecoveryLeaseMs,
     failedJobReader: orderProcessJobPublisher,
+    deliveryStateReader: orderProcessJobPublisher,
   });
   const orderProcessConsumer = createBullMqOrderProcessConsumer({
     connection: {

@@ -143,6 +143,8 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
       reason: row.reason,
       attempts: row.attempts,
       createdAt: row.createdAt,
+      processingGeneration: row.processingGeneration,
+      publicationOwner: row.publicationOwner,
       ...(row.sourceJobId ? { sourceJobId: row.sourceJobId } : {}),
       ...(row.sourceDisposition ? { sourceDisposition: row.sourceDisposition } : {}),
     }));
@@ -209,6 +211,29 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         processingGeneration: orderRecoveryJobs.processingGeneration,
       });
     return claimed ?? null;
+  }
+
+  async renewPublicationLease(input: {
+    recoveryKey: string;
+    processingGeneration: number;
+    publicationOwner: string;
+    now: Date;
+    leaseMs: number;
+  }): Promise<boolean> {
+    const leaseExpiresAt = new Date(input.now.getTime() + input.leaseMs);
+    const [renewed] = await this.db
+      .update(orderRecoveryJobs)
+      .set({ leaseExpiresAt, updatedAt: input.now })
+      .where(
+        and(
+          eq(orderRecoveryJobs.recoveryKey, input.recoveryKey),
+          eq(orderRecoveryJobs.status, "enqueued"),
+          eq(orderRecoveryJobs.processingGeneration, input.processingGeneration),
+          eq(orderRecoveryJobs.publicationOwner, input.publicationOwner),
+        ),
+      )
+      .returning({ id: orderRecoveryJobs.id });
+    return renewed !== undefined;
   }
 
   async markPublicationFailed(input: {

@@ -282,6 +282,7 @@ describe("PostgreSQL worker order transitions", () => {
       persistence: control,
       handler,
       publisher: { enqueue: vi.fn().mockRejectedValue(corruption) },
+      deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
       batchSize: 10,
@@ -1671,6 +1672,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: control,
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
       batchSize: 10,
@@ -1846,6 +1848,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: control,
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
       batchSize: 10,
@@ -1938,6 +1941,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: control,
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
       batchSize: 10,
@@ -1973,6 +1977,318 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await publisher.close();
     }
   }, 20_000);
+
+  it("keeps a recovery delivery waiting past its publication lease instead of republishing it", async () => {
+    // Keep scanner time behind real execution leases while expiring publication leases.
+    let policyNow = new Date(Date.now() - 600_000);
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    const jobs = [job];
+    for (let index = 1; index < 3; index++) {
+      const additional = {
+        ...job,
+        orderId: randomUUID(),
+        reservationId: randomUUID(),
+        publicOrderId: `ord_waiting_${index}`,
+      };
+      await seedAdditionalQueuedOrder(connection, additional);
+      jobs.push(additional);
+    }
+    const gates = jobs.map(() => {
+      let resolve = () => {};
+      const promise = new Promise<void>((release) => {
+        resolve = release;
+      });
+      return { promise, resolve };
+    });
+    const confirm = vi.fn(async () => {
+      await gates[confirm.mock.calls.length - 1]?.promise;
+    });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      handler: { handle: vi.fn() },
+      publisher,
+      deliveryStateReader: publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      for (const recoveryJob of jobs) {
+        await control.recordRecoverable({
+          job: recoveryJob,
+          delivery: {
+            attemptNumber: 1,
+            attemptsMade: 0,
+            maxAttempts: 1,
+            deliveryId: recoveryJob.orderId,
+          },
+          reason: "erp_local_persistence_unavailable",
+          error: new Error("database unavailable"),
+        });
+      }
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: jobs.length });
+      await queue.setGlobalConcurrency(1);
+      consumer = buildConsumer(connection, { confirm }, { concurrency: 3 });
+      consumer.start();
+      await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+      expect(await queue.getJobCounts()).toMatchObject({ active: 1, waiting: 2 });
+
+      for (let tick = 0; tick < 3; tick++) {
+        policyNow = new Date(policyNow.getTime() + 31_000);
+        await expect(scanner.scanOnce()).resolves.toMatchObject({
+          candidates: 2,
+          enqueued: 0,
+          failed: 0,
+        });
+        for (const recoveryJob of jobs) {
+          const record = await control.readControlRecord({ orderId: recoveryJob.orderId });
+          expect(record).toMatchObject({ processingGeneration: 1, attempts: 1 });
+          if ((await queue.getJobState(`recovery-${recoveryJob.orderId}-1`)) === "waiting") {
+            expect(record?.publicationOwner).toBe(`recovery-${recoveryJob.orderId}-1`);
+          }
+        }
+        expect(await queue.getJobs()).toHaveLength(jobs.length);
+      }
+
+      // Tick during each delivery as native concurrency drains the finite backlog.
+      for (let index = 0; index < jobs.length; index++) {
+        await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(index + 1));
+        policyNow = new Date(policyNow.getTime() + 31_000);
+        await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 0, failed: 0 });
+        gates[index]?.resolve();
+      }
+      await waitForQueueToSettle(queue);
+      expect((await connection.db.select().from(orders)).map((order) => order.status)).toEqual(
+        jobs.map(() => "confirmed"),
+      );
+      expect(confirm).toHaveBeenCalledTimes(jobs.length);
+      for (const recoveryJob of jobs) {
+        expect(await control.readControlRecord({ orderId: recoveryJob.orderId })).toMatchObject({
+          processingGeneration: 1,
+          attempts: 1,
+        });
+      }
+      expect(await queue.getJobs()).toHaveLength(jobs.length);
+      expect(await queue.getJobCounts()).toMatchObject({ completed: jobs.length, failed: 0 });
+      expect(await queue.client.then((client) => client.get(queue.toKey("id")))).toBe(
+        String(jobs.length),
+      );
+    } finally {
+      for (const gate of gates) gate.resolve();
+      await consumer?.close();
+      consumer = null;
+      await scanner.close();
+      await publisher.close();
+    }
+  }, 15_000);
+
+  it("re-claims a durable claim whose delivery never reached the queue", async () => {
+    let policyNow = new Date();
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      handler: { handle: vi.fn() },
+      publisher,
+      deliveryStateReader: publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      await control.recordRecoverable({
+        job,
+        delivery: {
+          attemptNumber: 1,
+          attemptsMade: 0,
+          maxAttempts: 1,
+          deliveryId: "initial-delivery",
+        },
+        reason: "erp_local_persistence_unavailable",
+        error: new Error("database unavailable"),
+      });
+      const abandonedClaim = await control.claimForPublication({
+        recoveryKey: `order:${ids.order}`,
+        now: policyNow,
+        leaseMs: 30_000,
+      });
+      if (!abandonedClaim) throw new Error("Expected abandoned recovery claim");
+      expect((await (await queue.getJob(abandonedClaim.jobId))?.getState()) ?? "unknown").toBe(
+        "unknown",
+      );
+
+      policyNow = new Date(policyNow.getTime() + 31_000);
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, enqueued: 1 });
+      expect(await control.readControlRecord({ orderId: ids.order })).toMatchObject({
+        status: "enqueued",
+        attempts: 2,
+        processingGeneration: 2,
+        publicationOwner: `recovery-${ids.order}-2`,
+      });
+      expect(await (await queue.getJob(`recovery-${ids.order}-2`))?.getState()).toBe("waiting");
+      expect(await queue.getJob(abandonedClaim.jobId)).toBeUndefined();
+    } finally {
+      await scanner.close();
+      await publisher.close();
+    }
+  }, 20_000);
+
+  it("reaches lookup reconciliation when an unresolved call's recovery delivery waits past its lease", async () => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    const snapshot = configSnapshotFixture();
+    snapshot.erpConfig.latencyMs = 300;
+    await connection.db
+      .update(demoRuns)
+      .set({ configSnapshot: snapshot })
+      .where(eq(demoRuns.id, ids.run));
+    let policyNow = new Date(Date.now() - 600_000);
+    const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
+    const transitions = new PostgresOrderTransitionPersistence(connection.db);
+    const attempts = new PostgresErpAttemptPersistence(connection.db);
+    const publishForConfirmedOrder = vi.fn().mockResolvedValue(undefined);
+    const store = new ErpChaosConfigStore(snapshot.erpConfig, {
+      maxLatencyMs: 5000,
+      minMaxTps: 1,
+      maxErrorRate: 1,
+      allowForcedOutage: true,
+    });
+    const server = buildMockErpServer({
+      chaosConfigStore: store,
+      confirmationService: new ConfirmationService({
+        ledger: new PostgresConfirmationLedger(connection.sql),
+        decisionProvider: new ChaosConfirmationDecisionProvider({
+          configStore: store,
+          tpsLimiter: new SlidingWindowTpsLimiter(),
+        }),
+      }),
+      controlServiceToken: "recovery-backlog-test",
+      logger: createSilentLogger("mock-erp"),
+    });
+    const methods: string[] = [];
+    server.addHook("onRequest", async (request) => {
+      methods.push(request.method);
+    });
+    const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });
+    const client = new HttpErpOrderConfirmation({
+      baseUrl,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: attempts,
+      runConfigReader: new PostgresRunConfigReader(connection.db),
+    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      { url: redisUrl, maxRetriesPerRequest: null },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
+    const scanner = createOrderRecoveryScanner({
+      persistence: control,
+      handler: { handle: vi.fn() },
+      publisher,
+      deliveryStateReader: publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 10,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+      now: () => policyNow,
+    });
+    try {
+      const delivery = {
+        attemptNumber: 1,
+        attemptsMade: 0,
+        maxAttempts: 1,
+        deliveryId: "initial-delivery",
+        processingGeneration: 0,
+      };
+      await transitions.transitionToProcessing(runScopedJob, delivery);
+      const outcome = await client.dispatch(runScopedJob, delivery, 75);
+      expect(outcome).toMatchObject({
+        disposition: "uncertain_result",
+        errorCode: "erp_request_timeout",
+      });
+      const call = await attempts.findUnresolvedCall(ids.order);
+      expect(call).not.toBeNull();
+      const ledgerRows = () =>
+        connection.sql`SELECT * FROM erp_confirmation_ledger WHERE order_id = ${ids.order}`;
+      await vi.waitFor(async () => expect(await ledgerRows()).toHaveLength(1));
+      await control.defer({
+        orderId: ids.order,
+        waitingReason: "uncertain_result",
+        nextEligibleAt: policyNow,
+        processingGeneration: 0,
+      });
+
+      // A running consumer cannot deliver while BullMQ's native queue pause is held.
+      await queue.pause();
+      consumer = buildConsumer(connection, client, {
+        notificationRecordPublisher: { publishForConfirmedOrder },
+      });
+      consumer.start();
+      await expect(scanner.scanOnce()).resolves.toMatchObject({ candidates: 1, enqueued: 1 });
+      for (let tick = 0; tick < 3; tick++) {
+        policyNow = new Date(policyNow.getTime() + 31_000);
+        await expect(scanner.scanOnce()).resolves.toMatchObject({
+          candidates: 1,
+          enqueued: 0,
+          failed: 0,
+        });
+        expect(await control.readControlRecord({ orderId: ids.order })).toMatchObject({
+          processingGeneration: 1,
+          publicationOwner: `recovery-${ids.order}-1`,
+          unresolvedErpCallId: call?.erpCallId,
+        });
+        expect(await queue.getJobs()).toHaveLength(1);
+      }
+      await queue.resume();
+      // The scanner clock stays behind real time so polling can never expire
+      // the consumer's real execution lease.
+      let drainingTicks = 0;
+      await vi.waitFor(
+        async () => {
+          if (drainingTicks < 5) {
+            drainingTicks += 1;
+            policyNow = new Date(policyNow.getTime() + 31_000);
+          }
+          await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 0, failed: 0 });
+          const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
+          expect(order?.status).toBe("confirmed");
+        },
+        { timeout: 1000 },
+      );
+      await waitForQueueToSettle(queue);
+      expect(await ledgerRows()).toHaveLength(1);
+      expect(methods.filter((method) => method === "POST")).toHaveLength(1);
+      expect(methods.filter((method) => method === "GET").length).toBeGreaterThanOrEqual(1);
+      expect(publishForConfirmedOrder).toHaveBeenCalledOnce();
+      expect(await attempts.findUnresolvedCall(ids.order)).toBeNull();
+      expect(
+        (await readOrderEvents(connection, ids.order)).filter(
+          (event) => event.eventName === "order.confirmed",
+        ),
+      ).toHaveLength(1);
+      expect(await control.readControlRecord({ orderId: ids.order })).toMatchObject({
+        processingGeneration: 1,
+      });
+      expect(await queue.getJobs()).toHaveLength(1);
+    } finally {
+      await consumer?.close();
+      consumer = null;
+      await scanner.close();
+      await publisher.close();
+      await server.close();
+    }
+  }, 15_000);
 
   it.each([
     5, 300,
@@ -2035,6 +2351,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1_000,
       batchSize: 100,
@@ -2164,6 +2481,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 100,
       batchSize: 20,
@@ -2295,6 +2613,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
       batchSize: 20,
@@ -2426,6 +2745,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
       publisher,
+      deliveryStateReader: publisher,
       logger: createSilentLogger("worker"),
       scanIntervalMs: 60_000,
       batchSize: 1,

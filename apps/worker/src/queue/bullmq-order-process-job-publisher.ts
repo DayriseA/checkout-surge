@@ -7,13 +7,19 @@ import {
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { GeneratedRunPublicationFence } from "../application/generated-run-publication-fence.js";
 import type { OrderJobPublisher } from "../application/order-job-publisher.js";
-import type { FailedOrderJobReader } from "../application/order-recovery-scanner.js";
+import type {
+  FailedOrderJobReader,
+  OrderDeliveryStateReader,
+} from "../application/order-recovery-scanner.js";
 import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
 } from "./bullmq-order-process-consumer.js";
 
-export interface WorkerOrderProcessJobPublisher extends OrderJobPublisher, FailedOrderJobReader {
+export interface WorkerOrderProcessJobPublisher
+  extends OrderJobPublisher,
+    FailedOrderJobReader,
+    OrderDeliveryStateReader {
   pauseDelivery(durationMs: number): Promise<void>;
   close(): Promise<void>;
 }
@@ -29,6 +35,7 @@ interface OrderProcessQueue {
     },
   ): Promise<unknown>;
   close(): Promise<void>;
+  getJobState?(jobId: string): Promise<string | null>;
   getJobs?(
     types: Array<"failed">,
     start: number,
@@ -64,6 +71,13 @@ export function createOrderProcessJobPublisher(
 ): WorkerOrderProcessJobPublisher {
   return {
     pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
+    async isDeliveryPending(jobId) {
+      if (!queue.getJobState) return false;
+      const state = await queue.getJobState(jobId);
+      return (
+        state === "waiting" || state === "active" || state === "delayed" || state === "prioritized"
+      );
+    },
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
       const add = async () => {
