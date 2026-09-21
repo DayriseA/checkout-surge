@@ -3745,10 +3745,10 @@ describe("API buy persistence", () => {
     }
 
     const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
-    const publisher = createBullMqOrderProcessJobPublisher(
-      { url: redisUrl, maxRetriesPerRequest: 3 },
-      undefined,
-    );
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: 3,
+    });
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },
@@ -3958,10 +3958,10 @@ describe("API buy persistence", () => {
     }
 
     const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
-    const publisher = createBullMqOrderProcessJobPublisher(
-      { url: redisUrl, maxRetriesPerRequest: 3 },
-      undefined,
-    );
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: 3,
+    });
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl, maxRetriesPerRequest: 3 } },

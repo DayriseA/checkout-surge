@@ -192,6 +192,9 @@ export const demoRuns = pgTable(
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),
+    /** Versioned engine-policy identity (D13) written at run acceptance. Nullable for pre-identity rows. */
+    enginePolicyName: text("engine_policy_name"),
+    enginePolicyVersion: integer("engine_policy_version"),
     correlationId: text("correlation_id"),
     saleOfferId: uuid("sale_offer_id").references(() => saleOffers.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }),

@@ -20,7 +20,6 @@ export const directSnapshotViolationCodes = [
   "public_duration_exceeded",
   "public_erp_error_rate_exceeded",
   "public_erp_latency_exceeded",
-  "public_erp_request_timeout_override_not_allowed",
   "public_erp_tps_exceeded",
   "public_forced_outage_not_allowed",
   "public_max_vus_exceeded",
@@ -101,15 +100,8 @@ function collectPublicProtectedConfigViolations(
     backpressure.queueName !== defaultBackpressure.queueName ||
     backpressure.physicalQueueName !== defaultBackpressure.physicalQueueName ||
     backpressure.orderProcessConcurrency !== defaultBackpressure.orderProcessConcurrency ||
-    backpressure.retryPolicy.maxAttempts !== defaultBackpressure.retryPolicy.maxAttempts ||
-    backpressure.retryPolicy.initialBackoffMs !==
-      defaultBackpressure.retryPolicy.initialBackoffMs ||
-    backpressure.drainTimeoutSeconds !== defaultBackpressure.drainTimeoutSeconds ||
     backpressure.pendingPersistenceRetryAfterSeconds !==
-      defaultBackpressure.pendingPersistenceRetryAfterSeconds ||
-    backpressure.circuitBreakerFailureThreshold !==
-      defaultBackpressure.circuitBreakerFailureThreshold ||
-    backpressure.circuitBreakerResetTimeoutMs !== defaultBackpressure.circuitBreakerResetTimeoutMs
+      defaultBackpressure.pendingPersistenceRetryAfterSeconds
   ) {
     violations.push({
       code: "public_backpressure_override_not_allowed",
@@ -125,13 +117,6 @@ function collectPublicProtectedConfigViolations(
       code: "public_reservation_hold_override_not_allowed",
       message: "Public custom reservation hold must match policy defaults.",
       path: ["inventoryConfig", "reservationHoldMinutes"],
-    });
-  }
-  if (snapshot.erpConfig.requestTimeoutMs !== defaults.erpConfig.requestTimeoutMs) {
-    violations.push({
-      code: "public_erp_request_timeout_override_not_allowed",
-      message: "Public custom ERP request timeout must match policy defaults.",
-      path: ["erpConfig", "requestTimeoutMs"],
     });
   }
 }

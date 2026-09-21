@@ -948,8 +948,8 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("reseeds an already-system mutable admin preset as a true no-op", async () => {
     await runSeedScript();
     // Operator edits the mutable admin preset and bumps updated_at. Uses the
-    // `custom` scratch preset so later breaker-backfill assertions on
-    // `admin-smoke-constant` are not affected by the preserved operator edit.
+    // `custom` scratch preset so its preserved operator edit does not affect
+    // other seeded preset assertions.
     await withDatabase(
       (sql) => sql`
         UPDATE demo_presets
@@ -993,8 +993,8 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("repairs a falsely non-system mutable admin preset on reseed without overwriting configuration", async () => {
     await runSeedScript();
     // Deliberately corrupt is_system to false and operator-edit the config.
-    // Uses a value within the backpressure schema max so later breaker-backfill
-    // schema validation on admin-failure-path still passes.
+    // Uses a value within the backpressure schema max so later seeded preset
+    // schema validation still passes.
     await withDatabase(
       (sql) => sql`
         UPDATE demo_presets
@@ -1130,101 +1130,51 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(policy).not.toHaveProperty("deploymentHardCaps");
   });
 
-  it("fills missing system-preset breaker defaults without rewriting other JSON", async () => {
+  it("seeds presets without retired engine knobs", async () => {
     await runSeedScript();
-    await withDatabase(async (sql) => {
-      await sql`
-        UPDATE demo_presets
-        SET backpressure_config = backpressure_config - 'circuitBreakerFailureThreshold' - 'circuitBreakerResetTimeoutMs'
-        WHERE slug = 'admin-smoke-constant'
-      `;
-      await sql`
-        UPDATE demo_presets
-        SET backpressure_config = (backpressure_config - 'circuitBreakerResetTimeoutMs')
-          || '{"circuitBreakerFailureThreshold":77}'::jsonb
-        WHERE slug = 'admin-failure-path'
-      `;
-      await sql`
-        UPDATE public_runtime_policies
-        SET policy = jsonb_set(jsonb_set(
-          policy, '{publicRunBudget,windowSeconds}', '999'::jsonb),
-          '{publicCustomDefaults,backpressureConfig}',
-          (policy #> '{publicCustomDefaults,backpressureConfig}')
-            - 'circuitBreakerFailureThreshold' - 'circuitBreakerResetTimeoutMs',
-          true
-        )
-        WHERE id = 'active'
-      `;
-    });
-
-    const overrides = {
-      ERP_CIRCUIT_FAILURE_THRESHOLD: "7",
-      ERP_CIRCUIT_RESET_TIMEOUT_MS: "12345",
-    };
-    await runSeedScript(overrides);
-    const readBackfilledState = () =>
-      withDatabase(
-        (sql) => sql<{ slug: string; backpressure_config: Record<string, unknown> }[]>`
-        SELECT slug, backpressure_config
+    const seededPresets = await withDatabase(
+      (sql) => sql<
+        {
+          slug: string;
+          erp_config: Record<string, unknown>;
+          backpressure_config: Record<string, unknown>;
+        }[]
+      >`
+        SELECT slug, erp_config, backpressure_config
         FROM demo_presets
-        WHERE slug IN ('admin-smoke-constant', 'admin-failure-path')
         ORDER BY slug
       `,
-      );
-    const firstPresetState = await readBackfilledState();
-    const [policyRow] = await withDatabase(
-      (sql) => sql<{ policy: unknown }[]>`
-      SELECT policy FROM public_runtime_policies WHERE id = 'active'
-    `,
     );
-    expect(firstPresetState).toEqual([
-      {
-        slug: "admin-failure-path",
-        backpressure_config: expect.objectContaining({
-          circuitBreakerFailureThreshold: 77,
-          circuitBreakerResetTimeoutMs: 12_345,
-          queueName: "orders:process",
-        }),
-      },
-      {
-        slug: "admin-smoke-constant",
-        backpressure_config: expect.objectContaining({
-          circuitBreakerFailureThreshold: 7,
-          circuitBreakerResetTimeoutMs: 12_345,
-          orderProcessConcurrency: 5,
-          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        }),
-      },
-    ]);
-    for (const preset of firstPresetState) {
+    expect(seededPresets.length).toBeGreaterThan(0);
+    for (const preset of seededPresets) {
+      expect(Object.keys(preset.backpressure_config)).toEqual(
+        expect.arrayContaining(["orderProcessConcurrency", "pendingPersistenceRetryAfterSeconds"]),
+      );
+      expect(preset.backpressure_config).not.toHaveProperty("retryPolicy");
+      expect(preset.backpressure_config).not.toHaveProperty("drainTimeoutSeconds");
+      expect(preset.backpressure_config).not.toHaveProperty("circuitBreakerFailureThreshold");
+      expect(preset.backpressure_config).not.toHaveProperty("circuitBreakerResetTimeoutMs");
+      expect(preset.erp_config).not.toHaveProperty("requestTimeoutMs");
       expect(() => backpressureConfigSchema.parse(preset.backpressure_config)).not.toThrow();
     }
-    expect(() => publicRuntimePolicyPersistedSchema.parse(policyRow?.policy)).toThrow();
-    expect(policyRow?.policy).toMatchObject({
-      publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
-      publicRunBudget: { windowSeconds: 999 },
-    });
 
-    await runSeedScript({
-      ERP_CIRCUIT_FAILURE_THRESHOLD: "9",
-      ERP_CIRCUIT_RESET_TIMEOUT_MS: "54321",
-    });
-    expect(await readBackfilledState()).toEqual(firstPresetState);
-    const [policyAfterRerun] = await withDatabase(
-      (sql) => sql<{ policy: unknown }[]>`
-      SELECT policy FROM public_runtime_policies WHERE id = 'active'
-    `,
-    );
-    expect(policyAfterRerun?.policy).toMatchObject({
-      publicCustomDefaults: { backpressureConfig: { orderProcessConcurrency: 5 } },
-      publicRunBudget: { windowSeconds: 999 },
-    });
-
-    // This test intentionally manufactures a policy shape that predates already-applied
-    // migrations. Restore a valid singleton so later migration-runner tests exercise their
-    // own bounded invalid fixtures rather than inheriting this one.
-    await withDatabase((sql) => sql`DELETE FROM public_runtime_policies WHERE id = 'active'`);
+    // Reseeding keeps the retired-field-free shape and does not re-add retired knobs.
     await runSeedScript();
+    expect(
+      await withDatabase(
+        (sql) => sql<
+          {
+            slug: string;
+            erp_config: Record<string, unknown>;
+            backpressure_config: Record<string, unknown>;
+          }[]
+        >`
+          SELECT slug, erp_config, backpressure_config
+          FROM demo_presets
+          ORDER BY slug
+        `,
+      ),
+    ).toEqual(seededPresets);
   });
 
   it("enforces lifecycle timestamp constraints while preserving one-way and equality semantics", async () => {

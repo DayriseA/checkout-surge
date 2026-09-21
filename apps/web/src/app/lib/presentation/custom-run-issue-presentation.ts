@@ -139,7 +139,7 @@ export function customErrorGroup(path: readonly unknown[]): CustomErrorGroup {
     return field === "reservationHoldMinutes" ? "advanced" : "stock";
   }
   if (path.includes("erpConfig")) {
-    return field === "requestTimeoutMs" || field === "forcedOutage" ? "advanced" : "erp";
+    return field === "forcedOutage" ? "advanced" : "erp";
   }
   return "form";
 }

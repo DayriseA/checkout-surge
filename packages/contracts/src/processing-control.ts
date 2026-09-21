@@ -49,3 +49,14 @@ export const enginePolicyIdentitySchema = z
   })
   .strict();
 export type EnginePolicyIdentity = z.infer<typeof enginePolicyIdentitySchema>;
+
+/**
+ * The single adaptive ERP admission engine-policy identity (D13). Defined once
+ * here so the API persists exactly the identity the worker policy runs: run
+ * acceptance stores it on the run row and the worker policy derives its
+ * version string from it.
+ */
+export const adaptiveErpAdmissionEnginePolicyIdentity = {
+  name: "adaptive-erp-admission",
+  version: 1,
+} as const satisfies EnginePolicyIdentity;

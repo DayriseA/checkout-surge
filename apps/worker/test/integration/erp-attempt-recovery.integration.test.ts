@@ -20,6 +20,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import { ErpUnresolvedCallReconciler } from "../../src/application/erp-reconciliation.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
@@ -409,7 +410,7 @@ run("PostgreSQL ERP attempt recovery", () => {
     try {
       const client = new HttpErpOrderConfirmation({
         baseUrl: erp.baseUrl,
-        requestTimeoutMs: 10,
+        lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence,
         now: () => now,
@@ -467,7 +468,7 @@ function createHttpConfirmation(
   let now = new Date("2026-06-22T00:00:01.000Z");
   return new HttpErpOrderConfirmation({
     baseUrl,
-    requestTimeoutMs: 1_000,
+    lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
     retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
     attemptPersistence,
     now: () => {
@@ -516,7 +517,7 @@ function toExplicitConfirmation(
     confirm: async (job, delivery) =>
       (await confirmation.findSuccessfulAttempt(job))
         ? { disposition: "succeeded" }
-        : confirmation.dispatch(job, delivery),
+        : confirmation.dispatch(job, delivery, adaptiveErpAdmissionPolicy.initialRequestDeadlineMs),
   };
 }
 

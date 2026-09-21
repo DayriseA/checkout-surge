@@ -115,7 +115,6 @@ export interface OrderRecoveryScanner {
     candidates: number;
     enqueued: number;
     failed: number;
-    escalated: number;
     oldestAgeMs: number | null;
     maxObservedAttempts: number;
   }>;
@@ -143,7 +142,6 @@ export function createOrderRecoveryScanner(dependencies: {
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;
-  maxRecoveryAttempts?: number;
   recoveryLeaseMs?: number;
   failedJobReader: FailedOrderJobReader;
   now?: () => Date;
@@ -202,7 +200,6 @@ export function createOrderRecoveryScanner(dependencies: {
     });
     let enqueued = 0;
     let failed = 0;
-    const escalated = 0;
     const oldestAgeMs =
       candidates.length > 0
         ? Math.max(
@@ -262,7 +259,6 @@ export function createOrderRecoveryScanner(dependencies: {
           candidates: candidates.length,
           enqueued,
           failed,
-          escalated,
           oldestAgeMs,
           maxObservedAttempts,
         },
@@ -273,7 +269,6 @@ export function createOrderRecoveryScanner(dependencies: {
       candidates: candidates.length,
       enqueued,
       failed,
-      escalated,
       oldestAgeMs,
       maxObservedAttempts,
     };

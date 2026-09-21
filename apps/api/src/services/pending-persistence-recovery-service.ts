@@ -22,7 +22,6 @@ import type {
   StockReservationGateway,
 } from "./reserve-order-service.js";
 import { isPersistedBuyForReservation } from "./reserve-order-service.js";
-import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export interface PendingPersistenceRecoverySummary {
   discovered: number;
@@ -62,7 +61,6 @@ export interface PendingPersistenceAttemptScope {
   audit: PendingPersistenceRecoveryAudit;
   stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
   orderProcessJobPublisher: OrderProcessJobPublisher;
-  runRetryPolicyResolver?: RunRetryPolicyResolver;
   close(): Promise<void>;
 }
 
@@ -117,7 +115,6 @@ export class PendingPersistenceRecoveryService {
         timeoutMs: number;
       }) => Promise<PendingPersistenceAttemptScope>;
       closeDiscovery?: () => Promise<void>;
-      runRetryPolicyResolver?: RunRetryPolicyResolver;
       idempotencyTtlSeconds: number;
       logger: CheckoutSurgeLogger;
       dashboardSourceDirtyScheduler?: Pick<DashboardSourceDirtySchedulerPort, "scheduleQueue">;
@@ -716,9 +713,6 @@ export class PendingPersistenceRecoveryService {
       audit: this.options.audit,
       stockReservations: this.options.stockReservations,
       orderProcessJobPublisher: this.options.orderProcessJobPublisher,
-      ...(this.options.runRetryPolicyResolver
-        ? { runRetryPolicyResolver: this.options.runRetryPolicyResolver }
-        : {}),
       close: async () => undefined,
     };
   }

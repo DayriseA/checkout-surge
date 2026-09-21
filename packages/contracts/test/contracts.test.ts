@@ -62,6 +62,8 @@ import {
   hasObservedRequestArrivals,
   healthReadyPath,
   healthResponseSchema,
+  historicalAcceptedRunConfigSnapshotSchema,
+  historicalTrafficExecutionStartRequestSchema,
   internalLoadMetricIngestPath,
   internalRunFailureReasonSchema,
   internalTrafficCompletionPath,
@@ -163,7 +165,7 @@ describe("intrinsic numeric contract bounds", () => {
   });
 });
 
-describe("accepted run breaker configuration", () => {
+describe("accepted run configuration", () => {
   const snapshot = {
     trafficConfig: {
       mode: "buyer-spike",
@@ -174,24 +176,20 @@ describe("accepted run breaker configuration", () => {
       quantityPerAttempt: 1,
     },
     inventoryConfig: { startingStock: 1, quantityPerCheckout: 1, reservationHoldMinutes: 1 },
-    erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false, requestTimeoutMs: 1 },
+    erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 0 },
-      drainTimeoutSeconds: 1,
       pendingPersistenceRetryAfterSeconds: 1,
-      circuitBreakerFailureThreshold: 2,
-      circuitBreakerResetTimeoutMs: 100,
     },
   };
 
-  it("accepts positive integer breaker configuration", () => {
+  it("accepts the retired-field-free accepted run configuration", () => {
     expect(acceptedRunConfigSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
 
-  it("enforces strict retry policy and the deployment concurrency cap", () => {
+  it("enforces the deployment concurrency cap strictly", () => {
     expect(
       acceptedRunConfigSnapshotSchema.safeParse({
         ...snapshot,
@@ -201,62 +199,73 @@ describe("accepted run breaker configuration", () => {
     expect(
       acceptedRunConfigSnapshotSchema.safeParse({
         ...snapshot,
-        backpressureConfig: {
-          ...snapshot.backpressureConfig,
-          retryPolicy: { maxAttempts: 0, initialBackoffMs: 0 },
-        },
-      }).success,
-    ).toBe(false);
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({
-        ...snapshot,
-        backpressureConfig: {
-          ...snapshot.backpressureConfig,
-          retryPolicy: { maxAttempts: 1, initialBackoffMs: 0, unknown: true },
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  it.each([
-    ["circuitBreakerFailureThreshold", 0],
-    ["circuitBreakerFailureThreshold", -1],
-    ["circuitBreakerFailureThreshold", 1.5],
-    ["circuitBreakerResetTimeoutMs", 0],
-    ["circuitBreakerResetTimeoutMs", -1],
-    ["circuitBreakerResetTimeoutMs", 1.5],
-  ] as const)("rejects invalid %s value %s", (field, value) => {
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({
-        ...snapshot,
-        backpressureConfig: {
-          ...snapshot.backpressureConfig,
-          [field]: value,
-        },
-      }).success,
-    ).toBe(false);
-  });
-
-  it("requires both breaker fields and remains strict", () => {
-    const { circuitBreakerFailureThreshold: _missingThreshold, ...withoutThreshold } =
-      snapshot.backpressureConfig;
-    const { circuitBreakerResetTimeoutMs: _missing, ...withoutReset } = snapshot.backpressureConfig;
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({
-        ...snapshot,
-        backpressureConfig: withoutThreshold,
-      }).success,
-    ).toBe(false);
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({ ...snapshot, backpressureConfig: withoutReset })
-        .success,
-    ).toBe(false);
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({
-        ...snapshot,
         backpressureConfig: { ...snapshot.backpressureConfig, unknown: true },
       }).success,
     ).toBe(false);
+  });
+
+  it("rejects retired engine knobs on new input instead of falling back", () => {
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
+      }).success,
+    ).toBe(false);
+    expect(
+      acceptedRunConfigSnapshotSchema.safeParse({
+        ...snapshot,
+        backpressureConfig: {
+          ...snapshot.backpressureConfig,
+          retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
+          drainTimeoutSeconds: 300,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps historical snapshots with retired engine knobs readable and stripped", () => {
+    const historical = historicalAcceptedRunConfigSnapshotSchema.parse({
+      ...snapshot,
+      erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
+      backpressureConfig: {
+        ...snapshot.backpressureConfig,
+        retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
+        drainTimeoutSeconds: 300,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
+      },
+    });
+    expect(historical).toEqual(snapshot);
+  });
+
+  it("keeps historical execution journals with retired engine knobs readable", () => {
+    const request = {
+      runId,
+      saleOfferId,
+      apiBaseUrl: "http://localhost:4000",
+      correlationId,
+      configSnapshot: {
+        ...snapshot,
+        erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
+        backpressureConfig: {
+          ...snapshot.backpressureConfig,
+          retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
+          drainTimeoutSeconds: 300,
+          circuitBreakerFailureThreshold: 5,
+          circuitBreakerResetTimeoutMs: 10_000,
+        },
+      },
+    };
+    expect(historicalTrafficExecutionStartRequestSchema.parse(request)).toEqual({
+      runId,
+      saleOfferId,
+      apiBaseUrl: "http://localhost:4000",
+      correlationId,
+      configSnapshot: snapshot,
+    });
+    expect(() => trafficExecutionStartRequestSchema.parse(request)).toThrow();
   });
 });
 
@@ -2471,17 +2480,12 @@ describe("public runtime policy contract", () => {
             maxTps: 10,
             errorRate: 0,
             forcedOutage: false,
-            requestTimeoutMs: 1000,
           },
           backpressureConfig: {
             queueName: "orders:process",
             physicalQueueName: "orders-process",
             orderProcessConcurrency: 2,
-            retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-            drainTimeoutSeconds: 300,
             pendingPersistenceRetryAfterSeconds: 30,
-            circuitBreakerFailureThreshold: 5,
-            circuitBreakerResetTimeoutMs: 10_000,
           },
         },
         startedAt: timestamp,
@@ -2771,17 +2775,12 @@ describe("public runtime policy contract", () => {
           maxTps: 100,
           errorRate: 0,
           forcedOutage: false,
-          requestTimeoutMs: 2000,
         },
         backpressureConfig: {
           queueName: "orders:process",
           physicalQueueName: "orders-process",
           orderProcessConcurrency: 5,
-          retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-          drainTimeoutSeconds: 300,
           pendingPersistenceRetryAfterSeconds: 30,
-          circuitBreakerFailureThreshold: 5,
-          circuitBreakerResetTimeoutMs: 10_000,
         },
       },
       publicCustomLimits: {
@@ -3118,7 +3117,14 @@ describe("public runtime policy contract", () => {
       code: "public_backpressure_override_not_allowed",
       path: ["backpressureConfig"],
       change: (snapshot: AcceptedRunConfigSnapshot) => {
-        snapshot.backpressureConfig.retryPolicy.maxAttempts += 1;
+        snapshot.backpressureConfig.pendingPersistenceRetryAfterSeconds += 1;
+      },
+    },
+    {
+      code: "public_backpressure_override_not_allowed",
+      path: ["backpressureConfig"],
+      change: (snapshot: AcceptedRunConfigSnapshot) => {
+        snapshot.backpressureConfig.orderProcessConcurrency += 1;
       },
     },
     {
@@ -3126,13 +3132,6 @@ describe("public runtime policy contract", () => {
       path: ["inventoryConfig", "reservationHoldMinutes"],
       change: (snapshot: AcceptedRunConfigSnapshot) => {
         snapshot.inventoryConfig.reservationHoldMinutes += 1;
-      },
-    },
-    {
-      code: "public_erp_request_timeout_override_not_allowed",
-      path: ["erpConfig", "requestTimeoutMs"],
-      change: (snapshot: AcceptedRunConfigSnapshot) => {
-        snapshot.erpConfig.requestTimeoutMs += 1;
       },
     },
   ] as const)("rejects $code for public custom without changing admin validation", (fixture) => {
@@ -3364,17 +3363,12 @@ describe("public runtime policy contract", () => {
         maxTps: 200,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: {
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
       },
     };
 
@@ -3583,17 +3577,12 @@ function acceptedRunSnapshot(): AcceptedRunConfigSnapshot {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 2,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

@@ -1567,14 +1567,12 @@ const policyFieldKeys = {
     "k6Vus.maxVus",
   ],
   inventory: ["startingStock", "quantityPerCheckout", "reservationHoldMinutes"],
-  erp: ["latencyMs", "maxTps", "errorRate", "requestTimeoutMs"],
-  backpressure: ["queueName", "physicalQueueName", "orderProcessConcurrency"],
-  retry: ["maxAttempts", "initialBackoffMs"],
-  backpressureTimeouts: [
-    "drainTimeoutSeconds",
+  erp: ["latencyMs", "maxTps", "errorRate"],
+  backpressure: [
+    "queueName",
+    "physicalQueueName",
+    "orderProcessConcurrency",
     "pendingPersistenceRetryAfterSeconds",
-    "circuitBreakerFailureThreshold",
-    "circuitBreakerResetTimeoutMs",
   ],
   limits: [
     "maxTotalRequests",
@@ -1669,18 +1667,6 @@ export function policyChangeSummary(
     ...policyChangeRows(
       "publicCustomDefaults.backpressureConfig",
       policyFieldKeys.backpressure,
-      oldDefaults.backpressureConfig,
-      newDefaults.backpressureConfig,
-    ),
-    ...policyChangeRows(
-      "publicCustomDefaults.backpressureConfig.retryPolicy",
-      policyFieldKeys.retry,
-      oldDefaults.backpressureConfig.retryPolicy,
-      newDefaults.backpressureConfig.retryPolicy,
-    ),
-    ...policyChangeRows(
-      "publicCustomDefaults.backpressureConfig",
-      policyFieldKeys.backpressureTimeouts,
       oldDefaults.backpressureConfig,
       newDefaults.backpressureConfig,
     ),
@@ -1874,12 +1860,8 @@ const erpConfigServerFields = new Set([
   "erpForcedOutage",
   "erpLatencyMs",
   "erpMaxTps",
-  "erpRequestTimeoutMs",
 ]);
 const backpressureServerFields = new Set([
-  "circuitBreakerFailureThreshold",
-  "circuitBreakerResetTimeoutMs",
-  "drainTimeoutSeconds",
   "orderProcessConcurrency",
   "pendingPersistenceRetryAfterSeconds",
 ]);
@@ -1966,9 +1948,7 @@ function serverDraftField(path: string[], context: ServerFieldContext): string |
             ? "erpErrorRate"
             : rawField === "forcedOutage"
               ? "erpForcedOutage"
-              : rawField === "requestTimeoutMs"
-                ? "erpRequestTimeoutMs"
-                : rawField;
+              : rawField;
   } else if (context === "policy" && path.includes("publicRunBudget")) {
     field =
       rawField === "windowSeconds"

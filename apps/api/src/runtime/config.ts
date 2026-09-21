@@ -14,8 +14,6 @@ export interface ApiConfig {
   databaseUrl: string;
   redisUrl: string;
   postgresPoolMax: number;
-  orderProcessMaxAttempts: number;
-  orderProcessBackoffBaseMs: number;
   reservationHoldMinutes: number;
   idempotencyTtlSeconds: number;
   pendingPersistenceRetryAfterSeconds: number;
@@ -32,7 +30,6 @@ export interface ApiConfig {
   controlServiceToken: string;
   publicClientCookieSecret: string;
   deploymentHardCaps: DeploymentHardCaps;
-  demoRunDrainTimeoutSeconds: number;
   demoRunFinalizationPollIntervalSeconds: number;
   dashboardMaxSseClients: number;
   dashboardMaxSseClientsPerSource: number;
@@ -63,16 +60,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     databaseUrl: requireEnv(env, "DATABASE_URL"),
     redisUrl: requireEnv(env, "REDIS_URL"),
     postgresPoolMax: parsePositiveInteger(env.API_POSTGRES_POOL_MAX, "API_POSTGRES_POOL_MAX", 10),
-    orderProcessMaxAttempts: parsePositiveInteger(
-      env.ORDER_PROCESS_MAX_ATTEMPTS,
-      "ORDER_PROCESS_MAX_ATTEMPTS",
-      4,
-    ),
-    orderProcessBackoffBaseMs: parsePositiveInteger(
-      env.ORDER_PROCESS_BACKOFF_BASE_MS,
-      "ORDER_PROCESS_BACKOFF_BASE_MS",
-      500,
-    ),
     reservationHoldMinutes: parsePositiveInteger(
       env.RESERVATION_HOLD_MINUTES,
       "RESERVATION_HOLD_MINUTES",
@@ -161,11 +148,6 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       ),
       maxVus: parsePositiveInteger(env.DEMO_MAX_VUS, "DEMO_MAX_VUS", 10_000),
     }),
-    demoRunDrainTimeoutSeconds: parsePositiveInteger(
-      env.DEMO_RUN_DRAIN_TIMEOUT_SECONDS,
-      "DEMO_RUN_DRAIN_TIMEOUT_SECONDS",
-      300,
-    ),
     demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
       env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",

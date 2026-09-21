@@ -31,10 +31,6 @@ describe("admin drafts", () => {
       backpressureConfig: preset.backpressureConfig,
     });
     expect(rebuilt.trafficConfig.quantityPerAttempt).toBe(7);
-    expect(rebuilt.backpressureConfig.retryPolicy).toEqual({
-      maxAttempts: 9,
-      initialBackoffMs: 321,
-    });
     expect(rebuilt.backpressureConfig.queueName).toBe("orders:process");
   });
 
@@ -340,17 +336,12 @@ function presetFixture(mode: "buyer-spike" | "constant-arrival-rate"): DemoPrese
       maxTps: 100,
       errorRate: 0.1,
       forcedOutage: false,
-      requestTimeoutMs: 2000,
     },
     backpressureConfig: {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 9, initialBackoffMs: 321 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
     createdAt: "2026-06-20T00:00:00.000Z",
     updatedAt: "2026-06-20T00:00:00.000Z",

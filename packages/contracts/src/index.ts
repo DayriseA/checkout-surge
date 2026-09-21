@@ -4,7 +4,6 @@ export * from "./demo.js";
 export * from "./entities.js";
 export * from "./erp.js";
 export * from "./erp-outcomes.js";
-export * from "./erp-profile.js";
 export * from "./error.js";
 export * from "./estimate.js";
 export * from "./health.js";

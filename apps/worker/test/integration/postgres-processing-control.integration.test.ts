@@ -23,6 +23,7 @@ import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   createOrderProcessJobHandler,
@@ -209,13 +210,15 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     );
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://erp.test",
-      requestTimeoutMs: 2_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       fetch,
       now: () => now,
     });
-    const handler = handlerWith(confirmation.dispatch.bind(confirmation));
+    const handler = handlerWith((job, delivery) =>
+      confirmation.dispatch(job, delivery, adaptiveErpAdmissionPolicy.initialRequestDeadlineMs),
+    );
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
@@ -270,14 +273,17 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     });
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://erp.test",
-      requestTimeoutMs: 2_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       fetch,
       now: () => now,
     });
 
-    await handlerWith(confirmation.dispatch.bind(confirmation)).handle(seeded.job, {
+    const handler = handlerWith((job, delivery) =>
+      confirmation.dispatch(job, delivery, adaptiveErpAdmissionPolicy.initialRequestDeadlineMs),
+    );
+    await handler.handle(seeded.job, {
       attemptNumber: 2,
       attemptsMade: 1,
       maxAttempts: 4,
@@ -1396,7 +1402,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     }
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://erp.test",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       now: () => now,
@@ -1406,10 +1412,14 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
           : vi.fn<typeof fetch>().mockResolvedValue(response),
     });
 
-    const outcome = await client.dispatch(seeded.job, {
-      ...delivery,
-      processingGeneration: processing.processingGeneration ?? 0,
-    });
+    const outcome = await client.dispatch(
+      seeded.job,
+      {
+        ...delivery,
+        processingGeneration: processing.processingGeneration ?? 0,
+      },
+      adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+    );
     expect(outcome.disposition).toBe("temporarily_unavailable");
     const authoritative = scenario === "recognized_availability";
     expect(await controlRow(seeded.orderId)).toMatchObject({

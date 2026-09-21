@@ -283,35 +283,17 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               ["Simulated ERP capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
               ["Simulated ERP failure rate (%)", formatPercent(config.erpConfig.errorRate)],
               ["Simulated ERP outage", config.erpConfig.forcedOutage ? "yes" : "no"],
-              ["Request timeout", formatDurationMs(config.erpConfig.requestTimeoutMs) ?? "n/a"],
             ]}
             title="Simulated ERP"
           />
           <FactList
             facts={[
               ["Concurrency", formatNumber(config.backpressureConfig.orderProcessConcurrency)],
-              ["Retry attempts", formatNumber(config.backpressureConfig.retryPolicy.maxAttempts)],
-              [
-                "Initial retry backoff",
-                formatDurationMs(config.backpressureConfig.retryPolicy.initialBackoffMs) ?? "n/a",
-              ],
-              [
-                "Configured drain timeout",
-                formatDurationSeconds(config.backpressureConfig.drainTimeoutSeconds),
-              ],
               [
                 "Configured retry delay",
                 formatDurationSeconds(
                   config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
                 ),
-              ],
-              [
-                "Circuit-breaker failure threshold",
-                formatNumber(config.backpressureConfig.circuitBreakerFailureThreshold),
-              ],
-              [
-                "Circuit-breaker reset timeout",
-                formatDurationMs(config.backpressureConfig.circuitBreakerResetTimeoutMs) ?? "n/a",
               ],
               ["Logical queue", codeValue(config.backpressureConfig.queueName)],
               ["Physical queue", codeValue(config.backpressureConfig.physicalQueueName)],
@@ -1088,10 +1070,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               ["Capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
               ["Failure rate", formatPercent(config.erpConfig.errorRate)],
               ["Forced outage", config.erpConfig.forcedOutage ? "yes" : "no"],
-              [
-                "Request timeout (configured safety limit)",
-                formatDurationMs(config.erpConfig.requestTimeoutMs) ?? "not recorded",
-              ],
             ]}
             title="Simulated ERP"
           />
@@ -1102,32 +1080,10 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
                 formatNumber(config.backpressureConfig.orderProcessConcurrency),
               ],
               [
-                "Retry attempts (configured limit)",
-                formatNumber(config.backpressureConfig.retryPolicy.maxAttempts),
-              ],
-              [
-                "Initial retry backoff",
-                formatDurationMs(config.backpressureConfig.retryPolicy.initialBackoffMs) ??
-                  "not recorded",
-              ],
-              [
-                "Drain safety limit (configured)",
-                formatDurationSeconds(config.backpressureConfig.drainTimeoutSeconds),
-              ],
-              [
                 "Pending-storage retry delay (configured)",
                 formatDurationSeconds(
                   config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
                 ),
-              ],
-              [
-                "Circuit-breaker failure threshold",
-                formatNumber(config.backpressureConfig.circuitBreakerFailureThreshold),
-              ],
-              [
-                "Circuit-breaker reset timeout",
-                formatDurationMs(config.backpressureConfig.circuitBreakerResetTimeoutMs) ??
-                  "not recorded",
               ],
             ]}
             title="Backpressure"

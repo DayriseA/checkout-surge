@@ -1,19 +1,24 @@
 import {
   type AcceptedRunConfigSnapshot,
   type BusinessOutcomeSummary,
-  materializedAcceptedRunConfigSnapshotSchema,
+  historicalAcceptedRunConfigSnapshotSchema,
   materializedBusinessOutcomeSummarySchema,
   type TerminalInventorySnapshot,
   terminalInventorySnapshotSchema,
 } from "@checkout-surge/contracts";
 import type { z } from "zod";
 
+/**
+ * Persisted run configuration read boundary. Historical snapshots keep
+ * parsing: the historical schema accepts and ignores retired engine knobs
+ * (D13) while supported fields keep their materialized rigor.
+ */
 export function parsePersistedAcceptedRunConfigSnapshot(
   value: unknown,
   context: string,
 ): AcceptedRunConfigSnapshot {
   return parsePersistedState(
-    materializedAcceptedRunConfigSnapshotSchema,
+    historicalAcceptedRunConfigSnapshotSchema,
     value,
     context,
     "configSnapshot",

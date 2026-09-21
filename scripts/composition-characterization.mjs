@@ -29,7 +29,6 @@ const composeEnv = {
   WEB_HOST_PORT: hostPorts.web,
   DASHBOARD_PROXY_HOST_PORT: hostPorts.dashboard,
   DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: "1",
-  DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "180",
 };
 const apiBaseUrl = `http://127.0.0.1:${hostPorts.api}`;
 const dashboardBaseUrl = `http://127.0.0.1:${hostPorts.dashboard}`;
@@ -79,7 +78,6 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2000,
     },
   });
   const { runId, saleOfferId } = requireRunIdentity(started);

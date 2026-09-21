@@ -15,6 +15,8 @@ export function isDestructiveResetReason(reason: string | null): reason is Destr
 export const internalRunFailureReasonValues = [
   "reconciliation_escalated",
   "pending_persistence_reconciliation_timeout",
+  // Historical rows only: no new run emits business_drain_timeout (task 14),
+  // but stored failure reasons keep parsing.
   "business_drain_timeout",
   "accepted_response_accounting_timeout",
   "traffic_delivery_major_shortfall",

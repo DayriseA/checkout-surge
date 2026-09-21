@@ -73,7 +73,7 @@ export function createBullMqOrderProcessConsumer(
 ): OrderProcessConsumer {
   const worker = new Worker<OrderProcessJob, void, typeof orderProcessJobName>(
     orderProcessBullMqQueueName,
-    async (job, token) => processJob(job, token, options),
+    async (job) => processJob(job, options),
     {
       autorun: false,
       concurrency: options.concurrency,
@@ -181,7 +181,6 @@ function correlationLogContext(data: unknown): { correlationId?: string } {
 
 export async function processJob(
   job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
-  _token: string | undefined,
   options: CreateBullMqOrderProcessConsumerOptions,
 ): Promise<void> {
   if (job.name !== orderProcessJobName) {

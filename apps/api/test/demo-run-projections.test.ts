@@ -22,17 +22,12 @@ const configSnapshot: AcceptedRunConfigSnapshot = {
     maxTps: 10,
     errorRate: 0,
     forcedOutage: false,
-    requestTimeoutMs: 1_000,
   },
   backpressureConfig: {
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency: 2,
-    retryPolicy: { maxAttempts: 3, initialBackoffMs: 100 },
-    drainTimeoutSeconds: 30,
     pendingPersistenceRetryAfterSeconds: 5,
-    circuitBreakerFailureThreshold: 3,
-    circuitBreakerResetTimeoutMs: 1_000,
   },
 };
 
@@ -46,6 +41,8 @@ describe("demo-run projections", () => {
       status: "failed",
       trafficStatus: "failed",
       configSnapshot,
+      enginePolicyName: null,
+      enginePolicyVersion: null,
       correlationId: null,
       saleOfferId: "33333333-3333-4333-8333-333333333333",
       startedAt: new Date("2026-07-21T10:00:00.000Z"),

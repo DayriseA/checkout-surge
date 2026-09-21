@@ -1,9 +1,5 @@
-import type { BackpressureConfig, OrderProcessJob } from "@checkout-surge/contracts";
-
-export interface OrderProcessJobPublishOptions {
-  retryPolicy: BackpressureConfig["retryPolicy"];
-}
+import type { OrderProcessJob } from "@checkout-surge/contracts";
 
 export interface OrderProcessJobPublisher {
-  enqueue(job: OrderProcessJob, options?: OrderProcessJobPublishOptions): Promise<void>;
+  enqueue(job: OrderProcessJob): Promise<void>;
 }

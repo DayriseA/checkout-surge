@@ -1248,12 +1248,7 @@ describe("public browser starts", () => {
     await user.click(screen.getByText("Customize a scenario"));
     for (const protectedControl of [
       "Worker concurrency (workers)",
-      "Retry attempts (attempts)",
-      "Initial retry backoff (milliseconds)",
-      "Drain timeout (seconds)",
       "Persistence retry delay (seconds)",
-      "Circuit failure threshold (failures)",
-      "Circuit reset timeout (milliseconds)",
       "Reservation hold (minutes)",
       "ERP request timeout (milliseconds)",
     ]) {
@@ -1291,7 +1286,6 @@ describe("public browser starts", () => {
           maxTps: 33,
           errorRate: 0.002,
           forcedOutage: false,
-          requestTimeoutMs: 2000,
         },
       },
     });

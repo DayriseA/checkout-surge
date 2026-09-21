@@ -25,7 +25,6 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { Queue } from "bullmq";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createBullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
-import { PostgresRunRetryPolicyResolver } from "../src/queue/postgres-run-retry-policy-resolver.js";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../src/services/reserve-order-service.js";
@@ -39,7 +38,6 @@ const ids = {
   run: "10000000-0000-4000-8000-000000000003",
   saleOffer: "10000000-0000-4000-8000-000000000004",
 } as const;
-const retryPolicy = { maxAttempts: 7, initialBackoffMs: 125 };
 const configSnapshot = {
   trafficConfig: {
     mode: "buyer-spike" as const,
@@ -59,17 +57,12 @@ const configSnapshot = {
     maxTps: 100,
     errorRate: 0,
     forcedOutage: false,
-    requestTimeoutMs: 2_000,
   },
   backpressureConfig: {
     queueName: "orders:process" as const,
     physicalQueueName: "orders-process" as const,
     orderProcessConcurrency: poolSize,
-    retryPolicy,
-    drainTimeoutSeconds: 30,
     pendingPersistenceRetryAfterSeconds: 5,
-    circuitBreakerFailureThreshold: 5,
-    circuitBreakerResetTimeoutMs: 10_000,
   },
 };
 
@@ -157,10 +150,10 @@ describe("generated buy bounded-pool admission", () => {
       orderProcessBullMqQueueName,
       { connection: { url: redisUrl(), maxRetriesPerRequest: 3 } },
     );
-    const publisher = createBullMqOrderProcessJobPublisher(
-      { url: redisUrl(), maxRetriesPerRequest: 3 },
-      { maxAttempts: 99, backoffBaseMs: 9_999 },
-    );
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl(),
+      maxRetriesPerRequest: 3,
+    });
     await queue.obliterate({ force: true });
 
     let admissionEnqueueCount = 0;
@@ -180,7 +173,7 @@ describe("generated buy bounded-pool admission", () => {
     );
     let burstDeadline: ReturnType<typeof setTimeout> | undefined;
     const admissionAwarePublisher: OrderProcessJobPublisher = {
-      enqueue: async (job, options) => {
+      enqueue: async (job) => {
         admissionEnqueueCount += 1;
         if (admissionEnqueueCount === poolSize) {
           const readinessStartedAt = Date.now();
@@ -207,13 +200,11 @@ describe("generated buy bounded-pool admission", () => {
           releaseAdmissionEnqueues?.();
         }
         await allAdmissionEnqueues;
-        expect(options).toBeUndefined();
-        await publisher.enqueue(job, options);
+        await publisher.enqueue(job);
       },
     };
     const service = new ReserveOrderService({
       persistence: new PostgresBuyPersistence(connection.db),
-      runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(connection.db),
       orderProcessJobPublisher: admissionAwarePublisher,
       stockReservations: {
         reserve: (input) => reserveInventoryStock(activeRedis, input),
@@ -263,10 +254,6 @@ describe("generated buy bounded-pool admission", () => {
       const readinessDurationMs = await readinessPromise;
       clearTimeout(readinessDeadline);
       expect(readinessDurationMs).toBeLessThan(readinessServiceLevelMs);
-      await expect(
-        new PostgresRunRetryPolicyResolver(connection.db).resolve(ids.run),
-      ).resolves.toEqual(retryPolicy);
-
       expect(await connection.db.select().from(reservations)).toHaveLength(poolSize);
       expect(await connection.db.select().from(orders)).toHaveLength(poolSize);
       expect(await connection.db.select().from(orderEvents)).toHaveLength(poolSize * 2);
@@ -280,10 +267,7 @@ describe("generated buy bounded-pool admission", () => {
       const jobs = await queue.getJobs(["waiting", "delayed", "paused"]);
       expect(jobs).toHaveLength(poolSize);
       for (const job of jobs) {
-        expect(job.opts).toMatchObject({
-          attempts: 1,
-          backoff: { type: "exponential", delay: 9999 },
-        });
+        expect(job.opts).toMatchObject({ attempts: 1 });
       }
       const advisoryLocks = await connection.sql`
         select count(*)::integer as count

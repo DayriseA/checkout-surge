@@ -1,7 +1,12 @@
-import type { ErpOutcomeDisposition } from "@checkout-surge/contracts";
+import {
+  adaptiveErpAdmissionEnginePolicyIdentity,
+  type ErpOutcomeDisposition,
+} from "@checkout-surge/contracts";
 
 export const adaptiveErpAdmissionPolicy = {
-  version: "adaptive-erp-admission-v1-provisional",
+  // Derived from the shared engine-policy identity so the API-persisted run
+  // evidence and the actually running policy can never drift (D13).
+  version: `${adaptiveErpAdmissionEnginePolicyIdentity.name}-v${adaptiveErpAdmissionEnginePolicyIdentity.version}`,
   initialRatePerSecond: 2,
   floorRatePerSecond: 0.5,
   ceilingRatePerSecond: 20,

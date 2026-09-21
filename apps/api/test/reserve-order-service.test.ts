@@ -25,9 +25,6 @@ function buildService(options: {
   persistence: BuyPersistence;
   stockReservations: StockReservationGateway;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
-  runRetryPolicyResolver?: ConstructorParameters<
-    typeof ReserveOrderService
-  >[0]["runRetryPolicyResolver"];
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   pendingPersistenceRecovery?: PendingPersistenceRecovery;
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
@@ -55,9 +52,6 @@ function buildService(options: {
     orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
       enqueue: async () => undefined,
     },
-    ...(options.runRetryPolicyResolver
-      ? { runRetryPolicyResolver: options.runRetryPolicyResolver }
-      : {}),
     reservationHoldMinutes: 15,
     idempotencyTtlSeconds: 1800,
     pendingPersistenceRetryAfterSeconds: 30,
@@ -364,9 +358,8 @@ describe("ReserveOrderService queue handoff", () => {
     });
   });
 
-  it("does not resolve the retired delivery retry policy before admission", async () => {
+  it("enqueues without publication options", async () => {
     const callOrder: string[] = [];
-    const retryPolicy = { maxAttempts: 6, initialBackoffMs: 125 };
     const service = buildService({
       persistence: {
         withRunAdmissionLock: async ({ reservation, operation }) => {
@@ -389,16 +382,9 @@ describe("ReserveOrderService queue handoff", () => {
           callOrder.push("promote");
         },
       }),
-      runRetryPolicyResolver: {
-        resolve: async () => {
-          callOrder.push("resolve policy");
-          return retryPolicy;
-        },
-      },
       orderProcessJobPublisher: {
-        enqueue: async (_job, options) => {
+        enqueue: async () => {
           callOrder.push("enqueue");
-          expect(options).toBeUndefined();
         },
       },
     });
@@ -412,14 +398,13 @@ describe("ReserveOrderService queue handoff", () => {
   it.each([
     "reservation_secured",
     "idempotent_replay",
-  ] as const)("does not treat retired retry-policy absence as a %s rejection", async (outcome) => {
+  ] as const)("treats a persisted-pending %s outcome without reversing the hold", async (outcome) => {
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
     const withRunAdmissionLock = vi.fn();
     const enqueue = vi.fn();
     const promoteAccepted = vi.fn();
     const reverse = vi.fn(async () => "reversed" as const);
-    const resolve = vi.fn(async () => null);
     const service = buildService({
       persistence: {
         persistSecuredReservation,
@@ -431,14 +416,12 @@ describe("ReserveOrderService queue handoff", () => {
         promoteAccepted,
         reverse,
       }),
-      runRetryPolicyResolver: { resolve },
       orderProcessJobPublisher: { enqueue },
     });
 
     await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
       outcome: "reservation_pending_persistence",
     });
-    expect(resolve).not.toHaveBeenCalled();
     expect(reverse).not.toHaveBeenCalled();
     expect(withRunAdmissionLock).toHaveBeenCalledOnce();
     expect(persistSecuredReservation).not.toHaveBeenCalled();
@@ -471,9 +454,6 @@ describe("ReserveOrderService queue handoff", () => {
         reverse,
         promoteAccepted,
       }),
-      runRetryPolicyResolver: {
-        resolve: async () => ({ maxAttempts: 4, initialBackoffMs: 500 }),
-      },
       orderProcessJobPublisher: { enqueue },
     });
 
@@ -485,31 +465,6 @@ describe("ReserveOrderService queue handoff", () => {
     expect(reverse).not.toHaveBeenCalled();
     expect(enqueue).toHaveBeenCalledOnce();
     expect(promoteAccepted).toHaveBeenCalledOnce();
-  });
-
-  it("does not consult retired retry-policy resolution before admission", async () => {
-    const resolutionError = new Error("database unavailable");
-    const reverse = vi.fn(async () => "reversed" as const);
-    const withRunAdmissionLock = vi.fn();
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation: vi.fn(),
-        getPersistedBuyByReservationId: vi.fn(),
-        withRunAdmissionLock,
-      },
-      stockReservations: acceptingGateway({ reverse }),
-      runRetryPolicyResolver: {
-        resolve: async () => {
-          throw resolutionError;
-        },
-      },
-    });
-
-    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
-      outcome: "reservation_pending_persistence",
-    });
-    expect(reverse).not.toHaveBeenCalled();
-    expect(withRunAdmissionLock).toHaveBeenCalledOnce();
   });
 
   it("schedules a best-effort business outcome update after durable reservation acceptance", async () => {

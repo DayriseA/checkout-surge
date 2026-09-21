@@ -463,16 +463,11 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `PENDING_PERSISTENCE_RECOVERY_POLL_INTERVAL_MS` | `1000` | Run-scoped recovery scan cadence; the owner uses a fixed bounded per-sale batch. |
 | `PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS` | `2000` | Whole-discovery deadline for the sole recovery scheduler; aborts its operation-owned PostgreSQL scope and bounds discovery Redis commands. |
 | `PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS` | `3` | Process-local cap for distinct request-replay recovery attempts; overload preserves the pending response and retryability. |
-| `ORDER_PROCESS_MAX_ATTEMPTS` | `4` | Retired order-delivery setting retained until the coordinated configuration cleanup; order-process jobs use one BullMQ attempt. |
-| `ORDER_PROCESS_BACKOFF_BASE_MS` | `500` | Retired order-delivery setting retained until the coordinated configuration cleanup; durable worker scheduling owns deferral timing. |
 | `API_LISTEN_BACKLOG` | `8192` | API listener accept backlog for one-second public spike validation |
 | `API_POSTGRES_POOL_MAX` | `10` | Long-lived API application/data-path PostgreSQL pool maximum; control-plane pools described below are separate |
 | `API_READINESS_TIMEOUT_MS` | `2000` | End-to-end API readiness deadline in milliseconds; must remain below the Compose healthcheck's 3-second timeout. Readiness is single-flight per API process, can open at most one separate short-lived PostgreSQL connection, and closes its PostgreSQL/Redis/BullMQ probe resources on completion, deadline, or API shutdown. |
 | `WORKER_POSTGRES_POOL_MAX` | `10` | Worker PostgreSQL connection pool maximum |
 | `HEALTH_PORT` | `4300` | Worker health server |
-| `ERP_REQUEST_TIMEOUT_MS` | `2000` | Temporary ERP client fallback until adaptive runtime wiring and configuration cleanup (tasks 09/12) |
-| `ERP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Legacy accepted configuration retained until task 12; adaptive runtime admission does not use it |
-| `ERP_CIRCUIT_RESET_TIMEOUT_MS` | `10000` | Legacy accepted configuration retained until task 12; adaptive runtime admission does not use it |
 | `ORDER_PROCESS_CONCURRENCY` | `10` | BullMQ's process-wide order-handler execution ceiling; must be at least the shared accepted-run hard cap of 10. Frozen per-run snapshots independently limit handlers through process-local admission in the single worker runtime. |
 | `NOTIFICATION_RECORD_CONCURRENCY` | `5` | Worker notification-record consumer concurrency |
 | `NOTIFICATION_RECOVERY_SCAN_INTERVAL_MS` / `NOTIFICATION_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker scan cadence and batch for confirmed orders missing notification records |
@@ -480,7 +475,6 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS` | `1000` | Minimum queued age before dispatch recovery reasserts a deterministic job; `0` is allowed |
 | `ORDER_RECOVERY_SCAN_INTERVAL_MS` / `ORDER_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker durable ERP/order-recovery scan cadence and batch |
 | `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must cover the adaptive ERP maximum request deadline plus ownership headroom (currently 11000 ms) |
-| `ORDER_RECOVERY_MAX_ATTEMPTS` | `100` | Worker recovery-attempt ceiling before escalation |
 | `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
 | `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |
 | `ERROR_RATE` | `0` | Mock ERP global fallback/diagnostic chaos behavior, from `0` to `1` |
@@ -496,7 +490,6 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DEMO_MAX_TRAFFIC_START_DELAY_SECONDS` | `30` | API safety cap for buyer-spike start delay |
 | `DEMO_MAX_PRE_ALLOCATED_VUS` | `10000` | API hard cap for resolved constant-arrival preallocated VUs, whether automatic or explicit |
 | `DEMO_MAX_VUS` | `10000` | API hard cap for resolved constant-arrival max VUs, whether automatic or explicit |
-| `DEMO_RUN_DRAIN_TIMEOUT_SECONDS` | `300` | Legacy parsed setting with no finalization authority; retained temporarily for task-12 configuration cleanup |
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |
 | `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | `runtime-setup` first-seed public run-budget per-visitor cap |
@@ -534,7 +527,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 
 `API_POSTGRES_POOL_MAX` governs only the main long-lived application/data-path pool. The API also owns a separate long-lived reset-workflow client capped at one connection, up to three concurrent dashboard-recovery pools capped at one connection each, and one max-one readiness pool. Pending-persistence recovery adds at most one discovery pool or one sequential scheduler attempt plus three direct attempt pools by default. At an exhaustion boundary each of those four attempts can briefly retain its attempt pool while opening one separately bounded max-one audit pool, so the conservative default PostgreSQL client ceiling is 23 per API process: 10 main + 1 reset + 3 dashboard recovery + 1 readiness + 8 pending-persistence attempt/audit. Readiness is single-flight, direct pending recovery is permit-bounded, scheduler attempts are sequential, and every transient pool is terminated when its operation completes or aborts.
 
-`DEMO_MAX_*` and the finalization poll interval belong to the API process and take effect after an API restart. `DEMO_RUN_DRAIN_TIMEOUT_SECONDS` is still parsed for pre-removal configuration compatibility but no longer terminalizes draining work or bounds the lifecycle. The fixed seven-day Redis sale-eligibility TTL authorizes new buys only, so API startup no longer constrains processing and recovery windows to fit inside it. `DEMO_MAX_*` values are not forwarded to `runtime-setup` and are not stored in PostgreSQL. Setup intrinsically validates and seeds only the mutable `PUBLIC_*` policy. The API combines that strict row with its current caps through the canonical effective-policy boundary and validates it before listening; tightening a cap below an admin-tuned public limit prevents startup instead of clamping it. `PUBLIC_RUN_BUDGET_*` and `PUBLIC_CUSTOM_*` belong only to `runtime-setup` and are used when the active row is first created. Once bootstrapped, PostgreSQL/admin updates are authoritative; changing setup values does not overwrite an existing policy. Use the protected admin policy controls, or wipe the database for a new bootstrap.
+`DEMO_MAX_*` and the finalization poll interval belong to the API process and take effect after an API restart. The fixed seven-day Redis sale-eligibility TTL authorizes new buys only, so API startup no longer constrains processing and recovery windows to fit inside it. `DEMO_MAX_*` values are not forwarded to `runtime-setup` and are not stored in PostgreSQL. Setup intrinsically validates and seeds only the mutable `PUBLIC_*` policy. The API combines that strict row with its current caps through the canonical effective-policy boundary and validates it before listening; tightening a cap below an admin-tuned public limit prevents startup instead of clamping it. `PUBLIC_RUN_BUDGET_*` and `PUBLIC_CUSTOM_*` belong only to `runtime-setup` and are used when the active row is first created. Once bootstrapped, PostgreSQL/admin updates are authoritative; changing setup values does not overwrite an existing policy. Use the protected admin policy controls, or wipe the database for a new bootstrap.
 
 The notification and durable order-recovery variables above are read by the host-native worker and documented in `apps/worker/.env.example`. The current reference Compose file does not forward overrides for `NOTIFICATION_RECORD_CONCURRENCY`, `NOTIFICATION_RECOVERY_*`, or `ORDER_RECOVERY_*`, so its worker uses the built-in values shown in this table. Compose does forward the `ORDER_DISPATCH_*`, aggregate order concurrency, ERP fallback, and pool-size settings.
 

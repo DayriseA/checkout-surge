@@ -915,7 +915,6 @@ function buildCustomConfigOverride(
       maxTps: parseInteger(draft.erpMaxTps, 1),
       errorRate: percentToRatio(draft.erpErrorRate),
       forcedOutage: false,
-      requestTimeoutMs: defaults.erpConfig.requestTimeoutMs,
     },
   };
 }

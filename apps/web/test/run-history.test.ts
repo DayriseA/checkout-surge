@@ -366,11 +366,11 @@ describe("run history", () => {
     expect(markup).toContain("Checkout dispatch duration (observed)");
     expect(markup).toContain("Configured maximum dispatch time");
     expect(markup).toMatch(/Configured start delay<\/dt><dd[^>]*>0 ms<\/dd>/);
-    expect(markup).toMatch(/Request timeout \(configured safety limit\)<\/dt><dd[^>]*>2 s<\/dd>/);
-    expect(markup).toMatch(/Retry attempts \(configured limit\)<\/dt><dd[^>]*>4<\/dd>/);
-    expect(markup).toMatch(/Initial retry backoff<\/dt><dd[^>]*>500 ms<\/dd>/);
-    expect(markup).toMatch(/Circuit-breaker failure threshold<\/dt><dd[^>]*>5<\/dd>/);
-    expect(markup).toMatch(/Circuit-breaker reset timeout<\/dt><dd[^>]*>10 s<\/dd>/);
+    expect(markup).not.toContain("Request timeout");
+    expect(markup).not.toContain("Retry attempts");
+    expect(markup).not.toContain("Initial retry backoff");
+    expect(markup).not.toContain("Circuit-breaker");
+    expect(markup).toContain("Pending-storage retry delay");
     expect(markup).toContain("Logical queue");
     expect(markup).toContain("orders:process");
     expect(markup).toContain("Physical queue");

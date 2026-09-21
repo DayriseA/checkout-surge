@@ -39,7 +39,7 @@ describe("Drizzle migration metadata", () => {
       .sort();
 
     expect(journal).toMatchObject({ version: "7", dialect: "postgresql" });
-    expect(journal.entries).toHaveLength(12);
+    expect(journal.entries).toHaveLength(13);
     expect(journal.entries[0]).toMatchObject({
       idx: 0,
       version: "7",

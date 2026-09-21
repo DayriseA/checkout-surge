@@ -71,7 +71,7 @@ describe("API runtime configuration", () => {
     expect(overridden.readinessTimeoutMs).toBe(1_500);
   });
 
-  it("loads documented deployment caps and drain defaults and maps every override", () => {
+  it("loads documented deployment caps and maps every override", () => {
     const defaults = loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" });
     expect(defaults.deploymentHardCaps).toEqual({
       maxBuyers: 100_000,
@@ -82,7 +82,6 @@ describe("API runtime configuration", () => {
       maxPreAllocatedVus: 10_000,
       maxVus: 10_000,
     });
-    expect(defaults.demoRunDrainTimeoutSeconds).toBe(300);
 
     const overridden = loadApiConfig({
       ...baseEnv,
@@ -94,7 +93,6 @@ describe("API runtime configuration", () => {
       DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
       DEMO_MAX_PRE_ALLOCATED_VUS: "15",
       DEMO_MAX_VUS: "16",
-      DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "17",
     });
     expect(overridden.deploymentHardCaps).toEqual({
       maxBuyers: 11,
@@ -105,7 +103,6 @@ describe("API runtime configuration", () => {
       maxPreAllocatedVus: 15,
       maxVus: 16,
     });
-    expect(overridden.demoRunDrainTimeoutSeconds).toBe(17);
   });
 
   it("loads every pending-persistence recovery default and override", () => {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigWriteSchema,
+  adaptiveErpAdmissionEnginePolicyIdentity,
   type BusinessOutcomeSummary,
   collectAcceptedRunConfigSnapshotViolations,
   type DemoPresetContract,
@@ -329,6 +330,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
             status: "starting",
             trafficStatus: "starting",
             configSnapshot: snapshot,
+            enginePolicyName: adaptiveErpAdmissionEnginePolicyIdentity.name,
+            enginePolicyVersion: adaptiveErpAdmissionEnginePolicyIdentity.version,
             correlationId,
             saleOfferId,
             startedAt: now,

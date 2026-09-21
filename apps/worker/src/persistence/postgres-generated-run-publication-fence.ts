@@ -1,4 +1,3 @@
-import type { AcceptedRunConfigSnapshot } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   createDatabase,
@@ -10,7 +9,6 @@ import {
 } from "@checkout-surge/db";
 import { and, eq, inArray } from "drizzle-orm";
 import type { GeneratedRunPublicationFence } from "../application/generated-run-publication-fence.js";
-import { parsePersistedRunConfig } from "./postgres-run-config-reader.js";
 
 type DatabaseWithClient = CheckoutSurgeDatabase & { $client: SqlClient };
 
@@ -20,7 +18,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
   async publish<T>(input: {
     runId: string;
     saleOfferId: string;
-    operation: (snapshot: AcceptedRunConfigSnapshot) => Promise<T>;
+    operation: () => Promise<T>;
   }): Promise<T> {
     const client = (this.db as DatabaseWithClient).$client;
     const reservedClient = await client.reserve();
@@ -33,7 +31,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
       await reservedClient`select pg_advisory_lock_shared(hashtext(${lockKey}))`;
       locked = true;
       const [row] = await reservedDb
-        .select({ configSnapshot: demoRuns.configSnapshot })
+        .select({ id: demoRuns.id })
         .from(demoRuns)
         .innerJoin(
           demoRunSaleContexts,
@@ -63,7 +61,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
         throw new GeneratedRunPublicationRejectedError(input.runId, input.saleOfferId);
       }
 
-      return await input.operation(parsePersistedRunConfig(input.runId, row.configSnapshot));
+      return await input.operation();
     } finally {
       try {
         if (locked) {

@@ -8,6 +8,7 @@ import {
 import { ConfirmationService } from "../../../mock-erp/src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-limiter.js";
 import { buildMockErpServer } from "../../../mock-erp/src/server.js";
+import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import {
   type ErpAttemptPersistence,
   HttpErpOrderConfirmation,
@@ -47,7 +48,6 @@ describe("worker and Mock ERP precedence", () => {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     };
     const attemptPersistence: ErpAttemptPersistence = {
       findTechnicalFailure: vi.fn().mockResolvedValue(null),
@@ -59,7 +59,7 @@ describe("worker and Mock ERP precedence", () => {
     };
     const confirmation = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence,
       runConfigReader: { read: vi.fn().mockResolvedValue(snapshot) },
@@ -91,6 +91,7 @@ describe("worker and Mock ERP precedence", () => {
           processingGeneration: 0,
         },
         { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 },
+        adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       ),
     ).resolves.toMatchObject({ response: { status: "succeeded" } });
   });

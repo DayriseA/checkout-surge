@@ -20,17 +20,12 @@ const baseSnapshot = {
     maxTps: 1,
     errorRate: 0,
     forcedOutage: false,
-    requestTimeoutMs: 1,
   },
   backpressureConfig: {
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency: 1,
-    retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
-    drainTimeoutSeconds: 1,
     pendingPersistenceRetryAfterSeconds: 1,
-    circuitBreakerFailureThreshold: 1,
-    circuitBreakerResetTimeoutMs: 1,
   },
 } satisfies AcceptedRunConfigSnapshot;
 

@@ -1,6 +1,7 @@
 import type { ErpCallReference } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import {
   ErpAcceptedConfirmationPersistenceError,
   type ErpAttemptPersistence,
@@ -8,6 +9,9 @@ import {
   HttpErpOrderConfirmation,
 } from "../../src/application/erp-confirmation-client.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
+
+// Confirmation calls always run on the adaptive policy's chosen deadline.
+const deadlineMs = adaptiveErpAdmissionPolicy.initialRequestDeadlineMs;
 
 const job = {
   orderId: "11111111-1111-4111-8111-111111111111",
@@ -107,7 +111,7 @@ describe("HTTP ERP confirmation outcomes", () => {
       fetch: vi.fn<typeof fetch>().mockResolvedValue(jsonResponse(testCase.body, testCase.status)),
     });
 
-    const outcome = await client.dispatch(job, delivery);
+    const outcome = await client.dispatch(job, delivery, deadlineMs);
 
     expect(outcome).toMatchObject({
       disposition: testCase.disposition,
@@ -136,10 +140,14 @@ describe("HTTP ERP confirmation outcomes", () => {
     const persistence = attemptPersistence();
     const client = createClient({ persistence, fetch });
 
-    await client.dispatch(job, {
-      ...delivery,
-      ...(supersedesErpCallId ? { supersedesErpCallId } : {}),
-    });
+    await client.dispatch(
+      job,
+      {
+        ...delivery,
+        ...(supersedesErpCallId ? { supersedesErpCallId } : {}),
+      },
+      deadlineMs,
+    );
 
     expect(persistence.recordDispatchIntent).toHaveBeenCalledWith({
       job,
@@ -175,7 +183,7 @@ describe("HTTP ERP confirmation outcomes", () => {
         }),
       ),
     });
-    await expect(client.dispatch(job, delivery)).resolves.toMatchObject({
+    await expect(client.dispatch(job, delivery, deadlineMs)).resolves.toMatchObject({
       disposition: "capacity_rejected",
       retryAfterMs: expectedMs,
     });
@@ -192,7 +200,9 @@ describe("HTTP ERP confirmation outcomes", () => {
       ),
     });
 
-    await expect(client.dispatch(job, delivery)).resolves.toMatchObject({ retryAfterMs: 5_000 });
+    await expect(client.dispatch(job, delivery, deadlineMs)).resolves.toMatchObject({
+      retryAfterMs: 5_000,
+    });
     expect(logger.warn).toHaveBeenCalledOnce();
   });
 
@@ -204,7 +214,7 @@ describe("HTTP ERP confirmation outcomes", () => {
         .mockResolvedValue(jsonResponse(body, 200, { "x-erp-replayed": "true" })),
     });
 
-    await expect(client.dispatch(job, delivery)).resolves.toMatchObject({
+    await expect(client.dispatch(job, delivery, deadlineMs)).resolves.toMatchObject({
       disposition: "succeeded",
       replayed: true,
       response: body,
@@ -217,7 +227,7 @@ describe("HTTP ERP confirmation outcomes", () => {
       fetch: vi.fn<typeof fetch>().mockRejectedValue(new Error("ECONNREFUSED")),
     });
 
-    await expect(unavailable.dispatch(job, delivery)).resolves.toMatchObject({
+    await expect(unavailable.dispatch(job, delivery, deadlineMs)).resolves.toMatchObject({
       disposition: "temporarily_unavailable",
       errorCode: "erp_request_failed",
     });
@@ -241,7 +251,6 @@ describe("HTTP ERP confirmation outcomes", () => {
       const client = createClient({
         persistence,
         fetch,
-        requestTimeoutMs: 1_000,
         now: () => new Date(),
       });
       let settled = false;
@@ -299,7 +308,7 @@ describe("HTTP ERP confirmation outcomes", () => {
       fetch: vi.fn<typeof fetch>().mockResolvedValue(response),
     });
 
-    const outcome = await client.dispatch(job, delivery);
+    const outcome = await client.dispatch(job, delivery, deadlineMs);
 
     expect(outcome).toMatchObject({
       disposition: "temporarily_unavailable",
@@ -327,7 +336,7 @@ describe("HTTP ERP confirmation outcomes", () => {
     await expect(
       createClient({
         fetch: vi.fn<typeof fetch>().mockResolvedValue(confirmationResponse),
-      }).dispatch(job, delivery),
+      }).dispatch(job, delivery, deadlineMs),
     ).resolves.toMatchObject({ disposition: "uncertain_result" });
     await expect(
       createClient({ fetch: vi.fn<typeof fetch>().mockResolvedValue(lookupResponse) }).lookup(
@@ -365,7 +374,9 @@ describe("HTTP ERP confirmation outcomes", () => {
     persistence.recordAttempt = vi.fn().mockRejectedValue(contradiction);
     const client = createClient({ persistence });
 
-    const error = await client.dispatch(job, delivery).catch((caught: unknown) => caught);
+    const error = await client
+      .dispatch(job, delivery, deadlineMs)
+      .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ErpConfirmationInvalidResponseError);
     expect(error).toMatchObject({
@@ -381,7 +392,9 @@ describe("HTTP ERP confirmation outcomes", () => {
     persistence.recordAttempt = vi.fn().mockRejectedValue(new Error("database unavailable"));
     const client = createClient({ persistence });
 
-    const error = await client.dispatch(job, delivery).catch((caught: unknown) => caught);
+    const error = await client
+      .dispatch(job, delivery, deadlineMs)
+      .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ErpAcceptedConfirmationPersistenceError);
     expect(error).toMatchObject({ record: { status: "succeeded", response: successResponse() } });
@@ -393,13 +406,13 @@ function createClient(
     persistence?: ErpAttemptPersistence;
     fetch?: typeof fetch;
     logger?: Pick<CheckoutSurgeLogger, "warn"> & Partial<Pick<CheckoutSurgeLogger, "info">>;
-    requestTimeoutMs?: number;
+    lookupTimeoutMs?: number;
     now?: () => Date;
   } = {},
 ): HttpErpOrderConfirmation {
   return new HttpErpOrderConfirmation({
     baseUrl: "http://mock-erp:4100",
-    requestTimeoutMs: options.requestTimeoutMs ?? 1_000,
+    lookupTimeoutMs: options.lookupTimeoutMs ?? 1_000,
     retryAfterPolicy: { fallbackDelayMs: 750, maximumDelayMs: 5_000 },
     attemptPersistence: options.persistence ?? attemptPersistence(),
     fetch:

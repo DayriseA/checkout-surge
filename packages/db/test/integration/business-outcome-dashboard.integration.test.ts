@@ -283,17 +283,12 @@ function configSnapshotFixture() {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1_000,
     },
     backpressureConfig: {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 1,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

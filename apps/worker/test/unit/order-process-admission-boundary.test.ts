@@ -374,7 +374,7 @@ describe("order process consumer boundary", () => {
   it("leaves ERP admission inside the claimed handler workflow", async () => {
     const handler = { handle: vi.fn().mockRejectedValue(new Error("handler failed")) };
     await expect(
-      processJob(bullJob(), "lock-token", {
+      processJob(bullJob(), {
         connection: {},
         concurrency: 10,
         handler,

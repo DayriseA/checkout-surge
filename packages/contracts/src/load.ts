@@ -135,7 +135,6 @@ export const erpRunConfigSchema = z
     maxTps: positiveIntegerSchema,
     errorRate: percentageSchema,
     forcedOutage: z.boolean().default(false),
-    requestTimeoutMs: positiveIntegerSchema,
   })
   .strict();
 export type ErpRunConfig = z.infer<typeof erpRunConfigSchema>;
@@ -147,23 +146,12 @@ export const acceptedErpRunConfigSchema = erpRunConfigSchema.safeExtend({
 
 export const orderProcessConcurrencyHardCap = 10;
 
-export const retryPolicySchema = z
-  .object({
-    maxAttempts: positiveIntegerSchema,
-    initialBackoffMs: nonnegativeIntegerSchema,
-  })
-  .strict();
-
 export const backpressureConfigSchema = z
   .object({
     queueName: z.literal(orderProcessQueueName),
     physicalQueueName: z.literal(orderProcessBullMqQueueName),
     orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
-    retryPolicy: retryPolicySchema,
-    drainTimeoutSeconds: positiveIntegerSchema,
     pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
-    circuitBreakerFailureThreshold: positiveIntegerSchema,
-    circuitBreakerResetTimeoutMs: positiveIntegerSchema,
   })
   .strict();
 export type BackpressureConfig = z.infer<typeof backpressureConfigSchema>;
@@ -209,6 +197,34 @@ export const materializedAcceptedRunConfigSnapshotSchema = z
   })
   .strict();
 
+/**
+ * Read boundary for snapshots persisted before the engine-knob retirement
+ * (D13, task 14). Supported fields keep their materialized rigor while the
+ * retired engine knobs (`retryPolicy`, `drainTimeoutSeconds`,
+ * `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and
+ * `erpConfig.requestTimeoutMs`) are accepted and ignored: the plain objects
+ * below drop them together with any other unknown key, so historical content
+ * stays readable and can never configure new runs.
+ */
+export const historicalAcceptedRunConfigSnapshotSchema = z.object({
+  trafficConfig: materializedAcceptedRunConfigSnapshotSchema.shape.trafficConfig,
+  inventoryConfig: inventoryConfigSchema.safeExtend({
+    quantityPerCheckout: positiveIntegerSchema,
+  }),
+  erpConfig: z.object({
+    latencyMs: nonnegativeIntegerSchema,
+    maxTps: positiveIntegerSchema,
+    errorRate: percentageSchema,
+    forcedOutage: z.boolean(),
+  }),
+  backpressureConfig: z.object({
+    queueName: z.literal(orderProcessQueueName),
+    physicalQueueName: z.literal(orderProcessBullMqQueueName),
+    orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
+    pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
+  }),
+});
+
 export const trafficExecutionStartRequestSchema = z
   .object({
     runId: uuidSchema,
@@ -224,6 +240,17 @@ export type TrafficExecutionStartRequest = z.infer<typeof trafficExecutionStartR
 export const materializedTrafficExecutionStartRequestSchema =
   trafficExecutionStartRequestSchema.safeExtend({
     configSnapshot: materializedAcceptedRunConfigSnapshotSchema,
+  });
+
+/**
+ * Read boundary for durable execution journals written before the engine-knob
+ * retirement (D13, task 14). The journal reader accepts and ignores retired
+ * engine knobs in the stored snapshot; writers keep using the materialized
+ * schema, so rewritten journals use the retired-field-free format.
+ */
+export const historicalTrafficExecutionStartRequestSchema =
+  trafficExecutionStartRequestSchema.safeExtend({
+    configSnapshot: historicalAcceptedRunConfigSnapshotSchema,
   });
 
 export const trafficExecutionStartResponseSchema = z

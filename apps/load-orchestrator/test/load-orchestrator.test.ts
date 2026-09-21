@@ -589,6 +589,56 @@ describe("durable execution ownership", () => {
     }
   });
 
+  it("restarts from a pre-retirement journal: retired engine knobs are ignored and any rewritten journal uses the current format", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-historical-journal-"));
+    try {
+      const store = new FileExecutionStore(directory);
+      await store.accept(startRequest, new Date(timestamp));
+
+      // Rewrite the journal as it was persisted before the engine-knob
+      // retirement: retired knobs present in the stored snapshot.
+      const historicalRequest = {
+        ...startRequest,
+        configSnapshot: {
+          ...startRequest.configSnapshot,
+          erpConfig: { ...startRequest.configSnapshot.erpConfig, requestTimeoutMs: 2000 },
+          backpressureConfig: {
+            ...startRequest.configSnapshot.backpressureConfig,
+            retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+            drainTimeoutSeconds: 300,
+            circuitBreakerFailureThreshold: 5,
+            circuitBreakerResetTimeoutMs: 10_000,
+          },
+        },
+      };
+      await writeFile(
+        path.join(directory, "execution.json"),
+        JSON.stringify({ request: historicalRequest, state: "accepted", acceptedAt: timestamp }),
+      );
+
+      // Restart-readable after the retirement: the stored request parses, the
+      // retired knobs are accepted and ignored, and the recovered snapshot
+      // carries only supported fields.
+      const recovered = await store.read();
+      expect(recovered?.request.configSnapshot).toEqual(startRequest.configSnapshot);
+      expect(JSON.stringify(recovered)).not.toContain("retryPolicy");
+      expect(JSON.stringify(recovered)).not.toContain("drainTimeoutSeconds");
+
+      // The in-flight execution keeps working, and the lifecycle transition
+      // rewrites the journal in the current (retired-field-free) format: the
+      // journal is operational state, not preserved evidence.
+      await expect(store.completeCancellation(startRequest.runId)).resolves.toBe(true);
+      const completed = await store.read();
+      expect(completed?.state).toBe("completed");
+      expect(completed?.request.configSnapshot).toEqual(startRequest.configSnapshot);
+      expect(JSON.parse(await readFile(path.join(directory, "execution.json"), "utf8"))).toEqual(
+        JSON.parse(JSON.stringify(completed)),
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("rejects journals whose stored completion relies on a wire default", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-incomplete-journal-"));
     try {

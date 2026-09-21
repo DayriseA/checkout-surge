@@ -34,31 +34,27 @@ describe("worker configuration", () => {
       orderRecoveryScanIntervalMs: 1000,
       orderRecoveryBatchSize: 100,
       orderRecoveryLeaseMs: 30_000,
-      orderRecoveryMaxAttempts: 100,
       postgresPoolMax: 10,
       mockErpBaseUrl: "http://localhost:4100/",
-      erpRequestTimeoutMs: 2000,
-      erpCircuitFailureThreshold: 5,
-      erpCircuitResetTimeoutMs: 10_000,
     });
   });
 
-  it("loads ERP client overrides", () => {
-    expect(
+  it("rejects retired ERP engine knobs", () => {
+    expect(() =>
       loadWorkerConfig({
         DATABASE_URL: "postgresql://localhost/checkout_surge",
         REDIS_URL: "redis://localhost:6379",
-        MOCK_ERP_BASE_URL: "http://mock-erp:4100",
         ERP_REQUEST_TIMEOUT_MS: "500",
-        ERP_CIRCUIT_FAILURE_THRESHOLD: "2",
-        ERP_CIRCUIT_RESET_TIMEOUT_MS: "1500",
       }),
-    ).toMatchObject({
-      mockErpBaseUrl: "http://mock-erp:4100/",
-      erpRequestTimeoutMs: 500,
-      erpCircuitFailureThreshold: 2,
-      erpCircuitResetTimeoutMs: 1500,
+    ).not.toThrow();
+    const config = loadWorkerConfig({
+      DATABASE_URL: "postgresql://localhost/checkout_surge",
+      REDIS_URL: "redis://localhost:6379",
+      ERP_CIRCUIT_FAILURE_THRESHOLD: "2",
+      ORDER_RECOVERY_MAX_ATTEMPTS: "5",
     });
+    expect(config).not.toHaveProperty("erpCircuitFailureThreshold");
+    expect(config).not.toHaveProperty("orderRecoveryMaxAttempts");
   });
 
   it("accepts coherent deadline resource bounds and rejects unsafe ceilings or leases", () => {
@@ -109,20 +105,6 @@ describe("worker configuration", () => {
         MOCK_ERP_BASE_URL: "not-a-url",
       }),
     ).toThrow("MOCK_ERP_BASE_URL must be a valid URL");
-    expect(() =>
-      loadWorkerConfig({
-        DATABASE_URL: "postgresql://localhost/test",
-        REDIS_URL: "redis://localhost:6379",
-        ERP_REQUEST_TIMEOUT_MS: "0",
-      }),
-    ).toThrow("ERP_REQUEST_TIMEOUT_MS must be a positive integer");
-    expect(() =>
-      loadWorkerConfig({
-        DATABASE_URL: "postgresql://localhost/test",
-        REDIS_URL: "redis://localhost:6379",
-        ERP_CIRCUIT_FAILURE_THRESHOLD: "0",
-      }),
-    ).toThrow("ERP_CIRCUIT_FAILURE_THRESHOLD must be a positive integer");
     expect(() =>
       loadWorkerConfig({
         DATABASE_URL: "postgresql://localhost/test",
@@ -288,7 +270,6 @@ describe("worker runtime lifecycle", () => {
             candidates: 1,
             enqueued: 1,
             failed: 0,
-            escalated: 0,
             oldestAgeMs: 1,
             maxObservedAttempts: 1,
           };

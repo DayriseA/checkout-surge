@@ -164,10 +164,9 @@ describe("order recovery scanner", () => {
       scanIntervalMs: 1000,
       batchSize: 10,
       failedJobReader: { findFailedOrderJobs: async () => [] },
-      maxRecoveryAttempts: 3,
     });
 
-    await expect(scanner.scanOnce()).resolves.toMatchObject({ escalated: 0, enqueued: 1 });
+    await expect(scanner.scanOnce()).resolves.toMatchObject({ enqueued: 1 });
     expect(store.markEscalated).not.toHaveBeenCalled();
     expect(store.claimForPublication).toHaveBeenCalledOnce();
     expect(publisher.enqueue).toHaveBeenCalledWith(

@@ -887,17 +887,12 @@ function acceptedConfig() {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2_000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
-      drainTimeoutSeconds: 300,
     },
   };
 }

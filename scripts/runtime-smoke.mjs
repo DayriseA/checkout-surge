@@ -45,7 +45,6 @@ const smokeScenario = {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2_000,
     },
   },
 };
@@ -1026,15 +1025,14 @@ async function readHttpResponse(url, init, fetchImpl, timeoutMs = requestTimeout
 function runtimeRunTimeoutMs(env, durationSeconds) {
   const override = env.RUNTIME_SMOKE_RUN_TIMEOUT_MS?.trim();
   if (override) return positiveInteger(override, "RUNTIME_SMOKE_RUN_TIMEOUT_MS");
-  const drainSeconds = positiveInteger(
-    env.DEMO_RUN_DRAIN_TIMEOUT_SECONDS ?? "300",
-    "DEMO_RUN_DRAIN_TIMEOUT_SECONDS",
-  );
   const finalizationSeconds = positiveInteger(
     env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS ?? "5",
     "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
   );
-  return (durationSeconds + drainSeconds + finalizationSeconds * 3 + 10) * 1_000;
+  // Harness-owned tail allowance for processing plus finalization after the
+  // traffic window. Fixed default, independent of any retired configuration knob.
+  const tailAllowanceSeconds = 300;
+  return (durationSeconds + tailAllowanceSeconds + finalizationSeconds * 3 + 10) * 1_000;
 }
 
 function positiveInteger(raw, name) {

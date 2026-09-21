@@ -72,7 +72,6 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
-      drainTimeoutSeconds: number;
       reservationTiming?: TerminalReservationTimingReader;
       now?: () => Date;
     },

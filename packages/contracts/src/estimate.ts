@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { acceptedErpProfileSchema } from "./erp-profile.js";
 import { inventoryConfigSchema, trafficConfigSchema } from "./load.js";
 import {
   isoTimestampSchema,
@@ -35,7 +34,6 @@ export const estimatorInputSchema = z
     declaredErpLatencyMs: nonnegativeNumberSchema,
     declaredErpForcedOutage: z.boolean().default(false),
     errorRateAssumption: percentageSchema.default(0),
-    profile: acceptedErpProfileSchema.optional(),
   })
   .strict();
 export type EstimatorInput = z.infer<typeof estimatorInputSchema>;

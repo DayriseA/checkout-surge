@@ -1,3 +1,4 @@
+import { adaptiveErpAdmissionEnginePolicyIdentity } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   AdaptiveErpAdmissionController,
@@ -7,6 +8,14 @@ import {
   type ErpAdmissionOperation,
   type ErpAdmissionScope,
 } from "../../src/application/adaptive-erp-admission-policy.js";
+
+describe("engine-policy identity", () => {
+  it("derives its version from the shared contracts identity (D13)", () => {
+    expect(adaptiveErpAdmissionPolicy.version).toBe(
+      `${adaptiveErpAdmissionEnginePolicyIdentity.name}-v${adaptiveErpAdmissionEnginePolicyIdentity.version}`,
+    );
+  });
+});
 
 describe("adaptive ERP request deadlines", () => {
   it("uses the initial deadline for an empty scope and isolates scope samples", () => {

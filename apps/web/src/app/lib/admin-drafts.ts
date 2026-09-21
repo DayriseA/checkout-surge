@@ -40,12 +40,8 @@ export interface RunConfigDraft {
   erpMaxTps: string;
   erpErrorRate: string;
   erpForcedOutage: boolean;
-  erpRequestTimeoutMs: string;
   orderProcessConcurrency: string;
-  drainTimeoutSeconds: string;
   pendingPersistenceRetryAfterSeconds: string;
-  circuitBreakerFailureThreshold: string;
-  circuitBreakerResetTimeoutMs: string;
 }
 
 export interface PresetDraft extends RunConfigDraft {
@@ -162,16 +158,10 @@ export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
     erpMaxTps: String(config.erpConfig.maxTps),
     erpErrorRate: String(config.erpConfig.errorRate),
     erpForcedOutage: config.erpConfig.forcedOutage,
-    erpRequestTimeoutMs: String(config.erpConfig.requestTimeoutMs),
     orderProcessConcurrency: String(config.backpressureConfig.orderProcessConcurrency),
-    drainTimeoutSeconds: String(config.backpressureConfig.drainTimeoutSeconds),
     pendingPersistenceRetryAfterSeconds: String(
       config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
     ),
-    circuitBreakerFailureThreshold: String(
-      config.backpressureConfig.circuitBreakerFailureThreshold,
-    ),
-    circuitBreakerResetTimeoutMs: String(config.backpressureConfig.circuitBreakerResetTimeoutMs),
   };
 }
 
@@ -477,18 +467,14 @@ function buildConfigFromParsed(
       maxTps: requiredNumber(number, "erpMaxTps"),
       errorRate: requiredNumber(number, "erpErrorRate"),
       forcedOutage: draft.erpForcedOutage,
-      requestTimeoutMs: requiredNumber(number, "erpRequestTimeoutMs"),
     },
     backpressureConfig: {
       ...base.backpressureConfig,
       orderProcessConcurrency: requiredNumber(number, "orderProcessConcurrency"),
-      drainTimeoutSeconds: requiredNumber(number, "drainTimeoutSeconds"),
       pendingPersistenceRetryAfterSeconds: requiredNumber(
         number,
         "pendingPersistenceRetryAfterSeconds",
       ),
-      circuitBreakerFailureThreshold: requiredNumber(number, "circuitBreakerFailureThreshold"),
-      circuitBreakerResetTimeoutMs: requiredNumber(number, "circuitBreakerResetTimeoutMs"),
     },
   };
 }
@@ -658,9 +644,7 @@ function configDraftField(path: readonly PropertyKey[]): string | undefined {
       ? "erpMaxTps"
       : field === "errorRate"
         ? "erpErrorRate"
-        : field === "requestTimeoutMs"
-          ? "erpRequestTimeoutMs"
-          : field;
+        : field;
 }
 
 function policyDraftField(path: readonly PropertyKey[]): string | undefined {
@@ -714,12 +698,8 @@ function runConfigRules(mode: TrafficMode, hardCaps?: DeploymentHardCaps): Numer
     rule("erpLatencyMs", "ERP latency"),
     rule("erpMaxTps", "ERP maximum TPS"),
     rule("erpErrorRate", "ERP error rate"),
-    rule("erpRequestTimeoutMs", "ERP timeout"),
     rule("orderProcessConcurrency", "Worker concurrency"),
-    rule("drainTimeoutSeconds", "Drain timeout"),
     rule("pendingPersistenceRetryAfterSeconds", "Persistence retry"),
-    rule("circuitBreakerFailureThreshold", "Circuit failure threshold"),
-    rule("circuitBreakerResetTimeoutMs", "Circuit reset timeout"),
   ];
 }
 

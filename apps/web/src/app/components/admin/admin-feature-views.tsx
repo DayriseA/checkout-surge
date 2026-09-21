@@ -706,7 +706,6 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
           <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
           <FieldRow label="Error rate" value={config.erpConfig.errorRate} />
           <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
-          <FieldRow label="Request timeout ms" value={config.erpConfig.requestTimeoutMs} />
         </ConfigGroup>
         <ConfigGroup title="Worker and backpressure">
           <FieldRow label="Queue name" value={config.backpressureConfig.queueName} />
@@ -719,30 +718,8 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
             value={config.backpressureConfig.orderProcessConcurrency}
           />
           <FieldRow
-            label="Retry max attempts"
-            value={config.backpressureConfig.retryPolicy.maxAttempts}
-          />
-          <FieldRow
-            label="Initial retry backoff ms"
-            value={config.backpressureConfig.retryPolicy.initialBackoffMs}
-          />
-          <FieldRow
-            label="Drain timeout seconds"
-            value={config.backpressureConfig.drainTimeoutSeconds}
-          />
-          <FieldRow
             label="Pending retry after seconds"
             value={config.backpressureConfig.pendingPersistenceRetryAfterSeconds}
-          />
-        </ConfigGroup>
-        <ConfigGroup title="Circuit protection">
-          <FieldRow
-            label="Failure threshold"
-            value={config.backpressureConfig.circuitBreakerFailureThreshold}
-          />
-          <FieldRow
-            label="Reset timeout ms"
-            value={config.backpressureConfig.circuitBreakerResetTimeoutMs}
           />
         </ConfigGroup>
       </div>
@@ -991,14 +968,10 @@ const runConfigFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = 
   ["quantityPerCheckout", "Quantity per checkout"],
   ["reservationHoldMinutes", "Hold minutes"],
   ["orderProcessConcurrency", "Worker concurrency"],
-  ["drainTimeoutSeconds", "Drain timeout seconds"],
   ["pendingPersistenceRetryAfterSeconds", "Persistence retry seconds"],
-  ["circuitBreakerFailureThreshold", "Circuit failure threshold"],
-  ["circuitBreakerResetTimeoutMs", "Circuit reset timeout ms"],
   ["erpLatencyMs", "ERP latency ms"],
   ["erpMaxTps", "ERP max TPS"],
   ["erpErrorRate", "ERP error rate", "0.01"],
-  ["erpRequestTimeoutMs", "ERP timeout ms"],
 ];
 
 export function AdminErpDiagnosticsView({

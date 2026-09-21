@@ -12,7 +12,6 @@ import {
   type BullMqOrderProcessJobPublisher,
   createBullMqOrderProcessJobPublisher,
 } from "../queue/bullmq-order-process-job-publisher.js";
-import { PostgresRunRetryPolicyResolver } from "../queue/postgres-run-retry-policy-resolver.js";
 import type {
   PendingPersistenceAttemptScope,
   PendingPersistenceDiscoveryScope,
@@ -29,8 +28,6 @@ export interface PendingPersistenceOperationConfig {
   databaseUrl: string;
   redisUrl: string;
   discoveryTimeoutMs: number;
-  orderProcessMaxAttempts: number;
-  orderProcessBackoffBaseMs: number;
 }
 
 export interface PendingPersistenceRunScope {
@@ -63,14 +60,11 @@ export interface PendingPersistenceInfrastructure {
       commandTimeout: number;
     },
   ): CheckoutSurgeRedis;
-  createPublisher(
-    connection: {
-      url: string;
-      maxRetriesPerRequest: number;
-      commandTimeout: number;
-    },
-    retry: { maxAttempts: number; backoffBaseMs: number },
-  ): BullMqOrderProcessJobPublisher;
+  createPublisher(connection: {
+    url: string;
+    maxRetriesPerRequest: number;
+    commandTimeout: number;
+  }): BullMqOrderProcessJobPublisher;
 }
 
 const pendingPersistenceInfrastructure: PendingPersistenceInfrastructure = {
@@ -160,17 +154,11 @@ export function createPendingPersistenceRecoveryOperations(
         });
         acquiredCleanup.push(() => operationRedis?.disconnect());
 
-        publisher = infrastructure.createPublisher(
-          {
-            url: config.redisUrl,
-            maxRetriesPerRequest: 0,
-            commandTimeout: timeoutMs,
-          },
-          {
-            maxAttempts: config.orderProcessMaxAttempts,
-            backoffBaseMs: config.orderProcessBackoffBaseMs,
-          },
-        );
+        publisher = infrastructure.createPublisher({
+          url: config.redisUrl,
+          maxRetriesPerRequest: 0,
+          commandTimeout: timeoutMs,
+        });
         acquiredCleanup.push(() => publisher?.abort());
       } catch (constructionError) {
         await failAfterResourceConstruction(
@@ -196,7 +184,6 @@ export function createPendingPersistenceRecoveryOperations(
             promoteReservationIdempotencyToAccepted(attemptRedis, input).then(() => undefined),
         },
         orderProcessJobPublisher: attemptPublisher,
-        runRetryPolicyResolver: new PostgresRunRetryPolicyResolver(operationDatabase.db),
         close: createOperationResourceCleanup({
           signal,
           operations: acquiredCleanup,

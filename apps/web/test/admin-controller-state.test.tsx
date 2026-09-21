@@ -382,13 +382,7 @@ describe("admin feature controllers", () => {
   it("groups preset configuration into five named fieldsets", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
-    for (const name of [
-      "Traffic",
-      "Inventory",
-      "Per-run ERP",
-      "Worker and backpressure",
-      "Circuit protection",
-    ]) {
+    for (const name of ["Traffic", "Inventory", "Per-run ERP", "Worker and backpressure"]) {
       expect(screen.getByRole("group", { name })).toBeTruthy();
     }
   });
@@ -1783,8 +1777,7 @@ describe("admin feature controllers", () => {
       "Quantity per attempt",
       "Queue name",
       "Physical queue name",
-      "Retry max attempts",
-      "Initial retry backoff ms",
+      "Pending retry after seconds",
     ]) {
       expect(within(preview).getByText(label)).toBeTruthy();
     }
@@ -3449,17 +3442,12 @@ function presetFixture(): AdminPresetListItem {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
     createdAt: "2026-06-20T00:00:00.000Z",
     updatedAt: "2026-06-20T00:00:00.000Z",

@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Status: Done (staged, not committed).
+- Status: Done (commit `88018c4e`).
 - Branch: `feat/adaptive-erp-and-admission`.
 - Sequence: 13 of 21. Execute after [12](12_implement_destructive_admin_reset.md); the destructive reset workflow accepts a caller-supplied reason.
 - Source: [implementation plan](../../adaptive_erp_processing_implementation_plan.md), section 5, Phase 4, D02 and D10. Baseline: `ee4d4135460a04b4de0e8bb8d031e8b45ad99e58`.

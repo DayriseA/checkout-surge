@@ -1,4 +1,3 @@
-import type { ErpProfile } from "./erp-profile.js";
 import type { DemoPresetVisibility } from "./lifecycle.js";
 import type { AcceptedRunConfigSnapshot } from "./load.js";
 
@@ -20,10 +19,10 @@ export interface AdaptiveErpFixtureExpectedCounts {
 
 /**
  * A named deterministic acceptance scenario (task 01). `config` parses with
- * `acceptedRunConfigSnapshotSchema`; `profile` parses with `erpProfileSchema`.
- * The `surge-10k` reference reuses the existing seeded preset by slug and
- * intentionally carries no copied configuration. Fixtures never contain
- * production runtime resources (URLs, connection strings, or clients).
+ * `acceptedRunConfigSnapshotSchema`. The `surge-10k` reference reuses the
+ * existing seeded preset by slug and intentionally carries no copied
+ * configuration. Fixtures never contain production runtime resources (URLs,
+ * connection strings, or clients).
  */
 export interface AdaptiveErpScenarioFixture {
   name: string;
@@ -31,7 +30,6 @@ export interface AdaptiveErpScenarioFixture {
   operatorScope: DemoPresetVisibility;
   presetSlug: string | null;
   config: AcceptedRunConfigSnapshot | null;
-  profile: ErpProfile | null;
   expected: AdaptiveErpFixtureExpectedCounts;
 }
 
@@ -42,11 +40,7 @@ function backpressureConfig(
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency,
-    retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-    drainTimeoutSeconds: 300,
     pendingPersistenceRetryAfterSeconds: 30,
-    circuitBreakerFailureThreshold: 5,
-    circuitBreakerResetTimeoutMs: 10_000,
   };
 }
 
@@ -76,11 +70,9 @@ export function originalIncidentFixture(): AdaptiveErpScenarioFixture {
         maxTps: 10,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: backpressureConfig(5),
     },
-    profile: null,
     expected: {
       plannedEmittedAttempts: 1500,
       acceptedReservations: 888,
@@ -116,11 +108,9 @@ export function lowCapacityFixture(): AdaptiveErpScenarioFixture {
         maxTps: 2,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: backpressureConfig(5),
     },
-    profile: null,
     expected: {
       plannedEmittedAttempts: 600,
       acceptedReservations: 300,
@@ -135,11 +125,11 @@ export function lowCapacityFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Finite outage segment followed by recovery to base; admin-scope profile only.
- * Dimensioning: service rate r = min(200, 5 / 1.0 s) = 5 confirmations/s, so
- * the 200 accepted orders need an ideal 40 s; the outage opens at 10 s with
- * 150 orders still outstanding and lifts at 40 s, exercising degradation and
- * the recovery tail.
+ * Finite outage window applied through the mock ERP's chaos controls, followed
+ * by recovery to base; admin scope only. Dimensioning: service rate
+ * r = min(200, 5 / 1.0 s) = 5 confirmations/s, so the 200 accepted orders need
+ * an ideal 40 s; the outage opens at 10 s with 150 orders still outstanding
+ * and lifts at 40 s, exercising degradation and the recovery tail.
  */
 export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
   return {
@@ -163,15 +153,8 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
         maxTps: 200,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: backpressureConfig(5),
-    },
-    profile: {
-      identity: { profileId: "finite-outage-recovery", version: 1 },
-      baseConfig: { latencyMs: 1000, maxTps: 200, errorRate: 0, forcedOutage: false },
-      segments: [{ offsetSeconds: 10, durationSeconds: 30, override: { forcedOutage: true } }],
-      recoveryToBase: true,
     },
     expected: {
       plannedEmittedAttempts: 200,
@@ -187,19 +170,20 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Latency increase segment followed by recovery to base; admin-scope profile
- * only. Dimensioning: base service rate r = min(10, 5 / 0.25 s) = 10/s while
- * arrivals run at 20/s, so accepted work is continuously outstanding; the
- * raised 3000 ms latency exceeds the 2000 ms initial request deadline (seed
- * default `ERP_REQUEST_TIMEOUT_MS`), exercising the section 11 "latency beyond
- * the initial request deadline" case while the segment (15 s–45 s) overlaps
- * the backlog and recovery drains the rest at the base rate.
+ * Latency increase applied through the mock ERP's chaos controls, followed by
+ * recovery to base; admin scope only. Dimensioning: base service rate
+ * r = min(10, 5 / 0.25 s) = 10/s while arrivals run at 20/s, so accepted work
+ * is continuously outstanding; the raised 3000 ms latency exceeds the base
+ * 250 ms per order and the adaptive policy's 2000 ms initial request deadline,
+ * exercising the section 11 latency-degradation case while the segment
+ * (15 s–45 s) overlaps the backlog and recovery drains the rest at the base
+ * rate.
  */
 export function latencyIncreaseFixture(): AdaptiveErpScenarioFixture {
   return {
     name: "latency-increase",
     description:
-      "Latency increase: constant 20 req/s for 30 s (600 attempts), stock 600, ERP 10/s at 250 ms (10/s service vs 20/s arrivals), latency 3000 ms from 15 s for 30 s (beyond the 2000 ms initial deadline), then recovery.",
+      "Latency increase: constant 20 req/s for 30 s (600 attempts), stock 600, ERP 10/s at 250 ms (10/s service vs 20/s arrivals), latency 3000 ms from 15 s for 30 s (beyond the adaptive policy's 2000 ms initial request deadline), then recovery.",
     operatorScope: "admin",
     presetSlug: null,
     config: {
@@ -216,15 +200,8 @@ export function latencyIncreaseFixture(): AdaptiveErpScenarioFixture {
         maxTps: 10,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: backpressureConfig(5),
-    },
-    profile: {
-      identity: { profileId: "latency-increase-recovery", version: 1 },
-      baseConfig: { latencyMs: 250, maxTps: 10, errorRate: 0, forcedOutage: false },
-      segments: [{ offsetSeconds: 15, durationSeconds: 30, override: { latencyMs: 3000 } }],
-      recoveryToBase: true,
     },
     expected: {
       plannedEmittedAttempts: 600,
@@ -262,11 +239,9 @@ export function duplicateAttemptsFixture(): AdaptiveErpScenarioFixture {
         maxTps: 200,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: backpressureConfig(5),
     },
-    profile: null,
     expected: {
       plannedEmittedAttempts: 400,
       acceptedReservations: 200,
@@ -293,7 +268,6 @@ export function surge10kPresetReferenceFixture(): AdaptiveErpScenarioFixture {
     operatorScope: "public",
     presetSlug: "surge-10k",
     config: null,
-    profile: null,
     expected: {
       plannedEmittedAttempts: 10_000,
       acceptedReservations: 1000,

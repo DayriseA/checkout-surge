@@ -84,7 +84,6 @@ export async function startWorker(): Promise<void> {
       url: config.redisUrl,
       maxRetriesPerRequest: 3,
     },
-    undefined,
     publicationFence,
   );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
@@ -116,7 +115,7 @@ export async function startWorker(): Promise<void> {
   });
   const erpClient = new HttpErpOrderConfirmation({
     baseUrl: config.mockErpBaseUrl,
-    requestTimeoutMs: config.erpRequestTimeoutMs,
+    lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
     retryAfterPolicy: {
       fallbackDelayMs: adaptiveErpAdmissionPolicy.fallbackCooldownMs,
       maximumDelayMs: adaptiveErpAdmissionPolicy.maximumCooldownMs,
@@ -157,7 +156,6 @@ export async function startWorker(): Promise<void> {
     logger,
     scanIntervalMs: config.orderRecoveryScanIntervalMs,
     batchSize: config.orderRecoveryBatchSize,
-    maxRecoveryAttempts: config.orderRecoveryMaxAttempts,
     recoveryLeaseMs: config.orderRecoveryLeaseMs,
     failedJobReader: orderProcessJobPublisher,
   });

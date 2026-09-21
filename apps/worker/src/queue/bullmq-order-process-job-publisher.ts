@@ -1,5 +1,4 @@
 import {
-  type AcceptedRunConfigSnapshot,
   type OrderProcessJob,
   orderProcessBullMqQueueName,
   orderProcessJobName,
@@ -25,7 +24,6 @@ interface OrderProcessQueue {
     options: {
       jobId: string;
       attempts: number;
-      backoff: { type: "exponential"; delay: number };
     },
   ): Promise<unknown>;
   close(): Promise<void>;
@@ -48,10 +46,6 @@ interface OrderProcessQueue {
 
 export function createBullMqOrderProcessJobPublisher(
   connection: ConnectionOptions,
-  retryOptions: { maxAttempts: number; backoffBaseMs: number } = {
-    maxAttempts: 4,
-    backoffBaseMs: 500,
-  },
   publicationFence?: GeneratedRunPublicationFence,
 ): WorkerOrderProcessJobPublisher {
   const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
@@ -59,27 +53,19 @@ export function createBullMqOrderProcessJobPublisher(
     { connection },
   );
 
-  return createOrderProcessJobPublisher(queue, retryOptions, publicationFence);
+  return createOrderProcessJobPublisher(queue, publicationFence);
 }
 
 export function createOrderProcessJobPublisher(
   queue: OrderProcessQueue,
-  retryOptions: { maxAttempts: number; backoffBaseMs: number } = {
-    maxAttempts: 4,
-    backoffBaseMs: 500,
-  },
   publicationFence?: GeneratedRunPublicationFence,
 ): WorkerOrderProcessJobPublisher {
   return {
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
-      const add = async (_snapshot?: AcceptedRunConfigSnapshot) => {
+      const add = async () => {
         await queue.add(orderProcessJobName, job, {
           attempts: 1,
-          backoff: {
-            type: "exponential",
-            delay: retryOptions.backoffBaseMs,
-          },
           jobId: options?.jobId ?? job.orderId,
         });
       };

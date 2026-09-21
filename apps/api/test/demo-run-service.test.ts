@@ -5,6 +5,7 @@ import type {
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
+  adaptiveErpAdmissionEnginePolicyIdentity,
   destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
@@ -228,6 +229,25 @@ describe("demo-run lifecycle start gating", () => {
       ),
     ).rejects.toMatchObject({ code: "resource_not_found" });
     expect(await activeConnection.db.select().from(demoRuns)).toHaveLength(0);
+  });
+
+  it("persists the shared engine-policy identity with each accepted run", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-engine-policy"),
+    ).resolves.toMatchObject({ run: { runId: "77777777-7777-4777-8777-777777777777" } });
+
+    const [run] = await requireConnection(connection)
+      .db.select({
+        enginePolicyName: demoRuns.enginePolicyName,
+        enginePolicyVersion: demoRuns.enginePolicyVersion,
+      })
+      .from(demoRuns);
+    expect(run).toEqual({
+      enginePolicyName: adaptiveErpAdmissionEnginePolicyIdentity.name,
+      enginePolicyVersion: adaptiveErpAdmissionEnginePolicyIdentity.version,
+    });
   });
 
   it.each([
@@ -702,7 +722,6 @@ describe("demo-run lifecycle start gating", () => {
             maxTps: 50,
             errorRate: 0,
             forcedOutage: false,
-            requestTimeoutMs: 2000,
           },
         },
       },
@@ -1308,17 +1327,12 @@ function surge10kSnapshot(): AcceptedRunConfigSnapshot {
       maxTps: 250,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 10,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }
@@ -1623,17 +1637,12 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
         maxTps: 100,
         errorRate: 0,
         forcedOutage: false,
-        requestTimeoutMs: 2000,
       },
       backpressureConfig: {
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        drainTimeoutSeconds: 300,
         pendingPersistenceRetryAfterSeconds: 30,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
       },
     },
     publicCustomLimits: {

@@ -201,7 +201,8 @@ export function isTemporaryErpDependencyError(error: unknown): boolean {
 
 export interface HttpErpOrderConfirmationOptions {
   baseUrl: string;
-  requestTimeoutMs: number;
+  /** Local network bound for status lookups; confirmation deadlines come from the adaptive policy. */
+  lookupTimeoutMs: number;
   retryAfterPolicy: { fallbackDelayMs: number; maximumDelayMs: number };
   attemptPersistence: ErpAttemptPersistence;
   fetch?: typeof fetch;
@@ -226,17 +227,13 @@ export class HttpErpOrderConfirmation {
   async dispatch(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
-    chosenRequestDeadlineMs?: number,
+    requestDeadlineMs: number,
   ): Promise<ErpConfirmationOutcome> {
-    const runConfig = job.runId ? await this.options.runConfigReader?.read(job.runId) : null;
-    // Temporary task-08 adapter: task 09 passes the policy deadline; task 12 removes snapshot timeout input.
-    const timeoutMs =
-      chosenRequestDeadlineMs ??
-      runConfig?.erpConfig.requestTimeoutMs ??
-      this.options.requestTimeoutMs;
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    if (!Number.isFinite(requestDeadlineMs) || requestDeadlineMs <= 0) {
       throw new Error("ERP request deadline must be a positive finite number.");
     }
+    const runConfig = job.runId ? await this.options.runConfigReader?.read(job.runId) : null;
+    const timeoutMs = requestDeadlineMs;
     const startedAt = this.now();
     const call = await this.recordDispatchIntent({
       job,
@@ -312,7 +309,7 @@ export class HttpErpOrderConfirmation {
   async lookup(idempotencyKey: string, correlationId: string): Promise<ErpLookupOutcome> {
     const startedAt = this.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), this.options.lookupTimeoutMs);
     try {
       const url = new URL(this.lookupUrl);
       url.pathname = erpConfirmationLookupPath.replace(
@@ -452,7 +449,7 @@ export class HttpErpOrderConfirmation {
           startedAt: record.startedAt,
           finishedAt: record.finishedAt,
           latencyMs: record.latencyMs,
-          requestDeadlineMs: record.requestDeadlineMs ?? this.options.requestTimeoutMs,
+          requestDeadlineMs: record.requestDeadlineMs ?? this.options.lookupTimeoutMs,
           replayed: record.replayed ?? false,
           errorCode: "erp_attempt_contradiction",
           errorMessage: error.message,

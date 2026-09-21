@@ -34,7 +34,6 @@ describe("worker order-processing job publisher", () => {
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
       attempts: 1,
-      backoff: { type: "exponential", delay: 500 },
       jobId: job.orderId,
     });
     expect(close).toHaveBeenCalledOnce();
@@ -87,29 +86,22 @@ describe("worker order-processing job publisher", () => {
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
       attempts: 1,
-      backoff: { type: "exponential", delay: 500 },
       jobId: "recovery-order-key-2",
     });
   });
 
-  it("uses one delivery and ignores the retired run retry budget", async () => {
+  it("publishes generated-run jobs through the publication fence with one delivery", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn() },
-      { maxAttempts: 9, backoffBaseMs: 999 },
       {
-        publish: vi.fn(async ({ operation }) =>
-          operation({
-            backpressureConfig: { retryPolicy: { maxAttempts: 6, initialBackoffMs: 250 } },
-          } as never),
-        ),
+        publish: vi.fn(async ({ operation }) => operation()),
       },
     );
     await publisher.enqueue(runJob);
     expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
       attempts: 1,
-      backoff: { type: "exponential", delay: 999 },
       jobId: job.orderId,
     });
   });
@@ -118,9 +110,12 @@ describe("worker order-processing job publisher", () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
     const publish = vi.fn().mockRejectedValue(new Error("generated run is terminal"));
-    const publisher = createOrderProcessJobPublisher({ add, close: vi.fn() }, undefined, {
-      publish,
-    });
+    const publisher = createOrderProcessJobPublisher(
+      { add, close: vi.fn() },
+      {
+        publish,
+      },
+    );
 
     await expect(
       publisher.enqueue(runJob, { jobId: "recovery-terminal-run", attempts: 1 }),

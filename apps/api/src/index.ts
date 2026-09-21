@@ -23,7 +23,6 @@ import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-process-queue-inspector.js";
-import { PostgresRunRetryPolicyResolver } from "./queue/postgres-run-retry-policy-resolver.js";
 import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboard-dirty-signal-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
@@ -99,16 +98,10 @@ export async function startApiServer(): Promise<void> {
     lazyConnect: true,
     maxRetriesPerRequest: 3,
   });
-  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher(
-    {
-      url: config.redisUrl,
-      maxRetriesPerRequest: 3,
-    },
-    {
-      maxAttempts: config.orderProcessMaxAttempts,
-      backoffBaseMs: config.orderProcessBackoffBaseMs,
-    },
-  );
+  const orderProcessJobPublisher = createBullMqOrderProcessJobPublisher({
+    url: config.redisUrl,
+    maxRetriesPerRequest: 3,
+  });
   const orderProcessQueueInspector = createBullMqOrderProcessQueueInspector({
     url: config.redisUrl,
     maxRetriesPerRequest: 3,
@@ -119,7 +112,6 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
-  const runRetryPolicyResolver = new PostgresRunRetryPolicyResolver(connection.db);
   const stockReservationGateway = {
     reserve: (input: Parameters<typeof reserveInventoryStock>[1]) =>
       reserveInventoryStock(redis, input),
@@ -185,8 +177,6 @@ export async function startApiServer(): Promise<void> {
     databaseUrl: config.databaseUrl,
     redisUrl: config.redisUrl,
     discoveryTimeoutMs: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
-    orderProcessMaxAttempts: config.orderProcessMaxAttempts,
-    orderProcessBackoffBaseMs: config.orderProcessBackoffBaseMs,
   });
   const pendingPersistenceRecovery = new PendingPersistenceRecoveryService({
     redis: pendingPersistenceOperations.redis,
@@ -202,7 +192,6 @@ export async function startApiServer(): Promise<void> {
     listRunScopes: (signal) => pendingPersistenceOperations.listRunScopes(signal),
     openAttemptScope: (input) => pendingPersistenceOperations.openAttemptScope(input),
     closeDiscovery: () => pendingPersistenceOperations.close(),
-    runRetryPolicyResolver,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
     dashboardSourceDirtyScheduler,
     businessOutcomeUpdates: businessOutcomePublications,
@@ -319,7 +308,6 @@ export async function startApiServer(): Promise<void> {
       timeoutMs: terminalInventoryReadTimeoutMs,
     }),
     terminalInventoryReadTimeoutMs,
-    drainTimeoutSeconds: config.demoRunDrainTimeoutSeconds,
     reservationTiming,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
@@ -361,7 +349,6 @@ export async function startApiServer(): Promise<void> {
   const reserveOrderService = new ReserveOrderService({
     persistence,
     orderProcessJobPublisher,
-    runRetryPolicyResolver,
     stockReservations: stockReservationGateway,
     reservationHoldMinutes: config.reservationHoldMinutes,
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,

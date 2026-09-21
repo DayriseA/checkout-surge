@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptedErpProfileSchema,
   acceptedRunConfigSnapshotSchema,
   acceptedRunConfigWriteSchema,
+  historicalAcceptedRunConfigSnapshotSchema,
   largestAllowedErpLatencyMs,
   publicRuntimePolicyMutableWriteSchema,
 } from "../src/index.js";
@@ -32,41 +32,6 @@ describe("adaptive ERP acceptance fixtures", () => {
       }
       expect(() => acceptedRunConfigWriteSchema.parse(fixture.config)).not.toThrow();
     }
-  });
-
-  it("keeps profile fixtures admin-scoped and schema-valid", () => {
-    for (const fixture of acceptanceScenarioFixtures()) {
-      if (fixture.profile === null) continue;
-      expect(fixture.operatorScope).toBe("admin");
-      expect(() => acceptedErpProfileSchema.parse(fixture.profile)).not.toThrow();
-    }
-    expect(
-      acceptanceScenarioFixtures()
-        .filter((fixture) => fixture.profile !== null)
-        .map((fixture) => fixture.name),
-    ).toEqual(["finite-outage", "latency-increase"]);
-  });
-
-  it("starts each profile segment before the ideal service completion of accepted orders", () => {
-    for (const fixture of acceptanceScenarioFixtures()) {
-      if (fixture.profile === null || fixture.config === null) continue;
-      const { latencyMs, maxTps } = fixture.config.erpConfig;
-      const concurrency = fixture.config.backpressureConfig.orderProcessConcurrency;
-      const serviceRate = Math.min(maxTps, concurrency / (latencyMs / 1000));
-      const idealServiceSeconds = fixture.expected.acceptedReservations / serviceRate;
-      expect(idealServiceSeconds).toBeGreaterThan(0);
-      for (const segment of fixture.profile.segments) {
-        expect(segment.offsetSeconds).toBeLessThan(idealServiceSeconds);
-      }
-    }
-  });
-
-  it("raises latency-increase latency beyond the initial request deadline", () => {
-    const fixture = fixtureByName("latency-increase");
-    const segment = fixture.profile?.segments[0];
-    if (!segment || !fixture.config) throw new Error("latency-increase fixture is misconfigured");
-    expect(segment.override.latencyMs).toBe(3000);
-    expect(segment.override.latencyMs).toBeGreaterThan(fixture.config.erpConfig.requestTimeoutMs);
   });
 
   it("carries exact internally consistent business counts", () => {
@@ -103,7 +68,6 @@ describe("adaptive ERP acceptance fixtures", () => {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2000,
     });
     expect(incident.config?.backpressureConfig.orderProcessConcurrency).toBe(5);
   });
@@ -127,15 +91,31 @@ describe("adaptive ERP acceptance fixtures", () => {
     }
   });
 
-  it("still parses the legacy accepted snapshot shape with retired engine fields", () => {
-    const legacy = previewRunConfigSnapshotFixture();
-    expect(legacy.backpressureConfig.retryPolicy).toEqual({
-      maxAttempts: 4,
-      initialBackoffMs: 500,
-    });
-    expect(legacy.backpressureConfig.drainTimeoutSeconds).toBe(300);
-    expect(legacy.erpConfig.requestTimeoutMs).toBe(2000);
-    expect(() => acceptedRunConfigWriteSchema.parse(legacy)).not.toThrow();
+  it("rejects retired engine knobs on new input and keeps historical snapshots readable", () => {
+    const legacy = {
+      ...previewRunConfigSnapshotFixture(),
+      erpConfig: {
+        ...previewRunConfigSnapshotFixture().erpConfig,
+        requestTimeoutMs: 2000,
+      },
+      backpressureConfig: {
+        ...previewRunConfigSnapshotFixture().backpressureConfig,
+        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+        drainTimeoutSeconds: 300,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
+      },
+    };
+    expect(() => acceptedRunConfigWriteSchema.parse(legacy)).toThrow();
+    expect(() => acceptedRunConfigSnapshotSchema.parse(legacy)).toThrow();
+
+    const historical = historicalAcceptedRunConfigSnapshotSchema.parse(legacy);
+    expect(historical).toEqual(previewRunConfigSnapshotFixture());
+    expect(historical.erpConfig).not.toHaveProperty("requestTimeoutMs");
+    expect(historical.backpressureConfig).not.toHaveProperty("retryPolicy");
+    expect(historical.backpressureConfig).not.toHaveProperty("drainTimeoutSeconds");
+    expect(historical.backpressureConfig).not.toHaveProperty("circuitBreakerFailureThreshold");
+    expect(historical.backpressureConfig).not.toHaveProperty("circuitBreakerResetTimeoutMs");
   });
 
   it("bounds new latency inputs without tightening historical snapshot reads", () => {
@@ -143,20 +123,6 @@ describe("adaptive ERP acceptance fixtures", () => {
     legacy.erpConfig.latencyMs = largestAllowedErpLatencyMs + 1;
     expect(() => acceptedRunConfigSnapshotSchema.parse(legacy)).not.toThrow();
     expect(() => acceptedRunConfigWriteSchema.parse(legacy)).toThrow();
-
-    const profile = acceptanceScenarioFixtures().find((fixture) => fixture.profile)?.profile;
-    if (!profile) throw new Error("Missing profile fixture");
-    expect(() =>
-      acceptedErpProfileSchema.parse({
-        ...profile,
-        segments: [
-          {
-            ...profile.segments[0],
-            override: { latencyMs: largestAllowedErpLatencyMs + 1 },
-          },
-        ],
-      }),
-    ).toThrow();
 
     const defaults = previewRunConfigSnapshotFixture();
     const policy = {

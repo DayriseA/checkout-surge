@@ -85,6 +85,13 @@
       "when": 1789924096210,
       "tag": "0011_destructive_admin_reset",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789956068665,
+      "tag": "0012_retire_scenario_engine_controls",
+      "breakpoints": true
     }
   ]
 }

@@ -3439,17 +3439,12 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 2,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

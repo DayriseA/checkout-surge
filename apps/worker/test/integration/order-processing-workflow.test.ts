@@ -51,6 +51,7 @@ import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-f
 import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
+import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
@@ -253,7 +254,7 @@ describe("PostgreSQL worker order transitions", () => {
     );
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: attempts,
       fetch,
@@ -356,7 +357,7 @@ describe("PostgreSQL worker order transitions", () => {
     );
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: attempts,
       fetch,
@@ -427,7 +428,7 @@ describe("PostgreSQL worker order transitions", () => {
       .mockResolvedValue(new Response("denied", { status: 401 }));
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
@@ -1034,7 +1035,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         url: redisUrl,
         maxRetriesPerRequest: null,
       },
-      undefined,
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
     const scanner = createOrderDispatchScanner({
@@ -1488,7 +1488,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       connection,
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
-        requestTimeoutMs: 1000,
+        lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
@@ -1612,7 +1612,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: attempts,
       fetch,
@@ -1704,7 +1704,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => new Date(now)),
       fetch,
@@ -1789,7 +1789,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: attempts,
       fetch,
@@ -1877,7 +1877,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => policyNow),
       fetch,
@@ -1999,7 +1999,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1_000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
@@ -2130,7 +2130,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const notificationRecordPublisher = { publishForConfirmedOrder: vi.fn() };
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      requestTimeoutMs: 1000,
+      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
@@ -2228,7 +2228,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       connection,
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
-        requestTimeoutMs: 1000,
+        lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
@@ -2578,7 +2578,6 @@ function createFinalizationService(
       read: ({ saleOfferId, observedAt }) => getInventoryStatus(redis, saleOfferId, observedAt),
     },
     terminalInventoryReadTimeoutMs: 2_000,
-    drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-21T00:00:10.000Z"),
   });
 }
@@ -2653,17 +2652,12 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

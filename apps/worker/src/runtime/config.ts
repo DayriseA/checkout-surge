@@ -60,11 +60,6 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
       "ORDER_RECOVERY_LEASE_MS",
       30_000,
     ),
-    orderRecoveryMaxAttempts: parsePositiveInteger(
-      env.ORDER_RECOVERY_MAX_ATTEMPTS,
-      "ORDER_RECOVERY_MAX_ATTEMPTS",
-      100,
-    ),
     postgresPoolMax: parsePositiveInteger(
       env.WORKER_POSTGRES_POOL_MAX,
       "WORKER_POSTGRES_POOL_MAX",
@@ -73,21 +68,6 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
     mockErpBaseUrl: parseUrl(
       env.MOCK_ERP_BASE_URL?.trim() || "http://localhost:4100",
       "MOCK_ERP_BASE_URL",
-    ),
-    erpRequestTimeoutMs: parsePositiveInteger(
-      env.ERP_REQUEST_TIMEOUT_MS,
-      "ERP_REQUEST_TIMEOUT_MS",
-      2000,
-    ),
-    erpCircuitFailureThreshold: parsePositiveInteger(
-      env.ERP_CIRCUIT_FAILURE_THRESHOLD,
-      "ERP_CIRCUIT_FAILURE_THRESHOLD",
-      5,
-    ),
-    erpCircuitResetTimeoutMs: parsePositiveInteger(
-      env.ERP_CIRCUIT_RESET_TIMEOUT_MS,
-      "ERP_CIRCUIT_RESET_TIMEOUT_MS",
-      10_000,
     ),
   };
   if (config.orderProcessConcurrency < orderProcessConcurrencyHardCap) {

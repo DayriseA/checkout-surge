@@ -16,7 +16,6 @@ import type {
 } from "./dashboard-source-dirty-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type { ReservationTimingObservationPort } from "./reservation-timing-observation.js";
-import type { RunRetryPolicyResolver } from "./run-retry-policy-resolver.js";
 
 export const definitivePersistenceRejectionCode = "run_sale_offer_mismatch" as const;
 export const terminalPersistenceRejectionCode = "run_terminal" as const;
@@ -179,7 +178,6 @@ export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
   private readonly orderProcessJobPublisher: OrderProcessJobPublisher;
-  private readonly runRetryPolicyResolver: RunRetryPolicyResolver | undefined;
   private readonly reservationHoldMinutes: number;
   private readonly idempotencyTtlSeconds: number;
   private readonly pendingPersistenceRetryAfterSeconds: number;
@@ -204,7 +202,6 @@ export class ReserveOrderService {
     persistence: BuyPersistence;
     stockReservations: StockReservationGateway;
     orderProcessJobPublisher: OrderProcessJobPublisher;
-    runRetryPolicyResolver?: RunRetryPolicyResolver;
     reservationHoldMinutes: number;
     idempotencyTtlSeconds: number;
     pendingPersistenceRetryAfterSeconds: number;
@@ -226,7 +223,6 @@ export class ReserveOrderService {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
     this.orderProcessJobPublisher = options.orderProcessJobPublisher;
-    this.runRetryPolicyResolver = options.runRetryPolicyResolver;
     this.reservationHoldMinutes = options.reservationHoldMinutes;
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;

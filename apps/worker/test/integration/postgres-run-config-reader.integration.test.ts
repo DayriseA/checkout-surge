@@ -52,6 +52,29 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     );
   });
 
+  it("accepts and ignores retired engine knobs in a pre-retirement snapshot", async () => {
+    const snapshot = configSnapshotFixture();
+    await connection.db.execute(
+      sql`UPDATE ${demoRuns}
+          SET config_snapshot = ${JSON.stringify({
+            ...snapshot,
+            erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
+            backpressureConfig: {
+              ...snapshot.backpressureConfig,
+              retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+              drainTimeoutSeconds: 300,
+              circuitBreakerFailureThreshold: 5,
+              circuitBreakerResetTimeoutMs: 10_000,
+            },
+          })}::jsonb
+          WHERE ${demoRuns.id} = ${runId}`,
+    );
+
+    await expect(new PostgresRunConfigReader(connection.db).read(runId)).resolves.toEqual(
+      configSnapshotFixture(),
+    );
+  });
+
   it("retains its configuration-reader semantics after a generated run becomes terminal", async () => {
     await connection.db
       .update(demoRuns)
@@ -91,7 +114,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn() },
-      undefined,
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -107,7 +129,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     expect(add).not.toHaveBeenCalled();
   });
 
-  it("validates the immutable run configuration inside the publication fence", async () => {
+  it("publishes recovery deliveries without consulting the stored snapshot configuration", async () => {
     const snapshot = configSnapshotFixture();
     await connection.db.execute(
       sql`UPDATE ${demoRuns}
@@ -120,15 +142,13 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn() },
-      undefined,
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
-    await expect(publisher.enqueue(runOrderJob())).rejects.toMatchObject({
-      code: "persisted_run_config_invalid",
-      runId,
-    });
-    expect(add).not.toHaveBeenCalled();
+    // The retired snapshot-fed retry budget is gone: the fence only guards
+    // run non-terminality and the operation no longer reads the snapshot.
+    await expect(publisher.enqueue(runOrderJob())).resolves.toBeUndefined();
+    expect(add).toHaveBeenCalledOnce();
   });
 
   it("holds the shared publication lock through queue add before terminal cleanup can proceed", async () => {
@@ -151,7 +171,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     });
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn() },
-      undefined,
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -204,7 +223,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
       { add, close: vi.fn() },
-      undefined,
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -320,17 +338,12 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       maxTps: 100,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2_000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

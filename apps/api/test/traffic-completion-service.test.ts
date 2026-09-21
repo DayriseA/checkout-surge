@@ -318,7 +318,6 @@ describe("TrafficCompletionService", () => {
           getInventoryStatus(redisClient, currentSaleOfferId, observedAt),
       },
       terminalInventoryReadTimeoutMs: 2_000,
-      drainTimeoutSeconds: 300,
       now: () => new Date("2026-07-19T00:00:11.000Z"),
     });
     const completionService = new TrafficCompletionService({
@@ -463,17 +462,12 @@ function acceptedRunConfigSnapshot(): AcceptedRunConfigSnapshot {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 2_000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
 }

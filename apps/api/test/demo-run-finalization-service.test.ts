@@ -1483,16 +1483,16 @@ describe("demo run finalization service", () => {
     );
   });
 
-  it("does not let runtime or historical drain timeouts terminalize unresolved work", async () => {
+  it("keeps unresolved work draining when a historical snapshot still carries retired knobs", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    const service = createService(connection, redis, { drainTimeoutSeconds: 1 });
+    const service = createService(connection, redis);
 
     await seedDrainingRun({
       db,
       redis: redisClient,
       trafficDeliveryStatus: "complete",
-      configSnapshot: configSnapshotFixture({ drainTimeoutSeconds: 300 }),
+      configSnapshot: historicalDrainSnapshotFixture(),
       trafficEndedAt: new Date("2026-06-20T00:00:00.000Z"),
     });
     await setArrivalAnchor(db);
@@ -1522,7 +1522,6 @@ function createService(
     >[0]["terminalInventoryRead"];
     terminalInventoryReadTimeoutMs?: number;
     now?: () => Date;
-    drainTimeoutSeconds?: number;
     logger?: ConstructorParameters<typeof DemoRunFinalizationService>[0]["logger"];
   } = {},
 ): DemoRunFinalizationService {
@@ -1535,7 +1534,6 @@ function createService(
     terminalInventoryRead: createTerminalInventoryRead(requireRedis(redis)),
     terminalInventoryReadTimeoutMs: 2_000,
     logger: createSilentLogger("api"),
-    drainTimeoutSeconds: 300,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     ...options,
   });
@@ -1743,9 +1741,7 @@ function orderFixture(
   };
 }
 
-function configSnapshotFixture(
-  options: { drainTimeoutSeconds?: number } = {},
-): AcceptedRunConfigSnapshot {
+function configSnapshotFixture(): AcceptedRunConfigSnapshot {
   return {
     trafficConfig: {
       mode: "buyer-spike",
@@ -1765,19 +1761,36 @@ function configSnapshotFixture(
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 2,
-      retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-      drainTimeoutSeconds: options.drainTimeoutSeconds ?? 300,
       pendingPersistenceRetryAfterSeconds: 30,
-      circuitBreakerFailureThreshold: 5,
-      circuitBreakerResetTimeoutMs: 10_000,
     },
   };
+}
+
+/**
+ * A snapshot persisted before the engine-knob retirement: the retired knobs
+ * are accepted and ignored on read and cannot terminalize or configure work.
+ */
+function historicalDrainSnapshotFixture(): AcceptedRunConfigSnapshot {
+  // The retired knobs exist only in stored JSON, never in the contract type,
+  // so the raw persisted shape is modeled with a JSON round-trip.
+  return JSON.parse(
+    JSON.stringify({
+      ...configSnapshotFixture(),
+      erpConfig: { ...configSnapshotFixture().erpConfig, requestTimeoutMs: 2000 },
+      backpressureConfig: {
+        ...configSnapshotFixture().backpressureConfig,
+        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
+        drainTimeoutSeconds: 300,
+        circuitBreakerFailureThreshold: 5,
+        circuitBreakerResetTimeoutMs: 10_000,
+      },
+    }),
+  ) as AcceptedRunConfigSnapshot;
 }
 
 function duplicateBuyerConfigSnapshot(): AcceptedRunConfigSnapshot {

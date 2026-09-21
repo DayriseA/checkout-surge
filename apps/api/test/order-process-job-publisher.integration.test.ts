@@ -34,35 +34,20 @@ describe("single-attempt BullMQ wake-ups", () => {
   });
 
   it("stores one delivery per generation and deterministic IDs", async () => {
-    const publisher = createBullMqOrderProcessJobPublisher(
-      { url: url() },
-      { maxAttempts: 99, backoffBaseMs: 9999 },
-    );
+    const publisher = createBullMqOrderProcessJobPublisher({ url: url() });
     const second = {
       ...base,
       orderId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       publicOrderId: "ord_b",
       runId: runB,
     };
-    await publisher.enqueue(base, {
-      retryPolicy: { maxAttempts: 6, initialBackoffMs: 750 },
-    });
-    await publisher.enqueue(second, {
-      retryPolicy: { maxAttempts: 3, initialBackoffMs: 0 },
-    });
-    await publisher.enqueue(base, {
-      retryPolicy: { maxAttempts: 6, initialBackoffMs: 750 },
-    });
+    await publisher.enqueue(base);
+    await publisher.enqueue(second);
+    await publisher.enqueue(base);
     const firstStored = await queue.getJob(base.orderId);
     const secondStored = await queue.getJob(second.orderId);
-    expect(firstStored?.opts).toMatchObject({
-      attempts: 1,
-      backoff: { type: "exponential", delay: 9999 },
-    });
-    expect(secondStored?.opts).toMatchObject({
-      attempts: 1,
-      backoff: { type: "exponential", delay: 9999 },
-    });
+    expect(firstStored?.opts).toMatchObject({ attempts: 1 });
+    expect(secondStored?.opts).toMatchObject({ attempts: 1 });
     expect(await queue.getJobCounts("waiting")).toMatchObject({ waiting: 2 });
     await publisher.close();
   });

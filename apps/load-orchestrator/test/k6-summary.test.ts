@@ -33,17 +33,12 @@ const request = {
       maxTps: 10,
       errorRate: 0,
       forcedOutage: false,
-      requestTimeoutMs: 1000,
     },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
-      drainTimeoutSeconds: 10,
       pendingPersistenceRetryAfterSeconds: 1,
-      circuitBreakerFailureThreshold: 1,
-      circuitBreakerResetTimeoutMs: 1000,
     },
   },
 } satisfies TrafficExecutionStartRequest;

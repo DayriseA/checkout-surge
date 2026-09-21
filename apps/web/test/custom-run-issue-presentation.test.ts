@@ -33,9 +33,7 @@ describe("custom run issue presentation", () => {
   });
 
   it("keeps group and unknown-path fallbacks safe", () => {
-    expect(
-      presentCustomRunIssues([["erpConfig", "requestTimeoutMs"], ["internalOnlyField"]]),
-    ).toEqual([
+    expect(presentCustomRunIssues([["erpConfig", "forcedOutage"], ["internalOnlyField"]])).toEqual([
       {
         group: "advanced",
         key: "custom-advanced-validation-error",
