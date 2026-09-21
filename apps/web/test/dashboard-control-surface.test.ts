@@ -260,8 +260,6 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("happy_path");
     expect(markup).not.toContain(">idempotency<");
     expect(duplicateFacts.expectedSoldOutCount).toBe(0);
-    expect(duplicateFacts.settlingCopy).toContain("2 s");
-    expect(duplicateFacts.settlingCopy).toContain("actual time depends on the environment");
     expect(steadyFacts.duplicateAttempts).toBe("No");
   });
 

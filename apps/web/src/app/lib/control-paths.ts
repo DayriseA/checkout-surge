@@ -1,5 +1,7 @@
 export const dashboardRecoveryProxyPath = "/api/dashboard/recovery" as const;
 export const healthReadyProxyPath = "/api/health/ready" as const;
+export const demoRunEstimateProxyPath = "/api/demo/runs/estimate" as const;
+export const adminDemoRunEstimateProxyPath = "/api/admin/demo/runs/estimate" as const;
 export const demoRunStartProxyPath = "/api/demo/runs/start" as const;
 export function publicRunHistoryDetailProxyPath(runId: string): string {
   return `/api/demo/runs/history/${encodeURIComponent(runId)}`;

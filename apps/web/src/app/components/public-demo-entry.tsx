@@ -6,6 +6,8 @@ import {
   type DashboardProjection,
   type DemoPresetContract,
   type DemoRunConfigOverride,
+  type EstimateAdmissionRejectionDetails,
+  estimateAdmissionRejectionDetailsSchema,
   type HealthResponse,
   healthResponseSchema,
   type PublicRuntimePolicy,
@@ -41,8 +43,10 @@ import {
 import { inputClassName, primaryButtonClassName } from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
+import { RunEstimateNotice } from "./run-estimate-notice";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
+import { useRunEstimate } from "./use-run-estimate";
 
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
@@ -70,6 +74,7 @@ type CustomSubmissionFailure =
   | { kind: "operation"; presentation: ErrorPresentation };
 
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
+  const [accepted, setAccepted] = useState(false);
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
@@ -280,6 +285,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       ? `Reduce the buyer count, rate, duration, or duplicate attempts to ${formatCount(runtimePolicy.publicCustomLimits.maxTotalRequests)} planned attempts or fewer.`
       : null;
   const startDisabled =
+    accepted ||
     isBlocked ||
     isReadinessBlocked ||
     startingSlug !== null ||
@@ -287,7 +293,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     startRetryUntil !== null ||
     surface.presets.status !== "available" ||
     recovery.status !== "available";
-  const customStartDisabled = startDisabled;
+  const customEstimate = useRunEstimate(
+    customPreset && customConfig
+      ? { presetSlug: customPreset.slug, configOverride: customConfig }
+      : null,
+    "public",
+    !isBlocked && !isReadinessBlocked && !accepted && customBuilderOpen,
+    JSON.stringify(runtimePolicy),
+  );
+  const customStartDisabled = startDisabled || customEstimate.blocksStart;
   const startOptionsAvailable =
     curatedPresets.length > 0 || Boolean(runtimePolicy && customPreset && customConfig);
   // Derived post-start reconciliation window: a start is pending its post-failure
@@ -322,7 +336,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       );
       return;
     }
-    await sendStartRequest(parsed.data, false);
+    return await sendStartRequest(parsed.data, false);
   }
 
   async function sendStartRequest(request: StartDemoRunRequest, isCustom: boolean) {
@@ -341,9 +355,18 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       });
 
       if (result.status === "available") {
+        setAccepted(true);
         setStatusMessage("Run accepted.");
         navigateToWatch(result.data.run.runId);
         return;
+      }
+
+      if (result.errorCode === "estimated_duration_rejected") {
+        const rejection = estimateAdmissionRejectionDetailsSchema.safeParse(result.details);
+        if (rejection.success) {
+          if (isCustom) customEstimate.reject(rejection.data);
+          return rejection.data;
+        }
       }
 
       if (
@@ -481,7 +504,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           label="Expected sold-out rejections"
                           value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
                         />
-                        <Fact label="Approximate settling" value={facts.settlingCopy} />
                         <Fact label="Detailed assumptions" value={facts.outcomeFocus} />
                       </dl>
                       <ConditionalCaveat show={facts.hasDuplicateAttempts}>
@@ -490,18 +512,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       </ConditionalCaveat>
                     </div>
                   </details>
-                  <button
-                    className={`${primaryButtonClassName} mt-3 enabled:cursor-pointer enabled:hover:brightness-90 enabled:active:brightness-75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
+                  <PublicPresetStart
+                    preset={preset}
                     disabled={startDisabled}
-                    onClick={() => {
-                      void startRun(preset.slug);
-                    }}
-                    type="button"
-                  >
-                    {startingSlug === preset.slug
-                      ? `Starting ${preset.display.name}`
-                      : `Start ${preset.display.name}`}
-                  </button>
+                    previewEnabled={!isBlocked && !isReadinessBlocked && !accepted}
+                    starting={startingSlug === preset.slug}
+                    onStart={() => startRun(preset.slug)}
+                  />
                 </article>
               );
             })}
@@ -828,6 +845,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             {customSubmissionFailure ? (
               <CustomErrorSummary failure={customSubmissionFailure} summaryRef={customSummaryRef} />
             ) : null}
+            <RunEstimateNotice state={customEstimate.state} mode="public" />
             <button className={primaryButtonClassName} disabled={customStartDisabled} type="submit">
               {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
             </button>
@@ -856,18 +874,47 @@ export function readinessBlocksRunStart(readiness: BackendRead<HealthResponse>):
   return readiness.status !== "available" || readiness.data.status !== "ok";
 }
 
+function PublicPresetStart({
+  preset,
+  disabled,
+  previewEnabled,
+  starting,
+  onStart,
+}: {
+  preset: DemoPresetContract;
+  disabled: boolean;
+  previewEnabled: boolean;
+  starting: boolean;
+  onStart: () => Promise<EstimateAdmissionRejectionDetails | undefined>;
+}) {
+  const estimate = useRunEstimate(
+    { presetSlug: preset.slug },
+    "public",
+    previewEnabled,
+    JSON.stringify(preset),
+  );
+  return (
+    <>
+      <RunEstimateNotice state={estimate.state} mode="public" />
+      <button
+        className={`${primaryButtonClassName} mt-3 enabled:cursor-pointer enabled:hover:brightness-90 enabled:active:brightness-75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
+        disabled={disabled || estimate.blocksStart}
+        onClick={async () => {
+          if (disabled || estimate.blocksStart) return;
+          const rejection = await onStart();
+          if (rejection) estimate.reject(rejection);
+        }}
+        type="button"
+      >
+        {starting ? `Starting ${preset.display.name}` : `Start ${preset.display.name}`}
+      </button>
+    </>
+  );
+}
+
 export function derivePresetCardFacts(preset: DemoPresetContract) {
   const configFacts = deriveRunConfigFacts(preset);
   const uniqueAttempts = configFacts.uniqueAttempts;
-  const expectedConfirmedOrders = Math.min(uniqueAttempts, preset.inventoryConfig.startingStock);
-  const workerThroughput =
-    preset.erpConfig.latencyMs === 0
-      ? Number.POSITIVE_INFINITY
-      : (preset.backpressureConfig.orderProcessConcurrency * 1_000) / preset.erpConfig.latencyMs;
-  const settlingSeconds = Math.max(
-    1,
-    Math.ceil(expectedConfirmedOrders / Math.min(preset.erpConfig.maxTps, workerThroughput)),
-  );
 
   return {
     surgeLabel: configFacts.surgeLabel,
@@ -878,7 +925,6 @@ export function derivePresetCardFacts(preset: DemoPresetContract) {
     demandValue: configFacts.demandValue,
     distinguishingBehavior: presetDistinguishingBehavior(preset),
     expectedSoldOutCount: Math.max(0, uniqueAttempts - preset.inventoryConfig.startingStock),
-    settlingCopy: `Usually about ${formatDurationMs(settlingSeconds * 1_000) ?? `${settlingSeconds}s`} on the demo host; actual time depends on the environment`,
     outcomeFocus: presetOutcomeFocus(preset),
   };
 }

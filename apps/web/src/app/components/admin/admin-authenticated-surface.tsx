@@ -15,11 +15,13 @@ import {
   archiveAdminPresetResponseSchema,
   copyDemoPresetToCustomRequestSchema,
   type DashboardProjection,
+  type DemoRunSnapshot,
   duplicateDemoPresetRequestSchema,
   type ErpChaosConfig,
   type ErpChaosStatus,
   erpChaosConfigSchema,
   erpChaosStatusSchema,
+  estimateAdmissionRejectionDetailsSchema,
   type HealthResponse,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyMutable,
@@ -75,7 +77,9 @@ import { RealtimeRecoveryNotice } from "../dashboard-panels";
 import { ErrorNotice } from "../error-notice";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
+import { RunEstimateNotice } from "../run-estimate-notice";
 import { StatusPill } from "../status-pill";
+import { useRunEstimate } from "../use-run-estimate";
 import {
   AdminErpDiagnosticsView,
   AdminPresetView,
@@ -676,6 +680,8 @@ export function AdminPresetController({
   startBlockedReason?: string | undefined;
 }) {
   const router = useRouter();
+  const [acceptedRun, setAcceptedRun] = useState<DemoRunSnapshot | null>(null);
+  const acceptedRecoveryRef = useRef(recovery);
   const initialPreset =
     initialPresets.status === "available" ? initialPresets.data.presets[0] : null;
   const [presetsRead, setPresetsRead] = useState(initialPresets);
@@ -734,6 +740,31 @@ export function AdminPresetController({
     [draft, effectiveRuntimePolicy, selectedPreset],
   );
 
+  const controlsBlocked = startBlocked ?? isRunStartBlocked(recovery);
+  const estimate = useRunEstimate(
+    startConfirmation?.request ??
+      (selectedPreset && effectiveConfig?.values
+        ? { presetSlug: selectedPreset.slug, configOverride: effectiveConfig.values }
+        : null),
+    "admin",
+    !controlsBlocked && !acceptedRun,
+    JSON.stringify([selectedPreset, effectiveRuntimePolicy]),
+  );
+  useEffect(() => {
+    // Failed reads can rewrap the previous projection; only producer time proves a newer read.
+    if (
+      acceptedRun &&
+      recovery.status === "available" &&
+      Date.parse(recovery.data.recoveredAt) > Date.parse(acceptedRun.startedAt) &&
+      (acceptedRecoveryRef.current.status !== "available" ||
+        Date.parse(recovery.data.recoveredAt) >
+          Date.parse(acceptedRecoveryRef.current.data.recoveredAt)) &&
+      !isRunStartBlocked(recovery)
+    ) {
+      setAcceptedRun(null);
+    }
+  }, [acceptedRun, recovery]);
+
   useEffect(() => {
     if (initialPresets === latestInitialPresetsRef.current) return;
     latestInitialPresetsRef.current = initialPresets;
@@ -779,6 +810,7 @@ export function AdminPresetController({
   }, [effectiveRuntimePolicy]);
 
   function start() {
+    if (controlsBlocked || acceptedRun || estimate.blocksStart) return;
     if (!selectedPreset || !draft || !effectiveConfig) return;
     const built = effectiveConfig;
     if (!built.values) {
@@ -803,7 +835,7 @@ export function AdminPresetController({
   }
 
   async function confirmStart() {
-    if (!startConfirmation) return;
+    if (!startConfirmation || controlsBlocked || acceptedRun || estimate.blocksStart) return;
     await withPending(async () => {
       const result = await readProxyJson(adminDemoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
@@ -817,10 +849,19 @@ export function AdminPresetController({
       }
       setNotice(result.status === "available" ? "Admin run accepted." : null);
       if (result.status === "available") {
+        acceptedRecoveryRef.current = recovery;
+        setAcceptedRun(result.data.run);
         setStartConfirmation(null);
         setStartError(null);
       }
       if (result.status === "unavailable") {
+        if (result.errorCode === "estimated_duration_rejected") {
+          const rejection = estimateAdmissionRejectionDetailsSchema.safeParse(result.details);
+          if (rejection.success) {
+            estimate.reject(rejection.data);
+            return;
+          }
+        }
         setStartError(adminFailureNotice(result));
         setFieldErrors(serverFieldErrors(result.details, "preset"));
         setShowValidationSummary(true);
@@ -1121,13 +1162,21 @@ export function AdminPresetController({
         selectedPreset={selectedPreset}
         showValidationSummary={showValidationSummary}
         validationSummaryRevision={validationSummaryRevision}
-        startBlocked={startBlocked ?? isRunStartBlocked(recovery)}
+        acceptedRunId={acceptedRun?.runId}
+        admissionNotice={<RunEstimateNotice state={estimate.state} mode="admin" />}
+        startBlocked={controlsBlocked || Boolean(acceptedRun) || estimate.blocksStart}
         startBlockedReason={startBlockedReason}
       />
       <ConfirmationDialog
+        confirmDisabled={controlsBlocked || Boolean(acceptedRun) || estimate.blocksStart}
         confirmLabel="Start run"
         description="Start with this effective configuration and claim the one shared demo runtime. The accepted values become a frozen per-run snapshot."
-        error={startError ? <AdminNoticeView notice={startError} /> : null}
+        error={
+          <>
+            {startConfirmation ? <RunEstimateNotice state={estimate.state} mode="admin" /> : null}
+            {startError ? <AdminNoticeView notice={startError} /> : null}
+          </>
+        }
         onCancel={() => {
           setStartConfirmation(null);
           setStartError(null);

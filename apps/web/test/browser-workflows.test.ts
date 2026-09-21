@@ -64,6 +64,12 @@ import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 import WatchPage from "../src/app/watch/page.js";
 
+// Admission timing is exercised with the real transport in run-estimate.test.tsx.
+// These existing workflows isolate their recovery, validation and mutation boundaries.
+vi.mock("../src/app/components/use-run-estimate", () => ({
+  useRunEstimate: () => ({ state: { status: "inactive" }, blocksStart: false, reject: vi.fn() }),
+}));
+
 vi.mock("../src/app/lib/api.js", () => ({
   getAdminRunHistoryDetail: vi.fn(),
   getPublicDemoSurface: vi.fn(),

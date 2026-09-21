@@ -47,6 +47,12 @@ import {
 import { dashboardStaleAfterMs } from "../src/app/lib/presentation/freshness.js";
 
 const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
+// Admission timing is exercised with the real transport in run-estimate.test.tsx.
+// These existing workflows isolate their recovery, validation and mutation boundaries.
+vi.mock("../src/app/components/use-run-estimate", () => ({
+  useRunEstimate: () => ({ state: { status: "inactive" }, blocksStart: false, reject: vi.fn() }),
+}));
+
 vi.mock("next/navigation", () => ({ useRouter: () => navigation }));
 
 class InjectedEventSource {
@@ -2212,7 +2218,9 @@ describe("admin feature controllers", () => {
 
     await waitFor(() => expect(status.textContent).toBe("Admin run accepted."));
     expect(document.querySelector("#presets p[role='status']")).toBe(status);
-    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe("/watch");
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe(
+      `/watch?acceptedRunId=${runFixture()?.runId}`,
+    );
     expect(assign).not.toHaveBeenCalled();
   });
 

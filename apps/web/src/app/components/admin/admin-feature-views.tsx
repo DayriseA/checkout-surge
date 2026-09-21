@@ -306,6 +306,8 @@ export function AdminPresetView({
   selectedPreset,
   startBlocked,
   startBlockedReason,
+  admissionNotice,
+  acceptedRunId,
   showValidationSummary,
   validationSummaryRevision,
 }: {
@@ -331,6 +333,8 @@ export function AdminPresetView({
   presets: AdminPresetListItem[];
   presetsRead: BackendRead<unknown>;
   selectedPreset: AdminPresetListItem | null;
+  admissionNotice?: React.ReactNode;
+  acceptedRunId?: string | undefined;
   startBlocked: boolean;
   startBlockedReason?: string | undefined;
   showValidationSummary: boolean;
@@ -541,6 +545,7 @@ export function AdminPresetView({
                     {actionPendingReason}
                   </p>
                 ) : null}
+                {admissionNotice}
                 {startBlockedReason ? (
                   <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={startBlockedReasonId}>
                     {startBlockedReason}
@@ -637,7 +642,10 @@ export function AdminPresetView({
       </div>
       <AdminNoticeView notice={notice} />
       {notice === "Admin run accepted." ? (
-        <a className={`${buttonClassName} mt-4 inline-flex items-center`} href="/watch">
+        <a
+          className={`${buttonClassName} mt-4 inline-flex items-center`}
+          href={acceptedRunId ? `/watch?${new URLSearchParams({ acceptedRunId })}` : "/watch"}
+        >
           Watch live
         </a>
       ) : null}

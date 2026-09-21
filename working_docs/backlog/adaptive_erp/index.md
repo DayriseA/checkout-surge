@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: implementation backlog prepared; tasks 01 to 15 are completed and committed; task 16 is Done (pending commit); tasks 17–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
+Status: implementation backlog prepared; tasks 01 to 15 are completed and committed; task 16 is Done (pending commit); task 17 is Done (pending commit); tasks 18–21 are pending. Creating these documents implements no runtime behavior and certifies no performance result.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -36,7 +36,7 @@ Task 20 contains the source plan's mandatory user-approval gate. After calibrati
 | 14 | [Retire scenario engine controls](14_retire_scenario_engine_controls.md) | 1/4 completion | Coordinated configuration retirement/history reads |
 | 15 | [Conservative duration estimator](15_implement_conservative_duration_estimator.md) | 5 | Done (pending commit): pure API model and provisional measured margins |
 | 16 | [Estimated-duration admission](16_enforce_estimated_duration_admission.md) | 5 | Done: effective ceiling, advisory preview, authoritative start recomputation, minimal web policy-save compatibility |
-| 17 | [Dashboard estimate/admission flow](17_build_dashboard_estimate_and_admission_flow.md) | 6 | Current-input preview and actionable rejection |
+| 17 | [Dashboard estimate/admission flow](17_build_dashboard_estimate_and_admission_flow.md) | 6 | Done (pending commit): shared current-input preview, start gating and actionable rejection |
 | 18 | [Runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md) | 6 | Minimal progress projection/UX and the grace-period notice |
 | 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Full 16-scenario coverage and isolated evidence |
 | 20 | [Calibration and explicit approval](20_calibrate_policy_and_obtain_approval.md) | 7 | Measured constants/report; mandatory user gate |
@@ -90,7 +90,7 @@ Task 01 refined this map with concrete current symbols and test names, verified 
 | ERP `requestTimeoutMs` schema | **Retired by 14**: removed from `erpRunConfigSchema` and `public-runtime-policy-validation.ts` (violation code deleted); `previewRunConfigSnapshotFixture` and the seed write the new format | `packages/contracts/test/contracts.test.ts`, `packages/db/test/integration/db.integration.test.ts` | 08, 14 (done) |
 | ERP `requestTimeoutMs` consumption | **Retired by 14**: `dispatch` requires the adaptive policy deadline (snapshot fallback removed); the client keeps `lookupTimeoutMs` for status lookups only, wired from the policy — not environment-configurable; `ERP_REQUEST_TIMEOUT_MS` config/env removed | `apps/worker/test/unit/erp-confirmation-client.test.ts`, `apps/worker/test/integration/postgres-run-config-reader.integration.test.ts` | 04, 08, 14 (done) |
 | Unrelated same-named `requestTimeoutMs` HTTP-client options (do not retire) | `apps/api/src/services/traffic-execution-gateway.ts` (`defaultStartRequestTimeoutMs`); `apps/load-orchestrator/src/application/api-client.ts` | `apps/api/test/traffic-execution-gateway.test.ts`, `apps/load-orchestrator/test/*` | none (guard note) |
-| Retired knobs in web drafts/forms/presentation | **Removed by 14**: draft fields, rebuild/rules, form fields, preview rows, history rows, policy comparison groups, and the `requestTimeoutMs` issue classification no longer reference retired knobs; admission/runtime UI remains 17–18 | `apps/web/test/admin-drafts.test.ts`, `apps/web/test/dashboard-phase6.test.ts`, `apps/web/test/api-read-fallback.test.ts` | 14 (done), 17, 18 |
+| Retired knobs in web drafts/forms/presentation | **Removed by 14**: draft fields, rebuild/rules, form fields, preview rows, history rows, policy comparison groups, and the `requestTimeoutMs` issue classification no longer reference retired knobs; task 17 adds admission UI without restoring knobs; runtime UI remains task 18 | `apps/web/test/admin-drafts.test.ts`, `apps/web/test/dashboard-phase6.test.ts`, `apps/web/test/api-read-fallback.test.ts` | 14 (done), 17, 18 |
 | Retired knobs in the load-orchestrator journal | **Done by 14**: journal reads parse through `historicalTrafficExecutionStartRequestSchema` (accept and strip); writers keep `materializedTrafficExecutionStartRequestSchema` in `apps/load-orchestrator/src/application/execution-store.ts` | `apps/load-orchestrator/test/load-orchestrator.test.ts` (pre-retirement journal restart test) | 14 (done) |
 | Pending-persistence recovery policy (same field names, NOT retired — reservation-persistence concern per D13) | `apps/api/src/runtime/pending-persistence-recovery-policy.ts` (`pendingPersistenceRecoveryDefaults`); `apps/api/src/services/pending-persistence-recovery-service.ts` (`maxAttempts`, `initialBackoffMs`, exponential backoff); `apps/api/src/runtime/pending-persistence-operation-factory.ts`; `apps/api/src/runtime/config.ts`; `apps/api/src/index.ts` | `apps/api/test/pending-persistence-recovery-service.test.ts`, `apps/api/test/runtime-config.test.ts` | 02 (reviews coupling), not 14 |
 

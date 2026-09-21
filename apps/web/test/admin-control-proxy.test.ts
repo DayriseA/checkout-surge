@@ -12,6 +12,8 @@ import {
   dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   errorPayloadSchema,
+  previewDemoRunPath,
+  previewDemoRunResponseSchema,
   publicVisitorIdHeaderName,
   runHistoryPath,
   startDemoRunPath,
@@ -28,6 +30,7 @@ import {
 import { POST as saveAdminPreset } from "../src/app/api/admin/demo/presets/save/route.js";
 import { POST as resetDemo } from "../src/app/api/admin/demo/reset/route.js";
 import { POST as cleanupRuns } from "../src/app/api/admin/demo/runs/cleanup/route.js";
+import { POST as previewAdminDemoRun } from "../src/app/api/admin/demo/runs/estimate/route.js";
 import { DELETE as deleteRunHistory } from "../src/app/api/admin/demo/runs/history/route.js";
 import { POST as startAdminDemoRun } from "../src/app/api/admin/demo/runs/start/route.js";
 import {
@@ -38,12 +41,14 @@ import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/rout
 import { GET as getErpChaos, PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
+import { POST as previewDemoRun } from "../src/app/api/demo/runs/estimate/route.js";
 import { POST as startDemoRun } from "../src/app/api/demo/runs/start/route.js";
 import { GET as getReadiness } from "../src/app/api/health/ready/route.js";
 import { adminPassphraseHeaderName } from "../src/app/lib/control-paths.js";
 import { resetAdminLoginAttemptLimiterForTests } from "../src/app/lib/server/admin-login-composition.js";
 import { createAdminSessionToken } from "../src/app/lib/server/admin-session.js";
 import { initializeWebServerConfig } from "../src/app/lib/server/config.js";
+import { estimateFixture } from "./estimate-fixtures.js";
 
 const originalEnv = { ...process.env };
 
@@ -83,6 +88,7 @@ describe("dashboard control proxy routes", () => {
       ["run cleanup", "POST", cleanupRuns],
       ["history delete", "DELETE", deleteRunHistory],
       ["run start", "POST", startAdminDemoRun],
+      ["run estimate", "POST", previewAdminDemoRun],
       ["runtime policy read", "GET", getAdminRuntimePolicy],
       ["runtime policy update", "PUT", updateAdminRuntimePolicy],
       ["ERP update", "PUT", updateErpChaos],
@@ -254,6 +260,85 @@ describe("dashboard control proxy routes", () => {
       code: "invalid_request",
       correlationId: "corr-invalid-recovery-query",
     });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "public",
+    "admin",
+  ] as const)("validates and proxies %s estimates with server-owned headers", async (mode) => {
+    const handler = mode === "admin" ? previewAdminDemoRun : previewDemoRun;
+    const headers = mode === "admin" ? await adminSessionHeaders() : {};
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({ result: estimateFixture("over_ceiling") }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const request = (body: unknown) =>
+      new Request(
+        `http://dashboard.local/api/${mode === "admin" ? "admin/" : ""}demo/runs/estimate`,
+        {
+          method: "POST",
+          headers: {
+            ...headers,
+            [controlServiceTokenHeaderName]: "forged",
+            [demoRunOperatorModeHeaderName]: "forged",
+            [publicVisitorIdHeaderName]: "forged",
+            [correlationIdHeaderName]: "estimate-correlation",
+          },
+          body: JSON.stringify(body),
+        },
+      );
+    for (const body of [
+      {},
+      { presetSlug: "preview-1k", estimate: {} },
+      {
+        presetSlug: "preview-1k",
+        configOverride: { backpressureConfig: { drainTimeoutSeconds: 20 } },
+      },
+    ]) {
+      expect((await handler(request(body))).status).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    for (const kind of ["allowed", "over_ceiling", "unestimable"] as const) {
+      fetchMock.mockResolvedValueOnce(jsonResponse({ result: estimateFixture(kind) }));
+      const response = await handler(request({ presetSlug: "preview-1k" }));
+      expect(response.status).toBe(200);
+      expect(previewDemoRunResponseSchema.parse(await response.json()).result).toEqual(
+        estimateFixture(kind),
+      );
+      expect(response.headers.get(correlationIdHeaderName)).toBe("estimate-correlation");
+      if (mode === "public") expect(response.headers.get("set-cookie")).toContain("HttpOnly");
+    }
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe(`http://api.internal${previewDemoRunPath}`);
+    expect(JSON.parse(String(init?.body))).toEqual({ presetSlug: "preview-1k" });
+    const forwarded = new Headers(init?.headers);
+    expect(forwarded.get(controlServiceTokenHeaderName)).toBe("control-token");
+    expect(forwarded.get(demoRunOperatorModeHeaderName)).toBe(mode);
+    expect(forwarded.get(correlationIdHeaderName)).toBe("estimate-correlation");
+    if (mode === "public")
+      expect(forwarded.get(publicVisitorIdHeaderName)).toMatch(
+        /^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/,
+      );
+    else expect(forwarded.get(publicVisitorIdHeaderName)).toBeNull();
+    fetchMock.mockResolvedValueOnce(jsonResponse({ result: { decision: "admitted" } }));
+    expect((await handler(request({ presetSlug: "preview-1k" }))).status).toBe(502);
+  });
+
+  it("rejects untrusted admin preview Origins before parsing or fetch", async () => {
+    const cookie = await adminSessionCookie();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    for (const origin of [undefined, "null", "not an origin", "http://evil.local"]) {
+      const response = await previewAdminDemoRun(
+        new Request("http://dashboard.local/api/admin/demo/runs/estimate", {
+          method: "POST",
+          headers: { cookie, ...(origin ? { origin } : {}) },
+          body: "not-json",
+        }),
+      );
+      expect(response.status).toBe(403);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
