@@ -1,9 +1,9 @@
 import {
-  adaptiveErpAdmissionEnginePolicyIdentity,
   conservativeDurationEstimatorIdentity,
   type EstimatorBottleneck,
   type EstimatorInput,
   type EstimatorResult,
+  erpDispatchEnginePolicyIdentity,
   estimatedDemoOccupancyCeilingSeconds,
   orderProcessConcurrencyHardCap,
 } from "@checkout-surge/contracts";
@@ -38,7 +38,7 @@ export function estimateDemoDuration(
   const constants = conservativeDurationEstimatorConstants;
   const base = {
     estimatorIdentity: conservativeDurationEstimatorIdentity,
-    policyIdentity: adaptiveErpAdmissionEnginePolicyIdentity,
+    policyIdentity: erpDispatchEnginePolicyIdentity,
     effectiveCeilingSeconds,
     assumptions: [
       {

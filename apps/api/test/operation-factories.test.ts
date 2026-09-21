@@ -122,6 +122,7 @@ describe("pending-persistence operation factory", () => {
         () =>
           ({
             enqueue: vi.fn(),
+            setLimits: vi.fn(),
             abort: abortPublisher,
             close: vi.fn(),
           }) as BullMqOrderProcessJobPublisher,

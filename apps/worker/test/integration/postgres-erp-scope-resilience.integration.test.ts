@@ -1,7 +1,7 @@
 import { createDatabaseConnection, erpScopeResilienceState } from "@checkout-surge/db";
 import { resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
-import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
+import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import { PostgresErpScopeResiliencePersistence } from "../../src/persistence/postgres-erp-scope-resilience-persistence.js";
 
@@ -99,6 +99,7 @@ run("PostgreSQL ERP scope resilience state", () => {
       nextProbeAtMs: 0,
     });
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
       fallbackConcurrency: 10,
@@ -122,7 +123,7 @@ run("PostgreSQL ERP scope resilience state", () => {
     await requireConnection()
       .db.insert(erpScopeResilienceState)
       .values(
-        Array.from({ length: adaptiveErpAdmissionPolicy.maximumScopeStates + 10 }, (_, index) => ({
+        Array.from({ length: erpResiliencePolicy.maximumScopeStates + 10 }, (_, index) => ({
           scope: `run:expired-${index}`,
           cooldownExpiresAt: new Date(now - 1),
         })),
@@ -137,6 +138,7 @@ run("PostgreSQL ERP scope resilience state", () => {
     });
 
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
       fallbackConcurrency: 10,
@@ -154,6 +156,7 @@ run("PostgreSQL ERP scope resilience state", () => {
   it("hydrates an active obligation created after startup before first admission", async () => {
     const now = Date.parse("2026-06-22T00:00:00.000Z");
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
       fallbackConcurrency: 10,

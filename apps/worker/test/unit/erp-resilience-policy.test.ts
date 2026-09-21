@@ -1,18 +1,18 @@
-import { adaptiveErpAdmissionEnginePolicyIdentity } from "@checkout-surge/contracts";
+import { erpDispatchEnginePolicyIdentity } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   AdaptiveErpAdmissionController,
   type AdaptiveErpPermit,
   AdaptiveErpRequestDeadlineController,
-  adaptiveErpAdmissionPolicy,
   type ErpAdmissionOperation,
   type ErpAdmissionScope,
-} from "../../src/application/adaptive-erp-admission-policy.js";
+  erpResiliencePolicy,
+} from "../../src/application/erp-resilience-policy.js";
 
 describe("engine-policy identity", () => {
   it("derives its version from the shared contracts identity (D13)", () => {
-    expect(adaptiveErpAdmissionPolicy.version).toBe(
-      `${adaptiveErpAdmissionEnginePolicyIdentity.name}-v${adaptiveErpAdmissionEnginePolicyIdentity.version}`,
+    expect(erpResiliencePolicy.version).toBe(
+      `${erpDispatchEnginePolicyIdentity.name}-v${erpDispatchEnginePolicyIdentity.version}`,
     );
   });
 });
@@ -22,9 +22,7 @@ describe("adaptive ERP request deadlines", () => {
     const clock = testClock();
     const controller = new AdaptiveErpRequestDeadlineController({ now: clock.now });
 
-    expect(controller.deadline("catalog")).toBe(
-      adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
-    );
+    expect(controller.deadline("catalog")).toBe(erpResiliencePolicy.initialRequestDeadlineMs);
     controller.record({
       scope: "catalog",
       source: "confirmation_response",
@@ -32,9 +30,7 @@ describe("adaptive ERP request deadlines", () => {
       requestDeadlineMs: 2_000,
     });
     expect(controller.deadline("catalog")).toBe(2_000);
-    expect(controller.deadline("run:separate")).toBe(
-      adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
-    );
+    expect(controller.deadline("run:separate")).toBe(erpResiliencePolicy.initialRequestDeadlineMs);
   });
 
   it("uses nearest-rank percentile, evicts the oldest sample, and clamps both bounds", () => {
@@ -79,7 +75,7 @@ describe("adaptive ERP request deadlines", () => {
   it("bounds retained scope state by evicting the least recently used scope", () => {
     let now = 0;
     const controller = new AdaptiveErpRequestDeadlineController({ now: () => now++ });
-    for (let index = 0; index <= adaptiveErpAdmissionPolicy.maximumScopeStates; index += 1) {
+    for (let index = 0; index <= erpResiliencePolicy.maximumScopeStates; index += 1) {
       controller.record({
         scope: `run:${index}`,
         source: "confirmation_response",
@@ -88,12 +84,10 @@ describe("adaptive ERP request deadlines", () => {
       });
     }
     expect(controller.snapshot("run:0").sampleCount).toBe(0);
-    expect(
-      controller.snapshot(`run:${adaptiveErpAdmissionPolicy.maximumScopeStates}`).sampleCount,
-    ).toBe(1);
-    expect(controller.snapshot("run:0").scopeCount).toBe(
-      adaptiveErpAdmissionPolicy.maximumScopeStates,
+    expect(controller.snapshot(`run:${erpResiliencePolicy.maximumScopeStates}`).sampleCount).toBe(
+      1,
     );
+    expect(controller.snapshot("run:0").scopeCount).toBe(erpResiliencePolicy.maximumScopeStates);
   });
 });
 
@@ -113,7 +107,7 @@ describe("adaptive ERP admission policy", () => {
     });
   });
 
-  it("paces starts without idle burst credit and applies both in-flight bounds", () => {
+  it("applies both in-flight safety bounds without pacing deferrals", () => {
     const clock = testClock();
     const controller = createController(clock);
     const first = acquire(controller, "catalog", "confirmation", 1);
@@ -123,23 +117,11 @@ describe("adaptive ERP admission policy", () => {
       reason: "scope_in_flight",
     });
     controller.feedback(first, success());
-    expect(controller.tryAcquire(request("catalog", "confirmation", 1))).toMatchObject({
-      admitted: false,
-      reason: "pacing",
-      nextEligibleAtMs: 500,
-    });
-
-    clock.set(60_000);
-    const afterIdle = acquire(controller, "catalog", "confirmation", 10);
-    expect(controller.tryAcquire(request("catalog", "confirmation", 10))).toMatchObject({
-      admitted: false,
-      reason: "pacing",
-      nextEligibleAtMs: 60_500,
-    });
-    controller.feedback(afterIdle, success());
+    const next = acquire(controller, "catalog", "confirmation", 1);
+    controller.feedback(next, success());
 
     const scopeHeld: AdaptiveErpPermit[] = [];
-    for (let index = 0; index < adaptiveErpAdmissionPolicy.perScopeInFlightCeiling; index += 1) {
+    for (let index = 0; index < erpResiliencePolicy.perScopeInFlightCeiling; index += 1) {
       clock.advance(500);
       scopeHeld.push(acquire(controller, "run:bounded", "confirmation", 100));
     }
@@ -151,7 +133,7 @@ describe("adaptive ERP admission policy", () => {
     for (const permit of scopeHeld) controller.feedback(permit, success());
 
     const held: AdaptiveErpPermit[] = [];
-    for (let index = 0; index < adaptiveErpAdmissionPolicy.workerInFlightCeiling; index += 1) {
+    for (let index = 0; index < erpResiliencePolicy.workerInFlightCeiling; index += 1) {
       held.push(acquire(controller, `run:${index}`, "lookup", 100));
     }
     expect(controller.tryAcquire(request("run:overflow", "lookup", 100))).toMatchObject({
@@ -159,115 +141,6 @@ describe("adaptive ERP admission policy", () => {
       reason: "worker_in_flight",
     });
     for (const permit of held) controller.feedback(permit, success());
-  });
-
-  it("increases only after useful stable windows, stops at the ceiling, and isolates scopes", () => {
-    const clock = testClock();
-    const controller = createController(clock);
-    const catalog = acquire(controller, "catalog", "confirmation", 20);
-    clock.set(adaptiveErpAdmissionPolicy.observationWindowMs);
-    controller.feedback(catalog, { outcome: "succeeded", replayed: true });
-    expect(controller.snapshot("catalog", 20).scope?.targetRatePerSecond).toBe(2);
-
-    for (
-      let expected = 3;
-      expected <= adaptiveErpAdmissionPolicy.ceilingRatePerSecond;
-      expected += 1
-    ) {
-      const permit = acquire(controller, "catalog", "confirmation", 20);
-      clock.advance(adaptiveErpAdmissionPolicy.observationWindowMs);
-      controller.feedback(permit, success());
-      expect(controller.snapshot("catalog", 20).scope?.targetRatePerSecond).toBe(expected);
-    }
-    const atCeiling = acquire(controller, "catalog", "confirmation", 20);
-    clock.advance(adaptiveErpAdmissionPolicy.observationWindowMs);
-    controller.feedback(atCeiling, success());
-    expect(controller.snapshot("catalog", 20).scope?.targetRatePerSecond).toBe(20);
-    expect(controller.snapshot("run:separate", 20).scope).toBeNull();
-    const separate = acquire(controller, "run:separate", "confirmation", 20);
-    expect(controller.snapshot("run:separate", 20).scope?.targetRatePerSecond).toBe(2);
-    controller.feedback(separate, success());
-  });
-
-  it("coalesces a time-based rejection wave, restarts stability, then reduces after the wave", () => {
-    const clock = testClock();
-    const controller = createController(clock);
-    raiseRateToCeiling(controller, clock);
-    const first = acquire(controller, "catalog", "confirmation", 20);
-
-    controller.feedback(first, { outcome: "capacity_rejected", retryAfterMs: 0 });
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: 10,
-      generation: 1,
-    });
-
-    clock.advance(100);
-    const coalesced = acquire(controller, "catalog", "confirmation", 20);
-    controller.feedback(coalesced, { outcome: "capacity_rejected", retryAfterMs: 0 });
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: 10,
-      generation: 1,
-    });
-
-    clock.advance(adaptiveErpAdmissionPolicy.observationWindowMs - 100);
-    const tooEarly = acquire(controller, "catalog", "confirmation", 20);
-    controller.feedback(tooEarly, success());
-    expect(controller.snapshot("catalog", 20).scope?.targetRatePerSecond).toBe(10);
-
-    clock.advance(100);
-    const stable = acquire(controller, "catalog", "confirmation", 20);
-    controller.feedback(stable, success());
-    expect(controller.snapshot("catalog", 20).scope?.targetRatePerSecond).toBe(11);
-
-    clock.advance(100);
-    const nextWave = acquire(controller, "catalog", "confirmation", 20);
-    controller.feedback(nextWave, { outcome: "capacity_rejected", retryAfterMs: 0 });
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: 5.5,
-      generation: 2,
-    });
-  });
-
-  it("keeps safety guidance from obsolete capacity and availability feedback", () => {
-    const clock = testClock();
-    const controller = createController(clock);
-    const first = acquire(controller, "catalog", "confirmation", 10);
-    clock.advance(500);
-    const second = acquire(controller, "catalog", "confirmation", 10);
-
-    controller.feedback(first, { outcome: "capacity_rejected", retryAfterMs: 1_000 });
-    clock.set(1_500);
-    const currentSuccess = acquire(controller, "catalog", "confirmation", 10);
-    clock.set(5_000);
-    controller.feedback(second, { outcome: "capacity_rejected", retryAfterMs: 10_000 });
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      generation: 1,
-      targetRatePerSecond: 1,
-      cooldownUntilMs: 15_000,
-    });
-    clock.set(10_500);
-    controller.feedback(currentSuccess, success());
-    expect(controller.snapshot("catalog", 10).scope?.targetRatePerSecond).toBe(1);
-    clock.set(15_000);
-    const stableSuccess = acquire(controller, "catalog", "confirmation", 10);
-    controller.feedback(stableSuccess, success());
-    expect(controller.snapshot("catalog", 10).scope?.targetRatePerSecond).toBe(2);
-
-    const otherClock = testClock();
-    const other = createController(otherClock);
-    const reduction = acquire(other, "catalog", "confirmation", 10);
-    const staleLookup = acquire(other, "catalog", "lookup", 10);
-    other.feedback(reduction, { outcome: "capacity_rejected", retryAfterMs: 0 });
-    other.feedback(staleLookup, { outcome: "temporarily_unavailable", retryAfterMs: 20_000 });
-    expect(other.snapshot("catalog", 10).scope).toMatchObject({
-      availabilityFailureCount: 0,
-      availabilityRetryAtMs: 20_000,
-    });
-    expect(other.tryAcquire(request("catalog", "lookup", 10))).toMatchObject({
-      admitted: false,
-      reason: "availability_backoff",
-      nextEligibleAtMs: 20_000,
-    });
   });
 
   it("honors availability Retry-After before opening for confirmations and lookups", () => {
@@ -332,8 +205,6 @@ describe("adaptive ERP admission policy", () => {
     capacityClock.set(10_500);
     capacity.feedback(obsoleteSuccess, success());
     expect(capacity.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: 1,
-      generation: 1,
       cooldownUntilMs: 60_500,
     });
   });
@@ -387,11 +258,10 @@ describe("adaptive ERP admission policy", () => {
     controller.feedback(healthyProbe, success());
     expect(controller.snapshot("catalog", 10).scope).toMatchObject({
       availabilityCircuitOpen: false,
-      targetRatePerSecond: adaptiveErpAdmissionPolicy.initialRatePerSecond,
     });
   });
 
-  it("lets bounded lookups bypass capacity pacing while replayed results teach no health", () => {
+  it("lets bounded lookups bypass capacity cooldown while replayed results teach no health", () => {
     const clock = testClock();
     const controller = createController(clock);
     const confirmation = acquire(controller, "catalog", "confirmation", 10);
@@ -406,39 +276,8 @@ describe("adaptive ERP admission policy", () => {
     controller.feedback(firstLookup, success());
     controller.feedback(secondLookup, success());
     expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: 1,
       availabilityFailureCount: 0,
       cooldownUntilMs: 10_000,
-    });
-  });
-
-  it("never raises a capacity-reduced rate when an outage opens or recovers", () => {
-    const clock = testClock();
-    const controller = createController(clock);
-    for (let reduction = 0; reduction < 3; reduction += 1) {
-      const permit = acquire(controller, "catalog", "confirmation", 10);
-      controller.feedback(permit, { outcome: "capacity_rejected", retryAfterMs: 0 });
-      clock.set(controller.snapshot("catalog", 10).scope?.nextStartAtMs ?? 0);
-    }
-    expect(controller.snapshot("catalog", 10).scope?.targetRatePerSecond).toBe(
-      adaptiveErpAdmissionPolicy.floorRatePerSecond,
-    );
-
-    for (let failure = 0; failure < 3; failure += 1) {
-      const permit = acquire(controller, "catalog", "confirmation", 10);
-      controller.feedback(permit, { outcome: "temporarily_unavailable" });
-      clock.set(controller.snapshot("catalog", 10).scope?.availabilityRetryAtMs ?? 0);
-    }
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: adaptiveErpAdmissionPolicy.floorRatePerSecond,
-      availabilityCircuitOpen: true,
-    });
-
-    const probe = acquire(controller, "catalog", "confirmation", 10);
-    controller.feedback(probe, success());
-    expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: adaptiveErpAdmissionPolicy.floorRatePerSecond,
-      availabilityCircuitOpen: false,
     });
   });
 
@@ -461,28 +300,26 @@ describe("adaptive ERP admission policy", () => {
       maximumJitter.feedback(permit, { outcome: "capacity_rejected" });
       const snapshot = maximumJitter.snapshot("catalog", 10).scope;
       fallbackDelays.push((snapshot?.cooldownUntilMs ?? 0) - feedbackAt);
-      clock.set(Math.max(snapshot?.cooldownUntilMs ?? 0, snapshot?.nextStartAtMs ?? 0));
+      clock.set(snapshot?.cooldownUntilMs ?? 0);
     }
     expect(fallbackDelays).toEqual([999, 1_999, 3_998, 7_996, 15_992, 31_984, 59_970, 59_970]);
-    expect(Math.max(...fallbackDelays)).toBeLessThanOrEqual(
-      adaptiveErpAdmissionPolicy.maximumCooldownMs,
-    );
+    expect(Math.max(...fallbackDelays)).toBeLessThanOrEqual(erpResiliencePolicy.maximumCooldownMs);
 
     const cappedClock = testClock();
     const capped = createController(cappedClock, () => 0.5);
     const permit = acquire(capped, "catalog", "confirmation", 10);
     capped.feedback(permit, { outcome: "capacity_rejected", retryAfterMs: 120_000 });
     expect(capped.snapshot("catalog", 10).scope?.cooldownUntilMs).toBe(
-      adaptiveErpAdmissionPolicy.maximumCooldownMs,
+      erpResiliencePolicy.maximumCooldownMs,
     );
   });
 
-  it("does not evict a scope with pending pacing at the retention limit", () => {
+  it("does not evict a scope with an unexpired cooldown at the retention limit", () => {
     const clock = testClock();
     const controller = createController(clock);
     const protectedPermit = acquire(controller, "catalog", "confirmation", 10);
-    controller.feedback(protectedPermit, success());
-    for (let index = 0; index < adaptiveErpAdmissionPolicy.maximumScopeStates - 1; index += 1) {
+    controller.feedback(protectedPermit, { outcome: "capacity_rejected", retryAfterMs: 500 });
+    for (let index = 0; index < erpResiliencePolicy.maximumScopeStates - 1; index += 1) {
       const permit = acquire(controller, `run:${index}`, "lookup", 10);
       controller.feedback(permit, success());
     }
@@ -491,12 +328,12 @@ describe("adaptive ERP admission policy", () => {
     controller.feedback(replacement, success());
     expect(controller.tryAcquire(request("catalog", "confirmation", 10))).toMatchObject({
       admitted: false,
-      reason: "pacing",
+      reason: "capacity_cooldown",
       nextEligibleAtMs: 500,
     });
   });
 
-  it("serializes only bounded restart safety and restores learning conservatively", () => {
+  it("serializes and restores bounded restart safety", () => {
     const clock = testClock();
     const controller = createController(clock);
     const permit = acquire(controller, "catalog", "confirmation", 10);
@@ -504,7 +341,7 @@ describe("adaptive ERP admission policy", () => {
 
     const safety = controller.safetyState();
     expect(safety).toEqual({
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       scopes: [
         {
           scope: "catalog",
@@ -516,7 +353,6 @@ describe("adaptive ERP admission policy", () => {
         },
       ],
     });
-    expect(Object.keys(safety.scopes[0] ?? {})).not.toContain("targetRatePerSecond");
 
     const restarted = new AdaptiveErpAdmissionController({
       now: clock.now,
@@ -524,8 +360,6 @@ describe("adaptive ERP admission policy", () => {
       safetyState: safety,
     });
     expect(restarted.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: adaptiveErpAdmissionPolicy.initialRatePerSecond,
-      generation: 0,
       cooldownUntilMs: 4_000,
     });
   });
@@ -537,7 +371,7 @@ describe("adaptive ERP admission policy", () => {
       now: clock.now,
       random: () => 0,
       safetyState: {
-        policyVersion: adaptiveErpAdmissionPolicy.version,
+        policyVersion: erpResiliencePolicy.version,
         scopes: [
           {
             scope: "catalog",
@@ -560,7 +394,6 @@ describe("adaptive ERP admission policy", () => {
     });
 
     expect(controller.snapshot("catalog", 10).scope).toMatchObject({
-      targetRatePerSecond: adaptiveErpAdmissionPolicy.initialRatePerSecond,
       cooldownUntilMs: 0,
       availabilityRetryAtMs: 0,
       availabilityCircuitOpen: false,
@@ -615,7 +448,7 @@ describe("adaptive ERP admission policy", () => {
       now: clock.now,
       random: () => 0,
       safetyState: {
-        policyVersion: adaptiveErpAdmissionPolicy.version,
+        policyVersion: erpResiliencePolicy.version,
         scopes: [
           {
             scope: "catalog",
@@ -650,7 +483,7 @@ describe("adaptive ERP admission policy", () => {
       now: clock.now,
       random: () => 0,
       safetyState: {
-        policyVersion: adaptiveErpAdmissionPolicy.version,
+        policyVersion: erpResiliencePolicy.version,
         scopes: [
           {
             scope: "catalog",
@@ -721,20 +554,6 @@ function recordResponse(controller: AdaptiveErpRequestDeadlineController, durati
 
 function createController(clock: ReturnType<typeof testClock>, random = () => 0) {
   return new AdaptiveErpAdmissionController({ now: clock.now, random });
-}
-
-function raiseRateToCeiling(
-  controller: AdaptiveErpAdmissionController,
-  clock: ReturnType<typeof testClock>,
-) {
-  while (
-    controller.snapshot("catalog", 20).scope?.targetRatePerSecond !==
-    adaptiveErpAdmissionPolicy.ceilingRatePerSecond
-  ) {
-    const permit = acquire(controller, "catalog", "confirmation", 20);
-    clock.advance(adaptiveErpAdmissionPolicy.observationWindowMs);
-    controller.feedback(permit, success());
-  }
 }
 
 function testClock() {

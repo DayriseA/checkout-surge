@@ -108,12 +108,16 @@ describe("adaptive ERP reconciliation", () => {
     expect(client.lookup).toHaveBeenCalledOnce();
   });
 
-  it("persists exact pacing denial on the single control record without dispatch", async () => {
+  it("persists exact capacity cooldown denial on the single control record without dispatch", async () => {
     const nowMs = 0;
     const admission = runtimeAdmission(() => nowMs);
     const first = await admission.tryAcquire(context, "confirmation");
     if (!first.admitted) throw new Error("Expected first permit.");
-    await admission.feedback(first.operation, dispatchedSuccess(false));
+    await admission.feedback(first.operation, {
+      ...dispatchedSuccess(false),
+      disposition: "capacity_rejected",
+      retryAfterMs: 500,
+    });
     const defer = vi.fn().mockResolvedValue(true);
     const client = {
       ...clientPort(lookupUnknown()),
@@ -129,13 +133,13 @@ describe("adaptive ERP reconciliation", () => {
 
     await expect(scheduled.confirm(job, delivery)).resolves.toMatchObject({
       disposition: "deferred",
-      reason: "pacing",
+      reason: "capacity_cooldown",
       nextEligibleAt: new Date(500),
     });
     expect(client.dispatch).not.toHaveBeenCalled();
     expect(defer).toHaveBeenCalledWith({
       orderId: job.orderId,
-      waitingReason: "local_admission",
+      waitingReason: "erp_capacity",
       nextEligibleAt: new Date(500),
       processingGeneration: 3,
     });
@@ -198,6 +202,7 @@ describe("adaptive ERP reconciliation", () => {
       nextEligibleAtMs: 0,
     });
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         listActive: async () => [],
         readActive: async () => null,
@@ -244,6 +249,7 @@ describe("adaptive ERP reconciliation", () => {
       nextEligibleAtMs: 0,
     });
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         listActive: async () => [],
         readActive: async () => null,
@@ -281,6 +287,7 @@ describe("adaptive ERP reconciliation", () => {
 
 function runtimeAdmission(now: () => number = () => 0): AdaptiveErpRuntimeAdmission {
   return AdaptiveErpRuntimeAdmission.create({
+    pauseDelivery: async () => {},
     persistence: {
       listActive: async () => [],
       readActive: async () => null,

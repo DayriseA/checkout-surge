@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -6,6 +7,7 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpAttemptHistoryRetentionLimit,
+  erpDispatchRateLimit,
   type NotificationRecordJob,
   notificationRecordBullMqQueueName,
   type notificationRecordJobName,
@@ -51,12 +53,13 @@ import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-f
 import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
-import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
+import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-limiter.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
 } from "../../src/application/erp-reconciliation.js";
+import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import { createNotificationRecordJobHandler as createProductionNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "../../src/application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
@@ -254,7 +257,7 @@ describe("PostgreSQL worker order transitions", () => {
     );
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: attempts,
       fetch,
@@ -357,7 +360,7 @@ describe("PostgreSQL worker order transitions", () => {
     );
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: attempts,
       fetch,
@@ -428,7 +431,7 @@ describe("PostgreSQL worker order transitions", () => {
       .mockResolvedValue(new Response("denied", { status: 401 }));
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
@@ -1201,7 +1204,9 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
         ),
       ]);
-      await new PostgresTerminalDemoRunSummaryWriter(connection.db).claimTerminalRun({
+      await new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+        synchronize: async () => {},
+      }).claimTerminalRun({
         runId: ids.run,
         terminalStatus: "failed",
         failureReason: "admin_reset",
@@ -1276,7 +1281,9 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   it("waits for an in-flight order transaction before purging run rows", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     await seedQueuedOrder(connection, { runScoped: true });
-    await new PostgresTerminalDemoRunSummaryWriter(connection.db).claimTerminalRun({
+    await new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+      synchronize: async () => {},
+    }).claimTerminalRun({
       runId: ids.run,
       terminalStatus: "failed",
       failureReason: "admin_reset",
@@ -1488,7 +1495,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       connection,
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
-        lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+        lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
@@ -1541,9 +1548,10 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
     for (const result of [serial, parallel]) {
       expect(result.confirmed).toBe(capacityJobs.length);
-      expect(result.capacityRejected).toBeGreaterThanOrEqual(1);
+      expect(result.capacityRejected).toBe(1);
       expect(result.peakInFlight).toBeLessThanOrEqual(1);
-      expect(result.minimumStartSpacingMs).toBeGreaterThanOrEqual(400);
+      expect(result.pauseAfterRejectionMs).toBeGreaterThanOrEqual(1_000);
+      expect(result.actualCalls).toBe(capacityJobs.length + 1);
       expect(result.publications).toBeLessThanOrEqual(12);
       expect(result.scans).toBeLessThanOrEqual(6);
     }
@@ -1612,7 +1620,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: attempts,
       fetch,
@@ -1620,6 +1628,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
       fallbackConcurrency: 2,
@@ -1696,6 +1705,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const control = new PostgresOrderRecoveryPersistence(connection.db, () => new Date(now));
     const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
       fallbackConcurrency: 10,
@@ -1704,7 +1714,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => new Date(now)),
       fetch,
@@ -1789,7 +1799,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const fetch = vi.fn<typeof globalThis.fetch>();
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: attempts,
       fetch,
@@ -1797,6 +1807,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
       fallbackConcurrency: 10,
@@ -1877,13 +1888,14 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db, () => policyNow),
       fetch,
       now: () => policyNow,
     });
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
       fallbackConcurrency: 10,
@@ -1955,6 +1967,110 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     }
   }, 20_000);
 
+  it.each([
+    5, 300,
+  ])("drains %i orders at declared capacity from the first second with the production recovery timer", async (backlogSize) => {
+    const declaredCapacity = 10;
+    const jobs = [job];
+    for (let index = 1; index < backlogSize; index += 1) {
+      const additionalJob = {
+        ...job,
+        orderId: randomUUID(),
+        reservationId: randomUUID(),
+        publicOrderId: `ord_throughput_${index}`,
+      };
+      await seedAdditionalQueuedOrder(connection, additionalJob);
+      jobs.push(additionalJob);
+    }
+    const limiter = new SlidingWindowTpsLimiter();
+    const confirmations: number[] = [];
+    let capacityResponses = 0;
+    const client = new HttpErpOrderConfirmation({
+      baseUrl: "http://mock-erp:4100",
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
+      retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
+      attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
+      fetch: async () => {
+        if (!limiter.acquire("catalog", declaredCapacity)) {
+          capacityResponses += 1;
+          return Response.json(
+            {
+              status: "failed",
+              httpStatus: 429,
+              errorCode: "erp_capacity_exceeded",
+              errorMessage: "Declared capacity exceeded.",
+              latencyMs: 1,
+              timestamp: new Date().toISOString(),
+            },
+            { status: 429, headers: { "retry-after": "1" } },
+          );
+        }
+        confirmations.push(Date.now());
+        return Response.json({
+          status: "succeeded",
+          confirmationId: `erp_throughput_${confirmations.length}`,
+          httpStatus: 200,
+          latencyMs: 1,
+          timestamp: new Date().toISOString(),
+        });
+      },
+    });
+    // Supply native pacing already: the old application gate must not throttle it again.
+    const rateLimit = erpDispatchRateLimit(declaredCapacity);
+    await queue.setGlobalRateLimit(rateLimit.max, rateLimit.duration);
+    await queue.setGlobalConcurrency(5);
+    consumer = buildConsumer(connection, client, { concurrency: 5 });
+    const publisher = createBullMqOrderProcessJobPublisher({
+      url: redisUrl,
+      maxRetriesPerRequest: null,
+    });
+    const scanner = createOrderRecoveryScanner({
+      persistence: new PostgresOrderRecoveryPersistence(connection.db),
+      handler: { handle: vi.fn() },
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1_000,
+      batchSize: 100,
+      failedJobReader: { findFailedOrderJobs: async () => [] },
+    });
+    try {
+      await queue.addBulk(
+        jobs.map((queuedJob) => ({
+          name: orderProcessJobName,
+          data: queuedJob,
+          opts: { attempts: 1, jobId: queuedJob.orderId },
+        })),
+      );
+      scanner.start();
+      consumer.start();
+      await vi.waitFor(() => expect(confirmations.length).toBeGreaterThan(0));
+      await new Promise((resolve) => setTimeout(resolve, 1_050));
+      const first = confirmations[0];
+      if (first === undefined) throw new Error("No ERP confirmation recorded.");
+      const firstSecond = confirmations.filter((at) => at - first < 1_000);
+      expect(firstSecond.length).toBeGreaterThanOrEqual(Math.min(backlogSize, 8));
+      await vi.waitFor(() => expect(confirmations).toHaveLength(backlogSize), {
+        timeout: 40_000,
+        interval: 100,
+      });
+      const last = confirmations.at(-1);
+      if (last === undefined) throw new Error("No final ERP confirmation recorded.");
+      const rate = ((backlogSize - 1) * 1_000) / (last - first);
+      expect(rate).toBeGreaterThanOrEqual(8);
+      expect(rate).toBeLessThanOrEqual(declaredCapacity);
+      expect(capacityResponses).toBe(0);
+      await waitForQueueToSettle(queue);
+      const settled = await connection.db.select({ status: orders.status }).from(orders);
+      expect(settled).toHaveLength(backlogSize);
+      expect(settled.every((order) => order.status === "confirmed")).toBe(true);
+    } finally {
+      await scanner.close();
+      await consumer?.close();
+      consumer = null;
+      await publisher.close();
+    }
+  }, 45_000);
+
   async function runCapacityFixture(concurrency: number) {
     await consumer?.close();
     consumer = null;
@@ -1965,7 +2081,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await seedAdditionalQueuedOrder(connection, capacityJob);
     }
     const confirmationStarts: number[] = [];
-    let lastAcceptedStart = 0;
     let inFlight = 0;
     let peakInFlight = 0;
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
@@ -1975,7 +2090,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       peakInFlight = Math.max(peakInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 40));
       inFlight -= 1;
-      if (lastAcceptedStart > 0 && startedAt - lastAcceptedStart < 650) {
+      if (confirmationStarts.length === 1) {
         return Response.json(
           {
             status: "failed",
@@ -1988,7 +2103,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           { status: 429, headers: { "retry-after": "1" } },
         );
       }
-      lastAcceptedStart = startedAt;
       return Response.json({
         status: "succeeded",
         confirmationId: `erp_capacity_${concurrency}`,
@@ -1999,13 +2113,17 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
     });
+    const rateLimit = erpDispatchRateLimit(10);
+    await queue.setGlobalRateLimit(rateLimit.max, rateLimit.duration);
+    await queue.setGlobalConcurrency(concurrency);
     consumer = buildConsumer(connection, client, {
       concurrency,
+      pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
     });
     const publisher = createBullMqOrderProcessJobPublisher({
       url: redisUrl,
@@ -2082,9 +2200,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           ),
         );
       expect((await queue.getJobCounts()).delayed).toBe(0);
-      const spacings = confirmationStarts
-        .slice(1)
-        .map((startedAt, index) => startedAt - (confirmationStarts[index] ?? startedAt));
       return {
         confirmed: confirmed.filter((order) => order.status === "confirmed").length,
         capacityRejected: attempts.filter((attempt) => attempt.disposition === "capacity_rejected")
@@ -2092,7 +2207,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         publications,
         scans,
         peakInFlight,
-        minimumStartSpacingMs: Math.min(...spacings),
+        pauseAfterRejectionMs: (confirmationStarts[1] ?? 0) - (confirmationStarts[0] ?? 0),
+        actualCalls: attempts.length,
       };
     } finally {
       await scanner.close();
@@ -2130,7 +2246,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const notificationRecordPublisher = { publishForConfirmedOrder: vi.fn() };
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
-      lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+      lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch,
@@ -2228,7 +2344,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       connection,
       new HttpErpOrderConfirmation({
         baseUrl: "http://mock-erp:4100",
-        lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+        lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
         attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
         fetch,
@@ -2311,6 +2427,7 @@ function buildConsumer(
   confirmation: OrderConfirmation | HttpErpOrderConfirmation,
   options: {
     scheduledNow?: () => Date;
+    pauseDelivery?: (durationMs: number) => Promise<void>;
     concurrency?: number;
     notificationRecordPublisher?: HandlerDependencies["notificationRecordPublisher"];
   } = {},
@@ -2323,6 +2440,7 @@ function buildConsumer(
           confirmation,
           options.concurrency ?? 2,
           options.scheduledNow,
+          options.pauseDelivery,
         )
       : confirmation;
   return createBullMqOrderProcessConsumer({
@@ -2345,10 +2463,12 @@ function scheduledConfirmation(
   client: HttpErpOrderConfirmation,
   concurrency: number,
   now?: () => Date,
+  pauseDelivery: (durationMs: number) => Promise<void> = async () => {},
 ) {
   const control = new PostgresOrderRecoveryPersistence(connection.db);
   const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
   const admission = AdaptiveErpRuntimeAdmission.create({
+    pauseDelivery,
     persistence: scopeState,
     runConfigReader: new PostgresRunConfigReader(connection.db),
     fallbackConcurrency: concurrency,
@@ -2570,10 +2690,13 @@ function createFinalizationService(
   redis: Redis,
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    queueLimits: { synchronize: async () => {} },
     db: connection.db,
     redis,
     logger: createSilentLogger("api"),
-    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db),
+    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+      synchronize: async () => {},
+    }),
     terminalInventoryRead: {
       read: ({ saleOfferId, observedAt }) => getInventoryStatus(redis, saleOfferId, observedAt),
     },

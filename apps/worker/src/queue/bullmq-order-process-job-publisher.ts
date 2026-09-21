@@ -14,10 +14,12 @@ import {
 } from "./bullmq-order-process-consumer.js";
 
 export interface WorkerOrderProcessJobPublisher extends OrderJobPublisher, FailedOrderJobReader {
+  pauseDelivery(durationMs: number): Promise<void>;
   close(): Promise<void>;
 }
 
 interface OrderProcessQueue {
+  rateLimit(durationMs: number): Promise<void>;
   add(
     name: typeof orderProcessJobName,
     data: OrderProcessJob,
@@ -61,6 +63,7 @@ export function createOrderProcessJobPublisher(
   publicationFence?: GeneratedRunPublicationFence,
 ): WorkerOrderProcessJobPublisher {
   return {
+    pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
     async enqueue(input, options?: { jobId?: string; attempts?: number }) {
       const job = orderProcessJobSchema.parse(input);
       const add = async () => {

@@ -160,6 +160,7 @@ function createIntegratedRetentionService(
 
 function createResetService(options: ResetTestOptions): AdminDemoResetService {
   return new AdminDemoResetService({
+    queueLimits: { synchronize: async () => {} },
     db: options.db,
     redis: options.redis,
     queueMaintenance: options.queueMaintenance,
@@ -621,7 +622,9 @@ describe("focused demo maintenance workflows", () => {
         db,
         redis: redisClient,
         queueMaintenance,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         maintenanceAuthority,
         logger,
         resetWorkflowFence: {
@@ -764,7 +767,9 @@ describe("focused demo maintenance workflows", () => {
           db,
           redis: redisClient,
           now,
-          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+            synchronize: async () => {},
+          }),
           queueMaintenance: { cleanRuns },
           dashboardLiveStateReset: metrics,
           clearErpCircuitBreakerState: clearErp,
@@ -810,7 +815,9 @@ describe("focused demo maintenance workflows", () => {
         db,
         redis: redisClient,
         now,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         logger: createSilentLogger("api"),
       });
@@ -906,7 +913,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         logger: createSilentLogger("api"),
       });
@@ -1010,7 +1019,9 @@ describe("focused demo maintenance workflows", () => {
         queueMaintenance: {
           cleanRuns: (ids) => maintenance.cleanRuns(ids, { deadline: performance.now() - 1 }),
         },
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
       });
       try {
         await queue.add(orderProcessJobName, {
@@ -1177,7 +1188,9 @@ describe("focused demo maintenance workflows", () => {
           db,
           redis: redisClient,
           logger,
-          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+            synchronize: async () => {},
+          }),
           queueMaintenance: noOpGeneratedRunQueueMaintenance(),
           dashboardLiveStateReset: metrics,
           now,
@@ -1263,7 +1276,9 @@ describe("focused demo maintenance workflows", () => {
           redis: redisClient,
           logger,
           dashboardLiveStateReset: metrics,
-          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+          terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+            synchronize: async () => {},
+          }),
           queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         });
         await expect(service.reset("corr-advisory")).resolves.toMatchObject({
@@ -1290,7 +1305,9 @@ describe("focused demo maintenance workflows", () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       const writerOperations: string[] = [];
-      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+        synchronize: async () => {},
+      });
       const claimTerminalRun = vi.fn(
         async (...args: Parameters<typeof postgresTerminalRunWriter.claimTerminalRun>) => {
           writerOperations.push("claim");
@@ -1536,7 +1553,9 @@ describe("focused demo maintenance workflows", () => {
       };
       const service = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance,
         logger: createSilentLogger("api"),
@@ -1617,7 +1636,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: { cleanRuns },
         trafficAborter: {
           abortCurrent: async () => {
@@ -1665,7 +1686,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: { cleanRuns },
         trafficAborter: {
           abortCurrent: async () => {
@@ -1736,7 +1759,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: { cleanRuns },
         trafficAborter: { abortCurrent },
         dashboardLiveStateReset: {
@@ -1792,7 +1817,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         logger: createSilentLogger("api"),
       });
@@ -1823,7 +1850,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: {
           cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
         },
@@ -1864,7 +1893,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         logger: createSilentLogger("api"),
         purgeResetRunDurable: async (...args) => {
@@ -1920,7 +1951,9 @@ describe("focused demo maintenance workflows", () => {
       const service = createResetService({
         db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: noOpGeneratedRunQueueMaintenance(),
         logger: createSilentLogger("api"),
       });
@@ -1960,7 +1993,9 @@ describe("focused demo maintenance workflows", () => {
       let resetNow = new Date("2026-06-20T00:15:10.000Z");
       const service = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance,
         logger: createSilentLogger("api"),
@@ -2049,7 +2084,9 @@ describe("focused demo maintenance workflows", () => {
       });
       const maintenanceService = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance: {
           cleanRuns: vi.fn().mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
@@ -2110,7 +2147,9 @@ describe("focused demo maintenance workflows", () => {
       };
       const service = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance: {
           cleanRuns: vi.fn().mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 }),
@@ -2224,7 +2263,9 @@ describe("focused demo maintenance workflows", () => {
       };
       const maintenanceService = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance,
         logger: createSilentLogger("api"),
@@ -2297,7 +2338,9 @@ describe("focused demo maintenance workflows", () => {
       };
       const service = createResetService({
         db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
         redis: redisClient,
         queueMaintenance,
         logger: createSilentLogger("api"),
@@ -2715,7 +2758,9 @@ describe("focused demo maintenance workflows", () => {
         .update(demoRunFinalizations)
         .set({ transportAttemptCounts: { completedRequests: 10 } as never })
         .where(eq(demoRunFinalizations.runId, ids.drainingRun));
-      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+        synchronize: async () => {},
+      });
       const service = createResetService({
         db,
         redis: redisClient,
@@ -2765,7 +2810,9 @@ describe("focused demo maintenance workflows", () => {
         ...fixture,
         failureReason: null,
       });
-      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+      const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+        synchronize: async () => {},
+      });
       const claimTerminalRun = vi.fn(
         postgresTerminalRunWriter.claimTerminalRun.bind(postgresTerminalRunWriter),
       );

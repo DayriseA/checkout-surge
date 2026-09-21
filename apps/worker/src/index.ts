@@ -5,12 +5,12 @@ import {
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
-import { adaptiveErpAdmissionPolicy } from "./application/adaptive-erp-admission-policy.js";
 import { HttpErpOrderConfirmation } from "./application/erp-confirmation-client.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
 } from "./application/erp-reconciliation.js";
+import { erpResiliencePolicy } from "./application/erp-resilience-policy.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
@@ -109,16 +109,17 @@ export async function startWorker(): Promise<void> {
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
   });
   const orderProcessAdmission = await AdaptiveErpRuntimeAdmission.restore({
+    pauseDelivery: (durationMs) => orderProcessJobPublisher.pauseDelivery(durationMs),
     persistence: erpScopeState,
     runConfigReader,
     fallbackConcurrency: config.orderProcessConcurrency,
   });
   const erpClient = new HttpErpOrderConfirmation({
     baseUrl: config.mockErpBaseUrl,
-    lookupTimeoutMs: adaptiveErpAdmissionPolicy.initialRequestDeadlineMs,
+    lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
     retryAfterPolicy: {
-      fallbackDelayMs: adaptiveErpAdmissionPolicy.fallbackCooldownMs,
-      maximumDelayMs: adaptiveErpAdmissionPolicy.maximumCooldownMs,
+      fallbackDelayMs: erpResiliencePolicy.fallbackCooldownMs,
+      maximumDelayMs: erpResiliencePolicy.maximumCooldownMs,
     },
     attemptPersistence: erpAttemptPersistence,
     logger,

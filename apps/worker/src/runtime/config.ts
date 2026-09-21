@@ -2,7 +2,7 @@ import {
   largestAllowedErpLatencyMs,
   orderProcessConcurrencyHardCap,
 } from "@checkout-surge/contracts";
-import { adaptiveErpAdmissionPolicy } from "../application/adaptive-erp-admission-policy.js";
+import { erpResiliencePolicy } from "../application/erp-resilience-policy.js";
 
 export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
   const config = {
@@ -86,14 +86,11 @@ export function validateAdaptiveErpDeadlineConfiguration(input: {
   requestDeadlineLeaseHeadroomMs?: number;
   largestAllowedLatencyMs?: number;
 }): void {
-  const maximum =
-    input.maximumRequestDeadlineMs ?? adaptiveErpAdmissionPolicy.maximumRequestDeadlineMs;
-  const margin =
-    input.requestDeadlineMarginMs ?? adaptiveErpAdmissionPolicy.requestDeadlineMarginMs;
+  const maximum = input.maximumRequestDeadlineMs ?? erpResiliencePolicy.maximumRequestDeadlineMs;
+  const margin = input.requestDeadlineMarginMs ?? erpResiliencePolicy.requestDeadlineMarginMs;
   const largestLatency = input.largestAllowedLatencyMs ?? largestAllowedErpLatencyMs;
   const leaseHeadroom =
-    input.requestDeadlineLeaseHeadroomMs ??
-    adaptiveErpAdmissionPolicy.requestDeadlineLeaseHeadroomMs;
+    input.requestDeadlineLeaseHeadroomMs ?? erpResiliencePolicy.requestDeadlineLeaseHeadroomMs;
   if (maximum < largestLatency + margin) {
     throw new Error(
       `Adaptive ERP maximum request deadline (${maximum}ms) must be at least the largest allowed ERP latency plus policy margin (${largestLatency + margin}ms).`,

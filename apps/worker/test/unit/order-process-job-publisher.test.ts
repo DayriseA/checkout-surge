@@ -25,6 +25,7 @@ describe("worker order-processing job publisher", () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
     const publisher: WorkerOrderProcessJobPublisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
       add,
       close,
     });
@@ -41,7 +42,11 @@ describe("worker order-processing job publisher", () => {
 
   it("rejects invalid jobs before reaching the queue", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({ add, close: vi.fn() });
+    const publisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
+      add,
+      close: vi.fn(),
+    });
 
     await expect(publisher.enqueue({ ...job, orderId: "invalid" })).rejects.toThrow();
     expect(add).not.toHaveBeenCalled();
@@ -49,6 +54,7 @@ describe("worker order-processing job publisher", () => {
 
   it("discovers failed jobs from durable disposition metadata rather than human error text", async () => {
     const publisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
       add: vi.fn(),
       close: vi.fn(),
       getJobs: vi.fn().mockResolvedValue([
@@ -80,7 +86,11 @@ describe("worker order-processing job publisher", () => {
 
   it("publishes recovery work with an explicit attempt-scoped ID and one delivery", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({ add, close: vi.fn() });
+    const publisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
+      add,
+      close: vi.fn(),
+    });
 
     await publisher.enqueue(job, { jobId: "recovery-order-key-2", attempts: 1 });
 
@@ -94,7 +104,7 @@ describe("worker order-processing job publisher", () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       {
         publish: vi.fn(async ({ operation }) => operation()),
       },
@@ -111,7 +121,7 @@ describe("worker order-processing job publisher", () => {
     const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
     const publish = vi.fn().mockRejectedValue(new Error("generated run is terminal"));
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       {
         publish,
       },
@@ -128,6 +138,7 @@ describe("worker order-processing job publisher", () => {
 
   it("recovers from the stable failedReason marker when progress was not persisted", async () => {
     const publisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
       add: vi.fn(),
       close: vi.fn(),
       getJobs: vi.fn().mockResolvedValue([
@@ -184,6 +195,7 @@ describe("worker order-processing job publisher", () => {
   it("returns raw poison jobs for DLQ reconciliation without parsing an order payload", async () => {
     const rawPayload = { orderId: "not-a-uuid", extra: "preserve" };
     const publisher = createOrderProcessJobPublisher({
+      rateLimit: async () => {},
       add: vi.fn(),
       close: vi.fn(),
       getJobs: vi.fn().mockResolvedValue([

@@ -106,22 +106,18 @@ The automatic reset is the only wall-clock termination. It acts on the whole run
 
 #### 6.1 One downstream admission authority
 
-All ERP calls, including retries and reconciliation calls that consume ERP capacity, pass through one worker-owned admission authority for the same downstream capacity scope. In the current isolated mock, this scope can remain the run because the mock applies quotas per run. A real shared ERP credential/quota would require one shared scope across all traffic using it.
+The API owns the order-process queue's native global rate and concurrency limits, derived from the accepted snapshot before traffic starts. Without an active run, the queue uses the shared catalog default. Dispatch uses small native bursts in windows of at least 20 ms, with a provisional 5% margin and a proven worst-case sliding-second bound. Task 17b replaces the original learned-rate design under revised D06.
 
-Admission combines an adaptive launch rate, evenly paced starts, a bounded in-flight limit, and a shared cooldown. Worker concurrency is a resource ceiling, not permission to exceed the downstream rate. A denied permit schedules a future wake-up without holding a worker slot, database transaction, or connection open.
+All ERP calls, including retries and reconciliation replays, retain worker-owned resilience admission for the same downstream scope. The controller retains cooldowns, bounded in-flight work, availability probes, and adaptive request deadlines. A capacity response pauses future queue delivery natively for Retry-After and durably defers the affected order. There is no custom pacing denial, launch-rate ramp, or rejection-wave reduction. Availability still opens its own circuit and admits at most one probe per scope every five seconds; a fresh successful probe resumes the configured rate.
 
-Start conservatively. Increase the launch rate gradually after stable progress, reduce it promptly on saturation, and honor valid ERP retry guidance. Coalesce feedback from one concurrent rejection wave so that ten simultaneous 429 responses do not apply ten successive rate reductions. Avoid accumulating a large burst allowance during idle or outage periods. After an outage, resume through a limited probe and gradual ramp-up.
-
-Keep the adaptive policy small and deterministic under an injected clock. Establish initial rates, observation windows, reduction factors, and minimum useful probe cadence through tests and calibration, then freeze them as a versioned policy. Do not claim exact capacity discovery or optimal throughput.
-
-The supported runtime still has one worker process. Use that single authority for atomic admission and retain restart-relevant cooldown/work timing durably. A distributed limiter and multiple worker replicas are outside scope; documentation must not imply that independent per-process gates would safely share a quota.
+The supported runtime has one worker process. PostgreSQL retains restart-relevant cooldown and work timing. API startup reapplies configured limits; worker restart reuses Redis queue metadata without writing it or gating startup on API readiness. The metadata-loss residual and integer-window throughput trade-off are documented in task 17b and `docs/architecture.md`. Multiple worker replicas remain outside the supported topology.
 
 #### 6.2 Explicit outcome classification and durable scheduling
 
 | Outcome | Disposition |
 | --- | --- |
 | Local admission unavailable | Deferred work; no ERP call and no ERP attempt |
-| Capacity rejection | Update pacing/cooldown; retain and reschedule the order |
+| Capacity rejection | Pause native queue delivery, persist cooldown, retain and reschedule the order |
 | Temporary dependency unavailability | Capped backoff with jitter; circuit protection and sparse probes |
 | Timeout or response lost after dispatch | Uncertain external outcome; reconcile using the stable business idempotency key |
 | Known permanent business rejection | Terminal business failure with an attributable reason |
@@ -274,12 +270,12 @@ The choices below resolve the questions Part I left open. They are binding for P
 - A locally reused success (local record or D05 lookup) is not evidence of ERP health: it neither closes the circuit nor raises the rate. Feedback from a call dispatched before the latest reduction cannot undo that reduction.
 - The controller never reads the run's declared capacity. It observes responses only.
 
-#### D07 — Restore safety state after restart; relearn throughput
+#### D07 — Restore safety state and retain declared-capacity queue limits after restart
 
 **Decision.** Option B. Revised with D06 (2026-09-21): there is no learned rate to relearn. After a restart the queue limits are re-applied from the accepted run snapshot, and the persisted cooldown and circuit expiries below are honored as before.
 
-- Persisted: dispatched-call intents (D04), cooldown and circuit-open expiries per scope, next eligible times. Not persisted: learned rate, observation windows, latency samples.
-- Startup order: reconcile dispatched calls first (D05), then resume from the initial conservative rate. A still-running persisted cooldown or circuit-open expiry is honored; otherwise the circuit starts closed at the initial rate.
+- Persisted: dispatched-call intents (D04), cooldown and circuit-open expiries per scope, next eligible times, and native queue limits in Redis. Not persisted: latency samples. Learned-rate and observation-window state no longer exist.
+- Startup order: reconcile dispatched calls first (D05), then resume under the declared-capacity queue limits. A still-running persisted cooldown or circuit-open expiry is honored; otherwise the circuit starts closed. Task 17b clarification: API startup reapplies configured limits; worker restart reuses Redis metadata without writing limits or gating startup. The existing finalization poll reapplies current limits even without a draining run; metadata loss or a failed terminal limit write is healed on its next successful tick (default five seconds, plus I/O latency), without failing a committed terminal transition; persisted cooldowns and durable deferral still retain saturation responses safely.
 - A missing accepted run snapshot for a run-scoped job is a technical failure of that order (D03), never a silent fallback to the catalog scope.
 - One authority per real quota: `run:<id>` and `catalog`. A worker-wide in-flight cap applies on top.
 
@@ -336,7 +332,7 @@ The choices below resolve the questions Part I left open. They are binding for P
 - Kept: traffic, inventory (`startingStock`, `quantityPerCheckout`, `reservationHoldMinutes`), ERP latency, capacity, error rate, forced outage (admin), `orderProcessConcurrency`, and `pendingPersistenceRetryAfterSeconds`, which belongs to reservation persistence and is unrelated to this work.
 - Engine constants live in a versioned worker policy; its version is persisted with each run. None of them is editable from the dashboard.
 - Persisted snapshots of earlier runs may still contain retired fields. History readers accept and ignore them; the incident's records are neither migrated nor rewritten.
-- Runtime view: outstanding orders, oldest outstanding age, observed confirmation rate, and one downstream status (`nominal`, `erp_limiting`, or `erp_unavailable`). Controller internals (target rate, in-flight ceiling, cooldown, probes) and per-reason waiting counts are not projected. The only run timing indication is the grace-period notice of D10. The 300-second drain timeout and `business_drain_timeout` disappear entirely.
+- Runtime view: outstanding orders, oldest outstanding age, observed confirmation rate, and one downstream status (`nominal`, `erp_limiting`, or `erp_unavailable`). Controller internals (in-flight ceiling, cooldown, probes) and per-reason waiting counts are not projected. The only run timing indication is the grace-period notice of D10. The 300-second drain timeout and `business_drain_timeout` disappear entirely.
 
 #### D14 — Bounded calibration against pre-approved criteria
 
@@ -394,19 +390,19 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 
 **Validation / exit:** more transient failures than the former four-attempt limit still converge after recovery; permanent rejection remains terminal; delayed replay does not produce an attempt-identity contradiction. Integration tests cover queue redelivery, crash windows, ERP success followed by lost response, worker restart, and mock ERP restart without duplicate effects.
 
-### Phase 3 — Implement adaptive ERP admission
+### Phase 3 — Implement declared-capacity dispatch and ERP resilience (revised by task 17b)
 
-**Depends on:** Phase 2. **Ownership:** worker application services and BullMQ adapter.
+**Depends on:** Phase 2. **Ownership:** API queue-limit lifecycle, worker application services, and BullMQ adapters.
 
-- [ ] Extend/replace concurrency-only admission with one paced rate/concurrency/cooldown decision before actual ERP dispatch.
+- [ ] Apply native queue rate/concurrency limits from the accepted snapshot before traffic, and restore catalog defaults at terminality/reset.
 - [ ] Route initial attempts, retries, and applicable reconciliation calls through that authority; successful local-result reuse should not spend an ERP-call permit.
 - [ ] Schedule denied work without held connections or sleeping active jobs. Bound deferred-job wake-ups and avoid starvation/retry storms.
-- [ ] Implement gradual recovery, prompt capacity reduction, rejection-wave coalescing, and limited outage probes. Keep 429 capacity feedback separate from breaker outage accounting.
+- [ ] Pause queue delivery on 429 and resume at the configured rate after cooldown. Keep capacity feedback separate from availability accounting and retain limited outage probes.
 - [ ] Add and consume valid `Retry-After` information; use safe local backoff when absent or invalid. Respect cooldowns without trusting arbitrary unbounded resource allocation.
 - [ ] Handle increasing latency with the in-flight ceiling and bounded adaptive request deadlines. Do not convert missed network deadlines into permanent rejection.
-- [ ] Restore conservative controller behavior and durable cooldowns after restart. Preserve scope isolation without multiplying an actual shared quota.
+- [ ] Restore durable cooldowns after restart, reapply configured limits on API startup, and reuse retained queue metadata on worker restart. Preserve scope isolation without multiplying an actual shared quota.
 
-**Validation / exit:** deterministic clock-based tests prove pacing, bounded concurrent calls, cooldown, stable recovery, and no repeated reduction per rejection wave. Real Redis/BullMQ tests prove deferral, progress, and no busy wake-up loop. Low-capacity scenarios produce identical business outcomes at different supported worker concurrency settings.
+**Validation / exit:** deterministic clock-based tests prove bounded concurrent calls, cooldown, and circuit safety. Real Redis/BullMQ tests prove evenly spaced dispatch from the first second, backlog-independent throughput, native pause/resume, restart retention, terminal/reset defaults, and durable recovery. Low-capacity scenarios produce identical business outcomes at different supported worker concurrency settings.
 
 ### Phase 4 — Align run completion, recovery, and maintenance
 
@@ -471,7 +467,7 @@ Before each phase, apply [the quality checklist](../docs/quality_checklists.md),
 | Original incident: 1,500 attempts, 888 stock, ERP 10/s and 250 ms | 888 unique reservations, 612 sold-out responses, 888 confirmations, 888 notifications, zero saturation-induced terminal orders; admissible under the demo estimate policy |
 | Same downstream conditions at several supported worker concurrency levels | Same business totals; ERP call rate/in-flight limits respected; no additional terminal errors from more worker capacity |
 | Low ERP capacity and sufficient finite stock | Backlog retained and demonstrably draining; no exhaustion failure after the old attempt budget |
-| Capacity drops and later recovers | Prompt rate reduction, gradual recovery, bounded retry pressure, no starved accepted orders |
+| Capacity drops and later recovers | Native Retry-After pauses, return to configured declared rate, bounded retry pressure, no starved accepted orders |
 | Latency increases beyond the initial request deadline | Uncertainty retained, no duplicate external effect, successful eventual reconciliation |
 | Finite ERP outage | Sparse probes/backoff during outage, automatic resumed processing, no invented permanent rejection |
 | ERP accepts but response is lost; ERP and worker restart | One canonical confirmation, one confirmed order, one notification |

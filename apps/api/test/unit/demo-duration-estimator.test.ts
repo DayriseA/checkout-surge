@@ -1,8 +1,8 @@
 import {
   type AcceptedRunConfigSnapshot,
-  adaptiveErpAdmissionEnginePolicyIdentity,
   conservativeDurationEstimatorIdentity,
   type EstimatorInput,
+  erpDispatchEnginePolicyIdentity,
   estimatorInputSchema,
   estimatorResultSchema,
 } from "@checkout-surge/contracts";
@@ -69,7 +69,7 @@ function estimate(value: EstimatorInput, ceiling = 600) {
   expect(value).toEqual(before);
   expect(estimatorResultSchema.parse(result)).toEqual(result);
   expect(result.estimatorIdentity).toEqual(conservativeDurationEstimatorIdentity);
-  expect(result.policyIdentity).toEqual(adaptiveErpAdmissionEnginePolicyIdentity);
+  expect(result.policyIdentity).toEqual(erpDispatchEnginePolicyIdentity);
   return result;
 }
 

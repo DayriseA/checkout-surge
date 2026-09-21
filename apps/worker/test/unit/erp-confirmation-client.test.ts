@@ -1,17 +1,17 @@
 import type { ErpCallReference } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { adaptiveErpAdmissionPolicy } from "../../src/application/adaptive-erp-admission-policy.js";
 import {
   ErpAcceptedConfirmationPersistenceError,
   type ErpAttemptPersistence,
   ErpConfirmationInvalidResponseError,
   HttpErpOrderConfirmation,
 } from "../../src/application/erp-confirmation-client.js";
+import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
 
 // Confirmation calls always run on the adaptive policy's chosen deadline.
-const deadlineMs = adaptiveErpAdmissionPolicy.initialRequestDeadlineMs;
+const deadlineMs = erpResiliencePolicy.initialRequestDeadlineMs;
 
 const job = {
   orderId: "11111111-1111-4111-8111-111111111111",

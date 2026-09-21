@@ -8,9 +8,12 @@ import type {
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
+  catalogErpDispatchLimits,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  erpDispatchRateLimit,
   isReplayPossible,
+  orderProcessBullMqQueueName,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -39,11 +42,13 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
+import { Queue } from "bullmq";
 import { count, eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresGeneratedRunPublicationFence } from "../../worker/src/persistence/postgres-generated-run-publication-fence.js";
 import { PostgresNotificationRecordPersistence } from "../../worker/src/persistence/postgres-notification-record-persistence.js";
 import { createNotificationRecordPublisher } from "../../worker/src/queue/bullmq-notification-record-publisher.js";
+import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import {
@@ -52,6 +57,10 @@ import {
 } from "../src/services/dashboard-recovery-service.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
+import {
+  DemoRunQueueLimits,
+  type OrderProcessQueueLimits,
+} from "../src/services/order-process-queue-limits.js";
 import {
   PostgresTerminalDemoRunSummaryWriter,
   terminalDemoRunTransitionLockKey,
@@ -109,6 +118,51 @@ describe("demo run finalization service", () => {
     if (redis) {
       await redis.flushdb();
       redis.disconnect();
+    }
+  });
+
+  it("heals a failed terminal limit update on the next lifecycle poll without another run or restart", async () => {
+    const db = requireConnection(connection).db;
+    await seedDrainingRun({ db, redis: requireRedis(redis), trafficDeliveryStatus: "complete" });
+    const queue = new Queue(orderProcessBullMqQueueName, {
+      connection: { url: requireTestRedisUrl() },
+    });
+    const publisher = createOrderProcessJobPublisher(queue);
+    const queueLimits = new DemoRunQueueLimits(db, publisher);
+    const logger = createSilentLogger("api");
+    const logged = vi.spyOn(logger, "error");
+    const terminalWriter = new PostgresTerminalDemoRunSummaryWriter(db, queueLimits, logger);
+    try {
+      await queueLimits.synchronize();
+      const previousLimits = await queue.getGlobalRateLimit();
+      vi.spyOn(publisher, "setLimits").mockRejectedValueOnce(
+        new Error("Redis temporarily unavailable"),
+      );
+      await expect(
+        terminalWriter.claimTerminalRun({
+          runId: ids.run,
+          terminalStatus: "completed",
+          failureReason: null,
+          finalizedAt: new Date("2026-06-20T00:00:10.000Z"),
+          allowedCurrentStatuses: ["draining"],
+        }),
+      ).resolves.toBe(true);
+      expect(logged).toHaveBeenCalledOnce();
+      expect(await queue.getGlobalRateLimit()).toEqual(previousLimits);
+      expect(await db.select({ status: demoRuns.status }).from(demoRuns)).toEqual([
+        { status: "completed" },
+      ]);
+      const service = createService(connection, redis, {
+        queueLimits,
+        terminalRunWriter: terminalWriter,
+      });
+      await expect(service.finalizeReadyRuns()).resolves.toBe(0);
+      expect(await queue.getGlobalRateLimit()).toEqual(
+        erpDispatchRateLimit(catalogErpDispatchLimits.maxTps),
+      );
+      expect(await queue.getGlobalConcurrency()).toBe(catalogErpDispatchLimits.concurrency);
+    } finally {
+      await publisher.close();
     }
   });
 
@@ -179,7 +233,9 @@ describe("demo run finalization service", () => {
   it("writes one immutable completed summary after business work settles", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+      synchronize: async () => {},
+    });
     const preparedInputs: unknown[] = [];
     const writeTerminalRun = vi.fn(
       async (...args: Parameters<typeof postgresTerminalRunWriter.writePrepared>) =>
@@ -811,8 +867,11 @@ describe("demo run finalization service", () => {
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetService = new AdminDemoResetService({
+      queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+        synchronize: async () => {},
+      }),
       redis: redisClient,
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
@@ -885,8 +944,12 @@ describe("demo run finalization service", () => {
     const terminalEvents: unknown[] = [];
     const observedBarriers: string[] = [];
     const writeResults: boolean[] = [];
-    const firstWriter = new PostgresTerminalDemoRunSummaryWriter(db);
-    const secondWriter = new PostgresTerminalDemoRunSummaryWriter(competingConnection.db);
+    const firstWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+      synchronize: async () => {},
+    });
+    const secondWriter = new PostgresTerminalDemoRunSummaryWriter(competingConnection.db, {
+      synchronize: async () => {},
+    });
     const firstService = createService(connection, redis, {
       terminalRunWriter: {
         writePrepared: async (runId, prepare) => {
@@ -1514,6 +1577,7 @@ function createService(
   connection: ReturnType<typeof createDatabaseConnection> | null,
   redis: ReturnType<typeof createRedisClient> | null,
   options: {
+    queueLimits?: OrderProcessQueueLimits;
     terminalRunWriter?: ConstructorParameters<
       typeof DemoRunFinalizationService
     >[0]["terminalRunWriter"];
@@ -1526,10 +1590,13 @@ function createService(
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    queueLimits: { synchronize: async () => {} },
     db: requireConnection(connection).db,
     terminalRunWriter:
       options.terminalRunWriter ??
-      new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db),
+      new PostgresTerminalDemoRunSummaryWriter(requireConnection(connection).db, {
+        synchronize: async () => {},
+      }),
     redis: requireRedis(redis),
     terminalInventoryRead: createTerminalInventoryRead(requireRedis(redis)),
     terminalInventoryReadTimeoutMs: 2_000,

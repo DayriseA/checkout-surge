@@ -33,6 +33,7 @@ import {
   reconcileAcceptedResponses,
 } from "./accepted-response-accounting.js";
 import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
+import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedState,
@@ -69,6 +70,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
+      queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
@@ -85,6 +87,12 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   }
 
   async finalizeReadyRuns(): Promise<number> {
+    await this.options.queueLimits.synchronize().catch((err: unknown) => {
+      this.options.logger.error(
+        { err },
+        "Queue limits synchronization failed; the next lifecycle poll will retry.",
+      );
+    });
     const rows = await this.options.db
       .select({ id: demoRuns.id })
       .from(demoRuns)

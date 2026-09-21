@@ -20,7 +20,12 @@ describe("order-processing job publisher", () => {
   it("validates and publishes with the order ID as the idempotent BullMQ job ID", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({ add, close } as OrderProcessQueue);
+    const publisher = createOrderProcessJobPublisher({
+      setGlobalRateLimit: async () => {},
+      setGlobalConcurrency: async () => {},
+      add,
+      close,
+    } as OrderProcessQueue);
 
     await publisher.enqueue(job);
     await publisher.close();
@@ -36,6 +41,8 @@ describe("order-processing job publisher", () => {
     const disconnect = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher({
+      setGlobalRateLimit: async () => {},
+      setGlobalConcurrency: async () => {},
       add: vi.fn().mockResolvedValue(undefined),
       disconnect,
       close,
@@ -50,6 +57,8 @@ describe("order-processing job publisher", () => {
   it("rejects invalid jobs before publishing", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher({
+      setGlobalRateLimit: async () => {},
+      setGlobalConcurrency: async () => {},
       add,
       close: vi.fn().mockResolvedValue(undefined),
     } as OrderProcessQueue);
@@ -61,6 +70,8 @@ describe("order-processing job publisher", () => {
   it("publishes run and catalog jobs with a single delivery attempt", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const publisher = createOrderProcessJobPublisher({
+      setGlobalRateLimit: async () => {},
+      setGlobalConcurrency: async () => {},
       add,
       close: vi.fn(),
     } as OrderProcessQueue);

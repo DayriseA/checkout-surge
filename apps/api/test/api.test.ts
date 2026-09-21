@@ -33,6 +33,7 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
+  erpDispatchEnginePolicyIdentity,
   erpResilienceStatusPath,
   errorPayloadSchema,
   estimateAdmissionRejectionDetailsSchema,
@@ -2075,7 +2076,7 @@ describe("API gateway routes", () => {
       reason: "over_ceiling",
       effectiveCeilingSeconds: 1,
       estimatorIdentity: { name: "conservative-duration-estimator", version: 1 },
-      policyIdentity: { name: "adaptive-erp-admission", version: 1 },
+      policyIdentity: erpDispatchEnginePolicyIdentity,
     });
   });
 

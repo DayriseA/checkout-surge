@@ -309,10 +309,13 @@ describe("TrafficCompletionService", () => {
       },
     }) as typeof redisClient;
     const finalizationService = new DemoRunFinalizationService({
+      queueLimits: { synchronize: async () => {} },
       db: activeConnection.db,
       redis: redisClient,
       logger: createSilentLogger("api"),
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(activeConnection.db),
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(activeConnection.db, {
+        synchronize: async () => {},
+      }),
       terminalInventoryRead: {
         read: ({ saleOfferId: currentSaleOfferId, observedAt }) =>
           getInventoryStatus(redisClient, currentSaleOfferId, observedAt),

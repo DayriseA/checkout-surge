@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigWriteSchema,
-  adaptiveErpAdmissionEnginePolicyIdentity,
   type BusinessOutcomeSummary,
   collectAcceptedRunConfigSnapshotViolations,
   type DemoPresetContract,
@@ -10,6 +9,7 @@ import {
   type DemoRunSnapshot,
   emptyHttpTimingBreakdownSummary,
   emptyServerReservationTimingSummary,
+  erpDispatchEnginePolicyIdentity,
   type InternalRunFailureReason,
   isReplayPossible,
   type OperatorMode,
@@ -54,6 +54,7 @@ import {
 } from "./demo-run-snapshot-operations.js";
 import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
+import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type {
   PublicRunBudgetReservation,
@@ -113,6 +114,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       presetReader: ActiveDemoPresetReader;
       runtimePolicyReader: EffectivePublicRuntimePolicyReader;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
+      queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       apiBaseUrl: string;
       logger: CheckoutSurgeLogger;
@@ -164,6 +166,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       const saleOfferId = requireRunSaleOfferId(accepted.run);
 
       try {
+        await this.options.queueLimits.synchronize();
         await initializeInventory(this.options.redis, {
           saleOfferId,
           allocatedStock: accepted.run.configSnapshot.inventoryConfig.startingStock,
@@ -355,8 +358,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
             status: "starting",
             trafficStatus: "starting",
             configSnapshot: snapshot,
-            enginePolicyName: adaptiveErpAdmissionEnginePolicyIdentity.name,
-            enginePolicyVersion: adaptiveErpAdmissionEnginePolicyIdentity.version,
+            enginePolicyName: erpDispatchEnginePolicyIdentity.name,
+            enginePolicyVersion: erpDispatchEnginePolicyIdentity.version,
             correlationId,
             saleOfferId,
             startedAt: now,

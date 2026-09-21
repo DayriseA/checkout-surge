@@ -7,13 +7,13 @@ import {
   type OrderWaitingReason,
   technicalOrderFailureCodeSchema,
 } from "@checkout-surge/contracts";
-import type { ErpAdmissionScope } from "./adaptive-erp-admission-policy.js";
 import type {
   ErpAttemptRecord,
   ErpConfirmationOutcome,
   ErpLookupOutcome,
   HttpErpOrderConfirmation,
 } from "./erp-confirmation-client.js";
+import type { ErpAdmissionScope } from "./erp-resilience-policy.js";
 import type {
   AdaptiveErpRuntimeAdmission,
   AdmittedErpOperation,

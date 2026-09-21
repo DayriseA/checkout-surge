@@ -43,6 +43,7 @@ import {
   readDemoRunSnapshot,
 } from "./demo-run-snapshot-operations.js";
 import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
+import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedState,
@@ -89,6 +90,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       queueMaintenance: ExactRunQueueMaintenance;
+      queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<
         TerminalDemoRunWriter,
         "claimTerminalRun" | "writeAfterTerminalClaims"
@@ -112,9 +114,11 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     reason: DestructiveResetReason = "admin_reset",
   ): Promise<AdminDemoResetResponse> {
     return this.options.maintenanceAuthority.runExclusive(() =>
-      this.options.resetWorkflowFence.runExclusive(() =>
-        this.resetWithoutConcurrentReset(correlationId, reason),
-      ),
+      this.options.resetWorkflowFence.runExclusive(async () => {
+        const result = await this.resetWithoutConcurrentReset(correlationId, reason);
+        await this.options.queueLimits.synchronize();
+        return result;
+      }),
     );
   }
 

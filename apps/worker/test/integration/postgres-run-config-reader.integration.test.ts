@@ -113,7 +113,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
   it("refuses publication when the job sale identity does not match the generated run", async () => {
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -141,7 +141,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     );
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -170,7 +170,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
       events.push("add-complete");
     });
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
@@ -222,7 +222,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     });
     const add = vi.fn();
     const publisher = createOrderProcessJobPublisher(
-      { add, close: vi.fn() },
+      { rateLimit: async () => {}, add, close: vi.fn() },
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 

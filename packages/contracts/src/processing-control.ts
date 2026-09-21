@@ -51,12 +51,24 @@ export const enginePolicyIdentitySchema = z
 export type EnginePolicyIdentity = z.infer<typeof enginePolicyIdentitySchema>;
 
 /**
- * The single adaptive ERP admission engine-policy identity (D13). Defined once
+ * The single declared-capacity ERP dispatch engine-policy identity (D13). Defined once
  * here so the API persists exactly the identity the worker policy runs: run
  * acceptance stores it on the run row and the worker policy derives its
  * version string from it.
  */
-export const adaptiveErpAdmissionEnginePolicyIdentity = {
-  name: "adaptive-erp-admission",
-  version: 1,
+export const erpDispatchEnginePolicyIdentity = {
+  name: "declared-capacity-erp-dispatch",
+  version: 2,
 } as const satisfies EnginePolicyIdentity;
+
+/** Provisional until task 20. Small native windows bound sliding-window pressure. */
+export const erpDispatchSafetyMargin = 0.05;
+export const erpDispatchMinimumWindowMs = 20;
+export const catalogErpDispatchLimits = { maxTps: 100, concurrency: 10 } as const;
+
+export function erpDispatchRateLimit(maxTps: number): { max: number; duration: number } {
+  const effectiveRate = maxTps * (1 - erpDispatchSafetyMargin);
+  // Smallest burst whose rounded-up duration reaches the minimum window.
+  const max = Math.floor(((erpDispatchMinimumWindowMs - 1) * effectiveRate) / 1_000) + 1;
+  return { max, duration: Math.ceil((max * 1_000) / effectiveRate) };
+}

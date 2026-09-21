@@ -59,6 +59,7 @@ import {
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
+import { DemoRunQueueLimits } from "./services/order-process-queue-limits.js";
 import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
@@ -218,7 +219,12 @@ export async function startApiServer(): Promise<void> {
     loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
     controlServiceToken: config.controlServiceToken,
   });
-  const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(connection.db);
+  const queueLimits = new DemoRunQueueLimits(connection.db, orderProcessJobPublisher);
+  const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(
+    connection.db,
+    queueLimits,
+    logger,
+  );
   const maintenanceAuthority = new ProcessLocalDemoMaintenanceAuthority();
   const generatedRunTeardown = new GeneratedRunTeardownService({
     db: connection.db,
@@ -236,6 +242,7 @@ export async function startApiServer(): Promise<void> {
     maintenanceAuthority,
   });
   const adminDemoReset = new AdminDemoResetService({
+    queueLimits,
     db: connection.db,
     redis,
     clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
@@ -299,6 +306,7 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const demoRunFinalizationService = new DemoRunFinalizationService({
+    queueLimits,
     db: connection.db,
     redis,
     logger,
@@ -327,6 +335,7 @@ export async function startApiServer(): Promise<void> {
     deploymentHardCaps: config.deploymentHardCaps,
   });
   const demoRunLifecycleService = new DemoRunLifecycleService({
+    queueLimits,
     db: connection.db,
     redis,
     presetReader: presetService,
@@ -456,6 +465,7 @@ export async function startApiServer(): Promise<void> {
 
   try {
     await runtimePolicyService.validateActivePolicyAtStartup();
+    await queueLimits.synchronize();
     await automaticRunReset.check().catch((err: unknown) => {
       logger.error(
         { err },

@@ -5,10 +5,13 @@ import type {
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
-  adaptiveErpAdmissionEnginePolicyIdentity,
+  catalogErpDispatchLimits,
   destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
+  erpDispatchEnginePolicyIdentity,
+  erpDispatchRateLimit,
+  orderProcessBullMqQueueName,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
@@ -28,8 +31,10 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
+import { Queue } from "bullmq";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
@@ -43,6 +48,10 @@ import {
   validateAcceptedRunSnapshot,
 } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
+import {
+  DemoRunQueueLimits,
+  type OrderProcessQueueLimits,
+} from "../src/services/order-process-queue-limits.js";
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
@@ -76,6 +85,7 @@ describe("demo-run lifecycle validation", () => {
     });
     const reserve = vi.fn();
     const service = new DemoRunLifecycleService({
+      queueLimits: { synchronize: async () => {} },
       db: { select } as never,
       redis: {} as never,
       presetReader: {
@@ -558,6 +568,89 @@ describe("demo-run lifecycle start gating", () => {
     expect(await activeConnection.db.select().from(demoRuns)).toHaveLength(0);
   });
 
+  it("applies accepted limits before traffic, restores on API restart, and returns to catalog at terminality and reset", async () => {
+    const db = requireConnection(connection).db;
+    const redisUrl = requireTestRedisUrl();
+    const queue = new Queue(orderProcessBullMqQueueName, { connection: { url: redisUrl } });
+    const fenceConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const writer = createOrderProcessJobPublisher(queue);
+    const limits = new DemoRunQueueLimits(db, writer);
+    const expectCatalog = async () => {
+      expect(await queue.getGlobalConcurrency()).toBe(catalogErpDispatchLimits.concurrency);
+      expect(await queue.getGlobalRateLimit()).toEqual(
+        erpDispatchRateLimit(catalogErpDispatchLimits.maxTps),
+      );
+    };
+    try {
+      await limits.synchronize();
+      await expectCatalog();
+      const service = createStartService(requireConnection(connection), requireRedis(redis), {
+        queueLimits: limits,
+        trafficExecutionGateway: {
+          start: async (request) => {
+            expect(await queue.getGlobalConcurrency()).toBe(
+              request.configSnapshot.backpressureConfig.orderProcessConcurrency,
+            );
+            expect(await queue.getGlobalRateLimit()).toEqual(
+              erpDispatchRateLimit(request.configSnapshot.erpConfig.maxTps),
+            );
+            return {
+              runId: request.runId,
+              status: "active",
+              startedAt: "2026-06-20T00:00:11.000Z",
+              correlationId: request.correlationId,
+            };
+          },
+        },
+      });
+      const accepted = await service.startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "queue-limits",
+      );
+      const acceptedLimits = await queue.getGlobalRateLimit();
+      const acceptedConcurrency = await queue.getGlobalConcurrency();
+      // Startup accepts persisted snapshots with retired knobs, like other run readers.
+      await db
+        .update(demoRuns)
+        .set({ configSnapshot: sql`config_snapshot || '{"retryPolicy":{"maxAttempts":4}}'::jsonb` })
+        .where(eq(demoRuns.id, accepted.run.runId));
+      await queue.removeGlobalRateLimit();
+      await queue.removeGlobalConcurrency();
+      await new DemoRunQueueLimits(db, writer).synchronize();
+      expect(await queue.getGlobalRateLimit()).toEqual(acceptedLimits);
+      expect(await queue.getGlobalConcurrency()).toBe(acceptedConcurrency);
+      await new PostgresTerminalDemoRunSummaryWriter(db, limits).claimTerminalRun({
+        runId: accepted.run.runId,
+        terminalStatus: "completed",
+        failureReason: null,
+        finalizedAt: new Date(),
+        allowedCurrentStatuses: ["active"],
+      });
+      await expectCatalog();
+      // A reset with no active run still repairs stale queue metadata.
+      await queue.setGlobalConcurrency(1);
+      await queue.setGlobalRateLimit(9, 999);
+      const reset = new AdminDemoResetService({
+        queueLimits: limits,
+        db,
+        redis: requireRedis(redis),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, limits),
+        queueMaintenance: { cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }) },
+        clearErpCircuitBreakerState: async () => {},
+        trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+        dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
+        resetWorkflowFence: new PostgresDemoResetWorkflowFence(fenceConnection.sql),
+        maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+        logger: createSilentLogger("api"),
+      });
+      await reset.reset("queue-limit-reset");
+      await expectCatalog();
+    } finally {
+      await writer.close();
+      await fenceConnection.close();
+    }
+  });
+
   it("persists the shared engine-policy identity with each accepted run", async () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis));
 
@@ -572,8 +665,8 @@ describe("demo-run lifecycle start gating", () => {
       })
       .from(demoRuns);
     expect(run).toEqual({
-      enginePolicyName: adaptiveErpAdmissionEnginePolicyIdentity.name,
-      enginePolicyVersion: adaptiveErpAdmissionEnginePolicyIdentity.version,
+      enginePolicyName: erpDispatchEnginePolicyIdentity.name,
+      enginePolicyVersion: erpDispatchEnginePolicyIdentity.version,
     });
   });
 
@@ -612,9 +705,12 @@ describe("demo-run lifecycle start gating", () => {
     let abortAttempt = 0;
     const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
     const resetService = new AdminDemoResetService({
+      queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       redis: redisClient,
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+        synchronize: async () => {},
+      }),
       queueMaintenance: {
         cleanRuns: queueCleanup,
       },
@@ -722,9 +818,12 @@ describe("demo-run lifecycle start gating", () => {
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
     const resetService = new AdminDemoResetService({
+      queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       redis: redisClient,
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+        synchronize: async () => {},
+      }),
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
@@ -791,9 +890,12 @@ describe("demo-run lifecycle start gating", () => {
     const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
     const createResetService = () =>
       new AdminDemoResetService({
+        queueLimits: { synchronize: async () => {} },
         db: resetConnection.db,
         redis: redisClient,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+          synchronize: async () => {},
+        }),
         queueMaintenance: { cleanRuns },
         clearErpCircuitBreakerState: async () => {
           if (clearFailure && failureBoundary === "breaker") throw new Error("breaker unavailable");
@@ -1400,7 +1502,9 @@ describe("demo-run lifecycle start gating", () => {
 
   it("writes a terminal summary when inventory initialization fails", async () => {
     const db = requireConnection(connection).db;
-    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db);
+    const postgresTerminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(db, {
+      synchronize: async () => {},
+    });
     const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
     const service = createStartService(requireConnection(connection), redisUnavailable(), {
       terminalRunWriter: { write: writeTerminalRun },
@@ -1572,8 +1676,11 @@ describe("demo-run lifecycle start gating", () => {
       },
     });
     const resetService = new AdminDemoResetService({
+      queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db),
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+        synchronize: async () => {},
+      }),
       redis: requireRedis(redis),
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
@@ -1698,6 +1805,7 @@ function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
+    queueLimits?: OrderProcessQueueLimits;
     presetReader?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["presetReader"];
     trafficExecutionGateway?: ConstructorParameters<
       typeof DemoRunLifecycleService
@@ -1726,6 +1834,7 @@ function createStartService(
   };
   const logger = overrides.logger ?? createSilentLogger("api");
   return new DemoRunLifecycleService({
+    queueLimits: overrides.queueLimits ?? { synchronize: async () => {} },
     db: connection.db,
     presetReader: overrides.presetReader ?? new DemoPresetService({ db: connection.db }),
     runtimePolicyReader: new PublicRuntimePolicyService({
@@ -1733,7 +1842,8 @@ function createStartService(
       deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
     }),
     terminalRunWriter:
-      overrides.terminalRunWriter ?? new PostgresTerminalDemoRunSummaryWriter(connection.db),
+      overrides.terminalRunWriter ??
+      new PostgresTerminalDemoRunSummaryWriter(connection.db, { synchronize: async () => {} }),
     redis,
     trafficExecutionGateway: overrides.trafficExecutionGateway ?? {
       start: async (request) => ({

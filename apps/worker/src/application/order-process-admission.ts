@@ -1,4 +1,5 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { ErpConfirmationOutcome, ErpLookupOutcome } from "./erp-confirmation-client.js";
 import {
   AdaptiveErpAdmissionController,
   type AdaptiveErpAdmissionDecision,
@@ -6,13 +7,12 @@ import {
   type AdaptiveErpAdmissionSnapshot,
   type AdaptiveErpPermit,
   AdaptiveErpRequestDeadlineController,
-  adaptiveErpAdmissionPolicy,
   type ErpAdmissionFeedback,
   type ErpAdmissionOperation,
   type ErpAdmissionScope,
   type ErpLatencyObservationSource,
-} from "./adaptive-erp-admission-policy.js";
-import type { ErpConfirmationOutcome, ErpLookupOutcome } from "./erp-confirmation-client.js";
+  erpResiliencePolicy,
+} from "./erp-resilience-policy.js";
 import { MissingAcceptedRunSnapshotError, type RunConfigReader } from "./run-config.js";
 
 export interface AdaptiveErpSafetyRecord {
@@ -97,6 +97,7 @@ export class AdaptiveErpRuntimeAdmission {
     private readonly options: {
       controller: AdaptiveErpAdmissionController;
       deadlines: AdaptiveErpRequestDeadlineController;
+      pauseDelivery: (durationMs: number) => Promise<void>;
       persistence: AdaptiveErpSafetyPersistence;
       runConfigReader: RunConfigReader;
       fallbackConcurrency: number;
@@ -105,6 +106,7 @@ export class AdaptiveErpRuntimeAdmission {
   ) {}
 
   static async restore(options: {
+    pauseDelivery: (durationMs: number) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
     fallbackConcurrency: number;
@@ -113,21 +115,21 @@ export class AdaptiveErpRuntimeAdmission {
   }): Promise<AdaptiveErpRuntimeAdmission> {
     const now = options.now ?? Date.now;
     const records = await options.persistence.listActive(now());
-    if (records.length > adaptiveErpAdmissionPolicy.maximumScopeStates) {
+    if (records.length > erpResiliencePolicy.maximumScopeStates) {
       throw new Error("Active ERP restart-safety state exceeds the bounded controller capacity.");
     }
     const admission = AdaptiveErpRuntimeAdmission.create({
       ...options,
       now,
       safetyState: {
-        policyVersion: adaptiveErpAdmissionPolicy.version,
+        policyVersion: erpResiliencePolicy.version,
         scopes: records,
       },
     });
     const unresolvedScopes = await options.persistence.listUnresolvedScopes(
-      adaptiveErpAdmissionPolicy.maximumScopeStates + 1,
+      erpResiliencePolicy.maximumScopeStates + 1,
     );
-    if (unresolvedScopes.length > adaptiveErpAdmissionPolicy.maximumScopeStates) {
+    if (unresolvedScopes.length > erpResiliencePolicy.maximumScopeStates) {
       throw new Error("Unresolved ERP scope gates exceed the bounded controller capacity.");
     }
     for (const scope of unresolvedScopes) {
@@ -137,6 +139,7 @@ export class AdaptiveErpRuntimeAdmission {
   }
 
   static create(options: {
+    pauseDelivery: (durationMs: number) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
     fallbackConcurrency: number;
@@ -146,7 +149,7 @@ export class AdaptiveErpRuntimeAdmission {
   }): AdaptiveErpRuntimeAdmission {
     const now = options.now ?? Date.now;
     const safetyState: AdaptiveErpAdmissionSafetyState = options.safetyState ?? {
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       scopes: [],
     };
     return new AdaptiveErpRuntimeAdmission({
@@ -156,6 +159,7 @@ export class AdaptiveErpRuntimeAdmission {
         safetyState,
       }),
       deadlines: new AdaptiveErpRequestDeadlineController({ now }),
+      pauseDelivery: options.pauseDelivery,
       persistence: options.persistence,
       runConfigReader: options.runConfigReader,
       fallbackConcurrency: options.fallbackConcurrency,
@@ -195,7 +199,7 @@ export class AdaptiveErpRuntimeAdmission {
         decision: {
           admitted: false,
           reason: "worker_in_flight",
-          nextEligibleAtMs: this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs,
+          nextEligibleAtMs: this.options.now() + erpResiliencePolicy.deferredRecheckMs,
           snapshot: this.options.controller.snapshot(context.scope, context.configuredConcurrency),
         },
       };
@@ -257,6 +261,13 @@ export class AdaptiveErpRuntimeAdmission {
     const snapshot = this.options.controller.feedback(operation.permit, toFeedback(outcome));
     this.settled += 1;
     await this.persist(operation.context.scope);
+    if (outcome.disposition === "capacity_rejected") {
+      const cooldownUntil = Math.max(
+        ...this.options.controller.safetyState().scopes.map((scope) => scope.cooldownUntilMs),
+      );
+      const pauseMs = cooldownUntil - this.options.now();
+      if (pauseMs > 0) await this.options.pauseDelivery(pauseMs);
+    }
     return { snapshot, nextEligibleAtMs: this.nextEligibleAt(snapshot) };
   }
 
@@ -274,7 +285,7 @@ export class AdaptiveErpRuntimeAdmission {
   }
 
   nextRecheckAt(): number {
-    return this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs;
+    return this.options.now() + erpResiliencePolicy.deferredRecheckMs;
   }
 
   async reconciliationSettled(scope: ErpAdmissionScope): Promise<void> {
@@ -289,7 +300,7 @@ export class AdaptiveErpRuntimeAdmission {
     this.pruneConfiguredConcurrency();
     return {
       available: true,
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       counters: {
         admitted: this.admitted,
         deferred: this.deferred,
@@ -385,7 +396,7 @@ export class AdaptiveErpRuntimeAdmission {
           this.unresolvedNextEligibleAt.set(scope, gate.nextEligibleAtMs);
           this.reconciliationRefreshAfter.set(
             scope,
-            this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs,
+            this.options.now() + erpResiliencePolicy.deferredRecheckMs,
           );
         } else {
           this.unresolvedScopes.delete(scope);
@@ -402,7 +413,7 @@ export class AdaptiveErpRuntimeAdmission {
           );
           this.reconciliationRefreshAfter.set(
             scope,
-            this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs,
+            this.options.now() + erpResiliencePolicy.deferredRecheckMs,
           );
         }
         throw error;
@@ -443,14 +454,13 @@ export class AdaptiveErpRuntimeAdmission {
 
   private nextEligibleAt(snapshot: AdaptiveErpAdmissionSnapshot): number {
     const scope = snapshot.scope;
-    if (!scope) return this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs;
+    if (!scope) return this.options.now() + erpResiliencePolicy.deferredRecheckMs;
     return Math.max(
-      this.options.now() + adaptiveErpAdmissionPolicy.deferredRecheckMs,
+      this.options.now() + erpResiliencePolicy.deferredRecheckMs,
       scope.cooldownUntilMs,
       scope.availabilityRetryAtMs,
       scope.circuitOpenUntilMs,
       scope.nextProbeAtMs,
-      scope.nextStartAtMs,
     );
   }
 }

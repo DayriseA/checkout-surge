@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: implementation backlog prepared; tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); tasks 17b, 17c and 18–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Creating these documents implements no runtime behavior and certifies no performance result.
+Status: implementation backlog prepared; tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); task 17b is implemented and measured, with the high-rate envelope criterion left for the project owner's acknowledgement (bounded by concurrency / full job time, not by pacing; input to 17c); tasks 17c and 18–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Task 17b records reference-runtime results and limitations; policy constants remain provisional until task 20.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -37,7 +37,7 @@ Task 20 contains the source plan's mandatory user-approval gate. After calibrati
 | 15 | [Conservative duration estimator](15_implement_conservative_duration_estimator.md) | 5 | Done (pending commit): pure API model and provisional measured margins |
 | 16 | [Estimated-duration admission](16_enforce_estimated_duration_admission.md) | 5 | Done: effective ceiling, advisory preview, authoritative start recomputation, minimal web policy-save compatibility |
 | 17 | [Dashboard estimate/admission flow](17_build_dashboard_estimate_and_admission_flow.md) | 6 | Done: shared current-input preview, start gating and actionable rejection |
-| 17b | [Declared-capacity dispatch](17b_pace_erp_dispatch_at_declared_capacity.md) | 3 revision | Queue-native rate limit at the declared ERP capacity; learned-rate machinery removed (inserted 2026-09-21, revised D06) |
+| 17b | [Declared-capacity dispatch](17b_pace_erp_dispatch_at_declared_capacity.md) | 3 revision | Native rate/global concurrency implemented and measured; exact accounting and scenario durations pass, high-rate envelope remains partial; measurements ready for 17c (revised D06) |
 | 17c | [Estimator re-fit and About copy](17c_refit_estimator_to_declared_capacity.md) | 5/6 revision | D11 envelope without a pacing ramp, `adaptive_pacing` removed, `admin-failure-path` stock revisited, design choice stated in About |
 | 18 | [Runtime progress and grace notice](18_build_runtime_progress_and_grace_notice.md) | 6 | Minimal progress projection/UX and the grace-period notice |
 | 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Full 16-scenario coverage and isolated evidence |

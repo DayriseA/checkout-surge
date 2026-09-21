@@ -6,13 +6,18 @@ import {
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { OrderProcessJobPublisher } from "../services/order-process-job-publisher.js";
+import type { OrderProcessQueueLimitsWriter } from "../services/order-process-queue-limits.js";
 
-export interface BullMqOrderProcessJobPublisher extends OrderProcessJobPublisher {
+export interface BullMqOrderProcessJobPublisher
+  extends OrderProcessJobPublisher,
+    OrderProcessQueueLimitsWriter {
   abort(): Promise<void>;
   close(): Promise<void>;
 }
 
 export interface OrderProcessQueue {
+  setGlobalRateLimit(max: number, duration: number): Promise<unknown>;
+  setGlobalConcurrency(concurrency: number): Promise<unknown>;
   add(
     name: typeof orderProcessJobName,
     data: OrderProcessJob,
@@ -40,6 +45,10 @@ export function createOrderProcessJobPublisher(
   queue: OrderProcessQueue,
 ): BullMqOrderProcessJobPublisher {
   return {
+    async setLimits({ concurrency, max, duration }) {
+      await queue.setGlobalRateLimit(max, duration);
+      await queue.setGlobalConcurrency(concurrency);
+    },
     async enqueue(input) {
       const job = orderProcessJobSchema.parse(input);
       await queue.add(orderProcessJobName, job, {

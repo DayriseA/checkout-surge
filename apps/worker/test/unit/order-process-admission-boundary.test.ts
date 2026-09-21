@@ -22,6 +22,7 @@ describe("adaptive ERP runtime admission", () => {
     let now = 1_000;
     const runId = "55555555-5555-4555-8555-555555555555";
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         listActive: async () => [
           {
@@ -70,8 +71,65 @@ describe("adaptive ERP runtime admission", () => {
     expect(state.scopes).toHaveLength(2);
   });
 
+  it("persists capacity safety then pauses native delivery without failing the operation", async () => {
+    const events: string[] = [];
+    const pauseDelivery = vi.fn(async () => {
+      events.push("pause");
+    });
+    let now = 0;
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery,
+      persistence: {
+        ...noSafetyPersistence(),
+        save: async () => {
+          events.push("persist");
+        },
+      },
+      runConfigReader: { read: async () => null },
+      fallbackConcurrency: 2,
+      now: () => now,
+    });
+    const context = await admission.context(data);
+    const acquired = await admission.tryAcquire(context, "confirmation");
+    if (!acquired.admitted) throw new Error("Expected permit.");
+    await admission.feedback(acquired.operation, {
+      disposition: "capacity_rejected",
+      operation: "dispatched_confirmation",
+      call: {
+        erpCallId: "99999999-9999-4999-8999-999999999999",
+        orderId: data.orderId,
+        idempotencyKey: `erp-confirmation:${data.orderId}`,
+        processingGeneration: 0,
+        dispatchedAt: new Date(0).toISOString(),
+      },
+      startedAt: new Date(0),
+      finishedAt: new Date(0),
+      latencyMs: 1,
+      requestDeadlineMs: 2_000,
+      replayed: false,
+      httpStatus: 429,
+      retryAfterMs: 1_000,
+    });
+    expect(events).toEqual(["persist", "pause"]);
+    expect(pauseDelivery).toHaveBeenCalledExactlyOnceWith(1_000);
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+      decision: { reason: "capacity_cooldown", nextEligibleAtMs: 1_000 },
+    });
+    now = 1_000;
+    const resumed = await admission.tryAcquire(context, "confirmation");
+    expect(resumed.admitted).toBe(true);
+    if (resumed.admitted) admission.release(resumed.operation);
+    // No learned-rate delay after the pause.
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: true,
+    });
+    await admission.close();
+  });
+
   it("rejects a missing accepted run snapshot instead of falling back to catalog", async () => {
     const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery: async () => {},
       persistence: noSafetyPersistence(),
       runConfigReader: { read: async () => null },
       fallbackConcurrency: 2,
@@ -83,6 +141,7 @@ describe("adaptive ERP runtime admission", () => {
 
   it("releases active permits on shutdown and admits no new work", async () => {
     const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery: async () => {},
       persistence: noSafetyPersistence(),
       runConfigReader: { read: async () => null },
       fallbackConcurrency: 2,
@@ -106,6 +165,7 @@ describe("adaptive ERP runtime admission", () => {
 
   it("reports safety persistence failure as unavailable instead of zero state", async () => {
     const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery: async () => {},
       persistence: {
         listActive: async () => [],
         readActive: async () => null,
@@ -155,6 +215,7 @@ describe("adaptive ERP runtime admission", () => {
     });
     const saved: Array<{ cooldownUntilMs: number }> = [];
     const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
         save: async (record) => {
@@ -190,6 +251,7 @@ describe("adaptive ERP runtime admission", () => {
 
   it("blocks fresh confirmations for a restored unresolved scope", async () => {
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
         listUnresolvedScopes: async () => ["catalog"],
@@ -222,6 +284,7 @@ describe("adaptive ERP runtime admission", () => {
     });
     const readReconciliationGate = vi.fn().mockReturnValueOnce(older).mockReturnValueOnce(newer);
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
         listUnresolvedScopes: async () => ["catalog"],
@@ -263,6 +326,7 @@ describe("adaptive ERP runtime admission", () => {
       .mockRejectedValueOnce(new Error("safety write failed"))
       .mockResolvedValue(undefined);
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
         listUnresolvedScopes: async () => ["catalog"],
@@ -312,6 +376,7 @@ describe("adaptive ERP runtime admission", () => {
       .mockRejectedValueOnce(new Error("PostgreSQL unavailable"))
       .mockResolvedValue({ pending: false, nextEligibleAtMs: 0 });
     const admission = await AdaptiveErpRuntimeAdmission.restore({
+      pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
         listUnresolvedScopes: async () => ["catalog"],

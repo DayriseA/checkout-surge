@@ -1,19 +1,12 @@
 import {
-  adaptiveErpAdmissionEnginePolicyIdentity,
   type ErpOutcomeDisposition,
+  erpDispatchEnginePolicyIdentity,
 } from "@checkout-surge/contracts";
 
-export const adaptiveErpAdmissionPolicy = {
+export const erpResiliencePolicy = {
   // Derived from the shared engine-policy identity so the API-persisted run
   // evidence and the actually running policy can never drift (D13).
-  version: `${adaptiveErpAdmissionEnginePolicyIdentity.name}-v${adaptiveErpAdmissionEnginePolicyIdentity.version}`,
-  initialRatePerSecond: 2,
-  floorRatePerSecond: 0.5,
-  ceilingRatePerSecond: 20,
-  additiveStepPerSecond: 1,
-  reductionFactor: 0.5,
-  observationWindowMs: 10_000,
-  rejectionWaveWindowMs: 1_000,
+  version: `${erpDispatchEnginePolicyIdentity.name}-v${erpDispatchEnginePolicyIdentity.version}`,
   fallbackCooldownMs: 1_000,
   maximumCooldownMs: 60_000,
   availabilityFailuresToOpen: 3,
@@ -58,19 +51,18 @@ export class AdaptiveErpRequestDeadlineController {
 
   deadline(scope: ErpAdmissionScope): number {
     const state = this.scopes.get(scope);
-    if (!state || state.samples.length === 0)
-      return adaptiveErpAdmissionPolicy.initialRequestDeadlineMs;
+    if (!state || state.samples.length === 0) return erpResiliencePolicy.initialRequestDeadlineMs;
     state.lastUsedAtMs = this.dependencies.now();
     const sorted = [...state.samples].sort((left, right) => left - right);
-    const rank = Math.ceil(sorted.length * adaptiveErpAdmissionPolicy.requestDeadlinePercentile);
+    const rank = Math.ceil(sorted.length * erpResiliencePolicy.requestDeadlinePercentile);
     const percentile = sorted[Math.max(0, rank - 1)] as number;
     return Math.min(
-      adaptiveErpAdmissionPolicy.maximumRequestDeadlineMs,
+      erpResiliencePolicy.maximumRequestDeadlineMs,
       Math.max(
-        adaptiveErpAdmissionPolicy.minimumRequestDeadlineMs,
+        erpResiliencePolicy.minimumRequestDeadlineMs,
         Math.ceil(
-          percentile * adaptiveErpAdmissionPolicy.requestDeadlineFactor +
-            adaptiveErpAdmissionPolicy.requestDeadlineMarginMs,
+          percentile * erpResiliencePolicy.requestDeadlineFactor +
+            erpResiliencePolicy.requestDeadlineMarginMs,
         ),
       ),
     );
@@ -88,7 +80,7 @@ export class AdaptiveErpRequestDeadlineController {
     const sample =
       input.source === "confirmation_timeout" ? input.requestDeadlineMs : input.durationMs;
     state.samples.push(sample);
-    if (state.samples.length > adaptiveErpAdmissionPolicy.requestDeadlineWindowSize) {
+    if (state.samples.length > erpResiliencePolicy.requestDeadlineWindowSize) {
       state.samples.shift();
     }
   }
@@ -100,7 +92,7 @@ export class AdaptiveErpRequestDeadlineController {
     scopeCount: number;
   } {
     return {
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       deadlineMs: this.deadline(scope),
       sampleCount: this.scopes.get(scope)?.samples.length ?? 0,
       scopeCount: this.scopes.size,
@@ -113,7 +105,7 @@ export class AdaptiveErpRequestDeadlineController {
       existing.lastUsedAtMs = now;
       return existing;
     }
-    if (this.scopes.size >= adaptiveErpAdmissionPolicy.maximumScopeStates) {
+    if (this.scopes.size >= erpResiliencePolicy.maximumScopeStates) {
       const oldest = [...this.scopes].reduce((candidate, entry) =>
         entry[1].lastUsedAtMs < candidate[1].lastUsedAtMs ? entry : candidate,
       );
@@ -141,7 +133,6 @@ export interface AdaptiveErpPermit {
   readonly scope: ErpAdmissionScope;
   readonly operation: ErpAdmissionOperation;
   readonly admittedAtMs: number;
-  readonly generation: number;
   readonly probe: boolean;
 }
 
@@ -152,7 +143,6 @@ export type ErpAdmissionReason =
   | "availability_backoff"
   | "capacity_cooldown"
   | "lookup_in_flight"
-  | "pacing"
   | "reconciliation_pending"
   | "scope_in_flight"
   | "scope_state_limit"
@@ -165,13 +155,10 @@ export interface AdaptiveErpAdmissionSnapshot {
   scopeCount: number;
   scope: null | {
     key: ErpAdmissionScope;
-    targetRatePerSecond: number;
-    generation: number;
     confirmationInFlight: number;
     confirmationInFlightCeiling: number;
     lookupInFlight: number;
     lookupInFlightCeiling: number;
-    nextStartAtMs: number;
     cooldownUntilMs: number;
     availabilityRetryAtMs: number;
     availabilityFailureCount: number;
@@ -197,7 +184,7 @@ export type AdaptiveErpAdmissionDecision =
       snapshot: AdaptiveErpAdmissionSnapshot;
     };
 
-/** This is the complete task-09 persistence boundary; learned rate/window state is excluded. */
+/** This is the complete task-09 persistence boundary; latency samples are excluded. */
 export interface AdaptiveErpAdmissionSafetyState {
   policyVersion: string;
   scopes: Array<{
@@ -211,12 +198,6 @@ export interface AdaptiveErpAdmissionSafetyState {
 }
 
 interface ScopeState {
-  rate: number;
-  generation: number;
-  nextStartAtMs: number;
-  observationStartedAtMs: number;
-  usefulProgress: number;
-  lastReductionAtMs: number;
   cooldownUntilMs: number;
   availabilityRetryAtMs: number;
   capacityBackoffAttempt: number;
@@ -281,12 +262,12 @@ export class AdaptiveErpAdmissionController {
     if (!state) return this.deferred(input, null, "scope_state_limit", now, now);
     state.lastUsedAtMs = now;
 
-    if (this.workerInFlight >= adaptiveErpAdmissionPolicy.workerInFlightCeiling) {
+    if (this.workerInFlight >= erpResiliencePolicy.workerInFlightCeiling) {
       return this.deferred(input, state, "worker_in_flight", now, now);
     }
     if (
       input.operation === "lookup" &&
-      state.lookupInFlight >= adaptiveErpAdmissionPolicy.lookupInFlightCeiling
+      state.lookupInFlight >= erpResiliencePolicy.lookupInFlightCeiling
     ) {
       return this.deferred(input, state, "lookup_in_flight", now, now);
     }
@@ -330,9 +311,6 @@ export class AdaptiveErpAdmissionController {
       if (now < state.cooldownUntilMs) {
         return this.deferred(input, state, "capacity_cooldown", now, state.cooldownUntilMs);
       }
-      if (now < state.nextStartAtMs) {
-        return this.deferred(input, state, "pacing", now, state.nextStartAtMs);
-      }
     }
     return this.admit(input, state, now, false);
   }
@@ -350,26 +328,20 @@ export class AdaptiveErpAdmissionController {
     this.releasePermit(internal, state);
     if (feedback.outcome === "capacity_rejected") {
       if (internal.operation === "confirmation") {
-        const currentGeneration = internal.generation === state.generation;
-        this.recordCapacityGuidance(state, feedback, now, currentGeneration);
-        if (currentGeneration) this.recordCapacityReduction(state, now);
+        this.recordCapacityGuidance(state, feedback, now);
       }
     } else if (
       feedback.outcome === "temporarily_unavailable" ||
       feedback.outcome === "uncertain_result"
     ) {
-      const currentGeneration = internal.generation === state.generation;
-      this.recordAvailabilityGuidance(state, feedback, now, currentGeneration);
-      if (currentGeneration) {
-        this.recordUnavailable(state, internal.probe, now);
-      }
+      this.recordAvailabilityGuidance(state, feedback, now);
+      this.recordUnavailable(state, internal.probe, now);
     } else if (
-      internal.generation === state.generation &&
       internal.operation === "confirmation" &&
       (feedback.outcome === "succeeded" || feedback.outcome === "permanent_rejection") &&
       !feedback.replayed
     ) {
-      this.recordUsefulProgress(state, internal.probe, now);
+      this.recordUsefulProgress(state, internal.probe);
     }
     return this.snapshot(internal.scope, internal.configuredConcurrency);
   }
@@ -386,7 +358,7 @@ export class AdaptiveErpAdmissionController {
 
   safetyState(): AdaptiveErpAdmissionSafetyState {
     return {
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       scopes: [...this.scopes.entries()].map(([scope, state]) => ({
         scope,
         cooldownUntilMs: state.cooldownUntilMs,
@@ -419,11 +391,10 @@ export class AdaptiveErpAdmissionController {
     if (input.operation === "lookup") state.lookupInFlight += 1;
     else {
       state.confirmationInFlight += 1;
-      state.nextStartAtMs = now + this.spacingMs(state.rate);
     }
     if (probe) {
       state.probeInFlight = true;
-      state.nextProbeAtMs = now + adaptiveErpAdmissionPolicy.probeCadenceMs;
+      state.nextProbeAtMs = now + erpResiliencePolicy.probeCadenceMs;
     }
     this.workerInFlight += 1;
     const permit: InternalPermit = {
@@ -431,7 +402,6 @@ export class AdaptiveErpAdmissionController {
       operation: input.operation,
       configuredConcurrency: input.configuredConcurrency,
       admittedAtMs: now,
-      generation: state.generation,
       probe,
     };
     this.activePermits.add(permit);
@@ -461,9 +431,7 @@ export class AdaptiveErpAdmissionController {
     nextEligibleAtMs: number,
   ): AdaptiveErpAdmissionDecision {
     const futureEligibility =
-      nextEligibleAtMs > now
-        ? nextEligibleAtMs
-        : now + adaptiveErpAdmissionPolicy.deferredRecheckMs;
+      nextEligibleAtMs > now ? nextEligibleAtMs : now + erpResiliencePolicy.deferredRecheckMs;
     return {
       admitted: false,
       reason,
@@ -476,32 +444,15 @@ export class AdaptiveErpAdmissionController {
     state: ScopeState,
     feedback: Extract<ErpAdmissionFeedback, { outcome: "capacity_rejected" }>,
     now: number,
-    advanceBackoff: boolean,
   ): void {
     const delay = this.boundedDelay(
       feedback.retryAfterMs,
-      adaptiveErpAdmissionPolicy.fallbackCooldownMs,
+      erpResiliencePolicy.fallbackCooldownMs,
       state.capacityBackoffAttempt,
-      adaptiveErpAdmissionPolicy.maximumCooldownMs,
+      erpResiliencePolicy.maximumCooldownMs,
     );
-    if (advanceBackoff) {
-      state.capacityBackoffAttempt = Math.min(state.capacityBackoffAttempt + 1, 30);
-    }
+    state.capacityBackoffAttempt = Math.min(state.capacityBackoffAttempt + 1, 30);
     state.cooldownUntilMs = Math.max(state.cooldownUntilMs, now + delay);
-    state.observationStartedAtMs = now;
-    state.usefulProgress = 0;
-  }
-
-  private recordCapacityReduction(state: ScopeState, now: number): void {
-    if (now - state.lastReductionAtMs < adaptiveErpAdmissionPolicy.rejectionWaveWindowMs) return;
-
-    state.rate = Math.max(
-      adaptiveErpAdmissionPolicy.floorRatePerSecond,
-      state.rate * adaptiveErpAdmissionPolicy.reductionFactor,
-    );
-    state.generation += 1;
-    state.lastReductionAtMs = now;
-    state.nextStartAtMs = Math.max(state.nextStartAtMs, now + this.spacingMs(state.rate));
   }
 
   private recordAvailabilityGuidance(
@@ -511,17 +462,14 @@ export class AdaptiveErpAdmissionController {
       { outcome: "temporarily_unavailable" | "uncertain_result" }
     >,
     now: number,
-    advanceBackoff: boolean,
   ): void {
     const delay = this.boundedDelay(
       feedback.retryAfterMs,
-      adaptiveErpAdmissionPolicy.availabilityBackoffMs,
+      erpResiliencePolicy.availabilityBackoffMs,
       state.availabilityBackoffAttempt,
-      adaptiveErpAdmissionPolicy.maximumAvailabilityBackoffMs,
+      erpResiliencePolicy.maximumAvailabilityBackoffMs,
     );
-    if (advanceBackoff) {
-      state.availabilityBackoffAttempt = Math.min(state.availabilityBackoffAttempt + 1, 30);
-    }
+    state.availabilityBackoffAttempt = Math.min(state.availabilityBackoffAttempt + 1, 30);
     state.availabilityRetryAtMs = Math.max(state.availabilityRetryAtMs, now + delay);
     if (state.availabilityCircuitOpen) {
       state.circuitOpenUntilMs = Math.max(state.circuitOpenUntilMs, state.availabilityRetryAtMs);
@@ -531,28 +479,21 @@ export class AdaptiveErpAdmissionController {
   private recordUnavailable(state: ScopeState, wasProbe: boolean, now: number): void {
     if (state.availabilityCircuitOpen && !wasProbe) return;
     state.availabilityFailureCount += 1;
-    state.usefulProgress = 0;
-    state.observationStartedAtMs = now;
     if (
       !wasProbe &&
-      state.availabilityFailureCount < adaptiveErpAdmissionPolicy.availabilityFailuresToOpen
+      state.availabilityFailureCount < erpResiliencePolicy.availabilityFailuresToOpen
     ) {
       return;
     }
     state.availabilityCircuitOpen = true;
     state.circuitOpenUntilMs = Math.max(
       state.availabilityRetryAtMs,
-      now + adaptiveErpAdmissionPolicy.probeCadenceMs,
+      now + erpResiliencePolicy.probeCadenceMs,
     );
-    state.nextProbeAtMs = Math.max(
-      state.nextProbeAtMs,
-      now + adaptiveErpAdmissionPolicy.probeCadenceMs,
-    );
-    state.rate = Math.min(state.rate, adaptiveErpAdmissionPolicy.initialRatePerSecond);
-    state.nextStartAtMs = Math.max(state.nextStartAtMs, now + this.spacingMs(state.rate));
+    state.nextProbeAtMs = Math.max(state.nextProbeAtMs, now + erpResiliencePolicy.probeCadenceMs);
   }
 
-  private recordUsefulProgress(state: ScopeState, wasProbe: boolean, now: number): void {
+  private recordUsefulProgress(state: ScopeState, wasProbe: boolean): void {
     if (state.availabilityCircuitOpen && !wasProbe) return;
     state.availabilityFailureCount = 0;
     state.capacityBackoffAttempt = 0;
@@ -561,35 +502,19 @@ export class AdaptiveErpAdmissionController {
       state.availabilityCircuitOpen = false;
       state.circuitOpenUntilMs = 0;
       state.nextProbeAtMs = 0;
-      state.observationStartedAtMs = now;
-      state.usefulProgress = 0;
-      return;
-    }
-    state.usefulProgress += 1;
-    if (
-      state.usefulProgress > 0 &&
-      now - state.observationStartedAtMs >= adaptiveErpAdmissionPolicy.observationWindowMs
-    ) {
-      state.rate = Math.min(
-        adaptiveErpAdmissionPolicy.ceilingRatePerSecond,
-        state.rate + adaptiveErpAdmissionPolicy.additiveStepPerSecond,
-      );
-      state.observationStartedAtMs = now;
-      state.usefulProgress = 0;
     }
   }
 
   private getOrCreateScope(scope: ErpAdmissionScope, now: number): ScopeState | null {
     const existing = this.scopes.get(scope);
     if (existing) return existing;
-    if (this.scopes.size >= adaptiveErpAdmissionPolicy.maximumScopeStates) {
+    if (this.scopes.size >= erpResiliencePolicy.maximumScopeStates) {
       const evictable = [...this.scopes.entries()]
         .filter(
           ([, state]) =>
             state.confirmationInFlight === 0 &&
             state.lookupInFlight === 0 &&
             !state.availabilityCircuitOpen &&
-            state.nextStartAtMs <= now &&
             state.cooldownUntilMs <= now &&
             state.availabilityRetryAtMs <= now &&
             state.circuitOpenUntilMs <= now &&
@@ -606,12 +531,6 @@ export class AdaptiveErpAdmissionController {
 
   private newScopeState(now: number): ScopeState {
     return {
-      rate: adaptiveErpAdmissionPolicy.initialRatePerSecond,
-      generation: 0,
-      nextStartAtMs: now,
-      observationStartedAtMs: now,
-      usefulProgress: 0,
-      lastReductionAtMs: Number.NEGATIVE_INFINITY,
       cooldownUntilMs: 0,
       availabilityRetryAtMs: 0,
       capacityBackoffAttempt: 0,
@@ -633,20 +552,17 @@ export class AdaptiveErpAdmissionController {
     configuredConcurrency: number,
   ): AdaptiveErpAdmissionSnapshot {
     return {
-      policyVersion: adaptiveErpAdmissionPolicy.version,
+      policyVersion: erpResiliencePolicy.version,
       workerInFlight: this.workerInFlight,
-      workerInFlightCeiling: adaptiveErpAdmissionPolicy.workerInFlightCeiling,
+      workerInFlightCeiling: erpResiliencePolicy.workerInFlightCeiling,
       scopeCount: this.scopes.size,
       scope: state
         ? {
             key: scope,
-            targetRatePerSecond: state.rate,
-            generation: state.generation,
             confirmationInFlight: state.confirmationInFlight,
             confirmationInFlightCeiling: this.confirmationLimit(configuredConcurrency),
             lookupInFlight: state.lookupInFlight,
-            lookupInFlightCeiling: adaptiveErpAdmissionPolicy.lookupInFlightCeiling,
-            nextStartAtMs: state.nextStartAtMs,
+            lookupInFlightCeiling: erpResiliencePolicy.lookupInFlightCeiling,
             cooldownUntilMs: state.cooldownUntilMs,
             availabilityRetryAtMs: state.availabilityRetryAtMs,
             availabilityFailureCount: state.availabilityFailureCount,
@@ -676,12 +592,8 @@ export class AdaptiveErpAdmissionController {
   private confirmationLimit(configuredConcurrency: number): number {
     return Math.min(
       Math.max(1, Math.floor(configuredConcurrency)),
-      adaptiveErpAdmissionPolicy.perScopeInFlightCeiling,
+      erpResiliencePolicy.perScopeInFlightCeiling,
     );
-  }
-
-  private spacingMs(rate: number): number {
-    return Math.ceil(1_000 / rate);
   }
 
   private now(): number {

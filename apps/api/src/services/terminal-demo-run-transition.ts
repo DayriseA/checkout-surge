@@ -8,7 +8,9 @@ import {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { demoRunSummaries, demoRuns, terminalDemoRunTransitionLockKey } from "@checkout-surge/db";
+import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import type {
   TerminalDemoRunStatus,
   TerminalDemoRunSummaryInput,
@@ -23,7 +25,11 @@ type TerminalDemoRunTransitionTransaction = Parameters<
 export { terminalDemoRunTransitionLockKey } from "@checkout-surge/db";
 
 export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWriter {
-  constructor(private readonly db: CheckoutSurgeDatabase) {}
+  constructor(
+    private readonly db: CheckoutSurgeDatabase,
+    private readonly queueLimits: OrderProcessQueueLimits,
+    private readonly logger: Pick<CheckoutSurgeLogger, "error"> = console,
+  ) {}
 
   async claimTerminalRun(input: TerminalDemoRunTransitionInput): Promise<boolean> {
     return this.withTerminalRunLock(input.runId, (tx) =>
@@ -150,13 +156,20 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
     runId: string,
     operation: (tx: TerminalDemoRunTransitionTransaction) => Promise<T>,
   ): Promise<T> {
-    return this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`,
       );
 
       return operation(tx);
     });
+    await this.queueLimits.synchronize().catch((err: unknown) => {
+      this.logger.error(
+        { err, runId },
+        "Terminal run committed; queue limits will retry on the next lifecycle poll.",
+      );
+    });
+    return result;
   }
 
   private async claimTerminalRunInsideLock(
