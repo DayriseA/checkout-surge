@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { largestAllowedErpLatencyMs } from "./erp.js";
 import { inventoryConfigSchema, trafficConfigSchema } from "./load.js";
 import {
   isoTimestampSchema,
@@ -6,7 +7,7 @@ import {
   percentageSchema,
   positiveIntegerSchema,
 } from "./primitives.js";
-import { enginePolicyIdentitySchema } from "./processing-control.js";
+import { type EnginePolicyIdentity, enginePolicyIdentitySchema } from "./processing-control.js";
 
 /**
  * Initial estimated demo-occupancy ceiling (D11). Inclusive, in seconds,
@@ -17,6 +18,12 @@ import { enginePolicyIdentitySchema } from "./processing-control.js";
  */
 export const estimatedDemoOccupancyCeilingSeconds = 600 as const;
 export const automaticRunResetDeadlineSeconds = 900 as const;
+
+/** Single estimator identity; provisional constants are frozen only by task 20. */
+export const conservativeDurationEstimatorIdentity = {
+  name: "conservative-duration-estimator",
+  version: 1,
+} as const satisfies EnginePolicyIdentity;
 
 /**
  * Declared scenario conditions consumed by the API-owned estimator (D11). The
@@ -31,7 +38,7 @@ export const estimatorInputSchema = z
     inventoryConfig: inventoryConfigSchema,
     effectiveWorkerConcurrency: positiveIntegerSchema,
     declaredErpCapacityPerSecond: positiveIntegerSchema,
-    declaredErpLatencyMs: nonnegativeNumberSchema,
+    declaredErpLatencyMs: nonnegativeNumberSchema.max(largestAllowedErpLatencyMs),
     declaredErpForcedOutage: z.boolean().default(false),
     errorRateAssumption: percentageSchema.default(0),
   })
@@ -43,6 +50,7 @@ export const estimatorBottleneckValues = [
   "erp_capacity",
   "worker_concurrency",
   "erp_latency",
+  "adaptive_pacing",
   "declared_outage",
   "unestimable",
 ] as const;
@@ -78,6 +86,7 @@ export type EstimatorUnestimableReason = z.infer<typeof estimatorUnestimableReas
 const estimatorResultBaseShape = {
   bottleneck: estimatorBottleneckSchema,
   assumptions: z.array(estimateAssumptionSchema),
+  reasons: z.array(z.string().trim().min(1)).optional(),
   estimatorIdentity: enginePolicyIdentitySchema,
   policyIdentity: enginePolicyIdentitySchema,
   effectiveCeilingSeconds: nonnegativeNumberSchema,

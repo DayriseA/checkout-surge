@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   acceptedEstimateSnapshotSchema,
+  conservativeDurationEstimatorIdentity,
+  enginePolicyIdentitySchema,
   estimatedDemoOccupancyCeilingSeconds,
   estimateObservationSchema,
   estimatePreviewSchema,
   estimateStaleRejectionSchema,
+  estimatorBottleneckSchema,
   estimatorInputSchema,
   estimatorResultSchema,
+  largestAllowedErpLatencyMs,
 } from "../src/index.js";
 
 const input = {
@@ -38,6 +42,26 @@ const estimable = {
 };
 
 describe("duration estimator contracts", () => {
+  it("validates the shared estimator identity, pacing bottleneck and deployment latency ceiling", () => {
+    expect(enginePolicyIdentitySchema.parse(conservativeDurationEstimatorIdentity)).toEqual({
+      name: "conservative-duration-estimator",
+      version: 1,
+    });
+    expect(estimatorBottleneckSchema.parse("adaptive_pacing")).toBe("adaptive_pacing");
+    expect(
+      estimatorInputSchema.safeParse({ ...input, declaredErpLatencyMs: largestAllowedErpLatencyMs })
+        .success,
+    ).toBe(true);
+    expect(
+      estimatorInputSchema.safeParse({
+        ...input,
+        declaredErpLatencyMs: largestAllowedErpLatencyMs + 1,
+      }).success,
+    ).toBe(false);
+    expect(
+      estimatorResultSchema.parse({ ...estimable, decision: "admitted", reasons: [] }).reasons,
+    ).toEqual([]);
+  });
   it("keeps the provisional inclusive 600-second occupancy ceiling", () => {
     expect(estimatedDemoOccupancyCeilingSeconds).toBe(600);
   });

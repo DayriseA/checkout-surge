@@ -11,7 +11,8 @@
     "type-check": "tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
     "dev": "node ../../scripts/run-with-env.mjs tsx watch src/index.ts",
-    "test": "pnpm test:api",
+    "test": "pnpm test:unit && pnpm test:api",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts",
     "test:coverage:api": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.api.config.ts --coverage"
   },

@@ -28,8 +28,8 @@ Sanity envelopes before margins (documentation only, not estimator logic): incid
 | 32 retained ERP attempts per order | Bounded attempt history | D09 | Initial constant; provisional until task 20. |
 | 600-second inclusive demo-occupancy ceiling (`estimatedDemoOccupancyCeilingSeconds` in `packages/contracts/src/estimate.ts`) | Admission envelope | D11 | Initial value; provisional until task 20. |
 | 900-second automatic reset deadline, measured from run acceptance | Demo occupancy hard limit | D10 | Initial value, introduced in task 13; provisional until task 20. |
-| Latency overhead floor; conservative margins for adaptation, persistence, and notification overhead | Estimator envelope | D11 | To be measured in task 15; provisional until task 20. |
-| Transient-error demand factor `1/(1-p)` margin and the policy-maximum `p` | Estimator error assumptions | D11 | To be calibrated in task 15; provisional until task 20. |
-| Policy and estimator identity versions (`enginePolicyIdentitySchema` names/versions) | Versioning | D13 | Assigned when the owning tasks activate the code they version. |
+| Latency overhead floor; conservative margins for adaptation, persistence, and notification overhead | Estimator envelope | D11 | Task 15: 50 ms latency overhead; assumed initial pacing 2/s, ramp 0.1/s², ceiling 20/s; ramp-aware ERP time ×2; fixed settlement overhead 15 s. Chosen from small supplied measurements; provisional until task 20. |
+| Transient-error demand factor `1/(1-p)` margin and the policy-maximum `p` | Estimator error assumptions | D11 | Task 15: p is a fraction; demand 1/(1-p) ×1.25 when p>0, plus 5 s per excess call; supported maximum p=0.3. Provisional until task 20. |
+| Policy and estimator identity versions (`enginePolicyIdentitySchema` names/versions) | Versioning | D13 | `adaptive-erp-admission` v1 (task 14 shared definition); `conservative-duration-estimator` v1 (task 15 shared definition in estimate.ts). Provisional until task 20. |
 
 Calibration may adjust these constants only; it may not change the algorithms, weaken a target, or suppress errors to pass (D14). The throughput and pressure targets pull in opposite directions by design; the task 20 report must explain the chosen trade-off. See [the execution index](index.md) and [task 20](20_calibrate_policy_and_obtain_approval.md) for the approval gate.
