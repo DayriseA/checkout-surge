@@ -17,6 +17,7 @@ import { enginePolicyIdentitySchema } from "./processing-control.js";
  * is at most this ceiling.
  */
 export const estimatedDemoOccupancyCeilingSeconds = 600 as const;
+export const automaticRunResetDeadlineSeconds = 900 as const;
 
 /**
  * Declared scenario conditions consumed by the API-owned estimator (D11). The

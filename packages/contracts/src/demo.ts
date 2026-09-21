@@ -140,6 +140,7 @@ const demoRunSnapshotBaseShape = {
   adminResetCompletedAt: isoTimestampSchema.optional(),
   configSnapshot: acceptedRunConfigSnapshotSchema,
   startedAt: isoTimestampSchema,
+  autoResetAt: isoTimestampSchema.optional(),
 };
 
 const nonterminalDemoRunSnapshotShape = {

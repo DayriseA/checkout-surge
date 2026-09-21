@@ -13,6 +13,7 @@ import {
   erpAttemptHistoryRetentionLimit,
   httpTimingBreakdownSummarySchema,
   internalRunFailureReasonSchema,
+  isDestructiveResetReason,
   type LoadRunDiagnosticsSummary,
   loadRunDiagnosticsSummarySchema,
   type PublicRunHistoryDetailResponse,
@@ -590,7 +591,7 @@ function toRunHistoryListItem(
     failedOrders: summary.businessOutcomeSummary.failedOrders,
     convergenceDurationSeconds:
       summary.runSignalTimelineSummary?.convergenceDurationSeconds ?? null,
-    dataDiscarded: row.failureReason === "admin_reset",
+    dataDiscarded: isDestructiveResetReason(row.failureReason),
   });
 }
 
@@ -694,7 +695,7 @@ function toPublicRunHistorySummary(
       : {}),
     runSignalTimelineSummary: toRunSignalTimelineHeadlineOrNull(row),
     capturedAt: row.capturedAt.toISOString(),
-    dataDiscarded: row.failureReason === "admin_reset",
+    dataDiscarded: isDestructiveResetReason(row.failureReason),
   });
 }
 
@@ -786,7 +787,7 @@ function toRunHistorySummary(row: typeof demoRunSummaries.$inferSelect): RunHist
       : {}),
     runSignalTimelineSummary: toRunSignalTimelineHeadlineOrNull(row),
     capturedAt: row.capturedAt.toISOString(),
-    dataDiscarded: row.failureReason === "admin_reset",
+    dataDiscarded: isDestructiveResetReason(row.failureReason),
   });
 }
 

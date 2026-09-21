@@ -68,6 +68,7 @@ describe("demo-run projections", () => {
       saleOfferId: row.saleOfferId,
       configSnapshot,
       startedAt: "2026-07-21T10:00:00.000Z",
+      autoResetAt: "2026-07-21T10:15:00.000Z",
       trafficStartedAt: "2026-07-21T10:00:01.000Z",
       trafficEndedAt: "2026-07-21T10:00:02.000Z",
       finalizedAt: "2026-07-21T10:00:03.000Z",

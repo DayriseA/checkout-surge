@@ -21,6 +21,7 @@ import {
   adminRunHistoryDetailResponseSchema,
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
+  automaticRunResetDeadlineSeconds,
   buyOutcomeHeaderName,
   buyRequestSchema,
   buyResponseSchema,
@@ -43,6 +44,7 @@ import {
   deriveLoadExecutionPlan,
   deriveRecordedReplyCount,
   deriveRunResult,
+  destructiveResetReasonValues,
   type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
@@ -61,6 +63,7 @@ import {
   healthReadyPath,
   healthResponseSchema,
   internalLoadMetricIngestPath,
+  internalRunFailureReasonSchema,
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
@@ -114,6 +117,7 @@ import {
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
+  toPublicRunFailureCategory,
   trafficCompletionAcknowledgementSchema,
   trafficCompletionDeliverySummarySchema,
   trafficCompletionReportSchema,
@@ -786,7 +790,26 @@ describe("run lifecycle contracts", () => {
       saleOfferId,
       configSnapshot: acceptedRunSnapshot(),
       startedAt: timestamp,
+      autoResetAt: new Date(
+        new Date(timestamp).getTime() + automaticRunResetDeadlineSeconds * 1000,
+      ).toISOString(),
     };
+    expect(automaticRunResetDeadlineSeconds).toBe(900);
+    expect(destructiveResetReasonValues).toEqual(["admin_reset", "auto_reset"]);
+    expect(internalRunFailureReasonSchema.parse("auto_reset")).toBe("auto_reset");
+    expect(toPublicRunFailureCategory("auto_reset")).toBe("automatic_reset");
+    expect(
+      demoRunSnapshotSchema.parse({ ...baseRun, status: "starting", trafficStatus: "starting" })
+        .autoResetAt,
+    ).toBe(baseRun.autoResetAt);
+    expect(
+      demoRunSnapshotSchema.safeParse({
+        ...baseRun,
+        status: "starting",
+        trafficStatus: "starting",
+        autoResetAt: "invalid",
+      }).success,
+    ).toBe(false);
     const trafficStartedAt = "2026-06-20T12:00:01.000Z";
     const trafficEndedAt = "2026-06-20T12:00:02.000Z";
     const finalizedAt = "2026-06-20T12:00:03.000Z";

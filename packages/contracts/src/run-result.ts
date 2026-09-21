@@ -4,6 +4,13 @@ import { trafficHttpSummarySchema } from "./load.js";
 import { nonnegativeIntegerSchema } from "./primitives.js";
 import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 
+export const destructiveResetReasonValues = ["admin_reset", "auto_reset"] as const;
+export type DestructiveResetReason = (typeof destructiveResetReasonValues)[number];
+
+export function isDestructiveResetReason(reason: string | null): reason is DestructiveResetReason {
+  return destructiveResetReasonValues.some((value) => value === reason);
+}
+
 /** The persisted failure vocabulary. Keep this closed: it is mapped before public projection. */
 export const internalRunFailureReasonValues = [
   "reconciliation_escalated",
@@ -16,7 +23,7 @@ export const internalRunFailureReasonValues = [
   "traffic_failed",
   "inventory_initialization_failed",
   "load_orchestrator_unavailable",
-  "admin_reset",
+  ...destructiveResetReasonValues,
 ] as const;
 export const internalRunFailureReasonSchema = z.enum(internalRunFailureReasonValues);
 export type InternalRunFailureReason = z.infer<typeof internalRunFailureReasonSchema>;
@@ -27,6 +34,7 @@ export const publicRunFailureCategoryValues = [
   "traffic",
   "inventory",
   "operator",
+  "automatic_reset",
 ] as const;
 export const publicRunFailureCategorySchema = z.enum(publicRunFailureCategoryValues);
 export type PublicRunFailureCategory = z.infer<typeof publicRunFailureCategorySchema>;
@@ -49,6 +57,8 @@ export function toPublicRunFailureCategory(
       return "traffic";
     case "inventory_initialization_failed":
       return "inventory";
+    case "auto_reset":
+      return "automatic_reset";
     case "admin_reset":
       return "operator";
   }

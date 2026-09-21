@@ -1,4 +1,5 @@
 import type { NotificationRecordJob } from "@checkout-surge/contracts";
+import { destructiveResetReasonValues } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   demoRuns,
@@ -6,7 +7,7 @@ import {
   orders,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { NotificationRecordPersistence } from "../application/notification-record-job-handler.js";
 
 type DurableOrder = typeof orders.$inferSelect;
@@ -55,7 +56,7 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
         and(
           eq(demoRuns.id, runId),
           eq(demoRuns.status, "failed"),
-          eq(demoRuns.failureReason, "admin_reset"),
+          inArray(demoRuns.failureReason, destructiveResetReasonValues),
         ),
       )
       .limit(1);

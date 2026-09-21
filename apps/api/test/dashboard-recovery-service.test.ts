@@ -6,6 +6,7 @@ import {
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
+  destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   type InventoryStatus,
@@ -27,7 +28,7 @@ import {
   saleOffers,
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
-import { eq, type SQL } from "drizzle-orm";
+import { eq, inArray, type SQL } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -95,7 +96,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     });
   });
 
-  it("recovers the global null-marker gate without a sale offer across reader recreation and repair", async () => {
+  it.each(
+    destructiveResetReasonValues,
+  )("recovers the %s null-marker gate without a sale offer across reader recreation and repair", async (reason) => {
     if (!connection) throw new Error("Test database connection was not initialized.");
     const id = "99999999-9999-4999-8999-999999999991";
     await connection.db.insert(demoRuns).values({
@@ -105,7 +108,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       operatorMode: "admin",
       status: "failed",
       trafficStatus: "failed",
-      failureReason: "admin_reset",
+      failureReason: reason,
       finalizedAt: now,
       configSnapshot: configSnapshot(),
       startedAt: now,
@@ -147,6 +150,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     await expect(
       new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
     ).resolves.toMatchObject({ resetRecovery: "ready", resetRecoveryRunId: null });
+    await connection.db
+      .delete(demoRuns)
+      .where(inArray(demoRuns.id, [id, "99999999-9999-4999-8999-999999999992"]));
   });
 
   it("recovers transport accounting and the joined terminal signal timeline", async () => {

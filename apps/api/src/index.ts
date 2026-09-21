@@ -36,6 +36,7 @@ import { createApiReadiness } from "./runtime/readiness.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
+import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
 import { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
@@ -409,6 +410,11 @@ export async function startApiServer(): Promise<void> {
     },
   });
 
+  const automaticRunReset = new AutomaticRunResetService({
+    db: connection.db,
+    resetWorkflow: adminDemoReset,
+  });
+  let automaticResetPoller: ReturnType<typeof setInterval> | null = null;
   let server: ApiFastifyInstance | null = null;
   let closePromise: Promise<void> | null = null;
   let finalizationPoller: ReturnType<typeof setInterval> | null = null;
@@ -423,6 +429,10 @@ export async function startApiServer(): Promise<void> {
       if (finalizationPoller) {
         clearInterval(finalizationPoller);
       }
+      if (automaticResetPoller) clearInterval(automaticResetPoller);
+      await automaticRunReset.close().catch((err: unknown) => {
+        logger.error({ err }, "Automatic run reset failed during shutdown.");
+      });
       await closeApiResources({
         closePendingPersistenceRecovery: () => pendingPersistenceRecovery.close(),
         closeReadiness: () => readiness.close(),
@@ -459,6 +469,18 @@ export async function startApiServer(): Promise<void> {
 
   try {
     await runtimePolicyService.validateActivePolicyAtStartup();
+    await automaticRunReset.check().catch((err: unknown) => {
+      logger.error(
+        { err },
+        "Automatic run reset startup check failed; periodic checks will retry.",
+      );
+    });
+    automaticResetPoller = setInterval(() => {
+      void automaticRunReset.check().catch((err: unknown) => {
+        logger.error({ err }, "Automatic run reset check failed.");
+      });
+    }, 5_000);
+    automaticResetPoller.unref();
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
     pendingPersistenceRecovery.start();
     if (startupReconciliation.discoveredRunCount > 0) {

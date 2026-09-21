@@ -54,6 +54,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         actions={actions}
         navigation={navigation}
         presetName={summary.presetName}
+        automatic={summary.failureCategory === "automatic_reset"}
       />
     );
   }
@@ -953,6 +954,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           </Link>
         }
         presetName={summary.presetName}
+        automatic={summary.failureCategory === "automatic_reset"}
       />
     );
   }
@@ -1363,6 +1365,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 }
 
 function DiscardedRunDetail({
+  automatic,
   actions,
   navigation,
   presetName,
@@ -1370,6 +1373,7 @@ function DiscardedRunDetail({
   actions?: ReactNode;
   navigation?: ReactNode;
   presetName: string;
+  automatic: boolean;
 }) {
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
@@ -1380,7 +1384,8 @@ function DiscardedRunDetail({
       <p className="m-0 mt-3 text-xs font-bold uppercase text-muted">Cancelled</p>
       <h1 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">{presetName}</h1>
       <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
-        This run was cancelled by an admin reset. Its experiment data was discarded.
+        This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
+        data was discarded.
       </p>
     </section>
   );

@@ -8,6 +8,7 @@ import {
   dashboardProjectionSchemaName,
   dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
+  isDestructiveResetReason,
   type MetricSample,
   type RunSignalTimelineSummary,
   runSignalTimelineSummarySchema,
@@ -145,7 +146,7 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
     // Keep the latest reset's result identity after its gate clears: claim and
     // completion dirty signals may coalesce before the first projection build.
     const resetRun =
-      latestTerminal?.status === "failed" && latestTerminal.failureReason === "admin_reset"
+      latestTerminal?.status === "failed" && isDestructiveResetReason(latestTerminal.failureReason)
         ? latestTerminal
         : null;
     const resetRecovery =

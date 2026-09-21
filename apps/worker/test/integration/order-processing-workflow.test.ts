@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   type AcceptedRunConfigSnapshot,
+  destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpAttemptHistoryRetentionLimit,
@@ -1253,6 +1254,23 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await consumer?.close();
       consumer = null;
     }
+  });
+
+  it.each(
+    destructiveResetReasonValues,
+  )("fences recovery and notification recording for %s", async (reason) => {
+    await resetTestDatabase({ databaseUrl, migrationsFolder });
+    await seedQueuedOrder(connection, { runScoped: true });
+    const recovery = new PostgresOrderRecoveryPersistence(connection.db);
+    const notifications = new PostgresNotificationRecordPersistence(connection.db);
+    expect(await recovery.isTerminalResetRun(ids.run)).toBe(false);
+    expect(await notifications.isTerminalResetRun(ids.run)).toBe(false);
+    await connection.db
+      .update(demoRuns)
+      .set({ status: "failed", failureReason: reason })
+      .where(eq(demoRuns.id, ids.run));
+    expect(await recovery.isTerminalResetRun(ids.run)).toBe(true);
+    expect(await notifications.isTerminalResetRun(ids.run)).toBe(true);
   });
 
   it("waits for an in-flight order transaction before purging run rows", async () => {

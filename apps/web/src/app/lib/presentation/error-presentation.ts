@@ -1,4 +1,4 @@
-import type { ErrorPayloadCode } from "@checkout-surge/contracts";
+import type { ErrorPayloadCode, PublicRunFailureCategory } from "@checkout-surge/contracts";
 import type { BackendRead } from "../backend-read";
 
 export type ErrorPresentationContextName =
@@ -59,7 +59,7 @@ export interface ErrorPresentationContext {
   budget?: "visitor" | "global";
   fieldErrors?: ReadonlyArray<{ field: string; message: string }>;
   readiness?: "degraded" | "unavailable";
-  failedRunCategory?: "reconciliation" | "business" | "traffic" | "inventory" | "operator";
+  failedRunCategory?: PublicRunFailureCategory;
 }
 
 const genericPresentation = {
@@ -210,7 +210,9 @@ function failedRunPresentation(
           ? "The scenario could not finish processing its checkout work."
           : category === "reconciliation"
             ? "The final evidence did not settle consistently."
-            : "The scenario was stopped by an operator.";
+            : category === "automatic_reset"
+              ? "The scenario was cancelled by an automatic reset."
+              : "The scenario was stopped by an operator.";
   return {
     headline: "This run did not finish",
     explanation,

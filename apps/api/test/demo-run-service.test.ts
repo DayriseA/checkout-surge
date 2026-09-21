@@ -5,6 +5,7 @@ import type {
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
+  destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   trafficDeliverySummarySchema,
@@ -1196,7 +1197,9 @@ describe("demo-run lifecycle start gating", () => {
     ).resolves.toBe(false);
   });
 
-  it("returns the reset run when a delayed orchestrator acknowledgement loses activation CAS", async () => {
+  it.each(
+    destructiveResetReasonValues,
+  )("returns the %s run when delayed activation loses CAS and allows a successor", async (reason) => {
     const startConnection = requireConnection(connection);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     let releaseTrafficStart: (() => void) | undefined;
@@ -1235,7 +1238,7 @@ describe("demo-run lifecycle start gating", () => {
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
       maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       logger: createSilentLogger("api"),
-      now: () => new Date("2026-06-20T00:00:20.000Z"),
+      now: () => new Date("2026-06-20T00:15:11.000Z"),
     });
 
     try {
@@ -1245,7 +1248,7 @@ describe("demo-run lifecycle start gating", () => {
       );
       await trafficStartEnteredPromise;
 
-      const resetResponse = await resetService.reset("corr-reset-race");
+      const resetResponse = await resetService.reset("corr-reset-race", reason);
       expect(resetResponse.failedRunCount).toBe(1);
 
       releaseTrafficStart?.();
@@ -1255,8 +1258,8 @@ describe("demo-run lifecycle start gating", () => {
         runId: "77777777-7777-4777-8777-777777777777",
         status: "failed",
         trafficStatus: "failed",
-        failureCategory: "operator",
-        finalizedAt: "2026-06-20T00:00:20.000Z",
+        failureCategory: reason === "auto_reset" ? "automatic_reset" : "operator",
+        finalizedAt: "2026-06-20T00:15:11.000Z",
       });
       const [run] = await startConnection.db
         .select()
@@ -1266,12 +1269,18 @@ describe("demo-run lifecycle start gating", () => {
         .select()
         .from(demoRunSummaries)
         .where(eq(demoRunSummaries.runId, "77777777-7777-4777-8777-777777777777"));
-      expect(run).toMatchObject({ status: "failed", failureReason: "admin_reset" });
+      expect(run).toMatchObject({ status: "failed", failureReason: reason });
       expect(summary).toMatchObject({
         status: "failed",
-        failureReason: "admin_reset",
-        endedAt: new Date("2026-06-20T00:00:20.000Z"),
+        failureReason: reason,
+        endedAt: new Date("2026-06-20T00:15:11.000Z"),
       });
+      const successor = await service.startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "corr-successor",
+      );
+      expect(successor.run.status).toBe("active");
+      expect(successor.run.runId).not.toBe(startResponse.run.runId);
     } finally {
       releaseTrafficStart?.();
       await resetConnection.close();

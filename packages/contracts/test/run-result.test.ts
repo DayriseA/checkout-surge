@@ -425,9 +425,14 @@ describe("deriveRunResult", () => {
 
   it("maps every persisted failure reason to a bounded public category", () => {
     for (const reason of internalRunFailureReasonValues) {
-      expect(["reconciliation", "business", "traffic", "inventory", "operator"]).toContain(
-        toPublicRunFailureCategory(reason),
-      );
+      expect([
+        "reconciliation",
+        "business",
+        "traffic",
+        "inventory",
+        "operator",
+        "automatic_reset",
+      ]).toContain(toPublicRunFailureCategory(reason));
     }
   });
 });

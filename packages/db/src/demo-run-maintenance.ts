@@ -1,4 +1,4 @@
-import { uuidSchema } from "@checkout-surge/contracts";
+import { type DestructiveResetReason, uuidSchema } from "@checkout-surge/contracts";
 import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
@@ -80,7 +80,7 @@ export async function deleteGeneratedRunDurable(
 /** Deletes a reset run's internal data while retaining its history identity. */
 export async function purgeResetRunDurable(
   db: CheckoutSurgeDatabase,
-  input: { runId: string; failureReason: "admin_reset" },
+  input: { runId: string; failureReason: DestructiveResetReason },
 ): Promise<void> {
   const runId = uuidSchema.parse(input.runId);
   await db.transaction(async (tx) => {

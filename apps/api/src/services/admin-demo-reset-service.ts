@@ -1,10 +1,14 @@
 import {
   type AdminDemoResetResponse,
   adminDemoResetResponseSchema,
+  automaticRunResetDeadlineSeconds,
   type BusinessOutcomeSummary,
+  type DestructiveResetReason,
+  destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyServerReservationTimingSummary,
   httpTimingBreakdownSummarySchema,
+  isDestructiveResetReason,
   isReplayPossible,
   realLoadRunDiagnosticsSummarySchema,
   type TerminalInventorySnapshot,
@@ -28,7 +32,7 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
@@ -64,6 +68,7 @@ type FencedResetRun = {
   run: typeof demoRuns.$inferSelect;
   finalization: typeof demoRunFinalizations.$inferSelect | null;
   finalizedAt: Date;
+  reason: DestructiveResetReason;
   previousStatus?: typeof demoRuns.$inferSelect.status;
   previousTrafficStatus?: typeof demoRuns.$inferSelect.trafficStatus;
 };
@@ -77,8 +82,6 @@ export interface DashboardLiveStateReset {
 export interface AdminDemoResetWorkflow {
   reset(correlationId: string, reason: DestructiveResetReason): Promise<AdminDemoResetResponse>;
 }
-
-export type DestructiveResetReason = "admin_reset";
 
 export class AdminDemoResetService implements AdminDemoResetWorkflow {
   constructor(
@@ -115,6 +118,24 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     );
   }
 
+  async hasPendingAutomaticResetCleanup(): Promise<boolean> {
+    // This marker survives durable purge and dashboard metric deletion until all cleanup succeeds.
+    const runIds = await this.options.redis.smembers(pendingResetProjectionKey);
+    if (runIds.length === 0) return false;
+    const [run] = await this.options.db
+      .select({ id: demoRuns.id })
+      .from(demoRuns)
+      .where(
+        and(
+          inArray(demoRuns.id, runIds),
+          eq(demoRuns.status, "failed"),
+          eq(demoRuns.failureReason, "auto_reset"),
+        ),
+      )
+      .limit(1);
+    return run !== undefined;
+  }
+
   private async resetWithoutConcurrentReset(
     correlationId: string,
     reason: DestructiveResetReason,
@@ -136,6 +157,12 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           and(
             inArray(demoRuns.status, ["starting", "active", "draining"]),
             isNull(demoRunSummaries.id),
+            reason === "auto_reset"
+              ? lte(
+                  demoRuns.startedAt,
+                  new Date(now.getTime() - automaticRunResetDeadlineSeconds * 1000),
+                )
+              : undefined,
           ),
           incompleteAdminResetPredicate(),
         ),
@@ -147,7 +174,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       .where(
         and(
           eq(demoRuns.status, "failed"),
-          eq(demoRuns.failureReason, "admin_reset"),
+          inArray(demoRuns.failureReason, destructiveResetReasonValues),
           isNotNull(demoRuns.adminResetCompletedAt),
         ),
       );
@@ -201,6 +228,9 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           run: candidate.run,
           finalization: candidate.finalization,
           finalizedAt: candidate.run.finalizedAt ?? now,
+          reason: isDestructiveResetReason(candidate.run.failureReason)
+            ? candidate.run.failureReason
+            : reason,
         });
         continue;
       }
@@ -218,13 +248,35 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
           run: candidate.run,
           finalization: candidate.finalization,
           finalizedAt: now,
+          reason,
           previousStatus: candidate.run.status,
           previousTrafficStatus: candidate.run.trafficStatus,
         });
       }
     }
 
-    for (const row of fencedRuns) await this.publishRecoveryDirty(row.run.id, correlationId);
+    // A poll can lose to a completed reset and a newly admitted successor.
+    // Do not clear the successor's shared state when nothing is due anymore.
+    if (reason === "auto_reset" && fencedRuns.length === 0 && projectionRunIds.size === 0) {
+      return adminDemoResetResponseSchema.parse({
+        failedRunCount: 0,
+        closedSaleOfferCount: 0,
+        cleanedQueueCount: 0,
+        cleanedJobCount: 0,
+        resetAt: now.toISOString(),
+        correlationId,
+      });
+    }
+
+    for (const row of fencedRuns) {
+      if (row.reason === "auto_reset") {
+        this.options.logger.info(
+          { runId: row.run.id, correlationId },
+          "Automatically resetting overdue demo run.",
+        );
+      }
+      await this.publishRecoveryDirty(row.run.id, correlationId);
+    }
 
     let closedSaleOfferCount = 0;
     const closureFailures: unknown[] = [];
@@ -274,7 +326,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
 
       await this.options.trafficAborter.abortCurrent({
         runId: row.run.id,
-        reason,
+        reason: row.reason,
         correlationId,
       });
     }
@@ -320,7 +372,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       summaryInputs.push({
         run: latest.run,
         terminalStatus: "failed",
-        failureReason: reason,
+        failureReason: fencedRun.reason,
         replayPossible: isReplayPossible(
           parsePersistedAcceptedRunConfigSnapshot(
             latest.run.configSnapshot,
@@ -335,7 +387,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         serverReservationTimingSummary: await this.readReservationTiming(latest.run.id),
         loadRunDiagnosticsSummary: {
           ...trafficSummary.loadRunDiagnosticsSummary,
-          failureReason: reason,
+          failureReason: fencedRun.reason,
           ...(fencedRun.previousStatus ? { previousStatus: fencedRun.previousStatus } : {}),
           ...(fencedRun.previousTrafficStatus
             ? { previousTrafficStatus: fencedRun.previousTrafficStatus }
@@ -363,7 +415,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     for (const row of fencedRuns) {
       await (this.options.purgeResetRunDurable ?? purgeResetRunDurable)(this.options.db, {
         runId: row.run.id,
-        failureReason: reason,
+        failureReason: row.reason,
       });
       await (this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState)(
         this.options.redis,

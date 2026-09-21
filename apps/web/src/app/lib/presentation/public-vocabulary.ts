@@ -193,6 +193,12 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
         explanation: "Final inventory evidence could not verify the run's stock outcome.",
         action: "Start a new run to capture a complete inventory result.",
       };
+    case "automatic_reset":
+      return {
+        explanation:
+          "The run was cancelled by an automatic reset. Its experiment data was discarded.",
+        action: "Start a new run when the demo is ready.",
+      };
     case "operator":
       return {
         explanation: "The run was stopped by an operator before a complete result was recorded.",

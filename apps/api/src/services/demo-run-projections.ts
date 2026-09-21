@@ -1,4 +1,5 @@
 import {
+  automaticRunResetDeadlineSeconds,
   type BusinessOutcomeSummary,
   type DemoRunSnapshot,
   demoRunSnapshotSchema,
@@ -21,7 +22,14 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     trafficStatus: run.trafficStatus,
     ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),
     configSnapshot: parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, context),
-    ...(run.startedAt ? { startedAt: run.startedAt.toISOString() } : {}),
+    ...(run.startedAt
+      ? {
+          startedAt: run.startedAt.toISOString(),
+          autoResetAt: new Date(
+            run.startedAt.getTime() + automaticRunResetDeadlineSeconds * 1000,
+          ).toISOString(),
+        }
+      : {}),
     ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),

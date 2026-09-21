@@ -1,4 +1,5 @@
 import type { OrderProcessJob, OrderWaitingReason } from "@checkout-surge/contracts";
+import { destructiveResetReasonValues } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   demoRuns,
@@ -31,7 +32,7 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           eq(demoRuns.id, runId),
           eq(demoRuns.status, "failed"),
-          eq(demoRuns.failureReason, "admin_reset"),
+          inArray(demoRuns.failureReason, destructiveResetReasonValues),
         ),
       )
       .limit(1);
