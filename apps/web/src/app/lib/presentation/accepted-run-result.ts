@@ -5,6 +5,10 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import type { CompletedBackendRead } from "../api";
+import {
+  type RunFailureExplanationEvidence,
+  runFailureExplanationEvidence,
+} from "./run-failure-explanation";
 
 /**
  * The small public summary/qualification subset retained from the visitor's own already-read
@@ -17,6 +21,7 @@ export interface AcceptedRunReportEvidence {
   trafficDeliveryStatus: TrafficDeliveryStatus;
   transportAttemptCounts: TransportAttemptCounts;
   transportFailures: number;
+  failureExplanation: RunFailureExplanationEvidence | null;
 }
 
 export type AcceptedRunResult =
@@ -52,6 +57,7 @@ export function acceptedRunResultFromRead(
             : {
                 reportEvidence: {
                   result: read.data.result,
+                  failureExplanation: runFailureExplanationEvidence(read.data),
                   trafficDeliveryStatus:
                     read.data.summary.trafficDeliverySummary.trafficDeliveryStatus,
                   transportAttemptCounts: read.data.summary.transportAttemptCounts,

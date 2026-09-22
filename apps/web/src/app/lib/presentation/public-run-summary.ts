@@ -26,6 +26,8 @@ export interface PublicRunSummaryInput {
    * saved-report evidence. Null when no transport counts are available.
    */
   transportObservation: TransportObservation | null;
+  /** A visible explanation already accounts for delivery and response coverage. */
+  hasFailureExplanation?: boolean;
 }
 
 export type PublicRunCaveatTone = "warning" | "danger";
@@ -124,7 +126,25 @@ function publicRunCaveats(
       tone: "warning",
     });
   }
-  if (classifications.has("evidence_incomplete") && !sentenceSaysIncomplete) {
+  const hasOtherMissingEvidence =
+    result.invariants.some((item) => item.status === "not_evaluable") ||
+    result.reconciliations.some(
+      (item) =>
+        item.classification === "evidence_incomplete" &&
+        !(
+          item.incompleteReason === "partial" &&
+          [
+            "partial_generator_coverage",
+            "accepted_responses_vs_unique_reservations",
+            "sold_out_decisions_vs_responses",
+          ].includes(item.code)
+        ),
+    );
+  if (
+    classifications.has("evidence_incomplete") &&
+    !sentenceSaysIncomplete &&
+    (!input.hasFailureExplanation || hasOtherMissingEvidence)
+  ) {
     caveats.push({
       message:
         "Evidence incomplete: some final evidence was unavailable, so the result could not be fully verified.",
@@ -132,10 +152,12 @@ function publicRunCaveats(
     });
   }
 
-  const measurementCaveats = [
-    ...transportCaveats(input.transportObservation),
-    ...deliveryCaveats(input.trafficDeliveryStatus),
-  ];
+  const measurementCaveats = input.hasFailureExplanation
+    ? []
+    : [
+        ...transportCaveats(input.transportObservation),
+        ...deliveryCaveats(input.trafficDeliveryStatus),
+      ];
   return {
     caveats: [...caveats, ...measurementCaveats],
     hasMeasurementCaveat: measurementCaveats.length > 0,
@@ -148,7 +170,9 @@ function transportCaveats(observation: TransportObservation | null): PublicRunCa
   }
   return [
     {
-      message: `Reply observation incomplete: outcomes and latency cover ${formatCount(observation.repliesRecorded) ?? "unavailable"} of ${formatCount(observation.counts.plannedRequests) ?? "unavailable"} attempts.`,
+      message: observation.hasUndispatchedAttempts
+        ? `${formatCount(observation.counts.unstartedRequests)} planned requests were never sent. ${observation.hasUnrecordedReplies ? `${formatCount(observation.counts.interruptedRequests)} launched requests did not complete; ${formatCount(observation.transportFailures)} attempts ended in transport failure.` : "All sent requests completed."} Outcomes and latency cover recorded responses only.`
+        : `Reply observation incomplete: outcomes and latency cover ${formatCount(observation.repliesRecorded) ?? "unavailable"} of ${formatCount(observation.counts.plannedRequests) ?? "unavailable"} attempts.`,
       tone: "warning",
     },
   ];

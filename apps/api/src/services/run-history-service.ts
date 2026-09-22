@@ -60,6 +60,7 @@ import {
   parsePersistedState,
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
+import { deriveRunFailureDiagnostic } from "./run-failure-diagnostic.js";
 import {
   parsePersistedTrafficDeliverySummary,
   parsePersistedTrafficHttpSummary,
@@ -159,6 +160,15 @@ export class RunHistoryService implements RunHistoryController {
     const summary = toPublicRunHistorySummary(source.summaryRow);
     const run = toPublicRunHistoryRun(source.runRow);
     return publicRunHistoryDetailResponseSchema.parse({
+      failureDiagnostic: deriveRunFailureDiagnostic(
+        source.runRow.failureReason
+          ? internalRunFailureReasonSchema.parse(source.runRow.failureReason)
+          : null,
+        parseRunHistoryDiagnostics(
+          source.summaryRow.loadRunDiagnosticsSummary,
+          `run summary ${source.summaryRow.id}`,
+        ),
+      ),
       summary,
       run,
       result: derivePublicRunResult(summary),
@@ -380,6 +390,12 @@ export class RunHistoryService implements RunHistoryController {
     ].filter(Boolean).length;
 
     return adminRunHistoryDetailResponseSchema.parse({
+      failureDiagnostic: deriveRunFailureDiagnostic(
+        source.runRow.failureReason
+          ? internalRunFailureReasonSchema.parse(source.runRow.failureReason)
+          : null,
+        diagnostics,
+      ),
       query,
       summary,
       run: toDemoRunSnapshot(source.runRow),

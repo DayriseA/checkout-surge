@@ -55,6 +55,47 @@ describe("run history service", () => {
     await connection?.close();
   });
 
+  it("projects the same safe diagnosis publicly and for admins while keeping stderr protected", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const warning =
+      'level=warning msg="Insufficient VUs, reached 4000 active VUs and cannot initialize more"';
+    await db
+      .update(demoRuns)
+      .set({ failureReason: "traffic_delivery_major_shortfall" })
+      .where(eq(demoRuns.id, ids.newerRun));
+    await db
+      .update(demoRunSummaries)
+      .set({
+        failureReason: "traffic_delivery_major_shortfall",
+        loadRunDiagnosticsSummary: {
+          ...runHistoryDiagnosticsFixture(),
+          executionPlan: {
+            trafficMode: "constant-arrival-rate",
+            ratePerSecond: 2000,
+            durationSeconds: 15,
+            startDelaySeconds: 6,
+            preAllocatedVus: 3000,
+            maxVus: 4000,
+            plannedEmittedAttempts: 30000,
+          },
+          stderrLines: [warning],
+          stderrLineCountObserved: 1,
+          stderrLineCountRetained: 1,
+        },
+      })
+      .where(eq(demoRunSummaries.runId, ids.newerRun));
+    const publicDetail = await service.detail(ids.newerRun);
+    const adminDetail = await service.adminDetail(ids.newerRun);
+    expect(publicDetail?.failureDiagnostic).toEqual({ cause: "virtual_user_limit", maxVus: 4000 });
+    expect(adminDetail?.failureDiagnostic).toEqual(publicDetail?.failureDiagnostic);
+    expect(JSON.stringify(publicDetail)).not.toContain("stderr");
+    expect(JSON.stringify(publicDetail)).not.toContain(warning);
+    expect(adminDetail?.loadRunDiagnosticsSummary?.stderrLines).toEqual([warning]);
+    expect((await service.detail(ids.olderRun))?.failureDiagnostic).toBeNull();
+  });
+
   it("does not emit a cursor beyond the accepted request ceiling", () => {
     expect(nextCursor(1_000_100, 999_999, 100)).toEqual({});
     expect(nextCursor(1_000_001, 999_999, 1)).toEqual({ nextCursor: "c1000000" });

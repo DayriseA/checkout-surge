@@ -777,6 +777,7 @@ function detailFixture(evidence: RunResultEvidence): PublicRunHistoryDetailRespo
       : {}),
   });
   return publicRunHistoryDetailResponseSchema.parse({
+    failureDiagnostic: null,
     summary: publicSummary,
     run: {
       runId,

@@ -1807,7 +1807,10 @@ describe("watch browser recovery", () => {
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(() => initialRecovery.promise)
-      .mockResolvedValueOnce(jsonResponse(terminalProjection));
+      .mockResolvedValueOnce(jsonResponse(terminalProjection))
+      .mockResolvedValueOnce(
+        jsonResponse(runHistoryDetailFixtureFor("55555555-5555-4555-8555-555555555555")),
+      );
     vi.stubGlobal("EventSource", FakeEventSource);
     vi.stubGlobal("fetch", fetchMock);
 
@@ -1823,14 +1826,17 @@ describe("watch browser recovery", () => {
 
     await act(async () => vi.advanceTimersByTimeAsync(2_000));
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
       `${dashboardRecoveryProxyPath}?knownRunId=55555555-5555-4555-8555-555555555555&knownSaleOfferId=22222222-2222-4222-8222-222222222222`,
+    );
+    expect(String(fetchMock.mock.calls[2]?.[0])).toBe(
+      publicRunHistoryDetailProxyPath("55555555-5555-4555-8555-555555555555"),
     );
     expect(screen.getByRole("region", { name: "Run conclusion" })).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(2_000));
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it("keeps initial read availability separate from an available idle lifecycle", () => {
@@ -2211,6 +2217,32 @@ describe("run history browser cleanup", () => {
 describe("accepted Watch result handoff", () => {
   const acceptedRunId = "55555555-5555-4555-8555-555555555555";
   const newerRunId = "66666666-6666-4666-8666-666666666666";
+
+  it("retains the saved failure explanation on Watch without mixing it into a successor", () => {
+    const detail = runHistoryDetailFixtureFor(acceptedRunId);
+    detail.failureDiagnostic = { cause: "virtual_user_limit", maxVus: 4000 };
+    detail.result = { ...detail.result, outcome: "failed", failureCategory: "traffic" };
+    detail.summary.status = "failed";
+    detail.summary.failureCategory = "traffic";
+    const acceptedResult = acceptedRunResultFromRead(acceptedRunId, {
+      status: "available",
+      data: detail,
+    });
+    const markup = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        acceptedResult,
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun: demoRunFixture({ runId: newerRunId, status: "active" }),
+          }),
+        ),
+      }),
+    );
+    expect(markup).toContain("Virtual user limit reached");
+    expect(markup).toContain("The surge is under way");
+    expect(markup.match(/Virtual user limit reached/g)).toHaveLength(1);
+    expect(markup).not.toContain("Recorded k6 output");
+  });
 
   it.each([
     "operator",
@@ -3407,6 +3439,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
   const { notes: _deliveryNotes, ...publicDeliverySummary } = publicSummary.trafficDeliverySummary;
 
   return {
+    failureDiagnostic: null,
     summary: {
       ...publicSummary,
       trafficDeliverySummary: publicDeliverySummary,

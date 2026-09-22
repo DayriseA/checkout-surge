@@ -69,6 +69,48 @@ function summaryInput(
 }
 
 describe("public run summary", () => {
+  it("avoids repeating explained coverage gaps while retaining unrelated missing evidence", () => {
+    const evidence: RunResultEvidence = {
+      ...cleanEvidence,
+      runStatus: "failed",
+      failureCategory: "traffic",
+      generator: {
+        httpSummary: cleanHttpSummary,
+        transportAttemptCounts: {
+          plannedRequests: 1100,
+          startedRequests: 1000,
+          completedRequests: 1000,
+          unstartedRequests: 100,
+          interruptedRequests: 0,
+        },
+      },
+    };
+    const options = { hasFailureExplanation: true, trafficDeliveryStatus: "failed" as const };
+    expect(derivePublicRunSummary(summaryInput(options, evidence)).caveats).toEqual([]);
+    expect(
+      derivePublicRunSummary(summaryInput(options, { ...evidence, remainingStock: null })).caveats,
+    ).toEqual([
+      expect.objectContaining({ message: expect.stringContaining("Evidence incomplete") }),
+    ]);
+  });
+
+  it("identifies unsent requests separately from missing replies", () => {
+    const observation = deriveTransportObservation(
+      {
+        plannedRequests: 1100,
+        startedRequests: 1000,
+        completedRequests: 1000,
+        unstartedRequests: 100,
+        interruptedRequests: 0,
+      },
+      0,
+    );
+    const summary = derivePublicRunSummary(summaryInput({ transportObservation: observation }));
+    expect(summary.caveats[0]?.message).toContain(
+      "100 planned requests were never sent. All sent requests completed.",
+    );
+    expect(summary.caveats[0]?.message).not.toContain("Reply observation incomplete");
+  });
   it("keeps a clean sellout free of alarms and exposes known counts", () => {
     const summary = derivePublicRunSummary(summaryInput({ trafficDeliveryStatus: "complete" }));
 

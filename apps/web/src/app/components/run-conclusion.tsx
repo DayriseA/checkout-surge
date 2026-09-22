@@ -5,8 +5,10 @@ import {
   type PublicRunSummary,
 } from "../lib/presentation/public-run-summary";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
+import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import { invariantLabel, runConclusionSentence } from "../lib/presentation/run-result-presentation";
 import { ReportMeasurementsLink } from "./report-measurements-link";
+import { RunFailureExplanation } from "./run-failure-explanation";
 import type { TransportObservation } from "./transport-observation";
 
 type Reconciliation = RunResult["reconciliations"][number];
@@ -123,6 +125,8 @@ export function PublicRunConclusion({
   consistencyTargetId,
   measurementsTargetId,
   showProof = true,
+  failureExplanation = null,
+  stderrLines,
 }: {
   result: RunResult;
   runStatus: DemoRunStatus;
@@ -131,22 +135,34 @@ export function PublicRunConclusion({
   consistencyTargetId?: string;
   measurementsTargetId?: string;
   showProof?: boolean;
+  failureExplanation?: RunFailureExplanationEvidence | null;
+  stderrLines?: string[];
 }) {
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const summary = derivePublicRunSummary({
     result,
     trafficDeliveryStatus,
     transportObservation,
+    hasFailureExplanation: failureExplanation !== null,
   });
   return (
     <section
-      className={`col-span-full rounded-lg border p-4 ${publicConclusionClassName(result, summary)}`}
+      className={`col-span-full rounded-lg border p-4 ${failureExplanation ? "border-border bg-surface" : publicConclusionClassName(result, summary)}`}
       aria-label="Run conclusion"
     >
       <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
       <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">{summary.title}</p>
-      <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
-      {summary.failure ? (
+      {failureExplanation ? (
+        <p className="m-0 mt-1 text-sm font-semibold text-danger">Traffic failure</p>
+      ) : (
+        <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
+      )}
+      {failureExplanation ? (
+        <RunFailureExplanation
+          evidence={failureExplanation}
+          {...(stderrLines ? { stderrLines } : {})}
+        />
+      ) : summary.failure ? (
         <div className="mt-3 text-sm text-muted-strong">
           <p className="m-0">{summary.failure.explanation}</p>
           <p className="m-0 mt-1 font-semibold">{summary.failure.action}</p>

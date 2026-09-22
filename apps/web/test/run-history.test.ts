@@ -49,6 +49,59 @@ function publicReport(detail: PublicRunHistoryDetailResponse) {
 }
 
 describe("run history", () => {
+  it("puts the failure explanation before metrics and exposes raw evidence only to admins", () => {
+    const publicDetail = detailFixture("failed");
+    publicDetail.failureDiagnostic = { cause: "virtual_user_limit", maxVus: 4000 };
+    publicDetail.summary.transportAttemptCounts = {
+      plannedRequests: 22,
+      startedRequests: 20,
+      completedRequests: 20,
+      unstartedRequests: 2,
+      interruptedRequests: 0,
+    };
+    const publicMarkup = renderToStaticMarkup(publicReport(publicDetail));
+    expect(publicMarkup).toContain("Virtual user limit reached");
+    expect(publicMarkup).toContain("2 planned requests were never sent.");
+    expect(publicMarkup).toContain("All 10 accepted orders were confirmed and notified.");
+    expect(publicMarkup).not.toContain("Recorded k6 output");
+    expect(publicMarkup).not.toContain("Delivery failed: the load generator");
+    const detail = adminDetailFixture();
+    detail.summary.status = "failed";
+    detail.summary.failureCategory = "traffic";
+    detail.failureDiagnostic = publicDetail.failureDiagnostic;
+    detail.loadRunDiagnosticsSummary = {
+      nproc: null,
+      ulimitNofile: null,
+      processMaxOpenFiles: null,
+      generatorCapacity: null,
+      generatorUtilisation: null,
+      networkDiagnostics: null,
+      k6Version: null,
+      startedAt: "2026-06-20T00:00:00.000Z",
+      completedAt: "2026-06-20T00:00:10.000Z",
+      executionPlan: {
+        trafficMode: "constant-arrival-rate",
+        ratePerSecond: 2,
+        durationSeconds: 11,
+        preAllocatedVus: 10,
+        maxVus: 4000,
+        startDelaySeconds: 0,
+        plannedEmittedAttempts: 22,
+      },
+      stderrLines: ["Insufficient VUs, reached 4000 active VUs and cannot initialize more"],
+      stderrLineCountObserved: 1,
+      stderrLineCountRetained: 1,
+      stderrRetainedLineLimit: 50,
+      stderrLineTruncationLength: 500,
+      stderrLineTruncatedCount: 0,
+    };
+    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
+    expect(markup.indexOf("Virtual user limit reached")).toBeLessThan(
+      markup.indexOf("Run overview"),
+    );
+    expect(markup).toContain("Recorded k6 output");
+    expect(markup).toContain("Insufficient VUs, reached 4000");
+  });
   it.each([
     "operator",
     "automatic_reset",
@@ -1448,6 +1501,7 @@ function detailFixture(
   });
   const serverTiming = emptyServerReservationTimingSummary;
   return {
+    failureDiagnostic: null,
     summary: {
       runId: "55555555-5555-4555-8555-555555555555",
       presetName: "Preview 1k",
@@ -1522,6 +1576,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
 
   return {
     query: { limit: 20 },
+    failureDiagnostic: null,
     overallDurationMs: 10_000,
     summary: {
       ...detail.summary,

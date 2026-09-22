@@ -16,6 +16,7 @@ import {
   trafficDeliveryStatusTone,
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
+import { runFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import { buildRunHistoryTrace } from "../lib/presentation/run-history-trace";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import {
@@ -109,6 +110,21 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           </div>
         </div>
       </header>
+
+      {detail.failureDiagnostic ? (
+        <PublicRunConclusion
+          result={result}
+          runStatus={summary.status}
+          showProof={false}
+          failureExplanation={runFailureExplanationEvidence(detail)}
+          stderrLines={detail.loadRunDiagnosticsSummary?.stderrLines ?? []}
+          trafficDeliveryStatus={summary.trafficDeliverySummary.trafficDeliveryStatus}
+          transportObservation={deriveTransportObservation(
+            summary.transportAttemptCounts,
+            summary.httpSummary.transportFailures,
+          )}
+        />
+      ) : null}
 
       <section aria-label="Run overview" className="rounded-lg border border-border bg-surface p-4">
         <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
@@ -301,7 +317,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         showReconciliationStatus
       />
 
-      {failure ? (
+      {failure && !detail.failureDiagnostic ? (
         <section className="rounded-lg border border-warning bg-warning-soft p-4">
           <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
           <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
@@ -980,6 +996,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
     <div className="grid grid-cols-1 gap-4">
       <PublicRunConclusion
         measurementsTargetId="report-advanced-measurements"
+        failureExplanation={runFailureExplanationEvidence(detail)}
         result={result}
         runStatus={summary.status}
         showProof={false}

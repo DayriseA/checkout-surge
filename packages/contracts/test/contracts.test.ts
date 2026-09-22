@@ -2434,6 +2434,7 @@ describe("public runtime policy contract", () => {
     const { notes: _deliveryNotes, ...publicDeliverySummary } =
       publicSummary.trafficDeliverySummary;
     const detail = publicRunHistoryDetailResponseSchema.parse({
+      failureDiagnostic: null,
       summary: {
         ...publicSummary,
         trafficDeliverySummary: publicDeliverySummary,
@@ -2523,6 +2524,7 @@ describe("public runtime policy contract", () => {
     expect(adminRunHistoryDetailPath(runId)).toBe(`/admin/demo/runs/history/${runId}`);
     expect(() =>
       adminRunHistoryDetailResponseSchema.parse({
+        failureDiagnostic: null,
         query: { limit: 20 },
         summary,
         run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },

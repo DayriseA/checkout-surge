@@ -703,6 +703,7 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
   const summary = runHistorySummaryFixture();
 
   return {
+    failureDiagnostic: null,
     query: { limit: 20 },
     summary,
     overallDurationMs: 10_000,
@@ -865,6 +866,7 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     : undefined;
   const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
   return {
+    failureDiagnostic: null,
     summary: {
       ...summary,
       trafficDeliverySummary: publicDeliverySummary,

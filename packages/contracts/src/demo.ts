@@ -48,6 +48,7 @@ import {
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
 } from "./public-runtime-policy-validation.js";
+import { runFailureDiagnosticSchema } from "./run-failure-diagnostic.js";
 import {
   internalRunFailureReasonSchema,
   publicRunFailureCategorySchema,
@@ -518,6 +519,7 @@ export const adminRunHistoryDetailResponseSchema = z
     overallDurationMs: nonnegativeNumberSchema.nullable(),
     exceptionSummary: runHistoryExceptionSummarySchema,
     internalFailureReason: internalRunFailureReasonSchema.optional(),
+    failureDiagnostic: runFailureDiagnosticSchema.nullable(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
     orders: runHistoryCollectionMetadataSchema
@@ -633,6 +635,7 @@ export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;
 
 export const publicRunHistoryDetailResponseSchema = z
   .object({
+    failureDiagnostic: runFailureDiagnosticSchema.nullable(),
     summary: publicRunHistorySummarySchema,
     run: publicRunHistoryRunSchema,
     result: runResultSchema,

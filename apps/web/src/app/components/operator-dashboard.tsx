@@ -51,6 +51,7 @@ import { useAcceptedRunResult } from "./realtime/use-accepted-run-result";
 import { useDashboardProjections } from "./realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { PublicRunCaveatList, PublicRunConclusionProof } from "./run-conclusion";
+import { RunFailureExplanation } from "./run-failure-explanation";
 import { ScenarioStrip } from "./scenario-strip";
 import { StatusPill } from "./status-pill";
 import { deriveTransportObservation } from "./transport-observation";
@@ -146,11 +147,17 @@ export function OperatorDashboard({
   const sameRunAccepted = Boolean(
     trackedResult && liveRun && trackedResult.runId === liveRun.runId,
   );
-  // The saved-report delivery qualification exists only in the visitor's own already-read public
-  // detail; it joins the shared verdict only when the accepted run is the run on screen.
+  const observed = useAcceptedRunResult(
+    !sameRunAccepted && liveRun && (liveRun.status === "completed" || liveRun.status === "failed")
+      ? { status: "awaiting", runId: liveRun.runId }
+      : undefined,
+  );
+  const visibleReport = sameRunAccepted ? accepted : observed;
+  const visibleResult = visibleReport.result;
+  // Only a report for the displayed run may explain its terminal result.
   const savedEvidence: AcceptedRunReportEvidence | null =
-    trackedResult?.status === "available" && sameRunAccepted
-      ? (trackedResult.reportEvidence ?? null)
+    visibleResult?.status === "available" && visibleResult.runId === liveRun?.runId
+      ? (visibleResult.reportEvidence ?? null)
       : null;
   return (
     <div className="grid grid-cols-12 gap-4">
@@ -164,13 +171,13 @@ export function OperatorDashboard({
       ) : null}
       <WatchNarrative
         accepted={
-          trackedResult
-            ? { retriesExhausted: accepted.retriesExhausted, result: trackedResult }
+          visibleResult
+            ? { retriesExhausted: visibleReport.retriesExhausted, result: visibleResult }
             : null
         }
         composition={composition}
         now={() => now.getTime()}
-        onAcceptedRetry={() => void accepted.retryNow()}
+        onAcceptedRetry={() => void visibleReport.retryNow()}
         onRetry={() => void retryNow()}
         onRevealTechnicalDetails={revealTechnicalDetails}
         savedEvidence={savedEvidence}
@@ -365,7 +372,9 @@ function RunCard({
             {terminal ? summary?.sentence : runPhaseSentence(composition)}
           </p>
         </div>
-        {failure ? (
+        {savedEvidence?.failureExplanation ? (
+          <RunFailureExplanation evidence={savedEvidence.failureExplanation} />
+        ) : failure ? (
           <p className="m-0 mt-2 max-w-[66ch] text-sm leading-6 text-muted-strong">
             <span className="font-semibold">{failure.explanation}</span> {failure.action}
           </p>
@@ -431,6 +440,7 @@ function terminalSummary(
     result: composition.result,
     trafficDeliveryStatus: savedEvidence?.trafficDeliveryStatus ?? null,
     transportObservation,
+    hasFailureExplanation: Boolean(savedEvidence?.failureExplanation),
   });
 }
 
@@ -760,6 +770,7 @@ function AcceptedResultNarrative({
     ? derivePublicRunSummary({
         result: reportEvidence.result,
         trafficDeliveryStatus: reportEvidence.trafficDeliveryStatus,
+        hasFailureExplanation: Boolean(reportEvidence.failureExplanation),
         transportObservation: deriveTransportObservation(
           reportEvidence.transportAttemptCounts,
           reportEvidence.transportFailures,
@@ -783,6 +794,9 @@ function AcceptedResultNarrative({
             <p className="m-0 text-sm leading-6 text-muted-strong">{summary.sentence}</p>
           </div>
           <p className="m-0 mt-1 text-sm text-muted">{resultIdentity}</p>
+          {reportEvidence?.failureExplanation ? (
+            <RunFailureExplanation evidence={reportEvidence.failureExplanation} />
+          ) : null}
           <PublicRunCaveatList caveats={summary.caveats} />
         </>
       ) : (
