@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -146,6 +147,128 @@ async function readMigrationCount(folder: string): Promise<number> {
   ) as { entries: unknown[] };
 
   return journal.entries.length;
+}
+
+/** Copies every migration except the newest one, so tests can populate the retained boundary first. */
+async function createRetainedBoundaryMigrationsFolder(): Promise<string> {
+  const folder = await mkdtemp(path.join(os.tmpdir(), "checkout-surge-retained-boundary-"));
+  const journal = JSON.parse(
+    await readFile(path.join(migrationsFolder, "meta", "_journal.json"), "utf8"),
+  ) as { entries: { idx: number; tag: string }[] };
+  const retainedEntries = journal.entries.slice(0, -1);
+
+  await mkdir(path.join(folder, "meta"), { recursive: true });
+  await writeFile(
+    path.join(folder, "meta", "_journal.json"),
+    JSON.stringify({ ...journal, entries: retainedEntries }),
+  );
+
+  for (const entry of retainedEntries) {
+    const snapshotName = `${entry.idx.toString().padStart(4, "0")}_snapshot.json`;
+    await cp(
+      path.join(migrationsFolder, `${entry.tag}.sql`),
+      path.join(folder, `${entry.tag}.sql`),
+    );
+    await cp(
+      path.join(migrationsFolder, "meta", snapshotName),
+      path.join(folder, "meta", snapshotName),
+    );
+  }
+
+  return folder;
+}
+
+async function insertRetainedBoundaryFixtures(sql: TestSql): Promise<void> {
+  const ids = buildOrderReservationIds(940);
+  const correlationId = "corr-retained-boundary";
+  const attemptFinishedAt = "2026-06-20T12:00:05.000Z";
+
+  await insertCatalogSaleOffer(sql, { ...ids, purpose: "generated_run" });
+  await insertGeneratedRunContext(sql, ids);
+  await insertReservation(sql, {
+    reservationId: ids.reservationId,
+    saleOfferId: ids.saleOfferId,
+    correlationId,
+    runId: ids.runId,
+  });
+  await insertOrder(sql, {
+    orderId: ids.orderId,
+    saleOfferId: ids.saleOfferId,
+    reservationId: ids.reservationId,
+    correlationId,
+    runId: ids.runId,
+    status: "failed",
+    processingAt: orderQueuedAt,
+    failedAt: attemptFinishedAt,
+  });
+  await sql`
+    UPDATE "orders"
+    SET "failure_category" = 'business_rejection'::"order_failure_category"
+    WHERE "id" = ${ids.orderId}
+  `;
+
+  for (const attempt of [
+    { deliveryId: "delivery-succeeded", attemptNumber: 1, status: "succeeded", errorCode: null },
+    {
+      deliveryId: "delivery-capacity",
+      attemptNumber: 2,
+      status: "failed",
+      errorCode: "erp_capacity_exceeded",
+    },
+    {
+      deliveryId: "delivery-unrecognized",
+      attemptNumber: 3,
+      status: "failed",
+      errorCode: "erp_unknown_error",
+    },
+  ]) {
+    await sql`
+      INSERT INTO "erp_attempts" (
+        "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status",
+        "error_code", "latency_ms", "started_at", "finished_at"
+      )
+      VALUES (
+        ${ids.orderId}, ${attempt.deliveryId}, ${correlationId}, ${ids.runId},
+        ${attempt.attemptNumber}, ${attempt.status}::"erp_attempt_status", ${attempt.errorCode},
+        5, ${orderQueuedAt}::timestamptz, ${attemptFinishedAt}::timestamptz
+      )
+    `;
+  }
+
+  await sql`
+    INSERT INTO "order_events" (
+      "order_id", "reservation_id", "sale_offer_id", "correlation_id", "run_id",
+      "event_name", "payload", "source", "occurred_at"
+    )
+    VALUES (
+      ${ids.orderId}, ${ids.reservationId}, ${ids.saleOfferId}, ${correlationId}, ${ids.runId},
+      'erp.attempt.failed'::"order_event_name", ${JSON.stringify({ attemptNumber: 3 })}::jsonb,
+      'worker', ${attemptFinishedAt}::timestamptz
+    )
+  `;
+  await sql`
+    INSERT INTO "simulated_notifications" (
+      "order_id", "sale_offer_id", "correlation_id", "run_id", "recipient_placeholder", "recorded_at"
+    )
+    VALUES (
+      ${ids.orderId}, ${ids.saleOfferId}, ${correlationId}, ${ids.runId},
+      'buyer@example.test', ${attemptFinishedAt}::timestamptz
+    )
+  `;
+  await sql`
+    INSERT INTO "order_recovery_jobs" (
+      "recovery_key", "job_id", "order_id", "payload", "reason", "waiting_reason",
+      "intervention_reason"
+    )
+    VALUES (
+      'recovery-retained-boundary', 'job-retained-boundary', ${ids.orderId}, '{}'::jsonb,
+      'erp_uncertain', 'intervention_required'::"order_waiting_reason", 'manual review'
+    )
+  `;
+  await sql`
+    INSERT INTO "erp_scope_resilience_state" ("scope", "circuit_open_expires_at")
+    VALUES (${`run:${ids.runId}`}, ${attemptFinishedAt}::timestamptz)
+  `;
 }
 
 async function insertCatalogSaleOffer(
@@ -449,6 +572,83 @@ describe("database migrations, seed data, and reset behavior", () => {
       expect(firstCount?.count).toBe(expectedMigrationCount);
       expect(secondCount).toEqual(firstCount);
     } finally {
+      await resetTestDatabase();
+    }
+  });
+
+  it("applies the squashed adaptive-ERP migration to a database populated at the retained boundary", async () => {
+    const databaseUrl = requireTestEnv("TEST_DATABASE_URL");
+    const { databaseName } = validateDedicatedTestDatabaseUrl(databaseUrl);
+    const expectedMigrationCount = await readMigrationCount(migrationsFolder);
+    const boundaryFolder = await createRetainedBoundaryMigrationsFolder();
+
+    try {
+      await rebuildAsEmptyPublicSchema();
+      await runDatabaseMigrations({
+        databaseUrl,
+        expectedDatabaseName: databaseName,
+        migrationsFolder: boundaryFolder,
+      });
+      await withDatabase(insertRetainedBoundaryFixtures);
+
+      await runDatabaseMigrations({ databaseUrl, expectedDatabaseName: databaseName });
+
+      const [migrationCount] = await withDatabase(
+        (sql) =>
+          sql<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`,
+      );
+      const dispositions = await withDatabase(
+        (sql) => sql<{ delivery_id: string; disposition: string }[]>`
+          SELECT "delivery_id", "disposition"::text AS disposition
+          FROM "erp_attempts"
+          ORDER BY "delivery_id"
+        `,
+      );
+      const [migratedState] = await withDatabase(
+        (sql) => sql<{ availability_circuit_open: boolean; next_probe_at: string | null }[]>`
+          SELECT "availability_circuit_open", "next_probe_at"::text AS next_probe_at
+          FROM "erp_scope_resilience_state"
+        `,
+      );
+      const [migratedEvent] = await withDatabase(
+        (sql) => sql<{ payload: Record<string, unknown> }[]>`
+          SELECT "payload" FROM "order_events" WHERE "event_name" = 'erp.attempt.failed'
+        `,
+      );
+      const [migratedRecoveryJob] = await withDatabase(
+        (sql) => sql<{ waiting_reason: string | null }[]>`
+          SELECT "waiting_reason"::text AS waiting_reason FROM "order_recovery_jobs"
+        `,
+      );
+      const retiredColumns = await withDatabase(
+        (sql) => sql<{ table_name: string; column_name: string }[]>`
+          SELECT table_name, column_name
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND (
+              (table_name = 'demo_runs' AND column_name = 'administrative_stop')
+              OR (table_name = 'order_recovery_jobs' AND column_name = 'intervention_reason')
+            )
+        `,
+      );
+
+      expect(migrationCount?.count).toBe(expectedMigrationCount);
+      expect(dispositions).toEqual([
+        { delivery_id: "delivery-capacity", disposition: "capacity_rejected" },
+        { delivery_id: "delivery-succeeded", disposition: "succeeded" },
+        { delivery_id: "delivery-unrecognized", disposition: "technical_failure" },
+      ]);
+      expect(migratedState).toMatchObject({ availability_circuit_open: true });
+      expect(migratedState?.next_probe_at).not.toBeNull();
+      expect(migratedEvent?.payload).toMatchObject({
+        attemptNumber: 3,
+        disposition: "technical_failure",
+        canonical: false,
+      });
+      expect(migratedRecoveryJob).toEqual({ waiting_reason: null });
+      expect(retiredColumns).toEqual([]);
+    } finally {
+      await rm(boundaryFolder, { recursive: true, force: true });
       await resetTestDatabase();
     }
   });

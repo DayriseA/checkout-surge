@@ -1,2 +1,0 @@
-ALTER TABLE "erp_scope_resilience_state" ADD COLUMN "intervention_reason" text;--> statement-breakpoint
-ALTER TABLE "erp_scope_resilience_state" ADD COLUMN "intervention_opened_at" timestamp with time zone;

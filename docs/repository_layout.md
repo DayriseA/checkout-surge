@@ -128,7 +128,7 @@ checkout-surge/
 
 ### `packages/db`
 
-- Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus one reviewed baseline SQL file, one journal entry, and one linked snapshot.
+- Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus the reviewed ordered migration SQL files, their journal entries, and their linked snapshots.
 - The baseline appends only the `pgcrypto` extension and constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup. Keys, foreign keys, uniqueness, and row-local checks remain declared in `schema.ts`; the current baseline has no trigger functions or non-internal triggers.
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
 - Shared by `apps/api` and `apps/worker` so durable checkout records and worker ERP-attempt semantics remain one source of truth.

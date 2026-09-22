@@ -1,5 +1,5 @@
 {
-  "id": "6de5a1b3-9de0-4085-b18f-d3cd9e977262",
+  "id": "f6b3a2f2-6deb-4ed4-ac84-39db811560c4",
   "prevId": "87f3e691-b626-4316-8715-b196aa67ddab",
   "version": "7",
   "dialect": "postgresql",
@@ -695,6 +695,18 @@
           "primaryKey": false,
           "notNull": true
         },
+        "engine_policy_name": {
+          "name": "engine_policy_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "engine_policy_version": {
+          "name": "engine_policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "correlation_id": {
           "name": "correlation_id",
           "type": "text",
@@ -734,12 +746,6 @@
         "admin_reset_completed_at": {
           "name": "admin_reset_completed_at",
           "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "administrative_stop": {
-          "name": "administrative_stop",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },
@@ -911,6 +917,13 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "disposition": {
+          "name": "disposition",
+          "type": "erp_outcome_disposition",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "terminal": {
           "name": "terminal",
@@ -1450,8 +1463,27 @@
           "primaryKey": false,
           "notNull": false
         },
+        "availability_retry_at": {
+          "name": "availability_retry_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "availability_circuit_open": {
+          "name": "availability_circuit_open",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "circuit_open_expires_at": {
           "name": "circuit_open_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_probe_at": {
+          "name": "next_probe_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -2003,12 +2035,6 @@
         },
         "publication_owner": {
           "name": "publication_owner",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "intervention_reason": {
-          "name": "intervention_reason",
           "type": "text",
           "primaryKey": false,
           "notNull": false
@@ -3337,6 +3363,18 @@
       "schema": "public",
       "values": ["succeeded", "failed", "timed_out"]
     },
+    "public.erp_outcome_disposition": {
+      "name": "erp_outcome_disposition",
+      "schema": "public",
+      "values": [
+        "succeeded",
+        "capacity_rejected",
+        "temporarily_unavailable",
+        "uncertain_result",
+        "permanent_rejection",
+        "technical_failure"
+      ]
+    },
     "public.order_event_name": {
       "name": "order_event_name",
       "schema": "public",
@@ -3355,7 +3393,7 @@
     "public.order_failure_category": {
       "name": "order_failure_category",
       "schema": "public",
-      "values": ["business_rejection", "administrative"]
+      "values": ["business_rejection", "technical"]
     },
     "public.order_status": {
       "name": "order_status",
@@ -3365,13 +3403,7 @@
     "public.order_waiting_reason": {
       "name": "order_waiting_reason",
       "schema": "public",
-      "values": [
-        "local_admission",
-        "erp_capacity",
-        "erp_unavailable",
-        "uncertain_result",
-        "intervention_required"
-      ]
+      "values": ["local_admission", "erp_capacity", "erp_unavailable", "uncertain_result"]
     },
     "public.recovery_job_status": {
       "name": "recovery_job_status",
