@@ -43,7 +43,7 @@ import {
 } from "../src/app/lib/presentation/estimate-presentation";
 import { estimateFixture, estimateRejectionFixture } from "./estimate-fixtures";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
@@ -414,6 +414,10 @@ it("retains the accepted admin handoff after failed recovery until a newer autho
       within(screen.getByRole("alertdialog")).getByRole("button", { name: "Start run" }),
     ),
   );
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input) === dashboardRecoveryProxyPath),
+  ).toHaveLength(0);
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry recovery" })));
   expect(screen.getByText("Recovery failed; previous projection retained.")).toBeTruthy();
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input) === dashboardRecoveryProxyPath),

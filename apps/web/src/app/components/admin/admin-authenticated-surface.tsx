@@ -853,6 +853,8 @@ export function AdminPresetController({
         setAcceptedRun(result.data.run);
         setStartConfirmation(null);
         setStartError(null);
+        router.push(`/watch?${new URLSearchParams({ acceptedRunId: result.data.run.runId })}`);
+        return;
       }
       if (result.status === "unavailable") {
         if (result.errorCode === "estimated_duration_rejected") {

@@ -46,7 +46,7 @@ import {
 } from "../src/app/lib/control-paths.js";
 import { dashboardStaleAfterMs } from "../src/app/lib/presentation/freshness.js";
 
-const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
+const navigation = vi.hoisted(() => ({ refresh: vi.fn(), push: vi.fn() }));
 // Admission timing is exercised with the real transport in run-estimate.test.tsx.
 // These existing workflows isolate their recovery, validation and mutation boundaries.
 vi.mock("../src/app/components/use-run-estimate", () => ({
@@ -91,6 +91,7 @@ afterEach(() => {
   cleanup();
   InjectedEventSource.instances = [];
   navigation.refresh.mockReset();
+  navigation.push.mockReset();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -807,7 +808,7 @@ describe("admin feature controllers", () => {
     expect(screen.getByText("The latest information is temporarily unavailable")).toBeTruthy();
   });
 
-  it("refreshes current-run recovery after a successful start", async () => {
+  it("navigates without refreshing current-run recovery after a successful start", async () => {
     vi.stubGlobal("EventSource", InjectedEventSource);
     const preset = presetFixture();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
@@ -842,10 +843,13 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     await user.click(confirmationButton("Start run"));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(navigation.push).toHaveBeenCalledExactlyOnceWith(
+        `/watch?acceptedRunId=${runFixture()?.runId}`,
+      ),
+    );
     expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
       adminDemoRunStartProxyPath,
-      dashboardRecoveryProxyPath,
     ]);
   });
 
@@ -2204,9 +2208,10 @@ describe("admin feature controllers", () => {
       (await screen.findAllByText("A demo run is already in progress")).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText("Admin run accepted.")).toBeNull();
+    expect(navigation.push).not.toHaveBeenCalled();
   });
 
-  it("announces an accepted admin start before offering user-activated Watch navigation", async () => {
+  it("navigates to Watch with the accepted admin run", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => {
@@ -2240,10 +2245,6 @@ describe("admin feature controllers", () => {
     const status = document.querySelector<HTMLParagraphElement>("#presets p[role='status']");
     if (!status) throw new Error("Expected the admin operation status region.");
     expect(status.textContent).toBe("");
-    const assign = vi.fn();
-    const navigationWindow = Object.create(window) as Window;
-    Object.defineProperty(navigationWindow, "location", { value: { assign } });
-    vi.stubGlobal("window", navigationWindow);
 
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     await user.click(confirmationButton("Start run"));
@@ -2253,7 +2254,9 @@ describe("admin feature controllers", () => {
     expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toBe(
       `/watch?acceptedRunId=${runFixture()?.runId}`,
     );
-    expect(assign).not.toHaveBeenCalled();
+    expect(navigation.push).toHaveBeenCalledExactlyOnceWith(
+      `/watch?acceptedRunId=${runFixture()?.runId}`,
+    );
   });
 
   it("shows actionable guidance when residual preset text validation rejects save", async () => {
