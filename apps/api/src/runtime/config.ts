@@ -3,6 +3,10 @@ import {
   isValidPublicVisitorCredentialSecret,
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
+import {
+  conservativeDurationEstimatorConstants,
+  type DurationEstimatorConstants,
+} from "../services/demo-duration-estimator.js";
 import { pendingPersistenceRecoveryDefaults } from "./pending-persistence-recovery-policy.js";
 
 export const composeApiHealthcheckTimeoutMs = 3_000;
@@ -30,6 +34,7 @@ export interface ApiConfig {
   controlServiceToken: string;
   publicClientCookieSecret: string;
   deploymentHardCaps: DeploymentHardCaps;
+  estimatorConstants: DurationEstimatorConstants;
   demoRunFinalizationPollIntervalSeconds: number;
   dashboardMaxSseClients: number;
   dashboardMaxSseClientsPerSource: number;
@@ -153,6 +158,28 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       ),
       maxVus: parsePositiveInteger(env.DEMO_MAX_VUS, "DEMO_MAX_VUS", 10_000),
     }),
+    estimatorConstants: {
+      latencyOverheadFloorMs: parsePositiveNumber(
+        env.ESTIMATOR_JOB_OVERHEAD_MS,
+        "ESTIMATOR_JOB_OVERHEAD_MS",
+        conservativeDurationEstimatorConstants.latencyOverheadFloorMs,
+      ),
+      settlementOverheadSeconds: parsePositiveNumber(
+        env.ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS,
+        "ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS",
+        conservativeDurationEstimatorConstants.settlementOverheadSeconds,
+      ),
+      transientErrorDemandMargin: parseDemandMargin(
+        env.ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN,
+        "ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN",
+        conservativeDurationEstimatorConstants.transientErrorDemandMargin,
+      ),
+      perExcessAttemptPauseSeconds: parsePositiveNumber(
+        env.ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS,
+        "ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS",
+        conservativeDurationEstimatorConstants.perExcessAttemptPauseSeconds,
+      ),
+    },
     demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
       env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
@@ -294,6 +321,33 @@ function parsePositiveInteger(value: string | undefined, name: string, fallback:
 
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`${name} must be a positive integer.`);
+  }
+
+  return parsed;
+}
+
+function parsePositiveNumber(value: string | undefined, name: string, fallback: number): number {
+  const raw = value?.trim();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive number.`);
+  }
+
+  return parsed;
+}
+
+/** The retry demand margin multiplies the 1/(1-p) demand, so it may not shrink it. */
+function parseDemandMargin(value: string | undefined, name: string, fallback: number): number {
+  const parsed = parsePositiveNumber(value, name, fallback);
+
+  if (parsed < 1) {
+    throw new Error(`${name} must be a number greater than or equal to 1.`);
   }
 
   return parsed;

@@ -6,6 +6,8 @@ import {
   type PublicRuntimePolicy,
 } from "@checkout-surge/contracts";
 import {
+  conservativeDurationEstimatorConstants,
+  type DurationEstimatorConstants,
   effectiveEstimatorWorkerConcurrency,
   estimateDemoDuration,
 } from "./demo-duration-estimator.js";
@@ -28,10 +30,12 @@ export function estimatorInputFromSnapshot(snapshot: AcceptedRunConfigSnapshot):
 export function estimateAcceptedDemoRun(
   snapshot: AcceptedRunConfigSnapshot,
   policy: PublicRuntimePolicy,
+  constants: DurationEstimatorConstants = conservativeDurationEstimatorConstants,
 ): EstimatorResult {
   return estimateDemoDuration(
     estimatorInputFromSnapshot(snapshot),
     policy.estimatedDemoOccupancyCeilingSeconds,
+    constants,
   );
 }
 

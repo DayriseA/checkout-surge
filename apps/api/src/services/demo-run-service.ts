@@ -42,6 +42,7 @@ import {
   estimateAcceptedDemoRun,
   requireEstimatedDurationAdmission,
 } from "./demo-duration-admission-service.js";
+import type { DurationEstimatorConstants } from "./demo-duration-estimator.js";
 import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
 import {
   emptyBusinessOutcomeSummary,
@@ -119,6 +120,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       apiBaseUrl: string;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
+      estimatorConstants: DurationEstimatorConstants;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -237,7 +239,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     this.verifyVisitor(request);
     const { snapshot, policy } = await this.resolveValidatedConfig(request);
     return previewDemoRunResponseSchema.parse({
-      result: estimateAcceptedDemoRun(snapshot, policy),
+      result: estimateAcceptedDemoRun(snapshot, policy, this.options.estimatorConstants),
     });
   }
 
@@ -318,7 +320,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         }
 
         const { preset, snapshot, policy } = await this.resolveValidatedConfig(request, tx);
-        requireEstimatedDurationAdmission(estimateAcceptedDemoRun(snapshot, policy));
+        requireEstimatedDurationAdmission(
+          estimateAcceptedDemoRun(snapshot, policy, this.options.estimatorConstants),
+        );
         await beforeInsert(policy);
 
         const [product] = await tx

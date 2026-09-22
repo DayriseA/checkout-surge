@@ -38,6 +38,7 @@ import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-proces
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
+import { conservativeDurationEstimatorConstants } from "../src/services/demo-duration-estimator.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
@@ -105,6 +106,7 @@ describe("demo-run lifecycle validation", () => {
       apiBaseUrl: "http://api.test",
       logger: createSilentLogger("api"),
       publicClientCookieSecret: publicCookieSecret,
+      estimatorConstants: conservativeDurationEstimatorConstants,
     });
     await expect(
       service.startRun(
@@ -1869,6 +1871,7 @@ function createStartService(
     apiBaseUrl: "http://api.test",
     logger,
     publicClientCookieSecret: publicCookieSecret,
+    estimatorConstants: conservativeDurationEstimatorConstants,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => {
       const id = ids.shift();

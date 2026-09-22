@@ -347,6 +347,7 @@ export async function startApiServer(): Promise<void> {
     apiBaseUrl: config.apiBaseUrl,
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
+    estimatorConstants: config.estimatorConstants,
   });
   const trafficCompletionService = new TrafficCompletionService({
     db: connection.db,

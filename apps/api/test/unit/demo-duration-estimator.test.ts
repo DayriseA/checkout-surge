@@ -311,6 +311,19 @@ describe("pure conservative duration estimator", () => {
     }
   });
 
+  it("applies injected allowances instead of the built-in defaults", () => {
+    const value = input();
+    const base = estimate(value);
+    const withLongerSettlement = estimateDemoDuration(value, 600, {
+      ...constants,
+      settlementOverheadSeconds: constants.settlementOverheadSeconds + 30,
+    });
+    expect(withLongerSettlement.conservativeDurationSeconds).toBeCloseTo(
+      (base.conservativeDurationSeconds ?? 0) + 30,
+      10,
+    );
+  });
+
   it("rejects unsupported scenarios before zero work without duration figures", () => {
     for (const startingStock of [0, 60]) {
       for (const [declaredErpForcedOutage, errorRateAssumption, reason] of [

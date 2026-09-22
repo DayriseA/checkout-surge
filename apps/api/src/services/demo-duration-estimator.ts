@@ -10,7 +10,9 @@ import {
 } from "@checkout-surge/contracts";
 
 /**
- * Re-fitted to task 17b declared-capacity measurements; provisional until task 20.
+ * Defaults measured on the host recorded in task 17b ("Docker 29.6.1-1 on Linux/WSL2,
+ * 16 visible CPUs, 7,637 MiB RAM, one worker"); they are meant to be re-measured per
+ * deployment (task 22 owns the procedure) and overridden through the API environment.
  * Estimator allowances include full durable job execution and settlement.
  * They are neither worst-case bounds nor confidence intervals.
  */
@@ -26,6 +28,14 @@ export const conservativeDurationEstimatorConstants = {
   supportedMaximumErrorRate: 0.3,
 } as const;
 
+/** Host-dependent allowances the deployment may override; the policy bound stays in code. */
+export interface DurationEstimatorConstants {
+  latencyOverheadFloorMs: number;
+  settlementOverheadSeconds: number;
+  transientErrorDemandMargin: number;
+  perExcessAttemptPauseSeconds: number;
+}
+
 /** Worker startup enforces deployment concurrency >= the accepted per-run cap. */
 export function effectiveEstimatorWorkerConcurrency(orderProcessConcurrency: number): number {
   return Math.min(orderProcessConcurrency, orderProcessConcurrencyHardCap);
@@ -35,8 +45,8 @@ export function effectiveEstimatorWorkerConcurrency(orderProcessConcurrency: num
 export function estimateDemoDuration(
   input: EstimatorInput,
   effectiveCeilingSeconds: number = estimatedDemoOccupancyCeilingSeconds,
+  constants: DurationEstimatorConstants = conservativeDurationEstimatorConstants,
 ): EstimatorResult {
-  const constants = conservativeDurationEstimatorConstants;
   const base = {
     estimatorIdentity: conservativeDurationEstimatorIdentity,
     policyIdentity: erpDispatchEnginePolicyIdentity,
@@ -45,7 +55,7 @@ export function estimateDemoDuration(
       {
         code: "provisional_declared_capacity_v2",
         detail:
-          "Task 17b measured job overhead with the shared dispatch safety margin, retry and settlement allowances; provisional until task 20. No confidence claim; constant declared conditions and one run are assumed.",
+          "Job overhead, retry and settlement allowances are deployment-configured defaults applied with the shared dispatch safety margin. No confidence claim; constant declared conditions and one run are assumed.",
       },
       {
         code: "effective_concurrency",
@@ -66,7 +76,7 @@ export function estimateDemoDuration(
   // Support checks precede the zero-work shortcut, including for empty stock.
   if (
     input.declaredErpForcedOutage ||
-    input.errorRateAssumption > constants.supportedMaximumErrorRate
+    input.errorRateAssumption > conservativeDurationEstimatorConstants.supportedMaximumErrorRate
   ) {
     return {
       ...base,

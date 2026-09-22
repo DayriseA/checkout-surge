@@ -287,6 +287,47 @@ describe("API runtime configuration", () => {
     ).toThrow(/PER_SOURCE.*must not exceed.*GLOBAL/);
   });
 
+  it("loads estimator allowance defaults and decimal overrides", () => {
+    expect(
+      loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" }).estimatorConstants,
+    ).toEqual({
+      latencyOverheadFloorMs: 130,
+      settlementOverheadSeconds: 15,
+      transientErrorDemandMargin: 1.25,
+      perExcessAttemptPauseSeconds: 1,
+    });
+    expect(
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        ESTIMATOR_JOB_OVERHEAD_MS: "210.5",
+        ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS: "20",
+        ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN: "1.5",
+        ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS: "2.5",
+      }).estimatorConstants,
+    ).toEqual({
+      latencyOverheadFloorMs: 210.5,
+      settlementOverheadSeconds: 20,
+      transientErrorDemandMargin: 1.5,
+      perExcessAttemptPauseSeconds: 2.5,
+    });
+  });
+
+  it.each([
+    ["ESTIMATOR_JOB_OVERHEAD_MS", "0"],
+    ["ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS", "-1"],
+    ["ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS", "invalid"],
+    ["ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN", "0.9"],
+  ])("rejects an unusable %s value (%s)", (name, value) => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        [name]: value,
+      }),
+    ).toThrow(new RegExp(name));
+  });
+
   it("rejects a readiness deadline outside the Compose healthcheck budget", () => {
     expect(() =>
       loadApiConfig({
