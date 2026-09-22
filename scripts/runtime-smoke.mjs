@@ -835,16 +835,18 @@ export async function teardownWithRetry(input) {
   let receivedSuccessfulResponse = false;
   let attempts = 0;
   let deadlineError;
+  let deadlineAt = input.deadlineAt;
+  let waitingForActiveJobs = false;
   const pause = input.pause ?? sleep;
   const now = input.now ?? Date.now;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     let attemptTimeoutMs = requestTimeoutMs;
-    if (input.deadlineAt) {
+    if (deadlineAt != null) {
       try {
         attemptTimeoutMs = Math.min(
           requestTimeoutMs,
           remainingDeadlineMs(
-            input.deadlineAt,
+            deadlineAt,
             "exact-run teardown",
             now(),
             "Exact-run cleanup deadline",
@@ -875,12 +877,24 @@ export async function teardownWithRetry(input) {
       break;
     } catch (error) {
       lastError = error;
+      const activeJobConflict =
+        error.status === 409 && error.payload?.details?.conflictReason === "active_job";
+      if (activeJobConflict) {
+        if (!waitingForActiveJobs) {
+          deadlineAt ??= now() + 60_000;
+          console.log(
+            `Exact-run teardown waiting for active jobs of run ${input.runId} to settle (up to ${Math.max(0, deadlineAt - now())} ms)`,
+          );
+          waitingForActiveJobs = true;
+        }
+        attempt -= 1;
+      }
       if (attempt < 3) {
-        const retryDelayMs = attempt * 500;
-        if (!input.deadlineAt) {
+        const retryDelayMs = activeJobConflict ? 1_000 : attempt * 500;
+        if (deadlineAt == null) {
           await pause(retryDelayMs);
         } else {
-          const remainingMs = input.deadlineAt - now();
+          const remainingMs = deadlineAt - now();
           if (remainingMs <= 0) {
             deadlineError = new Error(
               "Exact-run cleanup deadline expired before exact-run teardown retry.",
@@ -1000,9 +1014,12 @@ function describeRunObservation(observation, runId) {
 async function requestJson(url, init, fetchImpl, timeoutMs = requestTimeoutMs) {
   const { response, body: payload } = await readHttpResponse(url, init, fetchImpl, timeoutMs);
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       `${init.method ?? "GET"} ${url} returned HTTP ${response.status}: ${JSON.stringify(payload)}`,
     );
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
   return payload;
 }

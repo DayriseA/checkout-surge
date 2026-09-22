@@ -486,6 +486,110 @@ test("teardown retries only request failures and sends a bodyless exact DELETE",
   assert.equal(calls[0].headers["x-correlation-id"], correlationId);
 });
 
+test("teardown polls active-job conflicts beyond three attempts until validated success", async () => {
+  let clock = 0;
+  let fetchCalls = 0;
+  const delays = [];
+  const expected = {
+    outcome: "already_absent",
+    runId,
+    cleanedAt: "2026-07-23T00:00:00.000Z",
+    correlationId,
+  };
+  const response = await teardownWithRetry({
+    apiBaseUrl: "http://api.test",
+    token: "token",
+    runId,
+    correlationId,
+    deadlineAt: 5_000,
+    now: () => clock,
+    pause: async (ms) => {
+      delays.push(ms);
+      clock += ms;
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      return fetchCalls <= 4
+        ? Response.json(
+            { code: "run_cleanup_conflict", details: { conflictReason: "active_job" } },
+            { status: 409 },
+          )
+        : Response.json(expected);
+    },
+  });
+  assert.deepEqual(response, expected);
+  assert.equal(fetchCalls, 5);
+  assert.deepEqual(delays, [1_000, 1_000, 1_000, 1_000]);
+});
+
+for (const deadlineAt of [2_500, undefined]) {
+  test(`teardown stops active-job polling at ${deadlineAt ?? "the default 60-second deadline"}`, async () => {
+    let clock = 0;
+    const fetchTimes = [];
+    const limit = deadlineAt ?? 60_000;
+    await assert.rejects(
+      teardownWithRetry({
+        apiBaseUrl: "http://api.test",
+        token: "token",
+        runId,
+        correlationId,
+        deadlineAt,
+        now: () => clock,
+        pause: async (ms) => {
+          clock += ms;
+        },
+        fetchImpl: async () => {
+          fetchTimes.push(clock);
+          return Response.json(
+            {
+              code: "run_cleanup_conflict",
+              message: "Run has active work on orders:process; retry after it settles.",
+              details: { conflictReason: "active_job" },
+            },
+            { status: 409 },
+          );
+        },
+      }),
+      /Exact-run cleanup deadline expired.*last request failure: .*HTTP 409: .*active_job/,
+    );
+    assert.equal(clock, limit);
+    assert.equal(fetchTimes.length, Math.ceil(limit / 1_000));
+    assert.ok(fetchTimes.every((time) => time < limit));
+  });
+}
+
+for (const status of [409, 503]) {
+  test(`teardown retains three ordinary failure attempts after active-job conflicts (HTTP ${status})`, async () => {
+    let clock = 0;
+    let fetchCalls = 0;
+    const delays = [];
+    await assert.rejects(
+      teardownWithRetry({
+        apiBaseUrl: "http://api.test",
+        token: "token",
+        runId,
+        correlationId,
+        deadlineAt: 10_000,
+        now: () => clock,
+        pause: async (ms) => {
+          delays.push(ms);
+          clock += ms;
+        },
+        fetchImpl: async () => {
+          fetchCalls += 1;
+          return Response.json(
+            { details: { conflictReason: fetchCalls <= 4 ? "active_job" : "other" } },
+            { status: fetchCalls <= 4 ? 409 : status },
+          );
+        },
+      }),
+      /Teardown failed after 7 attempts/,
+    );
+    assert.equal(fetchCalls, 7);
+    assert.deepEqual(delays, [1_000, 1_000, 1_000, 1_000, 500, 1_000]);
+  });
+}
+
 test("cleanup deadline and teardown-attempt diagnostics report their actual bounds", async () => {
   let fetchCalls = 0;
   await assert.rejects(

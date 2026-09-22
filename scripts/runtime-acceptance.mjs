@@ -639,7 +639,8 @@ export async function runAcceptance(name, outputDirectory) {
           correlationId,
           runId,
           saleOfferId,
-          deadlineAt: Date.now() + 30_000,
+          // Allow two BullMQ stalled-job intervals for orphaned active jobs to settle.
+          deadlineAt: Date.now() + 60_000,
           fetchImpl: fetch,
         };
         if (report.detail?.run.status !== "completed") await prepareExactRunCleanup(input);
