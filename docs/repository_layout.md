@@ -144,8 +144,6 @@ checkout-surge/
 | :-- |
 | Project vision / blueprint (`project_description.md`) |
 | Delivery constraints and system guarantees (`delivery_constraints.md`) |
-| Project planning and task tracking (`project_planning.md`) |
-| Agent quality checklists (`quality_checklists.md`) |
 
 `docs/` holds the checked-in architecture and reference documentation for the implemented system:
 
@@ -155,5 +153,6 @@ checkout-surge/
 | Local development guide (`local_development.md`) |
 | Domain model and cross-service conventions (`core_business_entities.md`, `cross_service_conventions.md`) |
 | Runtime topology, testing infrastructure, load/metrics, inventory hot path, and admin access references |
+| Agent quality checklists (`quality_checklists.md`) |
 
 There are currently no separate ADR, hosted benchmark-result, or portfolio-write-up directories under `docs/`. Add and label those artifact types only when concrete files and reproducible evidence exist; they are not part of the current repository layout.

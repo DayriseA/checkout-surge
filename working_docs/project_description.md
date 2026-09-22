@@ -99,7 +99,7 @@ To ensure the system survives the "Hammer," the following OS-level optimizations
 
 ## 6. Project Roadmap
 
-The detailed, task-level roadmap lives in `working_docs/project_planning.md`. The durable roadmap shape is:
+Items 1 to 8 are delivered; items 9 and 10 remain future work. The durable roadmap shape is:
 
 ### Primary Track (Node.js / Fastify)
 
