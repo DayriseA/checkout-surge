@@ -1,3 +1,8 @@
+import {
+  automaticRunResetDeadlineSeconds,
+  automaticRunResetGraceNoticeSeconds,
+  estimatedDemoOccupancyCeilingSeconds,
+} from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { neutralLinkButtonClassName, primaryButtonClassName } from "./components/control-styles";
@@ -10,6 +15,9 @@ export const dynamic = "force-dynamic";
 
 const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
 const termLinkClassName = "font-semibold text-accent underline";
+const occupancyCeilingMinutes = estimatedDemoOccupancyCeilingSeconds / 60;
+const graceNoticeMinutes = automaticRunResetGraceNoticeSeconds / 60;
+const automaticResetMinutes = automaticRunResetDeadlineSeconds / 60;
 
 export default function OverviewPage() {
   return (
@@ -95,7 +103,12 @@ function TechnicalAbout() {
           <a className={termLinkClassName} href="#circuit-breaker">
             circuit breaker
           </a>{" "}
-          keep downstream pressure bounded while reserved work waits without being lost.
+          keep downstream pressure bounded. Reserved work waits in the queue rather than being
+          dropped; the one deliberate exception is a{" "}
+          <a className={termLinkClassName} href="#run-reset">
+            run reset
+          </a>
+          , which discards the whole run.
         </p>
         <p className="mt-3 leading-7 text-muted-strong">
           The worker is configured with the ERP’s declared capacity, as is common with mainstream
@@ -103,6 +116,16 @@ function TechnicalAbout() {
           variable, an adaptive client-side limiter, such as the adaptive retry mode of the AWS
           SDKs, is the appropriate technique. This demo deliberately shows the common case of a
           known limit.
+        </p>
+        <p className="mt-3 leading-7 text-muted-strong">
+          An ERP call can also end without a usable answer, such as a timeout. The worker never
+          retries such an{" "}
+          <a className={termLinkClassName} href="#uncertain-result">
+            uncertain result
+          </a>{" "}
+          blindly: it first asks the ERP’s durable confirmation ledger whether that idempotency key
+          already succeeded or was rejected, and replays the request with the same key only when the
+          ERP has no record of it. That is what keeps a retry from creating a second order.
         </p>
       </section>
 
@@ -153,17 +176,45 @@ function TechnicalAbout() {
         </ol>
       </section>
 
+      <section className={sectionClassName} id="run-finish" tabIndex={-1}>
+        <h2 className="m-0 text-xl font-bold text-ink">How a run finishes</h2>
+        <p className="mt-3 leading-7 text-muted-strong">
+          Once the load generator has sent its last attempt, the run enters a finishing phase and
+          stops accepting new traffic. An empty queue is not the end. The run completes only when
+          nothing is queued, processing, or waiting to retry, every uncertain ERP call has been
+          resolved, every Redis hold has reached its durable record, and every confirmed order has
+          its simulated email recorded. This phase has no elapsed-time deadline; the only time-based
+          stop is the automatic reset described below.
+        </p>
+      </section>
+
       <section className={sectionClassName} id="success" tabIndex={-1}>
         <h2 className="m-0 text-xl font-bold text-ink">What success means</h2>
         <p className="mt-3 leading-7 text-muted-strong">
           Every unique reservation must first reach a durable confirmed or failed order outcome. A
-          run completes successfully only when oversold units and failed or pending orders are all
-          zero. Accepted responses can outnumber unique reservations when an{" "}
+          run completes successfully only when the finishing phase has settled every remaining
+          obligation and oversold units and failed or pending orders are all zero. Accepted
+          responses can outnumber unique reservations when an{" "}
           <a className={termLinkClassName} href="#idempotency">
             idempotent
           </a>{" "}
           replay returns the original result; the final result keeps those populations distinct and
           shows their invariant proof.
+        </p>
+      </section>
+
+      <section className={sectionClassName} id="run-reset" tabIndex={-1}>
+        <h2 className="m-0 text-xl font-bold text-ink">Admission, grace period, and reset</h2>
+        <p className="mt-3 leading-7 text-muted-strong">
+          Before a run starts, the API estimates how long the chosen configuration would occupy the
+          demo and rejects it when that conservative estimate exceeds the demo limit of at most{" "}
+          {occupancyCeilingMinutes} minutes. The estimate serves admission only: an accepted run
+          that overruns it is neither stopped nor failed. From {graceNoticeMinutes} minutes after
+          acceptance the dashboard shows a grace-period notice if the run is still unfinished. A run
+          still unfinished at {automaticResetMinutes} minutes is reset automatically so the next
+          visitor can start. An admin can also reset a run manually. Either reset stops all demo
+          work immediately and discards the run’s data; one history line marked as cancelled
+          remains.
         </p>
       </section>
 
@@ -323,7 +374,12 @@ function PublicGlossary() {
     [
       "idempotency",
       "Idempotency",
-      "Repeating the same eligible request returns its original reservation instead of consuming stock again.",
+      "Repeating the same eligible request returns its original result instead of acting again: a replayed checkout returns its reservation, and a replayed ERP call cannot create a second order.",
+    ],
+    [
+      "uncertain-result",
+      "Uncertain result",
+      "An ERP call whose outcome never reached the worker. It is verified against the ERP’s confirmation ledger before any replay.",
     ],
     [
       "projection",
@@ -335,7 +391,11 @@ function PublicGlossary() {
       "Recovery",
       "Rebuilding current state after a missed update, or safely retrying incomplete durable work.",
     ],
-    ["drain", "Drain", "Processing queued work until the run-owned backlog returns to zero."],
+    [
+      "drain",
+      "Drain",
+      "Finishing a run after traffic stops: queued work, retries, uncertain ERP calls, pending holds, and missing simulated emails must all be settled before the run completes.",
+    ],
     [
       "reservation-hold",
       "Reservation hold",
