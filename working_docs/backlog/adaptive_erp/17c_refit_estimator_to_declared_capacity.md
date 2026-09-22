@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Status: Implemented and validated. The estimate-ratio acceptance criterion remains partial; by user decision (2026-09-21) it is carried to [task 20](20_calibrate_policy_and_obtain_approval.md), and the related D11 question to [carried-over follow-up 6](carried_over_follow_ups.md). Staged, not committed.
+- Status: Implemented and validated. The estimate-ratio acceptance criterion remains partial; by user decision (2026-09-21) it is carried to [task 20](20_verify_policy_against_code_bound_targets.md), and the related D11 question to [carried-over follow-up 6](carried_over_follow_ups.md). Staged, not committed.
 - Branch: `feat/adaptive-erp-and-admission`.
 - Sequence: inserted between 17 and 18 (user decision, 2026-09-21). Execute after [17b](17b_pace_erp_dispatch_at_declared_capacity.md); it supplies the corrected runtime behaviour and its measurements.
 - Source: revised D06 and D11 in the [implementation plan](../../adaptive_erp_processing_implementation_plan.md), the completion notes of tasks [15](15_implement_conservative_duration_estimator.md), [16](16_enforce_estimated_duration_admission.md), [17](17_build_dashboard_estimate_and_admission_flow.md) and 17b.

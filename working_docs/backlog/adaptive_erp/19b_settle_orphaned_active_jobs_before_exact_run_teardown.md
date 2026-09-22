@@ -2,7 +2,7 @@
 
 ## Handoff
 
-- Status: Done on 2026-09-21 (harness-side fix only; see the completion notes below). [Task 20](20_calibrate_policy_and_obtain_approval.md) can rerun the restart scenario.
+- Status: Done on 2026-09-21 (harness-side fix only; see the completion notes below). [Task 20](20_verify_policy_against_code_bound_targets.md) can rerun the restart scenario.
 - Ownership: verification harness (`scripts/runtime-acceptance.mjs`, `scripts/runtime-smoke.mjs` teardown helpers) first; the API generated-run teardown boundary only if the harness cannot settle the race on its own. Worker recovery policy is not in scope.
 - Origin: observed by [task 19a](19a_fix_recovery_publication_lease_starvation.md) on 2026-09-21 while rerunning `original-incident-restart`. It is a harness/cleanup defect, not an application accounting failure.
 

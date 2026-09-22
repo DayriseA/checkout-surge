@@ -1,10 +1,10 @@
 # D14 Calibration criteria and provisional policy parameters
 
-Recorded by task 01 before any constant is chosen, as required by decision D14 and task 01's calibration-criteria checkbox. Task 20 owns measurement, calibration, and the mandatory explicit user-approval gate; no constant listed here is final before that approval.
+Recorded by task 01 before any constant is chosen, as required by decision D14 and task 01's calibration-criteria checkbox. User decision (2026-09-22): the report-and-approval mechanism is superseded. Task 20 verifies the code-bound targets, task 21 moves the host-dependent estimator allowances to the environment, and task 22 documents how to re-measure them on a target host. The numeric targets below are unchanged; the host-bound ones (incident settlement time, estimate error) are recorded as observations rather than gates.
 
 ## Pre-approved measurable criteria (D14)
 
-The local reference runtime is the current verification environment documented in the calibration report, not a requirement to recover the original machine or its database. Follow the [runtime and evidence rules](index.md#common-guardrails-and-reporting): development data may be wiped, fixture inputs and numeric targets remain unchanged, and new measurements must identify their actual host/configuration. Earlier measurements remain historical observations.
+The local reference runtime is the current verification environment recorded in the task 20 recap, not a requirement to recover the original machine or its database. Follow the [runtime and evidence rules](index.md#common-guardrails-and-reporting): development data may be wiped, fixture inputs and numeric targets remain unchanged, and new measurements must identify their actual host/configuration. Earlier measurements remain historical observations.
 
 | Domain | Target | Measurement basis |
 | --- | --- | --- |
@@ -17,7 +17,9 @@ The local reference runtime is the current verification environment documented i
 
 Sanity envelopes before margins (documentation only, not estimator logic): incident conservative base `60 + 888/10 = 148.8 s`; `surge-10k` `120 + 1000/250 = 124 s`. Task 17c uses the full-job overhead floor: surge is limited to `10 / (0.150 + 0.130) = 35.714/s`, giving `120 + 28 = 148 s` before settlement and 163 s with settlement. The incident is 168.474 s with the shared dispatch margin and settlement. Both remain admissible.
 
-## Provisional policy parameters (frozen only at task 20)
+## Policy parameters
+
+Rows below still reading "provisional until task 20" were written before the 2026-09-22 decision. Current status: worker and contract constants (dispatch margin, limiter granularity, cooldowns, probes, deadlines, retention, ceilings) stay hardcoded and versioned in code and are verified, not tuned, by task 20; the estimator allowances (job overhead floor, settlement, transient-error margin and pause) keep their current values as defaults and become environment-configurable in task 21, with the re-measurement procedure in task 22.
 
 | Parameter | Domain | Source decision | Current status |
 | --- | --- | --- | --- |
@@ -33,4 +35,4 @@ Sanity envelopes before margins (documentation only, not estimator logic): incid
 | Transient-error demand factor `1/(1-p)` margin and the policy-maximum `p` | Estimator error assumptions | D11 | Task 17c: p is a fraction; demand 1/(1-p) ×1.25 when p>0, plus 1 s per excess attempt from the mock’s honored Retry-After. Supported maximum p=0.3. Scenario D estimate 68.618 s exceeds measured finalization 20.894 s. Provisional until task 20. |
 | Policy and estimator identity versions (`enginePolicyIdentitySchema` names/versions) | Versioning | D13 | `declared-capacity-erp-dispatch` v2 (task 17b shared definition); `conservative-duration-estimator` v2 (task 17c shared definition in estimate.ts). Provisional until task 20. |
 
-Calibration may adjust these constants only; it may not change the algorithms, weaken a target, or suppress errors to pass (D14). The throughput and pressure targets pull in opposite directions by design; the task 20 report must explain the chosen trade-off. See [the execution index](index.md) and [task 20](20_calibrate_policy_and_obtain_approval.md) for the approval gate.
+Calibration may adjust these constants only; it may not change the algorithms, weaken a target, or suppress errors to pass (D14). The throughput and pressure targets pull in opposite directions by design. See [the execution index](index.md), [task 20](20_verify_policy_against_code_bound_targets.md) and [task 22](22_document_calibration_procedure.md).

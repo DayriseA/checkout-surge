@@ -353,6 +353,8 @@ The choices below resolve the questions Part I left open. They are binding for P
 - Deliverable: a calibration report with environment, fixture, measured value per target, chosen constants, and policy/estimator versions. The user approves the frozen constants before Phase 7 closes and before documentation advertises the guarantee.
 - The throughput and pressure targets pull in opposite directions by design; the report explains the chosen trade-off rather than silently favoring one.
 
+**Revised by the project owner on 2026-09-22.** The calibration report and the explicit approval gate are dropped. A recap of the changes, validation results and any remaining issues is sufficient for routine task handoff. Any separately required owner decisions still apply. Fitting constants to one developer machine is not a deliverable: task 20 verifies the code-bound targets above (accounting, incident counts, throughput, pressure, outage probes) on a clean runtime, the host-dependent estimator allowances become environment-configurable with the current values as defaults (task 21), and a documented procedure lets a deployment re-measure them on its own host (task 22). The incident settlement time and the estimate error are recorded as local observations, not gates. The "constants only, never algorithms or targets" rule stands.
+
 ## Part III — Implementation plan
 
 ### 10. Sequencing and delivery rules

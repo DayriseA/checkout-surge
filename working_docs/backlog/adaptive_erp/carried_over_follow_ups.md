@@ -4,7 +4,7 @@ Optional items surfaced while tasks 03 to 11 and 17c were implemented. None of t
 
 This file is intentionally not named `xx_*.md`, so the sequential task runner never treats it as an implementation task.
 
-Deferred work that a later task genuinely needs was **not** recorded here. It was written into the destination task documents instead: the stranded recovery-attempt ceiling, the hardcoded `escalated` counter and the inert queue parameters are in [14](14_retire_scenario_engine_controls.md); the idle-window rate step is in [20](20_calibrate_policy_and_obtain_approval.md).
+Deferred work that a later task genuinely needs was **not** recorded here. It was written into the destination task documents instead: the stranded recovery-attempt ceiling, the hardcoded `escalated` counter and the inert queue parameters are in [14](14_retire_scenario_engine_controls.md); the idle-window rate step is in [20](20_verify_policy_against_code_bound_targets.md).
 
 ## 1. Stored terminal results are preserved semantically, not byte for byte
 
@@ -29,7 +29,7 @@ Deferred work that a later task genuinely needs was **not** recorded here. It wa
 
 - Origin: task 04, ERP classification and reconciliation.
 - Observation: a failing status lookup neither opens nor closes the availability circuit. This follows task 04's rules — only a fresh non-replayed confirmation teaches health — and it deliberately keeps reconciliation progressing during an outage. What is undecided is whether *repeated* lookup failures should themselves count as evidence that the ERP is unavailable.
-- Decision: keep lookups non-teaching, or let sustained lookup failure contribute to the circuit. This changes learning semantics rather than a constant, so it is a structural decision and would need explicit approval before task [20](20_calibrate_policy_and_obtain_approval.md) calibrates against it.
+- Decision: keep lookups non-teaching, or let sustained lookup failure contribute to the circuit. This changes learning semantics rather than a constant, so it is a structural decision and would need explicit approval before task [20](20_verify_policy_against_code_bound_targets.md) calibrates against it.
 
 ## 5. A corrupt accepted run snapshot still blocks notification publication
 
@@ -40,5 +40,5 @@ Deferred work that a later task genuinely needs was **not** recorded here. It wa
 ## 6. The estimator reserves the full traffic budget and sums traffic and ERP time
 
 - Origin: task 17c, estimator re-fit (user decision on 2026-09-21 to defer the estimate-ratio criterion to task 20).
-- Observation: D11's envelope adds the whole declared traffic budget to the ERP drain time. Task 17b shows both assumptions are pessimistic: traffic and ERP work overlap (the incident finalized at 96.7 s against a 148.8 s sequential base), and a buyer spike stops when stock sells out (`surge-10k` traffic ended at 13 s of its 120 s budget). The over-estimate is largest on short runs, far below the 600-second ceiling, and only 1.74x on the incident, so admission decisions are not affected today; the visible cost is a pessimistic figure wherever the conservative estimate is displayed. Overlap alone would barely change the ratios; the constants that dominate them are handed to task [20](20_calibrate_policy_and_obtain_approval.md).
-- Decision: keep D11's sequential envelope, or approve a structural change (overlap, or a sell-out-aware traffic term). An under-estimate admits a run that overstays the occupancy ceiling, while an over-estimate only costs accuracy, so any change must stay above every measurement. Altering D11 needs explicit approval before task 20 calibrates against it.
+- Observation: D11's envelope adds the whole declared traffic budget to the ERP drain time. Task 17b shows both assumptions are pessimistic: traffic and ERP work overlap (the incident finalized at 96.7 s against a 148.8 s sequential base), and a buyer spike stops when stock sells out (`surge-10k` traffic ended at 13 s of its 120 s budget). The over-estimate is largest on short runs, far below the 600-second ceiling, and only 1.74x on the incident, so admission decisions are not affected today; the visible cost is a pessimistic figure wherever the conservative estimate is displayed. Overlap alone would barely change the ratios; the constants that dominate them become deployment-configurable in task [21](21_make_estimator_constants_env_configurable.md) and re-measurable through task [22](22_document_calibration_procedure.md).
+- Decision: keep D11's sequential envelope, or approve a structural change (overlap, or a sell-out-aware traffic term). An under-estimate admits a run that overstays the occupancy ceiling, while an over-estimate only costs accuracy, so any change must stay above every measurement. Altering D11 needs explicit owner approval; it is not part of tasks 20–22.

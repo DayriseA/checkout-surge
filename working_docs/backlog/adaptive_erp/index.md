@@ -1,6 +1,6 @@
 # Adaptive ERP — Sequential Execution Index
 
-Status: tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); task 17b is implemented and measured, with the high-rate envelope criterion left for the project owner's acknowledgement (bounded by concurrency / full job time, not by pacing; input to 17c); task 17c is implemented, with the estimate-ratio criterion explicitly partial and carried to task 20 by user decision; task 18 is implemented, validated and browser-verified on the nominal path, with the full API matrix and non-nominal browser states carried to task 19; task 19 records runtime verification; the recovery publication/lease failure was fixed and re-verified by task 19a; task 19b fixed the harness teardown race after a worker kill (staged, not committed); tasks 20–21 are pending. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Task 17b records reference-runtime results and limitations; policy constants remain provisional until task 20.
+Status: tasks 01 to 17 are completed and committed (16 = `08383d69`, 17 = `a17b43c8`); task 17b is implemented and measured, with the high-rate envelope criterion left for the project owner's acknowledgement (bounded by concurrency / full job time, not by pacing; input to 17c); task 17c is implemented, with the estimate-ratio criterion explicitly partial and carried to task 20 by user decision; task 18 is implemented, validated and browser-verified on the nominal path, with the full API matrix and non-nominal browser states carried to task 19; task 19 records runtime verification; the recovery publication/lease failure was fixed and re-verified by task 19a; task 19b fixed the harness teardown race after a worker kill (staged, not committed); tasks 20–23 are pending. User decision (2026-09-22): the calibration report and mandatory approval gate of the original task 20 are dropped; task 20 verifies the code-bound targets only, task 21 makes the host-dependent estimator constants environment-configurable, task 22 documents a reproducible calibration procedure for a target host, and closure moves to task 23. D06 was revised by the project owner on 2026-09-21 (see the plan): dispatch at the declared ERP capacity through the queue's native rate limit replaces the learned AIMD rate of tasks 07 and 09. Task 17b records reference-runtime results and limitations; estimator defaults keep those values and become deployment-configurable in task 21.
 
 Target branch: `feat/adaptive-erp-and-admission`.
 
@@ -14,7 +14,7 @@ Each numbered document contains the local context, fixed rules, expected prerequ
 
 Complete and validate each runnable slice before proceeding. Coordinate producer/consumer and schema changes in the same slice; do not activate half a protocol. Record actual commits, checks, evidence and temporary adapters for successors. Tests belong with their implementation task; task 19 fills and verifies the cross-boundary matrix rather than postponing all testing until the end. No task status in this initial backlog means work has been implemented.
 
-Task 20 contains the source plan's mandatory user-approval gate. After calibration/reporting, pause there until the user explicitly approves the exact frozen constants/versions. Do not auto-complete it or proceed to task 21 merely because automated tests pass.
+User decision (2026-09-22): the source plan's D14 report-and-approval gate is superseded. A recap of the changes, validation results and any remaining issues is sufficient for routine task handoff. Any separately required owner decisions still apply. D14's rule that calibration may adjust constants only, never algorithms or targets, still applies. Constants fitted to one machine are not frozen in code: host-dependent estimator allowances are read from the environment (task 21) and re-measured per deployment with the documented procedure (task 22).
 
 ## Ordered tasks and phase coverage
 
@@ -43,33 +43,35 @@ Task 20 contains the source plan's mandatory user-approval gate. After calibrati
 | 19 | [Acceptance matrix and runtime verification](19_complete_acceptance_matrix_and_runtime_verification.md) | 7 | Recap retained; stable-high-latency recovery failure delegated to 19a |
 | 19a | [Fix recovery publication lease starvation](19a_fix_recovery_publication_lease_starvation.md) | 7 follow-up | Done (`ba3798a8`): waiting publications renew their lease instead of being superseded; stable-high-latency settles 600/600/600 |
 | 19b | [Settle orphaned active jobs before teardown](19b_settle_orphaned_active_jobs_before_exact_run_teardown.md) | 7 follow-up | Done (staged): the harness waits, within a 60 s cleanup deadline, for `active_job` teardown conflicts to settle; 3/3 restart runs passed with exact teardown |
-| 20 | [Calibration and explicit approval](20_calibrate_policy_and_obtain_approval.md) | 7 | Measured constants/report; mandatory user gate |
-| 21 | [Authoritative docs and delivery closure](21_update_authoritative_docs_and_close_delivery.md) | 7 | Approved claims, evidence and consistency review |
+| 20 | [Verify policy against code-bound targets](20_verify_policy_against_code_bound_targets.md) | 7 (revised) | One clean-runtime pass of the acceptance fixtures; pass/fail per code-bound target; failures become follow-up tasks |
+| 21 | [Estimator constants from the environment](21_make_estimator_constants_env_configurable.md) | 7 (revised) | Host-dependent estimator allowances read from env with current defaults; `.env.example` records their calibration origin |
+| 22 | [Calibration procedure](22_document_calibration_procedure.md) | 7 (revised) | `docs/estimator_calibration.md`: how to re-measure and set the variables on a target host |
+| 23 | [Authoritative docs and delivery closure](23_update_authoritative_docs_and_close_delivery.md) | 7 | Documented claims, evidence and consistency review |
 
-The sequence splits broad source phases by ownership but preserves their dependencies. Contracts/schema/client policies are prepared before live cutovers; task 05 coordinates all queue producers/consumers, task 09 activates all adaptive dispatch paths, and task 14 removes obsolete configuration only after replacement behavior exists. Initial estimator measurements occur in task 15; final cross-scenario calibration/approval remains task 20.
+The sequence splits broad source phases by ownership but preserves their dependencies. Contracts/schema/client policies are prepared before live cutovers; task 05 coordinates all queue producers/consumers, task 09 activates all adaptive dispatch paths, and task 14 removes obsolete configuration only after replacement behavior exists. Initial estimator measurements occur in task 15; task 20 verifies the code-bound targets and tasks 21–22 make the host-dependent allowances configurable and re-measurable.
 
 ## Locked-decision traceability
 
 | Decision | Implementation owners | Verification/closure |
 | --- | --- | --- |
-| D01 Existing lifecycles plus operational dimension | 01, 02, 05, 10, 11, 18 | 19, 21 |
-| D02 Destructive, fast reset | 12, 13, 18 | 19, 21 |
-| D03 Automatic transient recovery; any other error fails the order | 01, 04, 05, 11 | 19, 21 |
-| D04 One durable owner from first dispatch | 02, 05, 09 | 19, 21 |
-| D05 Terminal ERP ledger, lookup and idempotent replay | 03, 04, 05 | 19, 21 |
-| D06 (revised 2026-09-21) Dispatch at declared capacity via the queue's native rate limit; separate capacity/availability feedback | 04, 07 and 09 (original, superseded for pacing), 17b | 19, 20, 21 |
-| D07 Persist safety state; re-apply queue limits on restart (revised with D06) | 02, 05, 09, 11, 14, 17b | 19, 21 |
-| D08 Bounded observed-latency deadlines | 04, 08, 09, 14 | 19, 20, 21 |
-| D09 Bounded history and cumulative aggregates | 02, 06, 18 | 19, 20, 21 |
-| D10 Automatic reset 900 seconds after acceptance | 13, 18 | 19, 20, 21 |
-| D11 Conservative API-owned envelope | 01, 15, 16, 17c | 19, 20, 21 |
-| D12 Start-time recomputation is the only authority | 16, 17 | 19, 21 |
-| D13 Internal versioned engine policy; retire scenario knobs; minimal runtime view | 01, 07, 08, 10, 14, 18 | 19, 20, 21 |
-| D14 Bounded calibration and user approval | Criteria in 01; provisional values in 07, 08, 13, 15 | 19, 20 mandatory gate, 21 closure |
+| D01 Existing lifecycles plus operational dimension | 01, 02, 05, 10, 11, 18 | 19, 23 |
+| D02 Destructive, fast reset | 12, 13, 18 | 19, 23 |
+| D03 Automatic transient recovery; any other error fails the order | 01, 04, 05, 11 | 19, 23 |
+| D04 One durable owner from first dispatch | 02, 05, 09 | 19, 23 |
+| D05 Terminal ERP ledger, lookup and idempotent replay | 03, 04, 05 | 19, 23 |
+| D06 (revised 2026-09-21) Dispatch at declared capacity via the queue's native rate limit; separate capacity/availability feedback | 04, 07 and 09 (original, superseded for pacing), 17b | 19, 20, 23 |
+| D07 Persist safety state; re-apply queue limits on restart (revised with D06) | 02, 05, 09, 11, 14, 17b | 19, 23 |
+| D08 Bounded observed-latency deadlines | 04, 08, 09, 14 | 19, 20, 23 |
+| D09 Bounded history and cumulative aggregates | 02, 06, 18 | 19, 20, 23 |
+| D10 Automatic reset 900 seconds after acceptance | 13, 18 | 19, 20, 23 |
+| D11 Conservative API-owned envelope | 01, 15, 16, 17c | 19, 20, 23 |
+| D12 Start-time recomputation is the only authority | 16, 17 | 19, 23 |
+| D13 Internal versioned engine policy; retire scenario knobs; minimal runtime view | 01, 07, 08, 10, 14, 18 | 19, 20, 23 |
+| D14 Bounded calibration and user approval (approval/report mechanism superseded 2026-09-22) | Criteria in 01; provisional values in 07, 08, 13, 15; env-configurable estimator allowances in 21 | 19, 20 verification, 22 procedure, 23 closure |
 
-The full acceptance matrix is embedded in task 19. The source section 13 completion checklist is operationalized in task 21. Each task also owns focused tests before its exit.
+The full acceptance matrix is embedded in task 19. The source section 13 completion checklist is operationalized in task 23. Each task also owns focused tests before its exit.
 
-Task 01 recorded the D14 calibration criteria and the provisional policy parameters in [calibration criteria](calibration_criteria.md); task 20 owns the measurements and the mandatory approval gate.
+Task 01 recorded the D14 calibration criteria and the provisional policy parameters in [calibration criteria](calibration_criteria.md); task 20 owns the code-bound verification, task 22 the per-host calibration procedure.
 
 ## Consumer/ownership map
 
@@ -124,10 +126,10 @@ Read [AGENTS](../../../AGENTS.md) and [quality checklists](../../../docs/quality
 
 Run focused tests, `pnpm type-check` and affected unit/API/integration lanes for code changes. Use `pnpm test:infra:up` for isolated DB/Redis resources. Do not run `pnpm test:composition` or `pnpm test:characterization` unless explicitly asked. Long resilience experiments are explicit and isolated, not hidden inside routine smoke. Report every executed/skipped check honestly.
 
-Schema changes follow the repository's incremental migration practice (user decision, 2026-09-19): each schema-changing task adds one new generated migration (`0006_*`, ...) with its snapshot and journal entry, leaves earlier migrations and the baseline's custom SQL untouched, updates the entry count in `packages/db/test/unit/migration-metadata.test.ts`, and validates an isolated migration that applies to a populated database. This supersedes the single-baseline wording of the source plan's section 12; task 21 owns the separately requested final squash. Populated migration tests use generated fixtures, not preserved development data.
+Schema changes follow the repository's incremental migration practice (user decision, 2026-09-19): each schema-changing task adds one new generated migration (`0006_*`, ...) with its snapshot and journal entry, leaves earlier migrations and the baseline's custom SQL untouched, updates the entry count in `packages/db/test/unit/migration-metadata.test.ts`, and validates an isolated migration that applies to a populated database. This supersedes the single-baseline wording of the source plan's section 12; task 23 owns the separately requested final squash. Populated migration tests use generated fixtures, not preserved development data.
 
 User decision (2026-09-21, reaffirmed during the task 19 document review): development database contents are disposable. The reference runtime may be wiped (`pnpm runtime:wipe`, then `runtime:setup`/`runtime:up`) and used as the clean verification runtime; a second stack is not required solely to preserve dev data. Identify the selected Docker engine, Compose project and resources, and avoid interference with concurrent work. Neither the original machine nor historical run UUIDs/volumes are prerequisites. This rule supersedes contrary runtime/incident-preservation wording in earlier task handoffs and the source plan. Reproduce the incident through `original-incident`; prove historical-snapshot readability with old-format fixtures.
 
-Preserve scenario definitions and recorded verification evidence outside disposable runtime storage. Keep unfinished obligations intact while exercising recovery, then collect diagnostics and record pass/fail/inconclusive status before resetting or tearing down the owned environment. Cleanup must not turn a failed or interrupted recovery into a pass, but indefinite preservation of test databases is not required. Record the current host's topology, versions and resource limits with new measurements; historical reference measurements remain observations of their original environment, not prerequisites or results for the current host. Numeric acceptance targets and task 20's approval gate remain unchanged.
+Preserve scenario definitions and recorded verification evidence outside disposable runtime storage. Keep unfinished obligations intact while exercising recovery, then collect diagnostics and record pass/fail/inconclusive status before resetting or tearing down the owned environment. Cleanup must not turn a failed or interrupted recovery into a pass, but indefinite preservation of test databases is not required. Record the current host's topology, versions and resource limits with new measurements; historical reference measurements remain observations of their original environment, not prerequisites or results for the current host. Numeric acceptance targets remain unchanged; host-bound timing and estimate-ratio figures are recorded as observations (task 22), not pass/fail gates.
 
-A completed task handoff should identify its commit, actual changed interfaces/files, acceptance evidence, commands/results, intentionally temporary adapters and any blocker. A deviation from D01–D14 requires explicit user approval, not a convenient local reinterpretation. The existence of this backlog does not itself satisfy task 20's approval gate.
+A completed task handoff should identify its commit, actual changed interfaces/files, acceptance evidence, commands/results, intentionally temporary adapters and any blocker. A deviation from D01–D14 requires explicit user approval, not a convenient local reinterpretation.
