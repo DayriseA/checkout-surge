@@ -64,7 +64,7 @@ export function estimateDemoDuration(
       {
         code: "unique_acceptable_orders",
         detail:
-          "All planned unique intents may arrive; duplicate buyer attempts share an idempotency key. Stock is divided by traffic quantityPerAttempt (the generated request quantity), not inventory quantityPerCheckout.",
+          "All planned unique intents may arrive; duplicate buyer attempts share an idempotency key. Stock is divided by traffic quantityPerAttempt (the generated request quantity).",
       },
       {
         code: "transient_errors",

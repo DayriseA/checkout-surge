@@ -5,6 +5,7 @@ import type {
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { adminFieldHints } from "../lib/presentation/field-hints";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
@@ -29,6 +30,7 @@ import {
   neutralLinkButtonClassName,
   primaryButtonClassName,
 } from "./control-styles";
+import { FieldHint } from "./field-hint";
 import { GoldSignals } from "./gold-signals";
 import { PublicRunConclusion, PublicRunConclusionProof, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
@@ -267,18 +269,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             title="Traffic"
           />
           <FactList
-            facts={[
-              ["Starting stock", formatNumber(config.inventoryConfig.startingStock)],
-              ["Quantity", formatNumber(config.inventoryConfig.quantityPerCheckout)],
-              // Native minutes because of the unit, not because it is configured: the tiered
-              // formatter has no minute-native form and would render a 15 minute hold as
-              // "15 min 0 s" under a label that declares minutes. The guards below are configured
-              // too and are tiered. See the unit-choice table in docs/cross_service_conventions.md.
-              [
-                "Configured hold (minutes)",
-                formatNumber(config.inventoryConfig.reservationHoldMinutes),
-              ],
-            ]}
+            facts={[["Starting stock", formatNumber(config.inventoryConfig.startingStock)]]}
             title="Inventory"
           />
           <FactList
@@ -296,12 +287,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <FactList
             facts={[
               ["Concurrency", formatNumber(config.backpressureConfig.orderProcessConcurrency)],
-              [
-                "Configured retry delay",
-                formatDurationSeconds(
-                  config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
-                ),
-              ],
               ["Logical queue", codeValue(config.backpressureConfig.queueName)],
               ["Physical queue", codeValue(config.backpressureConfig.physicalQueueName)],
             ]}
@@ -570,29 +555,38 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
         Search the protected run dataset, including records outside the recent-record view.
       </p>
       <form className="mt-3 flex flex-wrap items-end gap-3" method="get">
-        <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-          Identifier type
+        <div className="grid gap-1 text-sm font-semibold text-muted-strong">
+          <div className="flex items-center gap-2">
+            <label htmlFor="history-filter-kind">Identifier type</label>
+            <FieldHint label="Identifier type" text={adminFieldHints.identifierType} />
+          </div>
           <select
             className={inputClassName}
             defaultValue={filter?.kind ?? "publicOrderId"}
+            id="history-filter-kind"
             name="filterKind"
           >
             <option value="orderId">Internal order ID</option>
             <option value="publicOrderId">Public order ID</option>
             <option value="correlationId">Correlation ID</option>
           </select>
-        </label>
-        <label className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-muted-strong">
-          Identifier
+        </div>
+        <div className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-muted-strong">
+          <div className="flex items-center gap-2">
+            <label htmlFor="history-filter-value">Identifier</label>
+            <FieldHint label="Identifier" text={adminFieldHints.identifier} />
+          </div>
           <input
             className={inputClassName}
             defaultValue={filter?.value ?? ""}
+            id="history-filter-value"
             name="filterValue"
             placeholder="Enter an exact identifier"
             required
             type="search"
           />
-        </label>
+          <span className="text-xs font-normal text-muted">Enter an exact identifier.</span>
+        </div>
         <button className={`${primaryButtonClassName} px-4 py-2`} type="submit">
           Search
         </button>
@@ -1064,11 +1058,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           <FactList
             facts={[
               [publicVocabulary.startingStock, formatNumber(config.inventoryConfig.startingStock)],
-              ["Quantity per checkout", formatNumber(config.inventoryConfig.quantityPerCheckout)],
-              [
-                "Configured hold (minutes)",
-                formatNumber(config.inventoryConfig.reservationHoldMinutes),
-              ],
             ]}
             title="Inventory"
           />
@@ -1086,12 +1075,6 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               [
                 "Order-processing concurrency",
                 formatNumber(config.backpressureConfig.orderProcessConcurrency),
-              ],
-              [
-                "Pending-storage retry delay (configured)",
-                formatDurationSeconds(
-                  config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
-                ),
               ],
             ]}
             title="Backpressure"
@@ -1353,11 +1336,6 @@ export function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
   const details = [
     `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(configSnapshot.inventoryConfig.startingStock)} starting units`,
   ];
-  if (configSnapshot.inventoryConfig.quantityPerCheckout > 1) {
-    details.push(
-      `${formatNumber(configSnapshot.inventoryConfig.quantityPerCheckout)} units per checkout`,
-    );
-  }
   if (traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt) {
     details.push("duplicate attempts enabled");
   }

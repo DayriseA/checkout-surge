@@ -55,7 +55,7 @@ vi.mock("../../../../packages/db/src/redis-inventory.js", () => ({
 function input(overrides: Partial<EstimatorInput> = {}): EstimatorInput {
   return estimatorInputSchema.parse({
     trafficConfig: { mode: "constant-arrival-rate", ratePerSecond: 10, durationSeconds: 10 },
-    inventoryConfig: { startingStock: 60, reservationHoldMinutes: 15 },
+    inventoryConfig: { startingStock: 60 },
     effectiveWorkerConcurrency: 5,
     declaredErpCapacityPerSecond: 5,
     declaredErpLatencyMs: 200,
@@ -126,7 +126,7 @@ describe("pure conservative duration estimator", () => {
         startDelaySeconds: 0,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 300, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 300 },
       declaredErpCapacityPerSecond: 100,
       declaredErpLatencyMs: 50,
       effectiveWorkerConcurrency: 10,
@@ -163,7 +163,7 @@ describe("pure conservative duration estimator", () => {
         startDelaySeconds: 0,
         quantityPerAttempt: 3,
       },
-      inventoryConfig: { startingStock: 11, quantityPerCheckout: 99, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 11 },
       declaredErpCapacityPerSecond: 1,
     });
     expect(estimate(spike).conservativeDurationSeconds).toBeCloseTo(16 + 3 / 0.95, 8);
@@ -197,7 +197,7 @@ describe("pure conservative duration estimator", () => {
 
   it("retains traffic, start delay and settlement for zero work; supports zero latency and the maximum supported p", () => {
     const empty = input({
-      inventoryConfig: { startingStock: 0, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 0 },
       declaredErpLatencyMs: 0,
       errorRateAssumption: 0.3,
     });
@@ -243,9 +243,7 @@ describe("pure conservative duration estimator", () => {
         "Lower declared ERP latency",
       ],
       [
-        {
-          inventoryConfig: { startingStock: 0, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
-        },
+        { inventoryConfig: { startingStock: 0 } },
         "traffic_dispatch",
         "Shorten the traffic duration",
       ],
@@ -262,8 +260,6 @@ describe("pure conservative duration estimator", () => {
           declaredErpCapacityPerSecond: 1,
           inventoryConfig: {
             startingStock: 1000,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
           },
           trafficConfig: {
             mode: "constant-arrival-rate",
@@ -290,8 +286,6 @@ describe("pure conservative duration estimator", () => {
         input({
           inventoryConfig: {
             startingStock: 200,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
           },
           trafficConfig: {
             ...input().trafficConfig,
@@ -334,7 +328,7 @@ describe("pure conservative duration estimator", () => {
       ] as const) {
         const result = estimate(
           input({
-            inventoryConfig: { startingStock, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+            inventoryConfig: { startingStock },
             declaredErpForcedOutage,
             errorRateAssumption,
           }),

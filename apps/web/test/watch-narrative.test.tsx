@@ -226,7 +226,10 @@ describe("watch narrative", () => {
     if (!currentRun) throw new Error("Expected a run.");
     currentRun.configSnapshot = {
       ...currentRun.configSnapshot,
-      inventoryConfig: { ...currentRun.configSnapshot.inventoryConfig, quantityPerCheckout: 2 },
+      trafficConfig: {
+        ...currentRun.configSnapshot.trafficConfig,
+        quantityPerAttempt: 2,
+      },
     };
     drainingProjection.inventory = {
       ...inventoryFixture,
@@ -333,7 +336,7 @@ describe("watch narrative", () => {
         expect(processing).toBeGreaterThan(signals);
         expect(consistency).toBeGreaterThan(processing);
         expect(connection).toBeGreaterThan(consistency);
-        expect(output.indexOf("View run report")).toBeGreaterThan(strip);
+        expect(output.indexOf("Preparing saved report…")).toBeGreaterThan(strip);
         expect(output.indexOf("Try another scenario")).toBeGreaterThan(strip);
       }
     }

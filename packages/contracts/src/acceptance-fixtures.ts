@@ -40,7 +40,6 @@ function backpressureConfig(
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency,
-    pendingPersistenceRetryAfterSeconds: 30,
   };
 }
 
@@ -64,7 +63,7 @@ export function originalIncidentFixture(): AdaptiveErpScenarioFixture {
         startDelaySeconds: 0,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 888, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 888 },
       erpConfig: {
         latencyMs: 250,
         maxTps: 10,
@@ -102,7 +101,7 @@ export function lowCapacityFixture(): AdaptiveErpScenarioFixture {
         startDelaySeconds: 0,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 300, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 300 },
       erpConfig: {
         latencyMs: 200,
         maxTps: 2,
@@ -148,7 +147,7 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
         maxDurationSeconds: 10,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 200, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 200 },
       erpConfig: {
         latencyMs: 1000,
         maxTps: 200,
@@ -194,7 +193,7 @@ export function latencyIncreaseFixture(): AdaptiveErpScenarioFixture {
         startDelaySeconds: 0,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 600, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 600 },
       erpConfig: {
         latencyMs: 250,
         maxTps: 10,
@@ -233,7 +232,7 @@ export function duplicateAttemptsFixture(): AdaptiveErpScenarioFixture {
         maxDurationSeconds: 11,
         quantityPerAttempt: 1,
       },
-      inventoryConfig: { startingStock: 200, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+      inventoryConfig: { startingStock: 200 },
       erpConfig: {
         latencyMs: 50,
         maxTps: 200,

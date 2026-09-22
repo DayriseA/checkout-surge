@@ -984,8 +984,6 @@ function acceptedConfig() {
     },
     inventoryConfig: {
       startingStock: 32,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 0,
@@ -997,7 +995,6 @@ function acceptedConfig() {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

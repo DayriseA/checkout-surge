@@ -1104,21 +1104,16 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
-  it("sources buy quantity from traffic attempts rather than inventory checkout sizing", () => {
+  it("sources buy quantity from traffic attempts", () => {
     const script = generateK6Script({
       ...startRequest,
       configSnapshot: {
         ...startRequest.configSnapshot,
         trafficConfig: { ...startRequest.configSnapshot.trafficConfig, quantityPerAttempt: 3 },
-        inventoryConfig: {
-          ...startRequest.configSnapshot.inventoryConfig,
-          quantityPerCheckout: 7,
-        },
       },
     });
 
     expect(script.contents).toContain('"quantity":3');
-    expect(script.contents).not.toContain('"quantity":7');
   });
 
   it("uses the same default constant-arrival VU values in the script and diagnostic plan", () => {

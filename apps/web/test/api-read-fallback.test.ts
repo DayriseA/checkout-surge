@@ -445,8 +445,6 @@ function runHistoryDetailFixture() {
         },
         inventoryConfig: {
           startingStock: 10,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
         },
         erpConfig: {
           latencyMs: 10,
@@ -458,7 +456,6 @@ function runHistoryDetailFixture() {
           queueName: "orders:process",
           physicalQueueName: "orders-process",
           orderProcessConcurrency: 2,
-          pendingPersistenceRetryAfterSeconds: 30,
         },
       },
       startedAt: "2026-06-20T00:00:00.000Z",
@@ -498,6 +495,7 @@ function runHistoryDetailFixture() {
     : undefined;
   const { notes: _deliveryNotes, ...publicDeliverySummary } = summary.trafficDeliverySummary;
   return {
+    failureDiagnostic: null,
     summary: {
       ...summary,
       trafficDeliverySummary: publicDeliverySummary,

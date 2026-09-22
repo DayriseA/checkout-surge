@@ -1134,8 +1134,6 @@ describe("demo-run lifecycle start gating", () => {
           },
           inventoryConfig: {
             startingStock: 44,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
           },
           erpConfig: {
             latencyMs: 75,
@@ -1180,8 +1178,6 @@ describe("demo-run lifecycle start gating", () => {
       },
       inventoryConfig: {
         startingStock: 55,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
       },
     };
     await managementService.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-update");
@@ -1221,8 +1217,6 @@ describe("demo-run lifecycle start gating", () => {
           },
           inventoryConfig: {
             startingStock: 33,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
           },
         },
       },
@@ -1743,8 +1737,6 @@ function surge10kSnapshot(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 1000,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 150,
@@ -1756,7 +1748,6 @@ function surge10kSnapshot(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 10,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }
@@ -2072,7 +2063,6 @@ function publicRuntimePolicy(): PublicRuntimePolicy {
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
-        pendingPersistenceRetryAfterSeconds: 30,
       },
     },
     publicCustomLimits: {

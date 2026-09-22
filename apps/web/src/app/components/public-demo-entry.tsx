@@ -29,7 +29,9 @@ import {
   type ErrorPresentation,
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
+import { fieldHints } from "../lib/presentation/field-hints";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
+import { percentToRatio, ratioToPercent } from "../lib/presentation/percent";
 import { publicVocabulary, trafficModeLabel } from "../lib/presentation/public-vocabulary";
 import {
   deriveRunConfigFacts,
@@ -42,6 +44,7 @@ import {
 } from "../lib/presentation/run-presentation-state";
 import { inputClassName, primaryButtonClassName } from "./control-styles";
 import { ErrorNotice } from "./error-notice";
+import { FieldHint } from "./field-hint";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { RunEstimateNotice } from "./run-estimate-notice";
 import { StatusPill } from "./status-pill";
@@ -611,7 +614,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 {customDraft.mode === "buyer-spike" ? (
                   <>
                     <LabeledInput
-                      helper="How many distinct buyers arrive in the spike."
+                      hint={fieldHints.buyerCount}
                       id="custom-buyers"
                       key="buyer-count"
                       label="Buyer count"
@@ -625,10 +628,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       value={customDraft.buyerCount}
                     />
                     <div className="grid content-start gap-1 text-sm font-semibold text-muted-strong">
-                      <label
-                        className="flex min-h-11 items-center gap-2"
-                        htmlFor="custom-duplicate"
-                      >
+                      <div className="flex min-h-11 items-center gap-2">
                         <input
                           aria-describedby="custom-duplicate-description"
                           checked={customDraft.duplicateEachBuyerAttempt}
@@ -641,20 +641,24 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           }
                           type="checkbox"
                         />
-                        Duplicate each buyer attempt
-                      </label>
+                        <label htmlFor="custom-duplicate">Duplicate each buyer attempt</label>
+                        <FieldHint
+                          label="Duplicate each buyer attempt"
+                          text={fieldHints.duplicateBuyerAttempt}
+                        />
+                      </div>
                       <span
                         className="font-normal leading-5 text-muted"
                         id="custom-duplicate-description"
                       >
-                        Sends the same request twice per buyer and doubles planned attempts.
+                        Doubles the planned attempts.
                       </span>
                     </div>
                   </>
                 ) : (
                   <>
                     <LabeledInput
-                      helper="Requests dispatched during each second."
+                      hint={fieldHints.arrivalRate}
                       id="custom-rate"
                       key="arrival-rate"
                       label="Arrival rate"
@@ -668,7 +672,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       value={customDraft.ratePerSecond}
                     />
                     <LabeledInput
-                      helper="Arrival rate × duration determines planned attempts."
+                      hint={fieldHints.trafficDuration}
                       id="custom-duration"
                       label="Traffic duration"
                       max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
@@ -683,9 +687,18 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   </>
                 )}
               </div>
-              <p className="m-0 text-sm font-semibold text-ink" id="custom-traffic-total">
+              <p
+                className="m-0 flex items-center gap-2 text-sm font-semibold text-ink"
+                id="custom-traffic-total"
+              >
                 Planned total attempts: {formatCount(plannedRequests) ?? "—"}
+                <FieldHint label="Planned total attempts" text={fieldHints.plannedAttempts} />
               </p>
+              {customDraft.mode === "constant-arrival-rate" ? (
+                <p className="m-0 text-sm text-muted">
+                  Planned attempts = arrival rate × duration.
+                </p>
+              ) : null}
               {totalRequestsError ? (
                 <p
                   className="m-0 text-sm font-semibold text-danger"
@@ -710,7 +723,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             >
               <legend className="px-1 font-bold text-ink">Stock</legend>
               <LabeledInput
-                helper="Units available before the run begins."
+                hint={fieldHints.startingStock}
                 id="custom-stock"
                 label="Starting stock"
                 max={runtimePolicy.publicCustomLimits.maxStartingStock}
@@ -736,9 +749,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               className="grid gap-3 rounded-lg border border-border p-3"
             >
               <legend className="px-1 font-bold text-ink">Slow ERP</legend>
+              <p className="m-0 text-sm text-muted">
+                The ERP is the simulated back-office system that confirms each order after its stock
+                is reserved. Here it is deliberately slow and unreliable.
+              </p>
               <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
                 <LabeledInput
-                  helper="Added delay for each simulated ERP call."
+                  hint={fieldHints.erpDelay}
                   id="custom-erp-delay"
                   label="Delay per order"
                   max={runtimePolicy.publicCustomLimits.maxErpLatencyMs}
@@ -751,18 +768,19 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   value={customDraft.erpLatencyMs}
                 />
                 <LabeledInput
-                  helper="Maximum simulated ERP throughput."
+                  hint={fieldHints.erpCapacity}
                   id="custom-erp-capacity"
                   label="Capacity"
                   max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
                   min={runtimePolicy.publicCustomLimits.minErpMaxTps}
                   onChange={(erpMaxTps) => updateCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
                   submittedError={fieldError("custom-erp-capacity")}
-                  unit="orders/second"
+                  unit="calls/second"
                   value={customDraft.erpMaxTps}
                 />
                 <LabeledInput
-                  helper="Enter 25 for a 25% simulated failure rate."
+                  hint={fieldHints.erpFailureRate}
+                  instruction="Enter 25 for 25%."
                   id="custom-erp-error-rate"
                   label="Failure rate"
                   max={ratioToPercent(runtimePolicy.publicCustomLimits.maxErpErrorRate)}
@@ -787,7 +805,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               ref={advancedSettingsRef}
             >
               <summary className="cursor-pointer font-bold text-ink">
-                Advanced protection settings
+                Advanced protection settings{" "}
+                <FieldHint
+                  label="Advanced protection settings"
+                  text={fieldHints.advancedProtection}
+                />
               </summary>
               <fieldset
                 aria-describedby={
@@ -800,7 +822,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
                   {customDraft.mode === "buyer-spike" ? (
                     <LabeledInput
-                      helper="Stops dispatch if the spike overruns — not the expected run duration."
+                      hint={fieldHints.safetyCutoff}
                       id="custom-safety-cutoff"
                       label="Safety cutoff"
                       max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
@@ -814,7 +836,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     />
                   ) : null}
                   <LabeledInput
-                    helper="Wait before the load generator starts dispatching."
+                    hint={fieldHints.startDelay}
                     id="custom-start-delay"
                     label="Start delay"
                     max={runtimePolicy.publicCustomLimits.maxTrafficStartDelaySeconds}
@@ -953,8 +975,6 @@ function buildCustomConfigOverride(
           },
     inventoryConfig: {
       startingStock: parseInteger(draft.startingStock, 0),
-      quantityPerCheckout: defaults.inventoryConfig.quantityPerCheckout,
-      reservationHoldMinutes: defaults.inventoryConfig.reservationHoldMinutes,
     },
     erpConfig: {
       latencyMs: parseInteger(draft.erpLatencyMs, 0),
@@ -1032,19 +1052,6 @@ function reloadPage() {
 function parseInteger(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
-}
-
-function parseNumber(value: string, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function ratioToPercent(ratio: number): number {
-  return Number((ratio * 100).toFixed(10));
-}
-
-function percentToRatio(percent: string): number {
-  return parseNumber(percent, 0) / 100;
 }
 
 function customValidationPath(value: unknown): readonly string[] {
@@ -1338,6 +1345,7 @@ function TrafficModeSelector({
   return (
     <fieldset className="m-0 flex flex-wrap gap-3 border-0 p-0">
       <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
+      <FieldHint label="Traffic pattern" text={fieldHints.trafficPattern} />
       {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => {
         const id = `custom-traffic-mode-${trafficMode}`;
         return (
@@ -1364,7 +1372,8 @@ function TrafficModeSelector({
 }
 
 function LabeledInput({
-  helper,
+  hint,
+  instruction,
   id,
   label,
   max,
@@ -1375,7 +1384,8 @@ function LabeledInput({
   unit,
   value,
 }: {
-  helper: string;
+  hint: string;
+  instruction?: string;
   id: string;
   label: string;
   max: number;
@@ -1393,9 +1403,12 @@ function LabeledInput({
 
   return (
     <div className="grid content-start gap-1 text-sm text-muted-strong">
-      <label className="font-semibold" htmlFor={id}>
-        {label} ({unit})
-      </label>
+      <div className="flex items-center gap-2">
+        <label className="font-semibold" htmlFor={id}>
+          {label} ({unit})
+        </label>
+        <FieldHint label={label} text={hint} />
+      </div>
       <input
         aria-describedby={`${descriptionId}${visibleError ? ` ${errorId}` : ""}`}
         aria-invalid={visibleError ? true : undefined}
@@ -1414,7 +1427,8 @@ function LabeledInput({
         value={value}
       />
       <span className="font-normal leading-5 text-muted" id={descriptionId}>
-        Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}. {helper}
+        Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}.
+        {instruction ? ` ${instruction}` : ""}
       </span>
       {visibleError ? (
         <span className="font-semibold text-danger" id={errorId}>

@@ -457,8 +457,6 @@ describe("dashboard control proxy routes", () => {
       },
       inventoryConfig: {
         startingStock: 44,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
       },
     };
     const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {

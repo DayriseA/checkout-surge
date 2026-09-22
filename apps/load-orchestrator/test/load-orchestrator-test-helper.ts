@@ -18,8 +18,6 @@ export function trafficExecutionStartRequestFixture(): TrafficExecutionStartRequ
       },
       inventoryConfig: {
         startingStock: 200,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
       },
       erpConfig: {
         latencyMs: 50,
@@ -31,7 +29,6 @@ export function trafficExecutionStartRequestFixture(): TrafficExecutionStartRequ
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
-        pendingPersistenceRetryAfterSeconds: 30,
       },
     },
   };

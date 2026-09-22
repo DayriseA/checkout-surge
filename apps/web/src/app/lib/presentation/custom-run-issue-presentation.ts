@@ -136,7 +136,7 @@ export function customErrorGroup(path: readonly unknown[]): CustomErrorGroup {
     return field === "maxDurationSeconds" || field === "startDelaySeconds" ? "advanced" : "traffic";
   }
   if (path.includes("inventoryConfig")) {
-    return field === "reservationHoldMinutes" ? "advanced" : "stock";
+    return "stock";
   }
   if (path.includes("erpConfig")) {
     return field === "forcedOutage" ? "advanced" : "erp";

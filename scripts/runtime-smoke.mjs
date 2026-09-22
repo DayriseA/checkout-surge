@@ -37,8 +37,6 @@ const smokeScenario = {
     },
     inventoryConfig: {
       startingStock: 32,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 0,

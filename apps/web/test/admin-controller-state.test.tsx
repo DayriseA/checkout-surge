@@ -13,7 +13,6 @@ import {
   errorPayloadSchema,
   nonnegativeNumberMinimum,
   orderProcessConcurrencyHardCap,
-  percentageMinimum,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
@@ -290,6 +289,20 @@ describe("admin feature controllers", () => {
     expect(panel.textContent).not.toContain("ready");
   });
 
+  it("keeps ERP fault hints reachable while the error-rate constraint stays concise", async () => {
+    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
+    const panel = document.querySelector("#erp-fault-injection") as HTMLElement;
+    const user = userEvent.setup();
+    await user.click(within(panel).getByRole("button", { name: "About Error rate" }));
+    expect(within(panel).getByRole("tooltip").textContent).toContain("confirmation calls");
+    expect(panel.querySelector("#erp-chaos-errorRate-help")?.textContent).toContain(
+      "Enter 25 for 25%.",
+    );
+    expect(panel.querySelector("#erp-chaos-errorRate-help")?.textContent).not.toContain(
+      "confirmation calls",
+    );
+  });
+
   it("does not invent forced-outage configuration when ERP status is unavailable", () => {
     render(
       <AdminErpDiagnosticsController
@@ -401,8 +414,10 @@ describe("admin feature controllers", () => {
       expect(within(erp).getAllByLabelText(label)).toHaveLength(1);
     }
     const worker = screen.getByRole("group", { name: "Worker and backpressure" });
-    for (const label of ["Worker concurrency", "Persistence retry seconds"])
-      expect(within(worker).getAllByLabelText(label)).toHaveLength(1);
+    expect(within(worker).getAllByLabelText("Worker concurrency")).toHaveLength(1);
+    expect(within(worker).queryByLabelText(/Persistence retry seconds/)).toBeNull();
+    expect(screen.getByRole("button", { name: "About ERP error rate" })).toBeTruthy();
+    expect(within(erp).getByText(/Unit: percent\. Minimum: 0\. Maximum: 100\./)).toBeTruthy();
     expect(screen.queryByRole("group", { name: "Circuit protection" })).toBeNull();
   });
 
@@ -906,7 +921,7 @@ describe("admin feature controllers", () => {
     expect(screen.getByLabelText("Worker concurrency").getAttribute("step")).toBeNull();
     expect(
       screen.getByText(
-        `Allowed range: 1–${orderProcessConcurrencyHardCap.toLocaleString("en-US")}.`,
+        `Unit: orders. Minimum: 1. Maximum: ${orderProcessConcurrencyHardCap.toLocaleString("en-US")}.`,
       ),
     ).toBeTruthy();
   });
@@ -917,9 +932,11 @@ describe("admin feature controllers", () => {
     expect(screen.getByLabelText("Error rate").getAttribute("min")).toBeNull();
     expect(screen.getByLabelText("Error rate").getAttribute("step")).toBeNull();
     expect(
-      screen.getByText(`Allowed range: ${nonnegativeNumberMinimum}–5000 milliseconds.`),
+      screen.getByText(`Unit: milliseconds. Minimum: ${nonnegativeNumberMinimum}. Maximum: 5000.`),
     ).toBeTruthy();
-    expect(screen.getByText(`Allowed range: ${percentageMinimum}–1.`)).toBeTruthy();
+    expect(
+      screen.getByText("Unit: percent. Minimum: 0. Maximum: 100. Enter 25 for 25%."),
+    ).toBeTruthy();
     for (const control of [
       screen.getByRole("button", { name: "Apply ERP controls" }),
       screen.getByRole("button", { name: "Reset ERP controls" }),
@@ -942,7 +959,7 @@ describe("admin feature controllers", () => {
     await user.type(maxTps, "20");
     const errorRate = screen.getByLabelText("Error rate");
     await user.clear(errorRate);
-    await user.type(errorRate, "0.25");
+    await user.type(errorRate, "25");
     await user.click(screen.getByLabelText("Forced outage"));
     rerender(
       <AdminErpDiagnosticsController
@@ -951,7 +968,7 @@ describe("admin feature controllers", () => {
     );
     expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
     expect((screen.getByLabelText("Max TPS") as HTMLInputElement).value).toBe("20");
-    expect((screen.getByLabelText("Error rate") as HTMLInputElement).value).toBe("0.25");
+    expect((screen.getByLabelText("Error rate") as HTMLInputElement).value).toBe("25");
     expect((screen.getByLabelText("Forced outage") as HTMLInputElement).checked).toBe(true);
 
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
@@ -1815,14 +1832,10 @@ describe("admin feature controllers", () => {
     const preview = screen.getByText("Effective run preview").closest("details");
     if (!preview) throw new Error("Expected effective run preview.");
     expect(within(preview).getByText("333")).toBeTruthy();
-    for (const label of [
-      "Quantity per attempt",
-      "Queue name",
-      "Physical queue name",
-      "Pending retry after seconds",
-    ]) {
+    for (const label of ["Quantity per attempt", "Queue name", "Physical queue name"]) {
       expect(within(preview).getByText(label)).toBeTruthy();
     }
+    expect(within(preview).queryByText("Pending retry after seconds")).toBeNull();
     const previewGroupByPayloadKey = {
       trafficConfig: "Traffic",
       inventoryConfig: "Inventory",
@@ -2508,6 +2521,28 @@ describe("admin feature controllers", () => {
       }),
     ).toBeTruthy();
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("shows policy hints and the edited error-rate maximum", async () => {
+    render(
+      <AdminRuntimePolicyController
+        initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
+      />,
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Runtime budgets, custom limits, and deployment hard caps"));
+    await user.click(screen.getByRole("button", { name: "About Budget window seconds" }));
+    expect(screen.getByRole("tooltip").textContent).toContain("fixed, not rolling");
+    const budgetHelp = document.querySelector("#runtime-policy-budgetWindowSeconds-help");
+    expect(budgetHelp?.textContent).toContain("Unit: seconds.");
+    expect(budgetHelp?.textContent).not.toContain("fixed, not rolling");
+
+    const limit = screen.getByLabelText("Max ERP error rate");
+    await user.clear(limit);
+    await user.type(limit, "50");
+    expect(document.querySelector("#runtime-policy-erpErrorRate-help")?.textContent).toContain(
+      "Maximum: 50. Enter 25 for 25%.",
+    );
   });
 
   it("preserves a dirty policy draft across props and adopts an explicit save response", async () => {
@@ -3480,7 +3515,7 @@ function presetFixture(): AdminPresetListItem {
       maxDurationSeconds: 2,
       quantityPerAttempt: 1,
     },
-    inventoryConfig: { startingStock: 250, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+    inventoryConfig: { startingStock: 250 },
     erpConfig: {
       latencyMs: 80,
       maxTps: 100,
@@ -3491,7 +3526,6 @@ function presetFixture(): AdminPresetListItem {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
     createdAt: "2026-06-20T00:00:00.000Z",
     updatedAt: "2026-06-20T00:00:00.000Z",

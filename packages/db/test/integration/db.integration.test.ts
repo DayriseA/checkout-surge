@@ -1103,8 +1103,9 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(seededPresets.length).toBeGreaterThan(0);
     for (const preset of seededPresets) {
       expect(Object.keys(preset.backpressure_config)).toEqual(
-        expect.arrayContaining(["orderProcessConcurrency", "pendingPersistenceRetryAfterSeconds"]),
+        expect.arrayContaining(["orderProcessConcurrency"]),
       );
+      expect(preset.backpressure_config).not.toHaveProperty("pendingPersistenceRetryAfterSeconds");
       expect(preset.backpressure_config).not.toHaveProperty("retryPolicy");
       expect(preset.backpressure_config).not.toHaveProperty("drainTimeoutSeconds");
       expect(preset.backpressure_config).not.toHaveProperty("circuitBreakerFailureThreshold");

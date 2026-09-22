@@ -1006,7 +1006,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
       },
       orderProcessJobPublisher: { enqueue: async () => undefined },
-      reservationHoldMinutes: 5,
+      reservationHoldMinutes: 15,
       idempotencyTtlSeconds: 1_800,
       pendingPersistenceRetryAfterSeconds: 5,
       pendingPersistenceRecovery: { recoverReservation: async () => null },
@@ -3253,8 +3253,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 1,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 10,
@@ -3266,7 +3264,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

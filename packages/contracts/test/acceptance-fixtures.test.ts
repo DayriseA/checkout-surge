@@ -41,7 +41,7 @@ describe("adaptive ERP acceptance fixtures", () => {
       expect(expected.notificationsRecorded).toBe(expected.confirmedOrders);
       expect(expected.confirmedOrders).toBeLessThanOrEqual(expected.acceptedReservations);
       expect(expected.reservedUnits).toBe(
-        expected.acceptedReservations * quantityPerCheckout(fixture),
+        expected.acceptedReservations * quantityPerAttempt(fixture),
       );
       expect(
         expected.acceptedReservations +
@@ -150,9 +150,9 @@ describe("adaptive ERP acceptance fixtures", () => {
   });
 });
 
-function quantityPerCheckout(fixture: AdaptiveErpScenarioFixture): number {
-  const quantity = fixture.config?.inventoryConfig.quantityPerCheckout ?? 1;
-  return quantity;
+function quantityPerAttempt(fixture: AdaptiveErpScenarioFixture): number {
+  const traffic = fixture.config?.trafficConfig;
+  return traffic?.quantityPerAttempt ?? 1;
 }
 
 function fixtureByName(name: string): AdaptiveErpScenarioFixture {

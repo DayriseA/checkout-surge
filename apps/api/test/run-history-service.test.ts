@@ -1487,8 +1487,6 @@ function configSnapshotFixture() {
     },
     inventoryConfig: {
       startingStock: 5,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 10,
@@ -1500,7 +1498,6 @@ function configSnapshotFixture() {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 2,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

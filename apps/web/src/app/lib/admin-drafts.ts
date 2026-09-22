@@ -16,6 +16,7 @@ import {
   publicRuntimePolicyMutableSchema,
 } from "@checkout-surge/contracts";
 import { formatCount } from "./presentation/format";
+import { percentToRatio, ratioToPercent } from "./presentation/percent";
 
 export type TrafficMode = DemoPresetContract["trafficConfig"]["mode"];
 export type RunConfigBase = Pick<
@@ -34,14 +35,11 @@ export interface RunConfigDraft {
   preAllocatedVus: string;
   maxVus: string;
   startingStock: string;
-  quantityPerCheckout: string;
-  reservationHoldMinutes: string;
   erpLatencyMs: string;
   erpMaxTps: string;
   erpErrorRate: string;
   erpForcedOutage: boolean;
   orderProcessConcurrency: string;
-  pendingPersistenceRetryAfterSeconds: string;
 }
 
 export interface PresetDraft extends RunConfigDraft {
@@ -127,7 +125,7 @@ export function draftFromRuntimePolicy(policy: PublicRuntimePolicy): RuntimePoli
     maxErpLatencyMs: String(policy.publicCustomLimits.maxErpLatencyMs),
     minErpMaxTps: String(policy.publicCustomLimits.minErpMaxTps),
     maxErpMaxTps: String(policy.publicCustomLimits.maxErpMaxTps),
-    maxErpErrorRate: String(policy.publicCustomLimits.maxErpErrorRate),
+    maxErpErrorRate: String(ratioToPercent(policy.publicCustomLimits.maxErpErrorRate)),
     allowForcedOutage: policy.publicCustomLimits.allowForcedOutage,
     allowBuyerSpike: policy.publicCustomLimits.allowedTrafficModes.includes("buyer-spike"),
     allowConstantArrivalRate:
@@ -151,16 +149,11 @@ export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
     preAllocatedVus: String(constantArrivalVus?.preAllocatedVus ?? 10),
     maxVus: String(constantArrivalVus?.maxVus ?? 50),
     startingStock: String(config.inventoryConfig.startingStock),
-    quantityPerCheckout: String(config.inventoryConfig.quantityPerCheckout),
-    reservationHoldMinutes: String(config.inventoryConfig.reservationHoldMinutes),
     erpLatencyMs: String(config.erpConfig.latencyMs),
     erpMaxTps: String(config.erpConfig.maxTps),
-    erpErrorRate: String(config.erpConfig.errorRate),
+    erpErrorRate: String(ratioToPercent(config.erpConfig.errorRate)),
     erpForcedOutage: config.erpConfig.forcedOutage,
     orderProcessConcurrency: String(config.backpressureConfig.orderProcessConcurrency),
-    pendingPersistenceRetryAfterSeconds: String(
-      config.backpressureConfig.pendingPersistenceRetryAfterSeconds,
-    ),
   };
 }
 
@@ -209,7 +202,7 @@ export function buildPolicyFromDraft(
     rule("maxErpLatencyMs", "Maximum ERP latency"),
     rule("minErpMaxTps", "Minimum ERP TPS"),
     rule("maxErpMaxTps", "Maximum ERP TPS"),
-    rule("maxErpErrorRate", "Maximum ERP error rate"),
+    rule("maxErpErrorRate", "Maximum ERP error rate", undefined, 100),
   ];
   const parsed = parseNumericDraft(draft, rules);
   if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
@@ -236,7 +229,7 @@ export function buildPolicyFromDraft(
       maxErpLatencyMs: requiredNumber(number, "maxErpLatencyMs"),
       minErpMaxTps: requiredNumber(number, "minErpMaxTps"),
       maxErpMaxTps: requiredNumber(number, "maxErpMaxTps"),
-      maxErpErrorRate: requiredNumber(number, "maxErpErrorRate"),
+      maxErpErrorRate: percentToRatio(requiredNumber(number, "maxErpErrorRate")),
       allowForcedOutage: draft.allowForcedOutage,
       allowedTrafficModes: [
         ...(draft.allowBuyerSpike ? (["buyer-spike"] as const) : []),
@@ -371,14 +364,14 @@ export function buildErpChaosFromDraft(
   const rules = [
     rule("latencyMs", "Latency", undefined, caps.maxLatencyMs),
     rule("maxTps", "Maximum TPS", caps.minMaxTps),
-    rule("errorRate", "Error rate", undefined, caps.maxErrorRate),
+    rule("errorRate", "Error rate", undefined, ratioToPercent(caps.maxErrorRate)),
   ];
   const parsed = parseNumericDraft(draft, rules);
   if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
   const values = {
     latencyMs: requiredNumber(parsed.values, "latencyMs"),
     maxTps: requiredNumber(parsed.values, "maxTps"),
-    errorRate: requiredNumber(parsed.values, "errorRate"),
+    errorRate: percentToRatio(requiredNumber(parsed.values, "errorRate")),
     forcedOutage: draft.forcedOutage,
   };
   const chaosParse = erpChaosConfigSchema.safeParse(values);
@@ -459,22 +452,16 @@ function buildConfigFromParsed(
           },
     inventoryConfig: {
       startingStock: requiredNumber(number, "startingStock"),
-      quantityPerCheckout: requiredNumber(number, "quantityPerCheckout"),
-      reservationHoldMinutes: requiredNumber(number, "reservationHoldMinutes"),
     },
     erpConfig: {
       latencyMs: requiredNumber(number, "erpLatencyMs"),
       maxTps: requiredNumber(number, "erpMaxTps"),
-      errorRate: requiredNumber(number, "erpErrorRate"),
+      errorRate: percentToRatio(requiredNumber(number, "erpErrorRate")),
       forcedOutage: draft.erpForcedOutage,
     },
     backpressureConfig: {
       ...base.backpressureConfig,
       orderProcessConcurrency: requiredNumber(number, "orderProcessConcurrency"),
-      pendingPersistenceRetryAfterSeconds: requiredNumber(
-        number,
-        "pendingPersistenceRetryAfterSeconds",
-      ),
     },
   };
 }
@@ -578,6 +565,9 @@ function contractIssueError(issue: ContractIssue, label: string): DraftFieldErro
     };
   }
   if (issue.code === "too_big" && typeof issue.maximum === "number") {
+    if (label.toLowerCase().includes("error rate")) {
+      return { code: "above_max", message: `${label} must be at most 100 percent.` };
+    }
     return {
       code: "above_max",
       message: `${label} must be at most ${issue.maximum}.`,
@@ -693,13 +683,10 @@ function runConfigRules(mode: TrafficMode, hardCaps?: DeploymentHardCaps): Numer
         ]),
     rule("startDelaySeconds", "Start delay", undefined, hardCaps?.maxTrafficStartDelaySeconds),
     rule("startingStock", "Starting stock"),
-    rule("quantityPerCheckout", "Quantity per checkout"),
-    rule("reservationHoldMinutes", "Reservation hold"),
     rule("erpLatencyMs", "ERP latency"),
     rule("erpMaxTps", "ERP maximum TPS"),
     rule("erpErrorRate", "ERP error rate"),
     rule("orderProcessConcurrency", "Worker concurrency"),
-    rule("pendingPersistenceRetryAfterSeconds", "Persistence retry"),
   ];
 }
 

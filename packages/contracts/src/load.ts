@@ -123,8 +123,6 @@ export type TrafficConfig = z.infer<typeof trafficConfigSchema>;
 export const inventoryConfigSchema = z
   .object({
     startingStock: nonnegativeIntegerSchema,
-    quantityPerCheckout: positiveIntegerSchema.default(1),
-    reservationHoldMinutes: positiveIntegerSchema,
   })
   .strict();
 export type InventoryConfig = z.infer<typeof inventoryConfigSchema>;
@@ -151,7 +149,6 @@ export const backpressureConfigSchema = z
     queueName: z.literal(orderProcessQueueName),
     physicalQueueName: z.literal(orderProcessBullMqQueueName),
     orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
-    pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
   })
   .strict();
 export type BackpressureConfig = z.infer<typeof backpressureConfigSchema>;
@@ -187,9 +184,7 @@ export const materializedAcceptedRunConfigSnapshotSchema = z
       materializedBuyerSpikeTrafficConfigSchema,
       materializedConstantArrivalTrafficConfigSchema,
     ]),
-    inventoryConfig: inventoryConfigSchema.safeExtend({
-      quantityPerCheckout: positiveIntegerSchema,
-    }),
+    inventoryConfig: inventoryConfigSchema,
     erpConfig: erpRunConfigSchema.safeExtend({
       forcedOutage: z.boolean(),
     }),
@@ -200,7 +195,8 @@ export const materializedAcceptedRunConfigSnapshotSchema = z
 /**
  * Read boundary for snapshots persisted before the engine-knob retirement
  * (D13, task 14). Supported fields keep their materialized rigor while the
- * retired engine knobs (`retryPolicy`, `drainTimeoutSeconds`,
+ * retired configuration keys (`quantityPerCheckout`, `reservationHoldMinutes`,
+ * `pendingPersistenceRetryAfterSeconds`) and engine knobs (`retryPolicy`, `drainTimeoutSeconds`,
  * `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and
  * `erpConfig.requestTimeoutMs`) are accepted and ignored: the plain objects
  * below drop them together with any other unknown key, so historical content
@@ -208,9 +204,7 @@ export const materializedAcceptedRunConfigSnapshotSchema = z
  */
 export const historicalAcceptedRunConfigSnapshotSchema = z.object({
   trafficConfig: materializedAcceptedRunConfigSnapshotSchema.shape.trafficConfig,
-  inventoryConfig: inventoryConfigSchema.safeExtend({
-    quantityPerCheckout: positiveIntegerSchema,
-  }),
+  inventoryConfig: z.object({ startingStock: nonnegativeIntegerSchema }),
   erpConfig: z.object({
     latencyMs: nonnegativeIntegerSchema,
     maxTps: positiveIntegerSchema,
@@ -221,7 +215,6 @@ export const historicalAcceptedRunConfigSnapshotSchema = z.object({
     queueName: z.literal(orderProcessQueueName),
     physicalQueueName: z.literal(orderProcessBullMqQueueName),
     orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
-    pendingPersistenceRetryAfterSeconds: positiveIntegerSchema,
   }),
 });
 

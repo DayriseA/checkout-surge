@@ -418,8 +418,6 @@ function constantArrivalTraffic(options: {
 function inventoryConfig(options: { startingStock: number }): InventoryConfig {
   return {
     startingStock: options.startingStock,
-    quantityPerCheckout: 1,
-    reservationHoldMinutes: optionalIntegerEnv("RESERVATION_HOLD_MINUTES", 15),
   };
 }
 
@@ -442,10 +440,6 @@ function backpressureConfig(options: { orderProcessConcurrency: number }): Backp
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency: options.orderProcessConcurrency,
-    pendingPersistenceRetryAfterSeconds: optionalIntegerEnv(
-      "PENDING_PERSISTENCE_RETRY_AFTER_SECONDS",
-      30,
-    ),
   };
 }
 

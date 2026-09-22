@@ -224,8 +224,6 @@ function acceptedRunConfigSnapshot() {
     },
     inventoryConfig: {
       startingStock: 10,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 100,
@@ -237,7 +235,6 @@ function acceptedRunConfigSnapshot() {
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

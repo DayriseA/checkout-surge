@@ -63,6 +63,7 @@ import {
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { adminFailureNotice } from "../../lib/presentation/admin-notice";
 import { mapErrorPresentation } from "../../lib/presentation/error-presentation";
+import { adminFieldHints } from "../../lib/presentation/field-hints";
 import { formatCount, formatInstantUtc } from "../../lib/presentation/format";
 import {
   dashboardUpdateExpected,
@@ -70,11 +71,13 @@ import {
   type Freshness,
   type RealtimeConnectionStatus,
 } from "../../lib/presentation/freshness";
+import { ratioToPercent } from "../../lib/presentation/percent";
 import { deriveFreshnessPresentationState } from "../../lib/presentation/run-presentation-state";
 import { ConfirmationDialog } from "../confirmation-dialog";
 import { buttonClassName } from "../control-styles";
 import { RealtimeRecoveryNotice } from "../dashboard-panels";
 import { ErrorNotice } from "../error-notice";
+import { FieldHint } from "../field-hint";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 import { RunEstimateNotice } from "../run-estimate-notice";
@@ -321,8 +324,9 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Readiness</p>
-          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-            Shared dependencies
+          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+            Shared dependencies{" "}
+            <FieldHint label="Shared dependencies" text={adminFieldHints.sharedDependencies} />
           </h2>
         </div>
         <StatusPill
@@ -398,7 +402,9 @@ export function AdminCurrentRunPanel({
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Live status</p>
-          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Current run</h2>
+          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+            Current run <FieldHint label="Current run" text={adminFieldHints.currentRun} />
+          </h2>
         </div>
         <StatusPill
           status={
@@ -1346,8 +1352,9 @@ export function AdminMaintenancePanel({
     <section className={panelClassName} id="maintenance">
       <div className="mb-4">
         <p className="m-0 text-xs font-bold uppercase text-muted">Maintenance</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-          Recovery and cleanup
+        <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+          Recovery and cleanup{" "}
+          <FieldHint label="Recovery and cleanup" text={adminFieldHints.recovery} />
         </h2>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -1594,7 +1601,11 @@ function erpChangeSummary(current: ErpChaosConfig, proposed: ErpChaosConfig) {
   return [
     { label: "Latency ms", oldValue: current.latencyMs, proposedValue: proposed.latencyMs },
     { label: "Max TPS", oldValue: current.maxTps, proposedValue: proposed.maxTps },
-    { label: "Error rate", oldValue: current.errorRate, proposedValue: proposed.errorRate },
+    {
+      label: "Error rate",
+      oldValue: `${ratioToPercent(current.errorRate)}%`,
+      proposedValue: `${ratioToPercent(proposed.errorRate)}%`,
+    },
     {
       label: "Forced outage",
       oldValue: current.forcedOutage ? "on" : "off",
@@ -1617,14 +1628,9 @@ const policyFieldKeys = {
     "k6Vus.preAllocatedVus",
     "k6Vus.maxVus",
   ],
-  inventory: ["startingStock", "quantityPerCheckout", "reservationHoldMinutes"],
+  inventory: ["startingStock"],
   erp: ["latencyMs", "maxTps", "errorRate"],
-  backpressure: [
-    "queueName",
-    "physicalQueueName",
-    "orderProcessConcurrency",
-    "pendingPersistenceRetryAfterSeconds",
-  ],
+  backpressure: ["queueName", "physicalQueueName", "orderProcessConcurrency"],
   limits: [
     "maxTotalRequests",
     "maxBuyers",
@@ -1651,9 +1657,12 @@ function policyChangeRows<const Key extends string, Value extends Record<Key, st
   oldValues: Value,
   proposedValues: Value,
 ) {
-  return keys.map((key) =>
-    policyChangeRow(`${prefix}.${key}`, oldValues[key], proposedValues[key]),
-  );
+  return keys.map((key) => {
+    const percentage = key === "errorRate" || key === "maxErpErrorRate";
+    const format = (value: string | number) =>
+      percentage && typeof value === "number" ? `${ratioToPercent(value)}%` : value;
+    return policyChangeRow(`${prefix}.${key}`, format(oldValues[key]), format(proposedValues[key]));
+  });
 }
 
 function publicTrafficPolicyFields(traffic: AcceptedRunConfigSnapshot["trafficConfig"]) {
@@ -1745,7 +1754,7 @@ function erpDraftFromRead(read: BackendRead<ErpChaosStatus>): ErpDraft {
     ? {
         latencyMs: String(read.data.latencyMs),
         maxTps: String(read.data.maxTps),
-        errorRate: String(read.data.errorRate),
+        errorRate: String(ratioToPercent(read.data.errorRate)),
         forcedOutage: read.data.forcedOutage,
       }
     : { latencyMs: "0", maxTps: "100", errorRate: "0", forcedOutage: false };
@@ -1901,21 +1910,14 @@ const trafficServerFields = new Set([
   "ratePerSecond",
   "startDelaySeconds",
 ]);
-const inventoryServerFields = new Set([
-  "quantityPerCheckout",
-  "reservationHoldMinutes",
-  "startingStock",
-]);
+const inventoryServerFields = new Set(["startingStock"]);
 const erpConfigServerFields = new Set([
   "erpErrorRate",
   "erpForcedOutage",
   "erpLatencyMs",
   "erpMaxTps",
 ]);
-const backpressureServerFields = new Set([
-  "orderProcessConcurrency",
-  "pendingPersistenceRetryAfterSeconds",
-]);
+const backpressureServerFields = new Set(["orderProcessConcurrency"]);
 const policyLimitServerFields = new Set([
   "allowBuyerSpike",
   "allowConstantArrivalRate",

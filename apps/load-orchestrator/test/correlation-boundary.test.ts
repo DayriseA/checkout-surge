@@ -30,8 +30,6 @@ const startRequest: TrafficExecutionStartRequest = {
     },
     inventoryConfig: {
       startingStock: 1,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 1,
     },
     erpConfig: {
       latencyMs: 0,
@@ -43,7 +41,6 @@ const startRequest: TrafficExecutionStartRequest = {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      pendingPersistenceRetryAfterSeconds: 1,
     },
   },
 };

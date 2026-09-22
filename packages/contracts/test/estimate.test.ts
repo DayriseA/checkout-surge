@@ -21,7 +21,7 @@ const input = {
     startDelaySeconds: 0,
     quantityPerAttempt: 1,
   },
-  inventoryConfig: { startingStock: 888, quantityPerCheckout: 1, reservationHoldMinutes: 15 },
+  inventoryConfig: { startingStock: 888 },
   effectiveWorkerConcurrency: 5,
   declaredErpCapacityPerSecond: 10,
   declaredErpLatencyMs: 250,

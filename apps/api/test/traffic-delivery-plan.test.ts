@@ -14,7 +14,7 @@ const baseSnapshot = {
     durationSeconds: 2,
     quantityPerAttempt: 1,
   },
-  inventoryConfig: { startingStock: 1, quantityPerCheckout: 1, reservationHoldMinutes: 1 },
+  inventoryConfig: { startingStock: 10 },
   erpConfig: {
     latencyMs: 0,
     maxTps: 1,
@@ -25,7 +25,6 @@ const baseSnapshot = {
     queueName: "orders:process",
     physicalQueueName: "orders-process",
     orderProcessConcurrency: 1,
-    pendingPersistenceRetryAfterSeconds: 1,
   },
 } satisfies AcceptedRunConfigSnapshot;
 

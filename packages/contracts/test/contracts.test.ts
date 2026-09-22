@@ -175,13 +175,12 @@ describe("accepted run configuration", () => {
       maxDurationSeconds: 1,
       quantityPerAttempt: 1,
     },
-    inventoryConfig: { startingStock: 1, quantityPerCheckout: 1, reservationHoldMinutes: 1 },
+    inventoryConfig: { startingStock: 1 },
     erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
     backpressureConfig: {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 1,
-      pendingPersistenceRetryAfterSeconds: 1,
     },
   };
 
@@ -204,7 +203,7 @@ describe("accepted run configuration", () => {
     ).toBe(false);
   });
 
-  it("rejects retired engine knobs on new input instead of falling back", () => {
+  it("rejects retired run-config fields and engine knobs on new input instead of falling back", () => {
     expect(
       acceptedRunConfigSnapshotSchema.safeParse({
         ...snapshot,
@@ -216,6 +215,7 @@ describe("accepted run configuration", () => {
         ...snapshot,
         backpressureConfig: {
           ...snapshot.backpressureConfig,
+          pendingPersistenceRetryAfterSeconds: 30,
           retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
           drainTimeoutSeconds: 300,
           circuitBreakerFailureThreshold: 5,
@@ -228,9 +228,15 @@ describe("accepted run configuration", () => {
   it("keeps historical snapshots with retired engine knobs readable and stripped", () => {
     const historical = historicalAcceptedRunConfigSnapshotSchema.parse({
       ...snapshot,
+      inventoryConfig: {
+        ...snapshot.inventoryConfig,
+        quantityPerCheckout: 1,
+        reservationHoldMinutes: 15,
+      },
       erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
       backpressureConfig: {
         ...snapshot.backpressureConfig,
+        pendingPersistenceRetryAfterSeconds: 30,
         retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
         drainTimeoutSeconds: 300,
         circuitBreakerFailureThreshold: 5,
@@ -2457,8 +2463,6 @@ describe("public runtime policy contract", () => {
           },
           inventoryConfig: {
             startingStock: 10,
-            quantityPerCheckout: 1,
-            reservationHoldMinutes: 15,
           },
           erpConfig: {
             latencyMs: 10,
@@ -2470,7 +2474,6 @@ describe("public runtime policy contract", () => {
             queueName: "orders:process",
             physicalQueueName: "orders-process",
             orderProcessConcurrency: 2,
-            pendingPersistenceRetryAfterSeconds: 30,
           },
         },
         startedAt: timestamp,
@@ -2753,8 +2756,6 @@ describe("public runtime policy contract", () => {
         },
         inventoryConfig: {
           startingStock: 100,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
         },
         erpConfig: {
           latencyMs: 100,
@@ -2766,7 +2767,6 @@ describe("public runtime policy contract", () => {
           queueName: "orders:process",
           physicalQueueName: "orders-process",
           orderProcessConcurrency: 5,
-          pendingPersistenceRetryAfterSeconds: 30,
         },
       },
       publicCustomLimits: {
@@ -3103,21 +3103,7 @@ describe("public runtime policy contract", () => {
       code: "public_backpressure_override_not_allowed",
       path: ["backpressureConfig"],
       change: (snapshot: AcceptedRunConfigSnapshot) => {
-        snapshot.backpressureConfig.pendingPersistenceRetryAfterSeconds += 1;
-      },
-    },
-    {
-      code: "public_backpressure_override_not_allowed",
-      path: ["backpressureConfig"],
-      change: (snapshot: AcceptedRunConfigSnapshot) => {
         snapshot.backpressureConfig.orderProcessConcurrency += 1;
-      },
-    },
-    {
-      code: "public_reservation_hold_override_not_allowed",
-      path: ["inventoryConfig", "reservationHoldMinutes"],
-      change: (snapshot: AcceptedRunConfigSnapshot) => {
-        snapshot.inventoryConfig.reservationHoldMinutes += 1;
       },
     },
   ] as const)("rejects $code for public custom without changing admin validation", (fixture) => {
@@ -3341,8 +3327,6 @@ describe("public runtime policy contract", () => {
       },
       inventoryConfig: {
         startingStock: 200,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
       },
       erpConfig: {
         latencyMs: 50,
@@ -3354,7 +3338,6 @@ describe("public runtime policy contract", () => {
         queueName: "orders:process",
         physicalQueueName: "orders-process",
         orderProcessConcurrency: 5,
-        pendingPersistenceRetryAfterSeconds: 30,
       },
     };
 
@@ -3555,8 +3538,6 @@ function acceptedRunSnapshot(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 10,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 10,
@@ -3568,7 +3549,6 @@ function acceptedRunSnapshot(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 2,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

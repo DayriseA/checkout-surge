@@ -86,10 +86,9 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
     );
   });
 
-  it("rejects a stored snapshot that relies on a wire default", async () => {
+  it("rejects a stored snapshot missing starting stock", async () => {
     const snapshot = configSnapshotFixture();
-    const { quantityPerCheckout: _defaulted, ...incompleteInventoryConfig } =
-      snapshot.inventoryConfig;
+    const { startingStock: _missing, ...incompleteInventoryConfig } = snapshot.inventoryConfig;
     await connection.db.execute(
       sql`UPDATE ${demoRuns}
           SET config_snapshot = ${JSON.stringify({
@@ -104,7 +103,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
       code: "persisted_run_config_invalid",
       runId,
       message: expect.stringMatching(
-        new RegExp(`${runId}.*configSnapshot\\.inventoryConfig\\.quantityPerCheckout`),
+        new RegExp(`${runId}.*configSnapshot\\.inventoryConfig\\.startingStock`),
       ),
       cause: expect.any(Error),
     } satisfies Partial<PersistedRunConfigCorruptionError>);
@@ -135,7 +134,7 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
       sql`UPDATE ${demoRuns}
           SET config_snapshot = ${JSON.stringify({
             ...snapshot,
-            inventoryConfig: { ...snapshot.inventoryConfig, quantityPerCheckout: 0 },
+            inventoryConfig: { ...snapshot.inventoryConfig, startingStock: -1 },
           })}::jsonb
           WHERE ${demoRuns.id} = ${runId}`,
     );
@@ -330,8 +329,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 10,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 25,
@@ -343,7 +340,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

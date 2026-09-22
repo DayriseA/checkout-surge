@@ -25,7 +25,6 @@ export const directSnapshotViolationCodes = [
   "public_max_vus_exceeded",
   "public_preallocated_vus_exceeded",
   "public_request_rate_exceeded",
-  "public_reservation_hold_override_not_allowed",
   "public_start_delay_exceeded",
   "public_starting_stock_exceeded",
   "public_total_requests_exceeded",
@@ -100,24 +99,12 @@ function collectPublicProtectedConfigViolations(
   if (
     backpressure.queueName !== defaultBackpressure.queueName ||
     backpressure.physicalQueueName !== defaultBackpressure.physicalQueueName ||
-    backpressure.orderProcessConcurrency !== defaultBackpressure.orderProcessConcurrency ||
-    backpressure.pendingPersistenceRetryAfterSeconds !==
-      defaultBackpressure.pendingPersistenceRetryAfterSeconds
+    backpressure.orderProcessConcurrency !== defaultBackpressure.orderProcessConcurrency
   ) {
     violations.push({
       code: "public_backpressure_override_not_allowed",
       message: "Public custom backpressure configuration must match policy defaults.",
       path: ["backpressureConfig"],
-    });
-  }
-  if (
-    snapshot.inventoryConfig.reservationHoldMinutes !==
-    defaults.inventoryConfig.reservationHoldMinutes
-  ) {
-    violations.push({
-      code: "public_reservation_hold_override_not_allowed",
-      message: "Public custom reservation hold must match policy defaults.",
-      path: ["inventoryConfig", "reservationHoldMinutes"],
     });
   }
 }

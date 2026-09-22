@@ -10,6 +10,7 @@ import {
   buildErpChaosFromDraft,
   buildPolicyFromDraft,
   buildSortOrder,
+  draftFromConfigSnapshot,
   draftFromPreset,
   draftFromRuntimePolicy,
   isPresetDraftDirty,
@@ -72,6 +73,17 @@ describe("admin drafts", () => {
       { maxLatencyMs: 5000, minMaxTps: 1, maxErrorRate: 0.5, allowForcedOutage: true },
     );
     expect(result.values).toMatchObject({ latencyMs: 0, maxTps: 1, errorRate: 0 });
+  });
+
+  it("round-trips admin error-rate percentages to stored ratios", () => {
+    const preset = presetFixture("buyer-spike");
+    preset.erpConfig.errorRate = 0.25;
+    const draft = draftFromPreset(preset);
+    expect(draft.erpErrorRate).toBe("25");
+    const built = buildEffectiveRunConfig({ ...draft, erpErrorRate: "25" }, preset);
+    if (!built.values) throw new Error("Expected valid run config.");
+    expect(built.values?.erpConfig.errorRate).toBe(0.25);
+    expect(draftFromConfigSnapshot(built.values).erpErrorRate).toBe("25");
   });
 
   it("prefers effective ERP bounds unless the contract requires a whole number", () => {
@@ -314,7 +326,7 @@ describe("admin drafts", () => {
     const preset = presetFixture("buyer-spike");
     const draft = draftFromPreset(preset);
     draft.buyerCount = "01000";
-    draft.erpErrorRate = "0.10";
+    draft.erpErrorRate = "10";
     draft.sortOrder = "010";
     expect(isPresetDraftDirty(draft, preset)).toBe(false);
 
@@ -333,7 +345,7 @@ function presetFixture(mode: "buyer-spike" | "constant-arrival-rate"): DemoPrese
     isEditable: true,
     isCustom: true,
     display: { name: "Custom", description: "Fixture", sortOrder: 10, outcomeFocus: [] },
-    inventoryConfig: { startingStock: 250, quantityPerCheckout: 2, reservationHoldMinutes: 15 },
+    inventoryConfig: { startingStock: 250 },
     erpConfig: {
       latencyMs: 80,
       maxTps: 100,
@@ -344,7 +356,6 @@ function presetFixture(mode: "buyer-spike" | "constant-arrival-rate"): DemoPrese
       queueName: "orders:process" as const,
       physicalQueueName: "orders-process" as const,
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
     createdAt: "2026-06-20T00:00:00.000Z",
     updatedAt: "2026-06-20T00:00:00.000Z",

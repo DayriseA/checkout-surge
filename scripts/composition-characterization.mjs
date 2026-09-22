@@ -70,8 +70,6 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
     },
     inventoryConfig: {
       startingStock: 1,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 1500,

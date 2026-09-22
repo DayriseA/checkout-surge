@@ -18,8 +18,6 @@ export function previewRunConfigSnapshotFixture(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 250,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 80,
@@ -31,7 +29,6 @@ export function previewRunConfigSnapshotFixture(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

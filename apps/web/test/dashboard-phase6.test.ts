@@ -961,8 +961,6 @@ function projectionFixture(): DashboardProjection {
       configSnapshot: {
         inventoryConfig: {
           startingStock: 100,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
         },
         trafficConfig: {
           mode: "buyer-spike",
@@ -982,7 +980,6 @@ function projectionFixture(): DashboardProjection {
           queueName: "orders:process",
           physicalQueueName: "orders-process",
           orderProcessConcurrency: 4,
-          pendingPersistenceRetryAfterSeconds: 30,
         },
       },
       startedAt: "2026-06-20T00:00:00.000Z",

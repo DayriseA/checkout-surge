@@ -64,7 +64,7 @@ describe("dashboard control surface", () => {
     );
     expect(markup).toContain("other visitors can&#x27;t start until it finishes");
     expect(markup).toContain("A successful start opens the live view.");
-    expect(markup).toContain("Capacity (orders/second)");
+    expect(markup).toContain("Capacity (calls/second)");
     expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Customize a scenario"));
     expect(markup).toContain("<form");
     expect(markup).not.toContain("bg-bg");
@@ -84,7 +84,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Advanced protection settings");
     expect(markup).toContain("Safety cutoff (seconds)");
     expect(markup).toContain("Start delay (seconds)");
-    expect(markup).toContain("not the expected run duration");
+    expect(markup).not.toContain("not the expected run duration");
     expect(markup).toContain("Unit: percent. Minimum: 0. Maximum: 25.");
     expect(markup).not.toContain("Worker concurrency");
     expect(markup).not.toContain("Retry attempts");
@@ -139,6 +139,14 @@ describe("dashboard control surface", () => {
     );
     expect(unenforcedMarkup).toContain("Public start budgets are not enforced right now.");
     expect(unenforcedMarkup).not.toContain("Up to 4 starts");
+  });
+
+  it("does not describe a buyer spike as rate times duration", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PublicDemoEntry, { surface: publicSurfaceFixture(null) }),
+    );
+    expect(markup).not.toContain("Planned attempts = arrival rate × duration.");
+    expect(markup).toContain('aria-label="About Advanced protection settings"');
   });
 
   it("renders an explicit empty state when no curated public presets are available", () => {

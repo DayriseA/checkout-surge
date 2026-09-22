@@ -49,8 +49,6 @@ const configSnapshot = {
   },
   inventoryConfig: {
     startingStock: poolSize,
-    quantityPerCheckout: 1,
-    reservationHoldMinutes: 15,
   },
   erpConfig: {
     latencyMs: 0,
@@ -62,7 +60,6 @@ const configSnapshot = {
     queueName: "orders:process" as const,
     physicalQueueName: "orders-process" as const,
     orderProcessConcurrency: poolSize,
-    pendingPersistenceRetryAfterSeconds: 5,
   },
 };
 

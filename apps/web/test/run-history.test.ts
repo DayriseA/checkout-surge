@@ -447,7 +447,7 @@ describe("run history", () => {
     expect(markup).not.toContain("Retry attempts");
     expect(markup).not.toContain("Initial retry backoff");
     expect(markup).not.toContain("Circuit-breaker");
-    expect(markup).toContain("Pending-storage retry delay");
+    expect(markup).not.toContain("Pending-storage retry delay");
     expect(markup).toContain("Logical queue");
     expect(markup).toContain("orders:process");
     expect(markup).toContain("Physical queue");

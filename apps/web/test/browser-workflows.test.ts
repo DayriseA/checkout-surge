@@ -898,6 +898,10 @@ describe("public browser starts", () => {
     expect(details.open).toBe(false);
     await user.click(expander);
     expect(details.open).toBe(true);
+    expect(screen.getByRole("button", { name: "About Buyer count" })).toBeTruthy();
+    expect(screen.getByText(/Unit: buyers\. Minimum: 1\./).textContent).not.toContain(
+      "How many simulated shoppers",
+    );
     expect(screen.getByRole("form", { name: "Custom run builder" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Buyers" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Stock" })).toBeTruthy();
@@ -1080,9 +1084,10 @@ describe("public browser starts", () => {
     const arrivalRate = screen.getByLabelText("Arrival rate (requests/second)") as HTMLInputElement;
     expect(arrivalRate.getAttribute("aria-invalid")).toBeNull();
     expect(arrivalRate.getAttribute("aria-describedby")).toBe("custom-rate-description");
-    expect(document.getElementById("custom-rate-description")?.textContent).toContain(
+    expect(document.getElementById("custom-rate-description")?.textContent).not.toContain(
       "Requests dispatched during each second.",
     );
+    expect(screen.getByRole("button", { name: "About Arrival rate" })).toBeTruthy();
     expect(screen.queryByText(buyerCount.validationMessage)).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -1255,7 +1260,6 @@ describe("public browser starts", () => {
     await user.click(screen.getByText("Customize a scenario"));
     for (const protectedControl of [
       "Worker concurrency (workers)",
-      "Persistence retry delay (seconds)",
       "Reservation hold (minutes)",
       "ERP request timeout (milliseconds)",
     ]) {
@@ -1265,7 +1269,7 @@ describe("public browser starts", () => {
     await replaceInputValue("Buyer count (buyers)", "321", user);
     await replaceInputValue("Starting stock (units)", "44", user);
     await replaceInputValue("Delay per order (milliseconds)", "125", user);
-    await replaceInputValue("Capacity (orders/second)", "33", user);
+    await replaceInputValue("Capacity (calls/second)", "33", user);
     await replaceInputValue("Failure rate (percent)", "0.2", user);
     await user.keyboard("{Enter}");
 
@@ -1285,8 +1289,6 @@ describe("public browser starts", () => {
         },
         inventoryConfig: {
           startingStock: 44,
-          quantityPerCheckout: 1,
-          reservationHoldMinutes: 15,
         },
         erpConfig: {
           latencyMs: 125,

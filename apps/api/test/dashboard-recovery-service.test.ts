@@ -403,11 +403,10 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     ).rejects.toThrow(new RegExp(`${row.id}.*${field}`));
   });
 
-  it("rejects a stored config snapshot that relies on wire defaults with run context", async () => {
+  it("rejects a stored config snapshot missing starting stock with run context", async () => {
     const row = databaseRun();
     const config = configSnapshot();
-    const { quantityPerCheckout: _defaulted, ...incompleteInventoryConfig } =
-      config.inventoryConfig;
+    const { startingStock: _missing, ...incompleteInventoryConfig } = config.inventoryConfig;
     const malformedRow = {
       ...row,
       configSnapshot: {
@@ -419,9 +418,7 @@ describe("PostgresDashboardRecoveryContextReader", () => {
 
     await expect(
       new PostgresDashboardRecoveryContextReader(database.db).readContext(),
-    ).rejects.toThrow(
-      new RegExp(`${row.id}.*configSnapshot\\.inventoryConfig\\.quantityPerCheckout`),
-    );
+    ).rejects.toThrow(new RegExp(`${row.id}.*configSnapshot\\.inventoryConfig\\.startingStock`));
   });
 });
 

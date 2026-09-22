@@ -246,8 +246,6 @@ function buyerSpikeSnapshot(): AcceptedRunConfigSnapshot {
     },
     inventoryConfig: {
       startingStock: 10,
-      quantityPerCheckout: 1,
-      reservationHoldMinutes: 15,
     },
     erpConfig: {
       latencyMs: 100,
@@ -259,7 +257,6 @@ function buyerSpikeSnapshot(): AcceptedRunConfigSnapshot {
       queueName: "orders:process",
       physicalQueueName: "orders-process",
       orderProcessConcurrency: 5,
-      pendingPersistenceRetryAfterSeconds: 30,
     },
   };
 }

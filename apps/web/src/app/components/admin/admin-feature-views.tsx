@@ -8,8 +8,6 @@ import {
   type ErpChaosStatus,
   nonnegativeNumberMinimum,
   orderProcessConcurrencyHardCap,
-  percentageMaximum,
-  percentageMinimum,
   positiveIntegerMinimum,
 } from "@checkout-surge/contracts";
 import { type ReactNode, useEffect, useId, useRef } from "react";
@@ -22,11 +20,18 @@ import type {
 } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
+import {
+  adminDraftFieldHints,
+  adminFieldHints,
+  fieldHints,
+} from "../../lib/presentation/field-hints";
 import { formatCount } from "../../lib/presentation/format";
+import { ratioToPercent } from "../../lib/presentation/percent";
 import { trafficModeLabel } from "../../lib/presentation/public-vocabulary";
 import { ConfigGroup, FieldRow } from "../config-presentation";
 import { buttonClassName, inputClassName, primaryButtonClassName } from "../control-styles";
 import { ErrorNotice } from "../error-notice";
+import { FieldHint } from "../field-hint";
 import { StatusPill } from "../status-pill";
 import { AdminNoticeView } from "./admin-notice";
 
@@ -69,8 +74,9 @@ export function AdminRuntimePolicyView({
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="m-0 text-xs font-bold uppercase text-muted">Public policy</p>
-          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
-            Public runtime policy
+          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+            Public runtime policy{" "}
+            <FieldHint label="Public runtime policy" text={adminFieldHints.publicPolicy} />
           </h2>
           <p className="m-0 mt-2 text-sm text-muted">
             Shared policy for future public starts. Already accepted runs keep their snapshots.
@@ -106,6 +112,7 @@ export function AdminRuntimePolicyView({
               <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
                 <Checkbox
                   label="Enforce public budget"
+                  hint={adminFieldHints.publicBudget}
                   checked={draft.isPublicRunBudgetEnforced}
                   onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
                 />
@@ -138,8 +145,12 @@ export function AdminRuntimePolicyView({
                 />
               </div>
               <div className="grid gap-3">
-                <p className="m-0 text-xs font-bold uppercase text-muted">Public custom defaults</p>
+                <p className="m-0 flex items-center gap-2 text-xs font-bold uppercase text-muted">
+                  Public custom defaults{" "}
+                  <FieldHint label="Public custom defaults" text={adminFieldHints.publicDefaults} />
+                </p>
                 <TrafficEditor
+                  disabled={isPending}
                   draft={draft}
                   errors={fieldErrors}
                   hardCaps={policy.deploymentHardCaps}
@@ -148,6 +159,8 @@ export function AdminRuntimePolicyView({
                   prefix="runtime-policy"
                 />
                 <RunConfigFields
+                  disabled={isPending}
+                  erpErrorRateMax={Number(draft.maxErpErrorRate)}
                   draft={draft}
                   errors={fieldErrors}
                   includeForcedOutage={false}
@@ -157,7 +170,10 @@ export function AdminRuntimePolicyView({
                 />
               </div>
               <div className="grid gap-3">
-                <p className="m-0 text-xs font-bold uppercase text-muted">Public custom limits</p>
+                <p className="m-0 flex items-center gap-2 text-xs font-bold uppercase text-muted">
+                  Public custom limits{" "}
+                  <FieldHint label="Public custom limits" text={adminFieldHints.publicLimits} />
+                </p>
                 <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
                   {policyLimitFields.map(([field, label, step]) => (
                     <DraftInput
@@ -173,14 +189,16 @@ export function AdminRuntimePolicyView({
                     />
                   ))}
                   <Checkbox
-                    label="Buyer spike"
+                    label="Allow buyer spike"
+                    hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowBuyerSpike"
                     checked={draft.allowBuyerSpike}
                     error={fieldErrors.allowBuyerSpike}
                     onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
                   />
                   <Checkbox
-                    label="Constant arrival"
+                    label="Allow constant arrival"
+                    hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowConstantArrivalRate"
                     checked={draft.allowConstantArrivalRate}
                     error={fieldErrors.allowConstantArrivalRate}
@@ -189,6 +207,13 @@ export function AdminRuntimePolicyView({
                 </div>
               </div>
               <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
+                <div className="col-span-full flex items-center gap-2 text-xs font-bold text-muted">
+                  Deployment hard caps{" "}
+                  <FieldHint
+                    label="Deployment hard caps"
+                    text={adminFieldHints.deploymentHardCaps}
+                  />
+                </div>
                 <Fact
                   label="Hard max buyers"
                   value={formatCap(policy.deploymentHardCaps.maxBuyers)}
@@ -198,7 +223,7 @@ export function AdminRuntimePolicyView({
                   value={formatCap(policy.deploymentHardCaps.maxTotalRequests)}
                 />
                 <Fact
-                  label="Hard max RPS"
+                  label="Hard max requests/second"
                   value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond)}
                 />
                 <Fact
@@ -210,10 +235,13 @@ export function AdminRuntimePolicyView({
                   value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds)}
                 />
                 <Fact
-                  label="Hard max preallocated VUs"
+                  label="Hard max preallocated virtual users"
                   value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus)}
                 />
-                <Fact label="Hard max VUs" value={formatCap(policy.deploymentHardCaps.maxVus)} />
+                <Fact
+                  label="Hard max virtual users"
+                  value={formatCap(policy.deploymentHardCaps.maxVus)}
+                />
               </dl>
               <div className="flex flex-wrap gap-2">
                 <button
@@ -365,6 +393,7 @@ export function AdminPresetView({
       <PanelHeading
         eyebrow="Presets"
         title="Inspection and starts"
+        hint={adminFieldHints.presets}
         status={
           <StatusPill
             status={
@@ -426,14 +455,23 @@ export function AdminPresetView({
               />
             ) : null}
             <ConfigGroup title="Preset identity">
-              <FieldRow label="Slug" value={selectedPreset.slug} />
-              <FieldRow label="Visibility" value={selectedPreset.visibility} />
-              <FieldRow label="Custom" value={selectedPreset.isCustom ? "yes" : "no"} />
+              <FieldRow label="Slug" value={selectedPreset.slug} hint={adminFieldHints.slug} />
+              <FieldRow
+                label="Visibility"
+                value={selectedPreset.visibility}
+                hint={adminFieldHints.visibility}
+              />
+              <FieldRow
+                label="Custom"
+                value={selectedPreset.isCustom ? "yes" : "no"}
+                hint={adminFieldHints.custom}
+              />
             </ConfigGroup>
             <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">{draft.description}</p>
             <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
               <DraftInput
                 label="Name"
+                hint={adminFieldHints.presetName}
                 draft={draft}
                 field="displayName"
                 error={fieldErrors.displayName}
@@ -445,6 +483,7 @@ export function AdminPresetView({
               />
               <DraftInput
                 label="Description"
+                hint={adminFieldHints.presetDescription}
                 draft={draft}
                 field="description"
                 onUpdate={onUpdateDraft}
@@ -455,6 +494,7 @@ export function AdminPresetView({
               />
               <DraftInput
                 label="Sort order"
+                hint={adminFieldHints.sortOrder}
                 draft={draft}
                 field="sortOrder"
                 onUpdate={onUpdateDraft}
@@ -466,6 +506,7 @@ export function AdminPresetView({
             </div>
             <ConfigFieldset disabled={isPending} legend="Traffic">
               <TrafficEditor
+                disabled={isPending}
                 draft={draft}
                 errors={fieldErrors}
                 hardCaps={hardCaps}
@@ -479,33 +520,46 @@ export function AdminPresetView({
                 draft={draft}
                 errors={fieldErrors}
                 fields={inventoryFields}
+                disabled={isPending}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
               />
             </ConfigFieldset>
-            <ConfigFieldset disabled={isPending} legend="Per-run ERP">
+            <ConfigFieldset
+              disabled={isPending}
+              hint={adminFieldHints.perRunErp}
+              legend="Per-run ERP"
+            >
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
                 fields={erpFields}
+                disabled={isPending}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
               />
               <Checkbox
                 label="ERP forced outage"
+                hint={adminDraftFieldHints.erpForcedOutage}
+                disabled={isPending}
                 id="preset-erpForcedOutage"
                 checked={draft.erpForcedOutage}
                 error={fieldErrors.erpForcedOutage}
                 onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
               />
             </ConfigFieldset>
-            <ConfigFieldset disabled={isPending} legend="Worker and backpressure">
+            <ConfigFieldset
+              disabled={isPending}
+              hint={adminFieldHints.workerBackpressure}
+              legend="Worker and backpressure"
+            >
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
                 fields={workerFields}
+                disabled={isPending}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
@@ -571,6 +625,10 @@ export function AdminPresetView({
                 >
                   Copy saved values to custom scenario
                 </button>
+                <FieldHint
+                  label="Copy saved values to custom scenario"
+                  text={adminFieldHints.copyToCustom}
+                />
                 {actionPendingReason ? (
                   <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={copyPendingReasonId}>
                     {actionPendingReason}
@@ -606,6 +664,8 @@ export function AdminPresetView({
             >
               <LabeledTextInput
                 disabled={isPending}
+                help="Letters are lowercased and separators become hyphens, e.g. recruiter-demo."
+                hint={adminFieldHints.duplicateSlug}
                 label="Duplicate slug"
                 name="duplicate-target-slug"
                 onChange={onDuplicateTargetSlugChange}
@@ -663,7 +723,8 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
   return (
     <details className="rounded border border-border px-3 py-2">
       <summary className="cursor-pointer font-semibold text-muted-strong">
-        Effective run preview
+        Effective run preview{" "}
+        <FieldHint label="Effective run preview" text={adminFieldHints.effectiveRunPreview} />
       </summary>
       <div className="mt-3 grid gap-3">
         <ConfigGroup title="Traffic">
@@ -690,23 +751,14 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
         </ConfigGroup>
         <ConfigGroup title="Inventory">
           <FieldRow label="Starting stock" value={config.inventoryConfig.startingStock} />
-          <FieldRow
-            label="Quantity per checkout"
-            value={config.inventoryConfig.quantityPerCheckout}
-          />
-          <FieldRow
-            label="Reservation hold minutes"
-            value={config.inventoryConfig.reservationHoldMinutes}
-          />
         </ConfigGroup>
         <ConfigGroup title="Per-run ERP">
           <FieldRow label="Latency ms" value={config.erpConfig.latencyMs} />
           <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
-          <FieldRow label="Error rate" value={config.erpConfig.errorRate} />
+          <FieldRow label="Error rate" value={`${ratioToPercent(config.erpConfig.errorRate)}%`} />
           <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
         </ConfigGroup>
         <ConfigGroup title="Worker and backpressure">
-          <FieldRow label="Queue name" value={config.backpressureConfig.queueName} />
           <FieldRow
             label="Physical queue name"
             value={config.backpressureConfig.physicalQueueName}
@@ -716,8 +768,9 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
             value={config.backpressureConfig.orderProcessConcurrency}
           />
           <FieldRow
-            label="Pending retry after seconds"
-            value={config.backpressureConfig.pendingPersistenceRetryAfterSeconds}
+            label="Queue name"
+            value={config.backpressureConfig.queueName}
+            hint={adminFieldHints.queueName}
           />
         </ConfigGroup>
       </div>
@@ -726,6 +779,7 @@ export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnaps
 }
 
 function TrafficEditor({
+  disabled,
   draft,
   errors,
   hardCaps,
@@ -734,6 +788,7 @@ function TrafficEditor({
   prefix,
 }: {
   draft: RunConfigDraft;
+  disabled?: boolean | undefined;
   errors: Record<string, DraftFieldError>;
   hardCaps?: DeploymentHardCaps | undefined;
   onBlur: (field: string) => void;
@@ -750,6 +805,10 @@ function TrafficEditor({
         tabIndex={-1}
       >
         <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
+        <FieldHint
+          label="Traffic pattern"
+          text={`${fieldHints.trafficPattern} Technically, k6 per-vu-iterations (one virtual user per buyer) versus constant-arrival-rate.`}
+        />
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <label
             className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong"
@@ -757,6 +816,7 @@ function TrafficEditor({
           >
             <input
               checked={draft.mode === mode}
+              disabled={disabled}
               name={`${prefix}-traffic-mode`}
               onChange={() => onUpdateDraft({ mode })}
               type="radio"
@@ -775,6 +835,7 @@ function TrafficEditor({
         {draft.mode === "buyer-spike" ? (
           <>
             <DraftInput
+              disabled={disabled}
               label="Buyer count"
               draft={draft}
               field="buyerCount"
@@ -785,6 +846,7 @@ function TrafficEditor({
               prefix={prefix}
             />
             <DraftInput
+              disabled={disabled}
               label="Max duration seconds"
               draft={draft}
               field="maxDurationSeconds"
@@ -796,6 +858,8 @@ function TrafficEditor({
             />
             <Checkbox
               label="Duplicate attempts"
+              hint={adminDraftFieldHints.duplicateEachBuyerAttempt}
+              disabled={disabled}
               id={`${prefix}-duplicateEachBuyerAttempt`}
               checked={draft.duplicateEachBuyerAttempt}
               error={errors.duplicateEachBuyerAttempt}
@@ -805,6 +869,7 @@ function TrafficEditor({
         ) : (
           <>
             <DraftInput
+              disabled={disabled}
               label="Requests per second"
               draft={draft}
               field="ratePerSecond"
@@ -815,6 +880,7 @@ function TrafficEditor({
               prefix={prefix}
             />
             <DraftInput
+              disabled={disabled}
               label="Duration seconds"
               draft={draft}
               field="durationSeconds"
@@ -825,6 +891,7 @@ function TrafficEditor({
               prefix={prefix}
             />
             <DraftInput
+              disabled={disabled}
               label="Preallocated VUs"
               draft={draft}
               field="preAllocatedVus"
@@ -835,6 +902,7 @@ function TrafficEditor({
               prefix={prefix}
             />
             <DraftInput
+              disabled={disabled}
               label="Max VUs"
               draft={draft}
               error={errors.maxVus}
@@ -847,6 +915,7 @@ function TrafficEditor({
           </>
         )}
         <DraftInput
+          disabled={disabled}
           label="Start delay seconds"
           draft={draft}
           field="startDelaySeconds"
@@ -863,6 +932,8 @@ function TrafficEditor({
 
 function RunConfigFields({
   draft,
+  disabled,
+  erpErrorRateMax,
   errors,
   includeForcedOutage = true,
   onBlur,
@@ -870,6 +941,8 @@ function RunConfigFields({
   prefix,
 }: {
   draft: RunConfigDraft;
+  disabled?: boolean | undefined;
+  erpErrorRateMax?: number | undefined;
   errors: Record<string, DraftFieldError>;
   includeForcedOutage?: boolean;
   onBlur: (field: string) => void;
@@ -880,6 +953,7 @@ function RunConfigFields({
     <>
       <ConfigFieldset legend="Inventory">
         <RunConfigInputs
+          disabled={disabled}
           draft={draft}
           errors={errors}
           fields={inventoryFields}
@@ -888,8 +962,10 @@ function RunConfigFields({
           prefix={prefix}
         />
       </ConfigFieldset>
-      <ConfigFieldset legend="Per-run ERP">
+      <ConfigFieldset hint={adminFieldHints.perRunErp} legend="Per-run ERP">
         <RunConfigInputs
+          disabled={disabled}
+          erpErrorRateMax={erpErrorRateMax}
           draft={draft}
           errors={errors}
           fields={erpFields}
@@ -900,6 +976,7 @@ function RunConfigFields({
         {includeForcedOutage ? (
           <Checkbox
             label="ERP forced outage"
+            disabled={disabled}
             id={`${prefix}-erpForcedOutage`}
             checked={draft.erpForcedOutage}
             error={errors.erpForcedOutage}
@@ -907,8 +984,9 @@ function RunConfigFields({
           />
         ) : null}
       </ConfigFieldset>
-      <ConfigFieldset legend="Worker and backpressure">
+      <ConfigFieldset hint={adminFieldHints.workerBackpressure} legend="Worker and backpressure">
         <RunConfigInputs
+          disabled={disabled}
           draft={draft}
           errors={errors}
           fields={workerFields}
@@ -924,18 +1002,22 @@ function RunConfigFields({
 function ConfigFieldset({
   children,
   disabled,
+  hint,
   legend,
 }: {
   children: ReactNode;
   disabled?: boolean | undefined;
+  hint?: string | undefined;
   legend: string;
 }) {
   return (
     <fieldset
+      aria-disabled={disabled || undefined}
       className="m-0 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] items-start gap-3 rounded border border-border p-3"
-      disabled={disabled}
     >
-      <legend className="px-1 text-sm font-bold text-ink">{legend}</legend>
+      <legend className="px-1 text-sm font-bold text-ink">
+        {legend} {hint ? <FieldHint label={legend} text={hint} /> : null}
+      </legend>
       {children}
     </fieldset>
   );
@@ -943,6 +1025,8 @@ function ConfigFieldset({
 
 function RunConfigInputs({
   draft,
+  disabled,
+  erpErrorRateMax,
   errors,
   fields,
   onBlur,
@@ -950,6 +1034,8 @@ function RunConfigInputs({
   prefix,
 }: {
   draft: RunConfigDraft;
+  disabled?: boolean | undefined;
+  erpErrorRateMax?: number | undefined;
   errors: Record<string, DraftFieldError>;
   fields: ReadonlyArray<[keyof RunConfigDraft, string, string?]>;
   onBlur: (field: string) => void;
@@ -958,6 +1044,8 @@ function RunConfigInputs({
 }) {
   return fields.map(([field, label, step]) => (
     <DraftInput
+      disabled={disabled}
+      max={field === "erpErrorRate" ? erpErrorRateMax : undefined}
       key={field}
       label={label}
       draft={draft}
@@ -973,12 +1061,9 @@ function RunConfigInputs({
 
 const inventoryFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["startingStock", "Starting stock"],
-  ["quantityPerCheckout", "Quantity per checkout"],
-  ["reservationHoldMinutes", "Hold minutes"],
 ];
 const workerFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["orderProcessConcurrency", "Worker concurrency"],
-  ["pendingPersistenceRetryAfterSeconds", "Persistence retry seconds"],
 ];
 const erpFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["erpLatencyMs", "ERP latency ms"],
@@ -1040,6 +1125,7 @@ export function AdminErpDiagnosticsView({
       <PanelHeading
         eyebrow="Global fallback scope"
         title="ERP fault injection (global fallback)"
+        hint={adminFieldHints.erpFallback}
         status={
           <StatusPill
             status={{
@@ -1052,26 +1138,35 @@ export function AdminErpDiagnosticsView({
         }
       />
       <p className="m-0 mb-4 text-sm text-muted">
-        Run processing uses the frozen run snapshot. These process-local values govern non-run calls
-        and are fallback when no snapshot is supplied.
+        Runs use the ERP settings frozen when they start. These controls change fallback behaviour
+        for calls that carry no run settings; they do not change an accepted run.
       </p>
       <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
-        <ConfigGroup title="Accepted run snapshot (per-run)">
+        <ConfigGroup
+          title="Accepted run snapshot (per-run)"
+          hint="The ERP settings frozen into the active run. These are what the running run's orders actually use."
+        >
           {runErpConfig ? (
             <>
               <FieldRow label="Latency ms" value={runErpConfig.latencyMs} />
               <FieldRow label="Max TPS" value={runErpConfig.maxTps} />
-              <FieldRow label="Error rate" value={runErpConfig.errorRate} />
+              <FieldRow label="Error rate" value={`${ratioToPercent(runErpConfig.errorRate)}%`} />
               <FieldRow label="Forced outage" value={runErpConfig.forcedOutage ? "on" : "off"} />
             </>
           ) : (
             <FieldRow label="Current run" value="none" />
           )}
         </ConfigGroup>
-        <ConfigGroup title="Configured global fallback">
+        <ConfigGroup
+          title="Configured global fallback"
+          hint="The ERP service's own values, used for calls without run settings. Reset to deployment defaults when the Mock ERP restarts."
+        >
           <FieldRow label="Latency ms" value={current?.latencyMs ?? "unavailable"} />
           <FieldRow label="Max TPS" value={current?.maxTps ?? "unavailable"} />
-          <FieldRow label="Error rate" value={current?.errorRate ?? "unavailable"} />
+          <FieldRow
+            label="Error rate"
+            value={current ? `${ratioToPercent(current.errorRate)}%` : "unavailable"}
+          />
           <FieldRow
             label="Forced outage"
             value={current ? (current.forcedOutage ? "on" : "off") : "unavailable"}
@@ -1091,9 +1186,10 @@ export function AdminErpDiagnosticsView({
           error={fieldErrors.latencyMs}
           help={
             caps
-              ? `Allowed range: ${nonnegativeNumberMinimum}–${caps.maxLatencyMs} milliseconds.`
+              ? `Unit: milliseconds. Minimum: ${nonnegativeNumberMinimum}. Maximum: ${caps.maxLatencyMs}.`
               : undefined
           }
+          hint={adminFieldHints.fallbackLatency}
           id="erp-chaos-latencyMs"
           inputMode="numeric"
           label="Latency ms"
@@ -1105,7 +1201,8 @@ export function AdminErpDiagnosticsView({
         />
         <LabeledTextInput
           error={fieldErrors.maxTps}
-          help={caps ? `Minimum: ${caps.minMaxTps} transactions per second.` : undefined}
+          help={caps ? `Unit: calls/second. Minimum: ${caps.minMaxTps}.` : undefined}
+          hint={adminFieldHints.fallbackCapacity}
           id="erp-chaos-maxTps"
           inputMode="numeric"
           label="Max TPS"
@@ -1117,7 +1214,12 @@ export function AdminErpDiagnosticsView({
         />
         <LabeledTextInput
           error={fieldErrors.errorRate}
-          help={caps ? `Allowed range: ${percentageMinimum}–${caps.maxErrorRate}.` : undefined}
+          help={
+            caps
+              ? `Unit: percent. Minimum: 0. Maximum: ${ratioToPercent(caps.maxErrorRate)}. Enter 25 for 25%.`
+              : undefined
+          }
+          hint={adminFieldHints.fallbackErrorRate}
           id="erp-chaos-errorRate"
           inputMode="decimal"
           label="Error rate"
@@ -1129,6 +1231,7 @@ export function AdminErpDiagnosticsView({
         />
         <Checkbox
           label="Forced outage"
+          hint="Makes the simulated ERP refuse every call that uses the fallback settings."
           id="erp-chaos-forcedOutage"
           checked={forcedOutage}
           error={fieldErrors.forcedOutage}
@@ -1136,6 +1239,10 @@ export function AdminErpDiagnosticsView({
         />
       </div>
       <div className="mt-4">
+        <p className="m-0 mb-2 text-sm text-muted">
+          Reset ERP controls restores the process's initial fallback configuration, not a clean
+          healthy preset.
+        </p>
         <div className="flex flex-wrap gap-2">
           <button
             aria-describedby={controlsDisabledReason ? controlsDisabledReasonId : undefined}
@@ -1204,6 +1311,7 @@ function DraftInput<T extends object>({
   disabled,
   error,
   field,
+  hint,
   label,
   max,
   onBlur,
@@ -1216,6 +1324,7 @@ function DraftInput<T extends object>({
   disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
   field: keyof T;
+  hint?: string | undefined;
   label: string;
   max?: number | undefined;
   onBlur?: ((field: string) => void) | undefined;
@@ -1229,7 +1338,14 @@ function DraftInput<T extends object>({
     <LabeledTextInput
       disabled={disabled}
       error={error}
-      help={max === undefined ? bounds.help : `${bounds.help ?? ""} Maximum: ${max}.`.trim()}
+      help={
+        field === "erpErrorRate" || String(field) === "maxErpErrorRate"
+          ? `Unit: percent. Minimum: 0. Maximum: ${max ?? 100}. Enter 25 for 25%.`
+          : max === undefined
+            ? bounds.help
+            : `${bounds.help ?? ""} Maximum: ${max}.`.trim()
+      }
+      hint={hint ?? adminDraftFieldHints[String(field)]}
       id={prefix ? `${prefix}-${String(field)}` : undefined}
       inputMode={type === "number" ? (step ? "decimal" : "numeric") : undefined}
       label={label}
@@ -1246,11 +1362,39 @@ function intrinsicInputBounds(field: string): {
   help?: string;
 } {
   if (field === "sortOrder") return { help: "Whole number." };
-  if (field.includes("ErrorRate") || field === "erpErrorRate") {
-    return {
-      help: `Allowed range: ${percentageMinimum}–${percentageMaximum}.`,
-    };
-  }
+  if (field.includes("ErrorRate") || field === "erpErrorRate")
+    return { help: "Unit: percent. Minimum: 0." };
+  const unit =
+    field === "maxRequestsPerSecond" || field === "ratePerSecond"
+      ? "requests/second"
+      : field.includes("Starts")
+        ? "starts"
+        : field.includes("Seconds") || field.includes("seconds") || field === "budgetWindowSeconds"
+          ? "seconds"
+          : field.includes("Latency") || field === "erpLatencyMs"
+            ? "milliseconds"
+            : field.includes("Tps") || field.includes("TPS")
+              ? "calls/second"
+              : field.includes("Vus") || field.includes("VUs")
+                ? "virtual users"
+                : field.includes("Stock") || field === "startingStock"
+                  ? "units"
+                  : field.includes("Buyer") || field === "buyerCount"
+                    ? "buyers"
+                    : field === "maxTotalRequests"
+                      ? "requests"
+                      : field.includes("Concurrency")
+                        ? "orders"
+                        : "items";
+  const minimum = [
+    "startingStock",
+    "startDelaySeconds",
+    "maxTrafficStartDelaySeconds",
+    "erpLatencyMs",
+    "maxErpLatencyMs",
+  ].includes(field)
+    ? 0
+    : positiveIntegerMinimum;
   if (
     field === "startingStock" ||
     field === "startDelaySeconds" ||
@@ -1258,46 +1402,52 @@ function intrinsicInputBounds(field: string): {
     field === "erpLatencyMs" ||
     field === "maxErpLatencyMs"
   ) {
-    return {
-      help: `Minimum: ${nonnegativeNumberMinimum}.`,
-    };
+    return { help: `Unit: ${unit}. Minimum: ${nonnegativeNumberMinimum}.` };
   }
   if (field === "orderProcessConcurrency") {
     return {
-      help: `Allowed range: ${formatCount(positiveIntegerMinimum)}–${formatCount(orderProcessConcurrencyHardCap)}.`,
+      help: `Unit: ${unit}. Minimum: ${formatCount(positiveIntegerMinimum)}. Maximum: ${formatCount(orderProcessConcurrencyHardCap)}.`,
     };
   }
   return {
-    help: `Minimum: ${positiveIntegerMinimum}.`,
+    help: `Unit: ${unit}. Minimum: ${minimum}.`,
   };
 }
 
 function Checkbox({
   checked,
+  disabled,
   error,
   id,
   label,
+  hint,
   onChange,
 }: {
   checked: boolean;
+  disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
   id?: string;
   label: string;
+  hint?: string | undefined;
   onChange: (value: boolean) => void;
 }) {
   return (
     <div className="grid gap-1">
-      <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
-        <input
-          aria-describedby={error && id ? `${id}-error` : undefined}
-          aria-invalid={error ? true : undefined}
-          checked={checked}
-          id={id}
-          onChange={(event) => onChange(event.target.checked)}
-          type="checkbox"
-        />
-        {label}
-      </label>
+      <div className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
+        <label className="flex items-center gap-2">
+          <input
+            aria-describedby={error && id ? `${id}-error` : undefined}
+            aria-invalid={error ? true : undefined}
+            checked={checked}
+            disabled={disabled}
+            id={id}
+            onChange={(event) => onChange(event.target.checked)}
+            type="checkbox"
+          />
+          {label}
+        </label>
+        {hint ? <FieldHint label={label} text={hint} /> : null}
+      </div>
       {error && id ? (
         <span className="text-xs font-semibold text-danger" id={`${id}-error`}>
           {error.message}
@@ -1309,10 +1459,12 @@ function Checkbox({
 
 function PanelHeading({
   eyebrow,
+  hint,
   status,
   title,
 }: {
   eyebrow: string;
+  hint?: string;
   status?: React.ReactNode;
   title: string;
 }) {
@@ -1320,7 +1472,10 @@ function PanelHeading({
     <div className="mb-4 flex items-start justify-between gap-3">
       <div>
         <p className="m-0 text-xs font-bold uppercase text-muted">{eyebrow}</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">{title}</h2>
+        <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+          {title}
+          {hint ? <FieldHint label={title} text={hint} /> : null}
+        </h2>
       </div>
       {status}
     </div>
@@ -1344,6 +1499,7 @@ function LabeledTextInput({
   disabled,
   error,
   help,
+  hint,
   id,
   inputMode,
   label,
@@ -1357,6 +1513,7 @@ function LabeledTextInput({
   disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
   help?: string | undefined;
+  hint?: string | undefined;
   id?: string | undefined;
   inputMode?: "decimal" | "numeric" | undefined;
   name?: string | undefined;
@@ -1368,7 +1525,10 @@ function LabeledTextInput({
   const controlId = id ?? name;
   return (
     <div className="grid gap-1 text-sm font-semibold text-muted-strong">
-      <label htmlFor={controlId}>{label}</label>
+      <div className="flex items-center gap-2">
+        <label htmlFor={controlId}>{label}</label>
+        {hint ? <FieldHint label={label} text={hint} /> : null}
+      </div>
       <input
         aria-describedby={
           [

@@ -3,7 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminSessionProxyPath } from "../../lib/control-paths";
+import { adminFieldHints } from "../../lib/presentation/field-hints";
 import { inputClassName, primaryButtonClassName } from "../control-styles";
+import { FieldHint } from "../field-hint";
 
 const maximumTimeoutMs = 2_147_483_647;
 
@@ -115,18 +117,22 @@ export function AdminSignInView({
           onSignIn();
         }}
       >
-        <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-          <span>Admin passphrase</span>
+        <div className="grid gap-1 text-sm font-semibold text-muted-strong">
+          <div className="flex items-center gap-2">
+            <label htmlFor="admin-passphrase">Admin passphrase</label>
+            <FieldHint label="Admin passphrase" text={adminFieldHints.adminPassphrase} />
+          </div>
           <input
             autoComplete="current-password"
             className={inputClassName}
             disabled={isPending || retryAfterMs !== null}
+            id="admin-passphrase"
             name="passphrase"
             onChange={(event) => onPassphraseChange(event.target.value)}
             type="password"
             value={passphrase}
           />
-        </label>
+        </div>
         <button
           className={primaryButtonClassName}
           disabled={isPending || retryAfterMs !== null}
