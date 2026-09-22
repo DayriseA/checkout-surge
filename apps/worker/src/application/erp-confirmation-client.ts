@@ -21,11 +21,6 @@ import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
 
 export type ErpOperationKind = "dispatched_confirmation" | "status_lookup" | "non_call_deferral";
 
-export interface ErpHealthLearningResult {
-  erpHealthLearningEligible: boolean;
-  response?: ErpConfirmationResponse;
-}
-
 export interface ErpAttemptRecord {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
@@ -175,28 +170,6 @@ export class ErpAcceptedConfirmationPersistenceError extends ErpAttemptPersisten
 
 export function isErpAttemptPersistenceError(error: unknown): error is ErpAttemptPersistenceError {
   return error instanceof ErpAttemptPersistenceError;
-}
-
-export function isAcceptedErpConfirmationPersistenceError(
-  error: unknown,
-): error is ErpAcceptedConfirmationPersistenceError {
-  return error instanceof ErpAcceptedConfirmationPersistenceError;
-}
-
-export function isTemporaryErpDependencyError(error: unknown): boolean {
-  if (isErpAttemptPersistenceError(error)) return false;
-  if (
-    error instanceof ErpConfirmationFailedError ||
-    error instanceof ErpConfirmationInvalidResponseError ||
-    error instanceof ErpConfirmationRequestError ||
-    error instanceof ErpConfirmationTimeoutError
-  ) {
-    return (
-      error.outcome?.disposition === "temporarily_unavailable" ||
-      error.outcome?.disposition === "uncertain_result"
-    );
-  }
-  return false;
 }
 
 export interface HttpErpOrderConfirmationOptions {

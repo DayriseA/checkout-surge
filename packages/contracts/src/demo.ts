@@ -134,7 +134,6 @@ export const startDemoRunRequestSchema = z
 export type StartDemoRunRequest = z.infer<typeof startDemoRunRequestSchema>;
 
 export const previewDemoRunRequestSchema = startDemoRunRequestSchema;
-export type PreviewDemoRunRequest = z.infer<typeof previewDemoRunRequestSchema>;
 export const previewDemoRunResponseSchema = estimatePreviewSchema;
 export type PreviewDemoRunResponse = z.infer<typeof previewDemoRunResponseSchema>;
 
@@ -487,7 +486,6 @@ export const runHistoryExceptionSummarySchema = z
     truncatedCollections: nonnegativeIntegerSchema,
   })
   .strict();
-export type RunHistoryExceptionSummary = z.infer<typeof runHistoryExceptionSummarySchema>;
 
 const erpAttemptStatusCountsSchema = z
   .object({

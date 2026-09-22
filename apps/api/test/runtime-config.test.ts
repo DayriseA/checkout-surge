@@ -220,7 +220,6 @@ describe("API runtime configuration", () => {
         CONTROL_SERVICE_TOKEN: "deployment-token",
         DEMO_MAX_TRAFFIC_START_DELAY_SECONDS: "0",
         DEMO_MAX_TRAFFIC_DURATION_SECONDS: "604800",
-        DEMO_RUN_DRAIN_TIMEOUT_SECONDS: "604800",
         PENDING_PERSISTENCE_RECOVERY_WINDOW_SECONDS: "604800",
       }),
     ).not.toThrow();

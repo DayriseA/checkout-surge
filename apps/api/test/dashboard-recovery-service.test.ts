@@ -1197,16 +1197,6 @@ function sharedErpProtectionFixture(): SharedErpProtectionStatus {
   return {
     status: "healthy",
     reason: null,
-    circuit: {
-      state: "closed",
-      consecutiveFailureCount: 0,
-      failureThreshold: 5,
-      resetTimeoutMs: 10_000,
-      openedAt: null,
-      nextAttemptAt: null,
-      halfOpenProbeInFlight: false,
-      lastChangedAt: now.toISOString(),
-    },
     retryPressure: {
       retryingJobCount: 0,
       retryAttemptCount: 0,
@@ -1221,8 +1211,6 @@ function sharedErpProtectionFixture(): SharedErpProtectionStatus {
 function runErpOutcomeFixture(scopedRunId = runId): RunErpOutcomeSummary {
   return {
     runId: scopedRunId,
-    circuit: null,
-    circuitReadStatus: "available",
     latestAttempt: null,
     recentAttemptWindowSeconds: 60,
     recentAttemptCount: 0,

@@ -89,7 +89,7 @@ export function deriveLiveTechnicalBoardValues(
       ? (projection.runtimeProgress.downstreamErpStatus ?? "unavailable")
       : null,
     erpFailures: erp ? [erp.recentFailureCount, erp.recentTimeoutCount] : null,
-    erpProtection: erp ? deriveRunErpStory(erp, run.status).sentence : null,
+    erpProtection: erp ? deriveRunErpStory(erp) : null,
     confirmationRate: projection.runtimeProgress
       ? [
           projection.runtimeProgress.confirmationRatePerSecond,

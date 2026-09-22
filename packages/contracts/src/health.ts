@@ -37,4 +37,3 @@ export const livenessResponseSchema = healthResponseSchema.pick({
   timestamp: true,
   uptimeSeconds: true,
 });
-export type LivenessResponse = z.infer<typeof livenessResponseSchema>;

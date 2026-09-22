@@ -450,7 +450,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
 | `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
 | `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | API traffic-execution gateway |
-| `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Web/local tooling |
+| `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Runtime smoke checks |
 | `WEB_BASE_URL` | `http://localhost:8080` | Routine runtime smoke and recovery-soak dashboard checks |
 | `PORT` | service-specific | Web `3000`, API `4000`, mock ERP `4100`, load orchestrator `4200` |
 | `HOST` | `0.0.0.0` | API, mock ERP, load orchestrator |

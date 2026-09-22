@@ -876,7 +876,6 @@ describe("demo run finalization service", () => {
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
-      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: {
         fenceRun: async () => undefined,

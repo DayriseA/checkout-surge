@@ -96,7 +96,6 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         "claimTerminalRun" | "writeAfterTerminalClaims"
       >;
       logger: CheckoutSurgeLogger;
-      clearErpCircuitBreakerState: () => Promise<void>;
       trafficAborter: TrafficAbortGateway;
       dashboardLiveStateReset: DashboardLiveStateReset;
       reservationTiming?: ReservationTimingLifecycle;
@@ -460,15 +459,6 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         );
       }
     }
-    await this.options.clearErpCircuitBreakerState().catch(() => {
-      throw new ApiHttpError({
-        statusCode: 503,
-        code: "run_cleanup_conflict",
-        message: "Work cleanup and history completed; retry Reset to finish shared-state cleanup.",
-        details: { conflictReason: "projection_cleanup_incomplete" },
-      });
-    });
-
     if (projectionRunIds.size > 0) {
       await publishDashboardProjectionDirtySignal(this.options.redis, {
         type: "dashboard.projection.dirty",

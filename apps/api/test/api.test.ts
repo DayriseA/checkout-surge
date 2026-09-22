@@ -996,16 +996,6 @@ function sharedErpProtectionFixture(): SharedErpProtectionStatus {
   return {
     status: "healthy",
     reason: null,
-    circuit: {
-      state: "closed",
-      consecutiveFailureCount: 0,
-      failureThreshold: 5,
-      resetTimeoutMs: 10_000,
-      openedAt: null,
-      nextAttemptAt: null,
-      halfOpenProbeInFlight: false,
-      lastChangedAt: "2026-06-20T00:00:10.000Z",
-    },
     retryPressure: {
       retryingJobCount: 0,
       retryAttemptCount: 0,
@@ -1020,8 +1010,6 @@ function sharedErpProtectionFixture(): SharedErpProtectionStatus {
 function runErpOutcomeFixture(): RunErpOutcomeSummary {
   return {
     runId: fixtureIds.run,
-    circuit: null,
-    circuitReadStatus: "available",
     latestAttempt: {
       runId: fixtureIds.run,
       status: "succeeded",
@@ -1373,8 +1361,6 @@ describe("API gateway routes", () => {
       recentMetrics: [],
       erp: {
         runId: fixtureIds.run,
-        circuit: null,
-        circuitReadStatus: "available",
         latestAttempt: {
           runId: fixtureIds.run,
           status: "failed",
@@ -1491,8 +1477,6 @@ describe("API gateway routes", () => {
       recentMetrics: [],
       erp: {
         runId: fixtureIds.run,
-        circuit: null,
-        circuitReadStatus: "available",
         latestAttempt: {
           runId: fixtureIds.run,
           status: "failed",

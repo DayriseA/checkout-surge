@@ -333,15 +333,6 @@ describe("watch narrative", () => {
     expect(output).not.toContain("Choose a simulation");
   });
 
-  it("explains paused order confirmation while a run is active", () => {
-    const activeProjection = projection(run("active"));
-    activeProjection.erp = pausedErp();
-    const output = markup(available(activeProjection));
-
-    expect(output).toContain("Calls paused to protect the simulated ERP");
-    expect(output).toContain("Calls can be retried from 2026-07-30 12:00:19 UTC");
-  });
-
   it("explains an invalid accepted link without exposing identifiers", () => {
     const output = renderToStaticMarkup(
       createElement(OperatorDashboard, {
@@ -446,33 +437,6 @@ const inventoryFixture: NonNullable<DashboardProjection["inventory"]> = {
   observedAt: "2026-07-30T12:00:01.000Z",
   lastUpdatedAt: "2026-07-30T12:00:01.000Z",
 };
-
-function pausedErp(): NonNullable<DashboardProjection["erp"]> {
-  return {
-    runId,
-    observedAt: "2026-07-30T12:00:03.000Z",
-    recentAttemptWindowSeconds: 60,
-    recentAttemptCount: 12,
-    recentFailureCount: 5,
-    recentTimeoutCount: 0,
-    latestAttempt: {
-      runId,
-      status: "failed",
-      finishedAt: "2026-07-30T12:00:03.000Z",
-    },
-    circuitReadStatus: "available",
-    circuit: {
-      state: "open",
-      consecutiveFailureCount: 5,
-      failureThreshold: 5,
-      resetTimeoutMs: 10_000,
-      openedAt: "2026-07-30T12:00:02.000Z",
-      nextAttemptAt: "2026-07-30T12:00:19.000Z",
-      halfOpenProbeInFlight: false,
-      lastChangedAt: "2026-07-30T12:00:02.000Z",
-    },
-  };
-}
 
 function terminalProjection(status: "completed" | "failed"): DashboardProjection {
   const terminal = projection(run(status));

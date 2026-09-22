@@ -35,7 +35,6 @@ export type ErpErrorCode = z.infer<typeof erpErrorCodeSchema>;
  */
 export const erpPermanentRejectionCodeValues = [] as const;
 export const erpPermanentRejectionCodeSchema = z.enum(erpPermanentRejectionCodeValues);
-export type ErpPermanentRejectionCode = z.infer<typeof erpPermanentRejectionCodeSchema>;
 
 /** Disposition classes for recognized ERP outcomes (D03/D05). */
 export const erpOutcomeDispositionValues = [
@@ -64,15 +63,6 @@ export const recognizedErpErrorCodeDispositions: Readonly<
   erp_injected_error: "temporarily_unavailable",
   erp_idempotency_conflict: "technical_failure",
 };
-
-/**
- * Canonical ERP status-lookup results (D05). `unknown` means "no terminal
- * record": never received, still processing, or lost. It is never evidence of
- * no effect.
- */
-export const erpLookupStatusValues = ["succeeded", "rejected", "unknown"] as const;
-export const erpLookupStatusSchema = z.enum(erpLookupStatusValues);
-export type ErpLookupStatus = z.infer<typeof erpLookupStatusSchema>;
 
 /** Immutable request identity stored with a durable terminal ERP outcome (D05). */
 export const erpLookupIdentitySchema = z
@@ -128,7 +118,6 @@ export const erpLookupResultSchema = z.discriminatedUnion("status", [
     })
     .strict(),
 ]);
-export type ErpLookupResult = z.infer<typeof erpLookupResultSchema>;
 
 export const erpLookupResponseSchema = z
   .object({

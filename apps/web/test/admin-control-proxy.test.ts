@@ -44,7 +44,6 @@ import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/r
 import { POST as previewDemoRun } from "../src/app/api/demo/runs/estimate/route.js";
 import { POST as startDemoRun } from "../src/app/api/demo/runs/start/route.js";
 import { GET as getReadiness } from "../src/app/api/health/ready/route.js";
-import { adminPassphraseHeaderName } from "../src/app/lib/control-paths.js";
 import { resetAdminLoginAttemptLimiterForTests } from "../src/app/lib/server/admin-login-composition.js";
 import { createAdminSessionToken } from "../src/app/lib/server/admin-session.js";
 import { initializeWebServerConfig } from "../src/app/lib/server/config.js";
@@ -109,9 +108,7 @@ describe("dashboard control proxy routes", () => {
       expect((await missingResponse.json()).code, `${name}: missing code`).toBe(
         "admin_session_required",
       );
-      const rawPassphraseResponse = await handler(
-        request({ [adminPassphraseHeaderName]: "admin-pass" }),
-      );
+      const rawPassphraseResponse = await handler(request({ "x-admin-passphrase": "admin-pass" }));
       expect(rawPassphraseResponse.status, `${name}: raw passphrase`).toBe(401);
       expect((await rawPassphraseResponse.json()).code, `${name}: raw passphrase code`).toBe(
         "admin_session_required",

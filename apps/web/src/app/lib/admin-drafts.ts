@@ -72,7 +72,6 @@ export interface RuntimePolicyDraft extends RunConfigDraft {
   allowConstantArrivalRate: boolean;
 }
 
-export type AdminDraftField = keyof RuntimePolicyDraft | keyof PresetDraft | keyof ErpChaosConfig;
 export type DraftErrorCode =
   | "required"
   | "not_a_number"

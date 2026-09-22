@@ -18,4 +18,3 @@ export const adminMaintenanceCleanupRunsProxyPath = "/api/admin/demo/runs/cleanu
 export const adminRunHistoryProxyPath = "/api/admin/demo/runs/history" as const;
 export const adminPublicRuntimePolicyProxyPath = "/api/admin/demo/runtime-policy" as const;
 export const adminSessionProxyPath = "/api/admin/session" as const;
-export const adminPassphraseHeaderName = "x-admin-passphrase" as const;

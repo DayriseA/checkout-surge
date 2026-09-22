@@ -423,22 +423,7 @@ describe("run history", () => {
     expect(markup).toContain("Failed attempts");
     expect(markup).toContain("Traffic delivery: Delivery failed");
     expect(markup).not.toContain("load_orchestrator_unavailable");
-
-    detail.summary.failureCategory = "reconciliation";
-    detail.result = deriveRunResult({
-      ...resultEvidence(detail),
-      generator: {
-        transportAttemptCounts: detail.summary.transportAttemptCounts,
-        httpSummary: detail.summary.httpSummary,
-      },
-    });
-    const reconciliationMarkup = renderToStaticMarkup(
-      createElement(PublicRunHistoryDetail, { detail }),
-    );
-    expect(reconciliationMarkup).toContain(
-      "The final counts did not agree, so the result could not be verified",
-    );
-    expect(reconciliationMarkup).not.toMatch(/finalization|finalized/i);
+    expect(markup).not.toMatch(/finalization|finalized/i);
   });
 
   it("renders nonzero delivery exceptions while keeping routine zero rows hidden", () => {

@@ -2,7 +2,6 @@ import type {
   DemoRunStatus,
   DownstreamErpStatus,
   ErpAttemptStatus,
-  ErpCircuitState,
   PublicRunFailureCategory,
   RunResultOutcome,
   TrafficDeliveryStatus,
@@ -179,16 +178,6 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
           "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
         action: "Start a new run to try again.",
       };
-    case "reconciliation":
-      return {
-        explanation: "The final counts did not agree, so the result could not be verified.",
-        action: "Review the evidence below, then start a new run if you need a clean comparison.",
-      };
-    case "business":
-      return {
-        explanation: "One or more reserved orders did not reach a confirmed or failed outcome.",
-        action: "Review the order outcome totals, then start a new run to try again.",
-      };
     case "inventory":
       return {
         explanation: "Final inventory evidence could not verify the run's stock outcome.",
@@ -241,17 +230,6 @@ export function publicStatusLabel(input: PublicStatus): string {
       return `${publicVocabulary.trafficDelivery}: ${trafficDeliveryStatusLabel(input.status)}`;
     case "run":
       return `${publicVocabulary.runLifecycle}: ${input.displayLabel ?? runLifecycleStatusLabel(input.status)}`;
-  }
-}
-
-export function circuitStateLabel(state: ErpCircuitState): string {
-  switch (state) {
-    case "closed":
-      return "Protection normal";
-    case "open":
-      return "Calls paused to protect the ERP";
-    case "half_open":
-      return "Testing recovery";
   }
 }
 

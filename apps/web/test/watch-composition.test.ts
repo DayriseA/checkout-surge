@@ -238,16 +238,6 @@ function systemStatus(
     erpProtection: {
       status: "healthy",
       reason: null,
-      circuit: {
-        state: "closed",
-        consecutiveFailureCount: 0,
-        failureThreshold: 5,
-        resetTimeoutMs: 10_000,
-        openedAt: null,
-        nextAttemptAt: null,
-        halfOpenProbeInFlight: false,
-        lastChangedAt: observedAt,
-      },
       retryPressure: {
         retryingJobCount: 0,
         retryAttemptCount: 0,

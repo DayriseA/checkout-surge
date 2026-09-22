@@ -13,7 +13,6 @@ import type {
   AcceptedRunReportEvidence,
   AcceptedRunResult,
 } from "../lib/presentation/accepted-run-result";
-import { deriveRunErpStory, erpStoryExplainsWaiting } from "../lib/presentation/erp-story";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import {
   derivePublicRunSummary,
@@ -319,14 +318,6 @@ function RunCard({
     terminal && composition.run.status === "failed"
       ? publicFailureExplanation(composition.run.failureCategory)
       : null;
-  const erpStory =
-    composition.phase === "active" || composition.phase === "draining"
-      ? deriveRunErpStory(projection.erp, composition.run.status)
-      : null;
-  // Only waiting or uncertain protection explains delay or uncertainty here; a healthy or
-  // coping circuit is not a fact a visitor needs between the counts and the signals.
-  const erpWaiting =
-    erpStory && erpStoryExplainsWaiting(projection.erp, composition.run.status) ? erpStory : null;
   const counts = {
     awaiting: summary
       ? summary.counts.pendingOrders
@@ -374,12 +365,6 @@ function RunCard({
       </div>
       <GracePeriodNotice now={now} run={composition.run} />
       <CountsRow {...counts} liveOutcome={terminal ? undefined : outcome} />
-      {erpWaiting ? (
-        <p className="m-0 text-sm font-semibold leading-6 text-muted-strong" role="status">
-          {erpWaiting.sentence}
-          {erpWaiting.nextAction ? ` — ${erpWaiting.nextAction}` : ""}
-        </p>
-      ) : null}
       <WatchSignalStrip
         charts={stripCharts.charts}
         hasEvidence={stripCharts.hasEvidence}

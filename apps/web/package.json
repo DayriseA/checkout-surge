@@ -8,7 +8,6 @@
     "type-check": "next typegen && tsc -p tsconfig.json --noEmit",
     "lint": "biome lint .",
     "dev": "node ../../scripts/run-with-env.mjs next dev -p 3000",
-    "start": "next start -p 3000",
     "test": "pnpm test:unit",
     "test:unit": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts",
     "test:unit:watch": "node ../../scripts/run-with-test-env.mjs vitest --watch --config vitest.config.ts",

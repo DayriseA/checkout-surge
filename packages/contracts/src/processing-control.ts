@@ -13,7 +13,6 @@ import {
  * work.
  */
 export const processingGenerationSchema = nonnegativeIntegerSchema;
-export type ProcessingGeneration = z.infer<typeof processingGenerationSchema>;
 
 /**
  * Identity of one actual ERP call (D04/D05). Distinct by construction from the
@@ -24,7 +23,6 @@ export type ProcessingGeneration = z.infer<typeof processingGenerationSchema>;
  * uncertain attempt.
  */
 export const erpCallIdSchema = uuidSchema;
-export type ErpCallId = z.infer<typeof erpCallIdSchema>;
 
 export const erpCallReferenceSchema = z
   .object({

@@ -7,7 +7,6 @@ import {
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { adminPassphraseHeaderName } from "../src/app/lib/control-paths.js";
 import {
   createAdminLoginHandler,
   defaultAdminLoginDependencies,
@@ -323,7 +322,6 @@ describe("backend proxy request context", () => {
       headers: {
         cookie: "checkout_surge_admin_session=stolen",
         authorization: "Bearer stolen",
-        [adminPassphraseHeaderName]: "admin-pass",
         "x-arbitrary-browser-header": "browser-only",
         [correlationIdHeaderName]: "browser-corr",
       },
@@ -366,7 +364,6 @@ describe("backend proxy request context", () => {
     expect(captured[publicVisitorIdHeaderName]).toBe("visitor-credential");
     expect(captured.cookie).toBeUndefined();
     expect(captured.authorization).toBeUndefined();
-    expect(captured[adminPassphraseHeaderName]).toBeUndefined();
     expect(captured["x-arbitrary-browser-header"]).toBeUndefined();
     expect(captured["x-arbitrary-caller-header"]).toBeUndefined();
   });

@@ -13,12 +13,6 @@ export function isDestructiveResetReason(reason: string | null): reason is Destr
 
 /** The persisted failure vocabulary. Keep this closed: it is mapped before public projection. */
 export const internalRunFailureReasonValues = [
-  "reconciliation_escalated",
-  "pending_persistence_reconciliation_timeout",
-  // Historical rows only: no new run emits business_drain_timeout (task 14),
-  // but stored failure reasons keep parsing.
-  "business_drain_timeout",
-  "accepted_response_accounting_timeout",
   "traffic_delivery_major_shortfall",
   "traffic_outcome_unexpected_responses",
   "traffic_transport_major_loss",
@@ -31,8 +25,6 @@ export const internalRunFailureReasonSchema = z.enum(internalRunFailureReasonVal
 export type InternalRunFailureReason = z.infer<typeof internalRunFailureReasonSchema>;
 
 export const publicRunFailureCategoryValues = [
-  "reconciliation",
-  "business",
   "traffic",
   "inventory",
   "operator",
@@ -45,12 +37,6 @@ export function toPublicRunFailureCategory(
   reason: InternalRunFailureReason,
 ): PublicRunFailureCategory {
   switch (reason) {
-    case "reconciliation_escalated":
-    case "pending_persistence_reconciliation_timeout":
-      return "reconciliation";
-    case "business_drain_timeout":
-    case "accepted_response_accounting_timeout":
-      return "business";
     case "traffic_delivery_major_shortfall":
     case "traffic_outcome_unexpected_responses":
     case "traffic_transport_major_loss":
@@ -68,7 +54,6 @@ export function toPublicRunFailureCategory(
 
 export const runResultInvariantStatusValues = ["holds", "broken", "not_evaluable"] as const;
 export const runResultInvariantStatusSchema = z.enum(runResultInvariantStatusValues);
-export type RunResultInvariantStatus = z.infer<typeof runResultInvariantStatusSchema>;
 
 export const runResultClassificationValues = [
   "expected_population_difference",

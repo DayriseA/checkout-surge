@@ -116,7 +116,6 @@ type TeardownTestOptions = MaintenanceTestContext & {
 type ResetTestOptions = MaintenanceTestContext & {
   queueMaintenance: ExactRunQueueMaintenance;
   terminalRunWriter: ConstructorParameters<typeof AdminDemoResetService>[0]["terminalRunWriter"];
-  clearErpCircuitBreakerState?: () => Promise<void>;
   trafficAborter?: ConstructorParameters<typeof AdminDemoResetService>[0]["trafficAborter"];
   dashboardLiveStateReset?: ConstructorParameters<
     typeof AdminDemoResetService
@@ -166,7 +165,6 @@ function createResetService(options: ResetTestOptions): AdminDemoResetService {
     queueMaintenance: options.queueMaintenance,
     terminalRunWriter: options.terminalRunWriter,
     logger: options.logger,
-    clearErpCircuitBreakerState: options.clearErpCircuitBreakerState ?? (async () => undefined),
     trafficAborter: options.trafficAborter ?? {
       abortCurrent: async () => ({ outcome: "no_current_run" as const }),
     },
@@ -757,10 +755,10 @@ describe("focused demo maintenance workflows", () => {
       await seedActiveRunBusinessState(db, redisClient);
       const now = () => new Date("2026-06-20T00:15:01.000Z");
       const metrics = new RedisDashboardTrafficMetricStore(redisClient);
-      const clearErp = vi
+      const clearRun = vi
         .fn()
         .mockRejectedValueOnce(new Error("Redis unavailable"))
-        .mockResolvedValue(undefined);
+        .mockImplementation((runId: string) => metrics.clearRun(runId));
       const cleanRuns = vi.fn().mockResolvedValue({ cleanedQueueCount: 2, cleanedJobCount: 0 });
       const createWorkflow = () =>
         createResetService({
@@ -771,15 +769,17 @@ describe("focused demo maintenance workflows", () => {
             synchronize: async () => {},
           }),
           queueMaintenance: { cleanRuns },
-          dashboardLiveStateReset: metrics,
-          clearErpCircuitBreakerState: clearErp,
+          dashboardLiveStateReset: {
+            fenceRun: (runId) => metrics.fenceRun(runId),
+            hasRunState: (runId) => metrics.hasRunState(runId),
+            clearRun,
+          },
           logger: createSilentLogger("api"),
         });
       await expect(
         new AutomaticRunResetService({ db, now, resetWorkflow: createWorkflow() }).check(),
-      ).rejects.toThrow("retry Reset to finish shared-state cleanup");
+      ).rejects.toThrow("Retry reset to finish projection cleanup");
       expect(await db.select().from(orders)).toHaveLength(0);
-      expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
       expect((await db.select().from(demoRuns))[0]).toMatchObject({
         status: "failed",
         failureReason: "auto_reset",
@@ -791,12 +791,13 @@ describe("focused demo maintenance workflows", () => {
       expect(await workflow.hasPendingAutomaticResetCleanup()).toBe(true);
       const automaticReset = new AutomaticRunResetService({ db, now, resetWorkflow: workflow });
       await automaticReset.check();
-      expect(clearErp).toHaveBeenCalledTimes(2);
+      expect(clearRun).toHaveBeenCalledTimes(2);
       expect(cleanRuns).toHaveBeenCalledOnce();
+      expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
       expect(await workflow.hasPendingAutomaticResetCleanup()).toBe(false);
       expect(await db.select().from(demoRunSummaries)).toEqual(summaries);
       await automaticReset.check();
-      expect(clearErp).toHaveBeenCalledTimes(2);
+      expect(clearRun).toHaveBeenCalledTimes(2);
     });
 
     it("rechecks the deadline under the reset fence so a successor is untouched", async () => {
@@ -1338,7 +1339,6 @@ describe("focused demo maintenance workflows", () => {
           return { cleanedQueueCount: 2, cleanedJobCount: 5 };
         }),
       };
-      const clearErpCircuitBreakerState = vi.fn().mockResolvedValue(undefined);
       const abortCurrent = vi.fn(async () => {
         writerOperations.push("abort");
         return { outcome: "current_run_aborted" as const };
@@ -1354,7 +1354,6 @@ describe("focused demo maintenance workflows", () => {
         terminalRunWriter: { claimTerminalRun, writeAfterTerminalClaims },
         redis: redisClient,
         queueMaintenance,
-        clearErpCircuitBreakerState,
         trafficAborter: { abortCurrent },
         dashboardLiveStateReset: { fenceRun, clearRun, hasRunState: async () => false },
         logger: createSilentLogger("api"),
@@ -1365,7 +1364,6 @@ describe("focused demo maintenance workflows", () => {
       await seedActiveRunBusinessState(db, redisClient);
 
       const response = await service.reset("corr-reset");
-      expect(clearErpCircuitBreakerState).toHaveBeenCalledOnce();
       const runs = await db
         .select()
         .from(demoRuns)
@@ -1744,12 +1742,6 @@ describe("focused demo maintenance workflows", () => {
       const metrics = new RedisDashboardTrafficMetricStore(redisClient);
       await redisClient.sadd(`demo-run:${ids.activeRun}:traffic-metric-batches`, "batch");
       const publish = vi.spyOn(redisClient, "publish");
-      const cleanupComplete = vi.fn();
-      const clearErp = vi.fn(async () => {
-        if (cleanupComplete.mock.calls.length === 0) expect(publish).toHaveBeenCalledTimes(2);
-        expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
-        cleanupComplete();
-      });
       const logger = createSilentLogger("api");
       const errorLog = vi.spyOn(logger, "error");
       const clearRun = vi.fn(async () => {
@@ -1769,7 +1761,6 @@ describe("focused demo maintenance workflows", () => {
           clearRun,
           hasRunState: (runId) => metrics.hasRunState(runId),
         },
-        clearErpCircuitBreakerState: clearErp,
         logger,
       });
 
@@ -1785,7 +1776,6 @@ describe("focused demo maintenance workflows", () => {
       expect(cleanRuns).toHaveBeenCalledOnce();
 
       expect(publish).toHaveBeenCalledTimes(2);
-      expect(clearErp).not.toHaveBeenCalled();
       failClear = false;
       await expect(service.reset("corr-clear-retry")).resolves.toMatchObject({ failedRunCount: 0 });
       expect(publish).toHaveBeenCalledTimes(3);
@@ -1793,12 +1783,6 @@ describe("focused demo maintenance workflows", () => {
         type: "dashboard.projection.dirty",
         correlationId: "corr-clear-retry",
       });
-      expect(publish.mock.invocationCallOrder[2]).toBeGreaterThan(
-        cleanupComplete.mock.invocationCallOrder[0] ?? 0,
-      );
-      expect(publish.mock.invocationCallOrder[2]).toBeGreaterThan(
-        clearErp.mock.invocationCallOrder[0] ?? 0,
-      );
       expect(await metrics.hasRunState(ids.activeRun)).toBe(false);
       await service.reset("corr-already-clean");
       expect(publish).toHaveBeenCalledTimes(3);

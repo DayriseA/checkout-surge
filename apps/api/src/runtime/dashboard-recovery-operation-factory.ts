@@ -22,7 +22,6 @@ import {
 import { RedisDashboardTrafficMetricStore } from "../services/dashboard-traffic-metric-store.js";
 import {
   PostgresErpAttemptStatusReader,
-  RedisErpCircuitBreakerStateReader,
   RunErpOutcomeService,
   SharedErpProtectionService,
 } from "../services/erp-status-service.js";
@@ -118,7 +117,6 @@ export function createDashboardRecoveryOperationFactory(
       "dashboard recovery queue inspector",
     );
     const queueStatusService = new QueueStatusService(operationQueueInspector, config.logger);
-    const circuitBreakerStateReader = new RedisErpCircuitBreakerStateReader(operationRedis);
     const operation: DashboardRecoveryOperation = {
       dependencies: {
         contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
@@ -129,12 +127,10 @@ export function createDashboardRecoveryOperationFactory(
         }),
         queueStatusService,
         sharedErpProtectionService: new SharedErpProtectionService({
-          circuitBreakerStateReader,
           queueStatusService,
           logger: config.logger,
         }),
         runErpOutcomeService: new RunErpOutcomeService({
-          circuitBreakerStateReader,
           attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
           logger: config.logger,
         }),

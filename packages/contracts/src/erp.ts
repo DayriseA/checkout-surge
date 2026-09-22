@@ -78,9 +78,6 @@ export const erpConfirmationSucceededResponseSchema = z
     errorMessage: z.never().optional(),
   })
   .strict();
-export type ErpConfirmationSucceededResponse = z.infer<
-  typeof erpConfirmationSucceededResponseSchema
->;
 
 export const erpConfirmationFailedResponseSchema = z
   .object({
@@ -92,7 +89,6 @@ export const erpConfirmationFailedResponseSchema = z
     errorMessage: z.string().trim().min(1),
   })
   .strict();
-export type ErpConfirmationFailedResponse = z.infer<typeof erpConfirmationFailedResponseSchema>;
 
 export const erpConfirmationResponseSchema = z.discriminatedUnion("status", [
   erpConfirmationSucceededResponseSchema,
@@ -108,25 +104,6 @@ export const erpChaosStatusSchema = erpChaosConfigSchema
   })
   .strict();
 export type ErpChaosStatus = z.infer<typeof erpChaosStatusSchema>;
-
-export const erpCircuitStateValues = ["closed", "open", "half_open"] as const;
-export const erpCircuitStateSchema = z.enum(erpCircuitStateValues);
-export type ErpCircuitState = z.infer<typeof erpCircuitStateSchema>;
-
-export const erpCircuitBreakerSnapshotSchema = z
-  .object({
-    state: erpCircuitStateSchema,
-    consecutiveFailureCount: nonnegativeIntegerSchema,
-    failureThreshold: z.number().int().positive(),
-    resetTimeoutMs: nonnegativeIntegerSchema,
-    openedAt: isoTimestampSchema.nullable(),
-    nextAttemptAt: isoTimestampSchema.nullable(),
-    halfOpenProbeInFlight: z.boolean(),
-    /** Edge-triggered clock: changes only when the breaker state changes. */
-    lastChangedAt: isoTimestampSchema,
-  })
-  .strict();
-export type ErpCircuitBreakerSnapshot = z.infer<typeof erpCircuitBreakerSnapshotSchema>;
 
 export const erpDependencyStatusValues = ["healthy", "degraded", "unavailable"] as const;
 export const erpDependencyStatusSchema = z.enum(erpDependencyStatusValues);
@@ -165,8 +142,6 @@ export type ErpCumulativeOutcomeCounts = z.infer<typeof erpCumulativeOutcomeCoun
 export const runErpOutcomeSummarySchema = z
   .object({
     runId: uuidSchema,
-    circuit: erpCircuitBreakerSnapshotSchema.nullable(),
-    circuitReadStatus: z.enum(["available", "unavailable"]),
     latestAttempt: erpLatestAttemptSummarySchema.nullable(),
     recentAttemptWindowSeconds: z.number().int().positive(),
     recentAttemptCount: nonnegativeIntegerSchema,
@@ -184,7 +159,6 @@ export const sharedErpProtectionStatusSchema = z
   .object({
     status: erpDependencyStatusSchema,
     reason: z.string().trim().min(1).nullable(),
-    circuit: erpCircuitBreakerSnapshotSchema.nullable(),
     retryPressure: erpRetryPressureSchema,
     observedAt: isoTimestampSchema,
   })

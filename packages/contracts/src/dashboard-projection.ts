@@ -56,7 +56,6 @@ export const sharedRuntimeStatusSchema = z
     erpProtection: sharedErpProtectionStatusSchema,
   })
   .strict();
-export type SharedRuntimeStatus = z.infer<typeof sharedRuntimeStatusSchema>;
 
 export const dashboardProjectionDirtySignalSchema = z
   .object({

@@ -862,7 +862,7 @@ describe("run lifecycle contracts", () => {
         trafficStartedAt,
         trafficEndedAt,
         finalizedAt,
-        failureCategory: "business",
+        failureCategory: "traffic",
       },
     ];
 
@@ -908,7 +908,7 @@ describe("run lifecycle contracts", () => {
         status: "failed",
         trafficStatus: "succeeded",
         finalizedAt,
-        failureCategory: "business",
+        failureCategory: "traffic",
       },
     ];
 
@@ -1526,16 +1526,6 @@ describe("ERP contracts", () => {
   });
 
   it("validates distinct run ERP outcomes and shared ERP protection", () => {
-    const circuit = {
-      state: "half_open" as const,
-      consecutiveFailureCount: 5,
-      failureThreshold: 5,
-      resetTimeoutMs: 10_000,
-      openedAt: "2026-06-20T00:00:00.000Z",
-      nextAttemptAt: "2026-06-20T00:00:10.000Z",
-      halfOpenProbeInFlight: true,
-      lastChangedAt: timestamp,
-    };
     const retryPressure = {
       retryingJobCount: 2,
       retryAttemptCount: 4,
@@ -1545,8 +1535,6 @@ describe("ERP contracts", () => {
     };
     const runOutcome = runErpOutcomeSummarySchema.parse({
       runId,
-      circuit,
-      circuitReadStatus: "available",
       latestAttempt: {
         runId,
         status: "failed",
@@ -1569,7 +1557,6 @@ describe("ERP contracts", () => {
     const protection = sharedErpProtectionStatusSchema.parse({
       status: "degraded",
       reason: "erp_retries_pending",
-      circuit,
       retryPressure,
       observedAt: timestamp,
     });
@@ -1577,10 +1564,8 @@ describe("ERP contracts", () => {
     expect(runOutcome.runId).toBe(runId);
     expect(protection.status).toBe("degraded");
     expect(
-      runErpOutcomeSummarySchema.safeParse({
-        ...runOutcome,
-        circuit: { ...circuit, lastChangedAt: undefined, updatedAt: timestamp },
-      }).success,
+      runErpOutcomeSummarySchema.safeParse({ ...runOutcome, circuitReadStatus: "available" })
+        .success,
     ).toBe(false);
   });
 });
@@ -1903,8 +1888,6 @@ describe("buy and dashboard contracts", () => {
     expect(recovery.consistencyLag?.p95LagMs).toBe(350);
     const runErp = runErpOutcomeSummarySchema.parse({
       runId,
-      circuit: null,
-      circuitReadStatus: "available",
       latestAttempt: {
         runId,
         status: "succeeded",
@@ -2062,7 +2045,6 @@ describe("buy and dashboard contracts", () => {
       erpProtection: {
         status: "healthy",
         reason: null,
-        circuit: null,
         retryPressure: {
           retryingJobCount: 0,
           retryAttemptCount: 0,
@@ -2115,8 +2097,6 @@ describe("buy and dashboard contracts", () => {
         ...idleProjection,
         erp: {
           runId,
-          circuit: null,
-          circuitReadStatus: "available",
           latestAttempt: null,
           recentAttemptWindowSeconds: 60,
           recentAttemptCount: 0,

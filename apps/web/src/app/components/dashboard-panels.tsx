@@ -2,7 +2,7 @@ import type { DashboardProjection } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
-import { deriveRunErpStory, type ErpStory } from "../lib/presentation/erp-story";
+import { deriveRunErpStory } from "../lib/presentation/erp-story";
 import {
   formatCount,
   formatDurationMs,
@@ -11,7 +11,6 @@ import {
 } from "../lib/presentation/format";
 import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
 import {
-  circuitStateLabel,
   durableCheckoutLens,
   erpAttemptStatusLabel,
   liveTrafficMetricWindowSeconds,
@@ -71,23 +70,6 @@ const millisecondUnit = "ms";
 const lagMeasurementBoundaryCaption =
   "Measured from the moment a reservation is secured to final simulated-ERP confirmation.";
 
-/**
- * Both simulated-ERP surfaces carry clocks from two different producers with two different update
- * meanings: the circuit breaker's edge-triggered state clocks, which move only when protection
- * changes, and the API projection's poll clock, which moves on every read. Labelling them by
- * producer keeps them from reading as one synchronized set of run timestamps.
- */
-const protectionClockLabel = {
-  pauseBegan: "Protection pause began (reported by circuit breaker)",
-  /**
-   * Not a scheduled check: the breaker books nothing, and only an incoming call can move it out of
-   * the paused state. This is the earliest time such a call would be allowed through.
-   */
-  retryEligibleFrom: "Calls can be retried from (per circuit breaker)",
-  stateChanged: "Protection state changed (reported by circuit breaker)",
-  projected: "Projected by API at",
-} as const;
-
 export function formatNumber(value: number | null | undefined): string {
   return formatCount(value) ?? "—";
 }
@@ -105,10 +87,6 @@ export function formatRate(value: number | null | undefined, unit: string, absen
 
 function formatExpectedTime(value: string | undefined | null): string {
   return formatInstantUtc(value) ?? "not yet available";
-}
-
-function formatScheduledTime(value: string | undefined | null): string {
-  return formatInstantUtc(value) ?? "not scheduled";
 }
 
 export function formatDurationSeconds(value: number | null | undefined, absent = "—"): string {
@@ -167,15 +145,14 @@ function Fact({ label, value, small = false }: { label: string; value: string; s
 }
 
 /**
- * The lead of both simulated-ERP surfaces: one sentence a visitor can read without knowing what a
- * circuit breaker is, and the next action only when one exists. `caption` states a measurement
- * window once for the facts below, so no individual count has to repeat it.
+ * The lead of the simulated-ERP surface: one sentence a visitor can read without technical
+ * context. `caption` states a measurement window once for the facts below, so no individual count
+ * has to repeat it.
  */
-function ErpStoryLead({ story, caption }: { story: ErpStory; caption?: string }) {
+function ErpStoryLead({ story, caption }: { story: string; caption?: string }) {
   return (
     <>
-      <p className={leadSentenceClassName}>{story.sentence}</p>
-      {story.nextAction ? <p className={leadDetailClassName}>{story.nextAction}</p> : null}
+      <p className={leadSentenceClassName}>{story}</p>
       {caption ? <p className={leadDetailClassName}>{caption}</p> : null}
     </>
   );
@@ -668,7 +645,7 @@ export function RunErpOutcomesPanel({
           <FreshnessLine freshness={freshness} />
           <ErpStoryLead
             caption={`Attempts, failures, and timeouts over the last ${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s.`}
-            story={deriveRunErpStory(erp, runStatus)}
+            story={deriveRunErpStory(erp)}
           />
           <dl className={factGridClassName}>
             <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
@@ -688,66 +665,6 @@ export function RunErpOutcomesPanel({
               small
             />
           </dl>
-          <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
-            <summary className="cursor-pointer font-semibold text-muted-strong">
-              Protection details
-            </summary>
-            <dl className={factGridClassName}>
-              <Fact
-                label="Run protection"
-                value={
-                  erp.circuitReadStatus === "unavailable"
-                    ? "Protection status unavailable"
-                    : erp.circuit
-                      ? circuitStateLabel(erp.circuit.state)
-                      : // A successful read with no snapshot only proves that no protection state is
-                        // retained now; run-scoped snapshots expire, so a settled run cannot claim
-                        // that protection never engaged.
-                        runEvidenceAbsence(runStatus, {
-                          source: "durable-processing",
-                          pending: "not yet exercised",
-                          settled: "No protection state was retained for this run",
-                        })
-                }
-              />
-              <Fact
-                label="Failures before protection pauses calls"
-                value={erp.circuit ? formatNumber(erp.circuit.failureThreshold) : "—"}
-              />
-              <Fact
-                label="Current failure streak"
-                value={erp.circuit ? formatNumber(erp.circuit.consecutiveFailureCount) : "—"}
-              />
-              <Fact
-                label="Recovery check delay"
-                value={erp.circuit ? formatMilliseconds(erp.circuit.resetTimeoutMs) : "—"}
-              />
-              <Fact
-                label={protectionClockLabel.pauseBegan}
-                value={formatScheduledTime(erp.circuit?.openedAt)}
-                small
-              />
-              <Fact
-                label={protectionClockLabel.retryEligibleFrom}
-                value={formatScheduledTime(erp.circuit?.nextAttemptAt)}
-                small
-              />
-              <Fact
-                label={protectionClockLabel.stateChanged}
-                value={formatExpectedTime(erp.circuit?.lastChangedAt)}
-                small
-              />
-              <Fact
-                label={protectionClockLabel.projected}
-                value={formatExpectedTime(erp.observedAt)}
-                small
-              />
-            </dl>
-          </details>
-          <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Protection is scoped to this run. Its state changes only when calls pause, recovery is
-            tested, or normal operation resumes.
-          </p>
         </>
       ) : (
         <EmptyState>

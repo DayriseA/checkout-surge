@@ -3,8 +3,6 @@ import {
   erpErrorCodeSchema,
   erpErrorCodeValues,
   erpLookupResultSchema,
-  erpLookupStatusSchema,
-  erpLookupStatusValues,
   erpOutcomeDispositionSchema,
   erpOutcomeDispositionValues,
   erpPermanentRejectionCodeSchema,
@@ -36,7 +34,6 @@ describe("ERP outcome vocabulary", () => {
       "erp_idempotency_conflict",
     ]);
     expect(erpErrorCodeSchema.options).toEqual(erpErrorCodeValues);
-    expect(erpLookupStatusValues).toEqual(["succeeded", "rejected", "unknown"]);
     expect(erpOutcomeDispositionValues).toEqual([
       "succeeded",
       "capacity_rejected",
@@ -107,7 +104,6 @@ describe("ERP status lookup contract", () => {
       status: "unknown",
       idempotencyKey: "idem-1",
     });
-    expect(erpLookupStatusSchema.safeParse("no_record").success).toBe(false);
   });
 
   it("keeps the immutable identity on terminal results only", () => {

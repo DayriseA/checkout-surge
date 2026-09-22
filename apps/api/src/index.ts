@@ -1,6 +1,5 @@
 import {
   BusinessOutcomePublicationScheduler,
-  clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardProjectionDirtySubscriber,
@@ -52,10 +51,7 @@ import {
   DemoRunStartupReconciliationService,
   PostgresStartingDemoRunReconciliationStore,
 } from "./services/demo-run-startup-reconciliation-service.js";
-import {
-  RedisErpCircuitBreakerStateReader,
-  SharedErpProtectionService,
-} from "./services/erp-status-service.js";
+import { SharedErpProtectionService } from "./services/erp-status-service.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
@@ -138,7 +134,6 @@ export async function startApiServer(): Promise<void> {
   });
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
   const sharedErpProtectionService = new SharedErpProtectionService({
-    circuitBreakerStateReader: new RedisErpCircuitBreakerStateReader(redis),
     queueStatusService,
     logger,
   });
@@ -245,7 +240,6 @@ export async function startApiServer(): Promise<void> {
     queueLimits,
     db: connection.db,
     redis,
-    clearErpCircuitBreakerState: () => clearErpCircuitBreakerSnapshots(redis),
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
     trafficAborter: trafficExecutionGateway,

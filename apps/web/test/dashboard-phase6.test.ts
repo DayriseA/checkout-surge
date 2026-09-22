@@ -205,8 +205,7 @@ describe("Phase 6 projection dashboard", () => {
     );
 
     expect(runMarkup).toContain("This run");
-    expect(runMarkup).toMatch(/Run protection<\/dt><dd[^>]*>Calls paused to protect the ERP<\/dd>/);
-    expect(runMarkup).toContain("Protection state changed (reported by circuit breaker)");
+    expect(runMarkup).toContain("Recent simulated-ERP calls include failures or timeouts");
     expect(runMarkup).not.toContain("Shared demo runtime");
     expect(systemMarkup).toContain("Shared demo runtime");
     expect(systemMarkup).toContain("Physical order queue");
@@ -214,29 +213,6 @@ describe("Phase 6 projection dashboard", () => {
     expect(systemMarkup).toContain("Last updated");
     expect(systemMarkup).not.toContain("Protection details");
     expect(systemMarkup).not.toContain("Recent attempts");
-  });
-
-  it("keeps run attempt evidence visible when circuit state is unavailable", () => {
-    const projection = projectionFixture();
-    if (!projection.erp) throw new Error("Expected run ERP outcome fixture.");
-    projection.erp = {
-      ...projection.erp,
-      circuit: null,
-      circuitReadStatus: "unavailable",
-    };
-
-    const markup = renderToStaticMarkup(
-      createElement(RunErpOutcomesPanel, {
-        recovery: available(projection),
-        presentation: deriveRunErpOutcomeState(projection.erp),
-        freshness: liveFreshness,
-      }),
-    );
-
-    expect(markup).toMatch(/Run protection<\/dt><dd[^>]*>Protection status unavailable<\/dd>/);
-    expect(markup).toMatch(/Recent attempts<\/dt><dd[^>]*>3<\/dd>/);
-    expect(markup).toContain("protection unavailable");
-    expect(markup).not.toContain("No ERP outcome data for this run.");
   });
 
   it("renders a completed exact sellout without warning presentation", () => {
@@ -481,7 +457,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(durableMarkup).toContain("No checkout outcome evidence yet.");
   });
 
-  it("leads the run simulated-ERP surface with one sentence and demotes protection configuration", () => {
+  it("leads the run simulated-ERP surface with one sentence", () => {
     const projection = projectionFixture();
     const runMarkup = renderToStaticMarkup(
       createElement(RunErpOutcomesPanel, {
@@ -491,34 +467,16 @@ describe("Phase 6 projection dashboard", () => {
       }),
     );
 
-    expect(runMarkup).toContain("Calls paused to protect the simulated ERP");
-    expect(runMarkup).toContain("Calls can be retried from 2026-06-20 00:00:19 UTC");
-    expect(runMarkup.indexOf("Calls paused to protect the simulated ERP")).toBeLessThan(
-      runMarkup.indexOf("Recent attempts"),
-    );
+    expect(runMarkup).toContain("Recent simulated-ERP calls include failures or timeouts");
+    expect(
+      runMarkup.indexOf("Recent simulated-ERP calls include failures or timeouts"),
+    ).toBeLessThan(runMarkup.indexOf("Recent attempts"));
     // The window is stated once for the counts below it, never inline on each number.
     expect(runMarkup).toContain("Attempts, failures, and timeouts over the last 60s.");
     expect(runMarkup).not.toContain("Attempt window");
 
-    // Demotion means containment inside the collapsed element, not merely appearing after it.
-    const runDetails = collapsedDetails(runMarkup, "Protection details");
-    const runMainView = runMarkup.replace(runDetails, "");
-    for (const demoted of [
-      "Run protection",
-      "Failures before protection pauses calls",
-      "Current failure streak",
-      "Recovery check delay",
-      // Both provenance clocks name their producer and update meaning distinctly.
-      "Protection pause began (reported by circuit breaker)",
-      "Calls can be retried from (per circuit breaker)",
-      "Protection state changed (reported by circuit breaker)",
-      "Projected by API at",
-    ]) {
-      expect(runDetails).toContain(demoted);
-      expect(runMainView).not.toContain(demoted);
-    }
     // A generic poll clock must not sit among the leading public facts.
-    expect(runMainView).not.toContain("Last updated");
+    expect(runMarkup).not.toContain("Last updated");
   });
 
   it("keeps the live queue facts and renders no verdict, failed total, or status pill", () => {
@@ -602,8 +560,7 @@ describe("Phase 6 projection dashboard", () => {
     }
     // Every reservation failed. Both branches need it, terminal or not: a lag summary reading zero
     // confirmed and zero pending says no order confirmed and none is queued or processing, so the
-    // only accounting left for six accepted reservations is six failed ones. The base fixture's
-    // open circuit makes that ordinary rather than contrived. Overriding the lag alone would leave
+    // only accounting left for six accepted reservations is six failed ones. Overriding the lag alone would leave
     // the outcome's own confirmed and in-flight counts behind, describing nothing real.
     projection.businessOutcome = {
       ...businessOutcome,
@@ -972,14 +929,6 @@ function panelSection(document: Document, title: string): Element {
  * The markup of the one `<details>` element carrying `summaryText`, so a demotion test can assert
  * containment rather than mere document order.
  */
-function collapsedDetails(markup: string, summaryText: string): string {
-  for (const match of markup.matchAll(/<details\b[^>]*>[\s\S]*?<\/details>/g)) {
-    if (match[0].includes(summaryText)) return match[0];
-  }
-
-  throw new Error(`No collapsed <details> element with summary "${summaryText}".`);
-}
-
 function available(data: DashboardProjection) {
   return { status: "available" as const, data, httpStatus: 200 };
 }
@@ -1083,19 +1032,8 @@ function projectionFixture(): DashboardProjection {
     ],
     erp: {
       runId,
-      circuit: {
-        state: "open",
-        consecutiveFailureCount: 5,
-        failureThreshold: 5,
-        resetTimeoutMs: 10_000,
-        openedAt: "2026-06-20T00:00:09.000Z",
-        nextAttemptAt: "2026-06-20T00:00:19.000Z",
-        halfOpenProbeInFlight: false,
-        lastChangedAt: "2026-06-20T00:00:10.000Z",
-      },
-      circuitReadStatus: "available",
       // Read from the same attempt table as the windowed counts below, so attempts inside the
-      // window always come with a latest attempt. The breaker opened on this one.
+      // window always come with a latest attempt.
       latestAttempt: { runId, status: "failed", finishedAt: "2026-06-20T00:00:09.000Z" },
       recentAttemptWindowSeconds: 60,
       recentAttemptCount: 3,
@@ -1128,16 +1066,6 @@ function projectionFixture(): DashboardProjection {
       erpProtection: {
         status: "degraded",
         reason: "erp_retries_pending",
-        circuit: {
-          state: "closed",
-          consecutiveFailureCount: 0,
-          failureThreshold: 5,
-          resetTimeoutMs: 10_000,
-          openedAt: null,
-          nextAttemptAt: null,
-          halfOpenProbeInFlight: false,
-          lastChangedAt: "2026-06-19T16:00:10.000Z",
-        },
         retryPressure: {
           retryingJobCount: 1,
           retryAttemptCount: 2,

@@ -638,7 +638,6 @@ describe("demo-run lifecycle start gating", () => {
         redis: requireRedis(redis),
         terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, limits),
         queueMaintenance: { cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }) },
-        clearErpCircuitBreakerState: async () => {},
         trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
         dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
         resetWorkflowFence: new PostgresDemoResetWorkflowFence(fenceConnection.sql),
@@ -716,7 +715,6 @@ describe("demo-run lifecycle start gating", () => {
       queueMaintenance: {
         cleanRuns: queueCleanup,
       },
-      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: {
         abortCurrent: async () => {
           abortAttempt += 1;
@@ -829,7 +827,6 @@ describe("demo-run lifecycle start gating", () => {
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
-      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(redisClient),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
@@ -865,10 +862,7 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
-  it.each([
-    "metrics",
-    "breaker",
-  ])("repairs a marker-backed %s failure without aborting an admitted successor or rewriting history", async (failureBoundary) => {
+  it("repairs a marker-backed metrics failure without aborting an admitted successor or rewriting history", async () => {
     const primary = requireConnection(connection);
     const redisClient = requireRedis(redis);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
@@ -899,16 +893,12 @@ describe("demo-run lifecycle start gating", () => {
           synchronize: async () => {},
         }),
         queueMaintenance: { cleanRuns },
-        clearErpCircuitBreakerState: async () => {
-          if (clearFailure && failureBoundary === "breaker") throw new Error("breaker unavailable");
-        },
         trafficAborter: { abortCurrent },
         dashboardLiveStateReset: {
           fenceRun: (id) => metrics.fenceRun(id),
           hasRunState: (id) => metrics.hasRunState(id),
           clearRun: async (id) => {
-            if (clearFailure && failureBoundary === "metrics")
-              throw new Error("projection unavailable");
+            if (clearFailure) throw new Error("projection unavailable");
             await metrics.clearRun(id);
           },
         },
@@ -925,7 +915,6 @@ describe("demo-run lifecycle start gating", () => {
         { presetSlug: "preview-1k", operatorMode: "admin" },
         "admitted-successor",
       );
-      if (failureBoundary === "breaker") expect(await metrics.hasRunState(runId)).toBe(false);
       const publish = vi.spyOn(redisClient, "publish");
       clearFailure = false;
       await expect(createResetService().reset("projection-retry")).resolves.toMatchObject({
@@ -1687,7 +1676,6 @@ describe("demo-run lifecycle start gating", () => {
       queueMaintenance: {
         cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
       },
-      clearErpCircuitBreakerState: async () => undefined,
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),

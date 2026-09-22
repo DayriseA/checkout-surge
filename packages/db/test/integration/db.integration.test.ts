@@ -12,13 +12,10 @@ import {
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
-  clearErpCircuitBreakerSnapshots,
   createDatabaseConnection,
   createRedisDashboardProjectionDirtySubscriber,
   dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
-  getErpCircuitBreakerSnapshot,
-  getErpCircuitBreakerSnapshotKey,
   getInventoryStatus,
   InventoryNotInitializedError,
   initializeInventory,
@@ -33,7 +30,6 @@ import {
   reverseReservation,
   runSaleEligibilityKey,
   runSaleEligibilityTtlSeconds,
-  setErpCircuitBreakerSnapshot,
   setRunSaleEligibility,
 } from "../../src/index.js";
 import { runDatabaseMigrations } from "../../src/migrations.js";
@@ -933,45 +929,6 @@ describe("database migrations, seed data, and reset behavior", () => {
         )
       `;
     });
-  });
-
-  it("isolates scoped ERP circuit snapshots, applies TTL, and clears scoped state", async () => {
-    const base = {
-      state: "closed" as const,
-      consecutiveFailureCount: 0,
-      failureThreshold: 5,
-      resetTimeoutMs: 10_000,
-      openedAt: null,
-      nextAttemptAt: null,
-      halfOpenProbeInFlight: false,
-      lastChangedAt: "2026-06-20T12:00:00.000Z",
-    };
-    const runA = { type: "run" as const, runId: "55555555-5555-4555-8555-555555555555" };
-    const runB = { type: "run" as const, runId: "66666666-6666-4666-8666-666666666666" };
-    await setErpCircuitBreakerSnapshot(redis, { ...base, failureThreshold: 2 }, runA);
-    await setErpCircuitBreakerSnapshot(
-      redis,
-      { ...base, failureThreshold: 3, resetTimeoutMs: 172_800_001 },
-      runB,
-    );
-    await setErpCircuitBreakerSnapshot(redis, base, { type: "catalog" });
-
-    await expect(getErpCircuitBreakerSnapshot(redis, runA)).resolves.toMatchObject({
-      failureThreshold: 2,
-    });
-    await expect(getErpCircuitBreakerSnapshot(redis, runB)).resolves.toMatchObject({
-      failureThreshold: 3,
-    });
-    await expect(getErpCircuitBreakerSnapshot(redis, { type: "catalog" })).resolves.toMatchObject({
-      failureThreshold: 5,
-    });
-    expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runA))).toBeGreaterThan(86_300);
-    expect(await redis.ttl(getErpCircuitBreakerSnapshotKey(runB))).toBeGreaterThan(345_500);
-
-    await clearErpCircuitBreakerSnapshots(redis);
-    await expect(getErpCircuitBreakerSnapshot(redis, runA)).resolves.toBeNull();
-    await expect(getErpCircuitBreakerSnapshot(redis, runB)).resolves.toBeNull();
-    await expect(getErpCircuitBreakerSnapshot(redis, { type: "catalog" })).resolves.toBeNull();
   });
 
   it("enforces one non-terminal demo run across direct and concurrent writers", async () => {

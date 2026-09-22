@@ -1978,7 +1978,6 @@ describe("watch browser recovery", () => {
               erpProtection: {
                 status: "degraded",
                 reason: "erp_retries_pending",
-                circuit: null,
                 retryPressure: {
                   retryingJobCount: 29,
                   retryAttemptCount: 37,

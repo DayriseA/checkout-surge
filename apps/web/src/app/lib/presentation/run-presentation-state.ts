@@ -362,15 +362,9 @@ export function deriveRunErpOutcomeState(
       "ERP outcome evidence for this run is not yet available.",
     );
   }
-  if (erp.circuitReadStatus === "unavailable") {
-    return state(
-      "run-erp-protection-unavailable",
-      "warning",
-      "protection unavailable",
-      "ERP attempt outcomes are available, but this run's protection state could not be read.",
-    );
-  }
-  if (!erp.circuit && erp.recentAttemptCount === 0) {
+  // The recent window is bounded; `latestAttempt` spans retained history, so only its absence
+  // proves that no call was recorded.
+  if (erp.recentAttemptCount === 0 && erp.latestAttempt === null) {
     if (isTerminalRun(run)) {
       return state(
         "run-erp-not-recorded",
@@ -380,10 +374,10 @@ export function deriveRunErpOutcomeState(
       );
     }
     return state(
-      "run-erp-protection-not-exercised",
+      "run-erp-no-calls-yet",
       "idle",
-      "not yet exercised",
-      "This run has not exercised ERP protection.",
+      "no ERP calls yet",
+      "No simulated ERP calls have been recorded for this run yet.",
     );
   }
   if (
@@ -396,7 +390,7 @@ export function deriveRunErpOutcomeState(
       "run-erp-failures-observed",
       "warning",
       "failures observed",
-      "This run has ERP failures or timeouts in the recent attempt window.",
+      "This run has recorded ERP failures or timeouts.",
     );
   }
   return state(

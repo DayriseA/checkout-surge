@@ -300,7 +300,7 @@ describe("public run summary", () => {
         {
           ...cleanEvidence,
           runStatus: "failed",
-          failureCategory: "reconciliation",
+          failureCategory: "traffic",
           durable: {
             ...cleanDurable,
             reservedUnits: 249,
@@ -319,7 +319,7 @@ describe("public run summary", () => {
     );
     // The failed headline already states the failed count, so only pending is appended.
     expect(failedWithPending.sentence).toBe(
-      "The run failed due to a reconciliation failure with 50 failed orders. 10 orders remain pending.",
+      "The run failed due to a traffic failure with 50 failed orders. 10 orders remain pending.",
     );
   });
 
@@ -330,7 +330,7 @@ describe("public run summary", () => {
         {
           ...cleanEvidence,
           runStatus: "failed",
-          failureCategory: "business",
+          failureCategory: "traffic",
           durable: {
             ...cleanDurable,
             reservedUnits: 249,
@@ -467,7 +467,7 @@ describe("public run conclusion", () => {
   const failedWithBrokenInvariantEvidence: RunResultEvidence = {
     ...cleanEvidence,
     runStatus: "failed",
-    failureCategory: "business",
+    failureCategory: "traffic",
     durable: {
       ...cleanDurable,
       reservedUnits: 249,
@@ -563,7 +563,7 @@ describe("public run conclusion", () => {
     const failed = renderConclusion(failedWithBrokenInvariantEvidence);
     expectVisible(
       failed.container,
-      "The run failed due to a business failure with 50 failed orders.",
+      "The run failed due to a traffic failure with 50 failed orders.",
     );
     expectVisible(
       failed.container,

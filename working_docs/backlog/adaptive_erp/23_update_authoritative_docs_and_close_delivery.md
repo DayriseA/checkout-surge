@@ -121,7 +121,7 @@ Six documentation corrections were applied after review; no migration or test ch
 
 ### Remaining limitations
 
-- The dashboard's ERP circuit field reads the per-scope Redis snapshot keys that no production code writes any more (`setErpCircuitBreakerSnapshot` has no application caller since the worker moved its safety state to PostgreSQL). The field therefore always reports "no snapshot". This is pre-existing dead code plus an always-empty projection, not introduced here; it is now described truthfully in `docs/scope_and_caveats.md` and left for a project-owner decision instead of being deleted.
+- The dashboard's ERP circuit field read the per-scope Redis snapshot keys that no production code wrote any more (`setErpCircuitBreakerSnapshot` had no application caller since the worker moved its safety state to PostgreSQL), so it always reported "no snapshot". This pre-existing dead path was left for a project-owner decision at delivery time; it has since been removed entirely (Redis helpers, API reader, contract `circuit` fields and the dashboard protection panel) in the dead-code cleanup that followed this delivery.
 - `apps/worker/src/persistence/postgres-erp-scope-resilience-persistence.ts` still carries a comment mentioning "learned rate"; no such mechanism exists. Left untouched as unrelated to this task's scope.
 - The acceptance evidence is a single observation per scenario on one host (three repetitions only for the calibration fixtures). It is a local demonstration, not a benchmark or a statistical guarantee.
 - The `finite-outage` actual duration exceeds its admission estimate, because a finite injected outage is not modelled by the estimator. Recorded as an observation; it fails no order.

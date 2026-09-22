@@ -243,6 +243,25 @@ describe("run presentation state", () => {
       label: "ERP evidence unavailable",
     });
   });
+
+  it("does not claim that no ERP call was recorded when the latest attempt is outside the recent window", () => {
+    const erp = {
+      runId,
+      latestAttempt: { runId, status: "failed" as const, finishedAt: "2026-07-30T12:00:01.000Z" },
+      recentAttemptWindowSeconds: 60,
+      recentAttemptCount: 0,
+      recentFailureCount: 0,
+      recentTimeoutCount: 0,
+      observedAt: "2026-07-30T12:02:00.000Z",
+    };
+
+    expect(deriveRunErpOutcomeState(erp, run("draining"))).toMatchObject({
+      state: "run-erp-failures-observed",
+    });
+    expect(
+      deriveRunErpOutcomeState({ ...erp, latestAttempt: null }, run("draining")),
+    ).toMatchObject({ state: "run-erp-no-calls-yet", label: "no ERP calls yet" });
+  });
 });
 
 const runId = "11111111-1111-4111-8111-111111111111";

@@ -6,7 +6,6 @@ export * from "./demo-run-maintenance.js";
 export * from "./migrations.js";
 export * from "./redis.js";
 export * from "./redis-dashboard-projection-dirty.js";
-export * from "./redis-erp-resilience.js";
 export * from "./redis-inventory.js";
 export * from "./redis-stock-reservation.js";
 export * from "./run-signal-timeline.js";

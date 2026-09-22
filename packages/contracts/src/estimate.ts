@@ -63,11 +63,9 @@ export const estimateAssumptionSchema = z
     detail: z.string().trim().min(1),
   })
   .strict();
-export type EstimateAssumption = z.infer<typeof estimateAssumptionSchema>;
 
 export const estimatorDecisionValues = ["admitted", "rejected"] as const;
 export const estimatorDecisionSchema = z.enum(estimatorDecisionValues);
-export type EstimatorDecision = z.infer<typeof estimatorDecisionSchema>;
 
 /**
  * Why a scenario has no admissible finite estimate (plan section 7, D11).
@@ -186,7 +184,6 @@ export const estimatorResultSchema = z
 export type EstimatorResult = z.infer<typeof estimatorResultSchema>;
 
 export const estimatePreviewSchema = z.object({ result: estimatorResultSchema }).strict();
-export type EstimatePreview = z.infer<typeof estimatePreviewSchema>;
 
 /** Start rejection details, consumed by the dashboard before any run exists. */
 export const estimateAdmissionRejectionDetailsSchema = z.discriminatedUnion("reason", [
