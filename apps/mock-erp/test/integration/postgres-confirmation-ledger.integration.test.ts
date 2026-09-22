@@ -21,7 +21,7 @@ import { PostgresConfirmationLedger } from "../../src/persistence/postgres-confi
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const run = databaseUrl ? describe : describe.skip;
-const migrationsFolder = new URL("../../../../packages/db/drizzle", import.meta.url).pathname;
+const migrationsFolder = fileURLToPath(new URL("../../../../packages/db/drizzle", import.meta.url));
 const mockErpRoot = fileURLToPath(new URL("../..", import.meta.url));
 const mockErpEntryPoint = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 const request: ErpConfirmationRequest = {

@@ -39,7 +39,7 @@ describe("Drizzle migration metadata", () => {
       .sort();
 
     expect(journal).toMatchObject({ version: "7", dialect: "postgresql" });
-    expect(journal.entries).toHaveLength(7);
+    expect(journal.entries).toHaveLength(1);
     expect(journal.entries[0]).toMatchObject({
       idx: 0,
       version: "7",
@@ -89,17 +89,17 @@ describe("Drizzle migration metadata", () => {
     try {
       await cp(drizzleFolder, temporaryDrizzle, { recursive: true });
       const before = (await readdir(temporaryDrizzle)).sort();
-      const drizzleKit = path.join(packageRoot, "node_modules", ".bin", "drizzle-kit");
+      const drizzleKit = path.join(packageRoot, "node_modules", "drizzle-kit", "bin.cjs");
       const temporaryConfig = path.join(temporaryRoot, "drizzle.config.ts");
       await writeFile(
         temporaryConfig,
         `export default ${JSON.stringify({
-          schema: path.join(packageRoot, "src", "schema.ts"),
+          schema: path.join(packageRoot, "src", "schema.ts").replaceAll(path.sep, "/"),
           out: "./drizzle",
           dialect: "postgresql",
         })};\n`,
       );
-      await execFileAsync(drizzleKit, ["generate", "--config", temporaryConfig], {
+      await execFileAsync(process.execPath, [drizzleKit, "generate", "--config", temporaryConfig], {
         cwd: temporaryRoot,
       });
 

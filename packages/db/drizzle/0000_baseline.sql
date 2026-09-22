@@ -4,8 +4,11 @@ CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> sta
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint
+CREATE TYPE "public"."erp_outcome_disposition" AS ENUM('succeeded', 'capacity_rejected', 'temporarily_unavailable', 'uncertain_result', 'permanent_rejection', 'technical_failure');--> statement-breakpoint
 CREATE TYPE "public"."order_event_name" AS ENUM('reservation.secured', 'order.queued', 'order.processing', 'order.confirmed', 'order.failed', 'notification.recorded', 'inventory.updated', 'erp.attempt.failed', 'erp.attempt.succeeded');--> statement-breakpoint
+CREATE TYPE "public"."order_failure_category" AS ENUM('business_rejection', 'technical');--> statement-breakpoint
 CREATE TYPE "public"."order_status" AS ENUM('queued', 'processing', 'confirmed', 'failed');--> statement-breakpoint
+CREATE TYPE "public"."order_waiting_reason" AS ENUM('local_admission', 'erp_capacity', 'erp_unavailable', 'uncertain_result');--> statement-breakpoint
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
 CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled', 'exhausted');--> statement-breakpoint
 CREATE TYPE "public"."sale_offer_purpose" AS ENUM('catalog', 'generated_run');--> statement-breakpoint
@@ -67,6 +70,7 @@ CREATE TABLE "demo_run_summaries" (
 	"preset_name" text NOT NULL,
 	"status" "demo_run_status" NOT NULL,
 	"failure_reason" text,
+	"replay_possible" boolean NOT NULL,
 	"started_at" timestamp with time zone,
 	"ended_at" timestamp with time zone NOT NULL,
 	"transport_attempt_counts" jsonb NOT NULL,
@@ -91,11 +95,15 @@ CREATE TABLE "demo_runs" (
 	"status" "demo_run_status" DEFAULT 'starting' NOT NULL,
 	"traffic_status" "demo_run_traffic_status" DEFAULT 'not_started' NOT NULL,
 	"config_snapshot" jsonb NOT NULL,
+	"engine_policy_name" text,
+	"engine_policy_version" integer,
+	"correlation_id" text,
 	"sale_offer_id" uuid,
 	"started_at" timestamp with time zone,
 	"traffic_started_at" timestamp with time zone,
 	"traffic_ended_at" timestamp with time zone,
 	"finalized_at" timestamp with time zone,
+	"admin_reset_completed_at" timestamp with time zone,
 	"failure_reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -107,8 +115,10 @@ CREATE TABLE "erp_attempts" (
 	"delivery_id" text NOT NULL,
 	"correlation_id" text NOT NULL,
 	"run_id" uuid,
+	"erp_call_id" uuid,
 	"attempt_number" integer NOT NULL,
 	"status" "erp_attempt_status" NOT NULL,
+	"disposition" "erp_outcome_disposition",
 	"terminal" boolean DEFAULT false NOT NULL,
 	"http_status" integer,
 	"error_code" text,
@@ -124,6 +134,48 @@ CREATE TABLE "erp_attempts" (
 	CONSTRAINT "erp_attempts_latency_nonnegative" CHECK ("erp_attempts"."latency_ms" >= 0),
 	CONSTRAINT "erp_attempts_http_status_valid" CHECK ("erp_attempts"."http_status" IS NULL OR ("erp_attempts"."http_status" >= 100 AND "erp_attempts"."http_status" <= 599)),
 	CONSTRAINT "erp_attempts_finished_after_started" CHECK ("erp_attempts"."finished_at" >= "erp_attempts"."started_at")
+);
+--> statement-breakpoint
+CREATE TABLE "erp_confirmation_ledger" (
+	"idempotency_key" text PRIMARY KEY NOT NULL,
+	"order_id" uuid NOT NULL,
+	"public_order_id" text NOT NULL,
+	"reservation_id" uuid NOT NULL,
+	"sale_offer_id" uuid NOT NULL,
+	"run_id" uuid,
+	"quantity" integer NOT NULL,
+	"terminal_result" jsonb NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "erp_confirmation_ledger_quantity_positive" CHECK ("erp_confirmation_ledger"."quantity" > 0)
+);
+--> statement-breakpoint
+CREATE TABLE "erp_dispatch_calls" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"order_id" uuid NOT NULL,
+	"processing_generation" integer NOT NULL,
+	"idempotency_key" text NOT NULL,
+	"public_order_id" text NOT NULL,
+	"reservation_id" uuid NOT NULL,
+	"sale_offer_id" uuid NOT NULL,
+	"run_id" uuid,
+	"quantity" integer NOT NULL,
+	"correlation_id" text NOT NULL,
+	"dispatched_at" timestamp with time zone NOT NULL,
+	"resolved_at" timestamp with time zone,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "erp_dispatch_calls_quantity_positive" CHECK ("erp_dispatch_calls"."quantity" > 0),
+	CONSTRAINT "erp_dispatch_calls_generation_nonnegative" CHECK ("erp_dispatch_calls"."processing_generation" >= 0)
+);
+--> statement-breakpoint
+CREATE TABLE "erp_scope_resilience_state" (
+	"scope" text PRIMARY KEY NOT NULL,
+	"cooldown_expires_at" timestamp with time zone,
+	"availability_retry_at" timestamp with time zone,
+	"availability_circuit_open" boolean DEFAULT false NOT NULL,
+	"circuit_open_expires_at" timestamp with time zone,
+	"next_probe_at" timestamp with time zone,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
 CREATE TABLE "order_dead_letters" (
@@ -173,7 +225,14 @@ CREATE TABLE "order_recovery_jobs" (
 	"resolved_at" timestamp with time zone,
 	"escalated_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"processing_generation" integer DEFAULT 0 NOT NULL,
+	"lease_expires_at" timestamp with time zone,
+	"waiting_reason" "order_waiting_reason",
+	"publication_owner" text,
+	"unresolved_erp_call_id" uuid,
+	"attempt_counts" jsonb DEFAULT '{}'::jsonb NOT NULL,
+	CONSTRAINT "order_recovery_jobs_generation_nonnegative" CHECK ("order_recovery_jobs"."processing_generation" >= 0)
 );
 --> statement-breakpoint
 CREATE TABLE "orders" (
@@ -185,6 +244,7 @@ CREATE TABLE "orders" (
 	"run_id" uuid,
 	"quantity" integer DEFAULT 1 NOT NULL,
 	"status" "order_status" DEFAULT 'queued' NOT NULL,
+	"failure_category" "order_failure_category",
 	"failure_code" text,
 	"failure_message" text,
 	"queued_at" timestamp with time zone NOT NULL,
@@ -273,53 +333,30 @@ CREATE TABLE "simulated_notifications" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE UNIQUE INDEX "demo_runs_id_sale_offer_id_unique" ON "demo_runs" USING btree ("id","sale_offer_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "demo_run_sale_contexts_run_sale_offer_unique" ON "demo_run_sale_contexts" USING btree ("run_id","sale_offer_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "orders_erp_attribution_identity_unique" ON "orders" USING btree ("id","correlation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "orders_notification_attribution_identity_unique" ON "orders" USING btree ("id","sale_offer_id","correlation_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "reservations_backing_order_identity_unique" ON "reservations" USING btree ("id","sale_offer_id","correlation_id","quantity");--> statement-breakpoint
-ALTER TABLE "demo_run_finalizations" ADD CONSTRAINT "demo_run_finalizations_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_sale_offer_demo_runs_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_runs"("id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_run_summaries" ADD CONSTRAINT "demo_run_summaries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_preset_id_demo_presets_id_fk" FOREIGN KEY ("preset_id") REFERENCES "public"."demo_presets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_correlation_fk" FOREIGN KEY ("order_id","correlation_id") REFERENCES "public"."orders"("id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_events" ADD CONSTRAINT "order_events_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_events" ADD CONSTRAINT "order_events_reservation_id_reservations_id_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_events" ADD CONSTRAINT "order_events_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_events" ADD CONSTRAINT "order_events_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "order_recovery_jobs" ADD CONSTRAINT "order_recovery_jobs_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_backing_reservation_fk" FOREIGN KEY ("reservation_id","sale_offer_id","correlation_id","quantity") REFERENCES "public"."reservations"("id","sale_offer_id","correlation_id","quantity") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "orders" ADD CONSTRAINT "orders_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservations" ADD CONSTRAINT "reservations_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "reservations" ADD CONSTRAINT "reservations_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "sale_offers" ADD CONSTRAINT "sale_offers_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_order_attribution_fk" FOREIGN KEY ("order_id","sale_offer_id","correlation_id") REFERENCES "public"."orders"("id","sale_offer_id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_presets_slug_unique" ON "demo_presets" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "demo_presets_visibility_idx" ON "demo_presets" USING btree ("visibility");--> statement-breakpoint
 CREATE INDEX "demo_presets_archived_at_idx" ON "demo_presets" USING btree ("archived_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_finalizations_run_id_unique" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_finalizations_run_id_idx" ON "demo_run_finalizations" USING btree ("run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_sale_contexts_sale_offer_id_unique" ON "demo_run_sale_contexts" USING btree ("sale_offer_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "demo_run_sale_contexts_run_sale_offer_unique" ON "demo_run_sale_contexts" USING btree ("run_id","sale_offer_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_run_summaries_run_id_unique" ON "demo_run_summaries" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "demo_run_summaries_captured_at_idx" ON "demo_run_summaries" USING btree ("captured_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "demo_runs_sale_offer_id_unique" ON "demo_runs" USING btree ("sale_offer_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "demo_runs_id_sale_offer_id_unique" ON "demo_runs" USING btree ("id","sale_offer_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_preset_id_idx" ON "demo_runs" USING btree ("preset_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_status_idx" ON "demo_runs" USING btree ("status");--> statement-breakpoint
-CREATE UNIQUE INDEX "erp_attempts_order_delivery_attempt_unique" ON "erp_attempts" USING btree ("order_id","delivery_id","attempt_number");--> statement-breakpoint
+CREATE UNIQUE INDEX "erp_attempts_order_delivery_attempt_unique" ON "erp_attempts" USING btree ("order_id","delivery_id","attempt_number") WHERE "erp_attempts"."erp_call_id" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "erp_attempts_erp_call_id_unique" ON "erp_attempts" USING btree ("erp_call_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "erp_attempts_success_idempotency_key_unique" ON "erp_attempts" USING btree ("idempotency_key");--> statement-breakpoint
 CREATE INDEX "erp_attempts_order_id_idx" ON "erp_attempts" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "erp_attempts_run_id_idx" ON "erp_attempts" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "erp_attempts_run_id_finished_at_created_at_idx" ON "erp_attempts" USING btree ("run_id","finished_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "erp_attempts_run_id_correlation_id_idx" ON "erp_attempts" USING btree ("run_id","correlation_id");--> statement-breakpoint
+CREATE INDEX "erp_confirmation_ledger_run_id_idx" ON "erp_confirmation_ledger" USING btree ("run_id");--> statement-breakpoint
+CREATE INDEX "erp_dispatch_calls_order_id_idx" ON "erp_dispatch_calls" USING btree ("order_id");--> statement-breakpoint
+CREATE INDEX "erp_dispatch_calls_run_id_idx" ON "erp_dispatch_calls" USING btree ("run_id");--> statement-breakpoint
+CREATE INDEX "erp_dispatch_calls_idempotency_key_idx" ON "erp_dispatch_calls" USING btree ("idempotency_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "order_dead_letters_queue_job_name_unique" ON "order_dead_letters" USING btree ("queue_name","job_id","job_name");--> statement-breakpoint
 CREATE INDEX "order_dead_letters_observed_at_idx" ON "order_dead_letters" USING btree ("observed_at");--> statement-breakpoint
 CREATE INDEX "order_events_order_id_idx" ON "order_events" USING btree ("order_id");--> statement-breakpoint
@@ -327,6 +364,7 @@ CREATE INDEX "order_events_reservation_id_idx" ON "order_events" USING btree ("r
 CREATE INDEX "order_events_sale_offer_id_idx" ON "order_events" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "order_events_run_id_idx" ON "order_events" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "order_events_run_id_occurred_at_created_at_idx" ON "order_events" USING btree ("run_id","occurred_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "order_events_run_id_correlation_id_idx" ON "order_events" USING btree ("run_id","correlation_id");--> statement-breakpoint
 CREATE INDEX "order_events_event_name_idx" ON "order_events" USING btree ("event_name");--> statement-breakpoint
 CREATE INDEX "order_events_occurred_at_idx" ON "order_events" USING btree ("occurred_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "order_recovery_jobs_recovery_key_unique" ON "order_recovery_jobs" USING btree ("recovery_key");--> statement-breakpoint
@@ -334,9 +372,12 @@ CREATE INDEX "order_recovery_jobs_status_next_attempt_idx" ON "order_recovery_jo
 CREATE INDEX "order_recovery_jobs_order_id_idx" ON "order_recovery_jobs" USING btree ("order_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "orders_public_order_id_unique" ON "orders" USING btree ("public_order_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "orders_reservation_id_unique" ON "orders" USING btree ("reservation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_erp_attribution_identity_unique" ON "orders" USING btree ("id","correlation_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_notification_attribution_identity_unique" ON "orders" USING btree ("id","sale_offer_id","correlation_id");--> statement-breakpoint
 CREATE INDEX "orders_sale_offer_id_idx" ON "orders" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "orders_run_id_idx" ON "orders" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "orders_run_id_queued_at_created_at_idx" ON "orders" USING btree ("run_id","queued_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "orders_run_id_correlation_id_idx" ON "orders" USING btree ("run_id","correlation_id");--> statement-breakpoint
 CREATE INDEX "orders_correlation_id_idx" ON "orders" USING btree ("correlation_id");--> statement-breakpoint
 CREATE INDEX "orders_status_idx" ON "orders" USING btree ("status");--> statement-breakpoint
 CREATE UNIQUE INDEX "products_sku_unique" ON "products" USING btree ("sku");--> statement-breakpoint
@@ -345,6 +386,7 @@ CREATE INDEX "products_is_active_idx" ON "products" USING btree ("is_active");--
 CREATE UNIQUE INDEX "reservation_pending_persistence_reservation_id_unique" ON "reservation_pending_persistence" USING btree ("reservation_id");--> statement-breakpoint
 CREATE INDEX "reservation_pending_persistence_run_id_idx" ON "reservation_pending_persistence" USING btree ("run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "reservations_reservation_token_unique" ON "reservations" USING btree ("reservation_token");--> statement-breakpoint
+CREATE UNIQUE INDEX "reservations_backing_order_identity_unique" ON "reservations" USING btree ("id","sale_offer_id","correlation_id","quantity");--> statement-breakpoint
 CREATE INDEX "reservations_sale_offer_id_idx" ON "reservations" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "reservations_run_id_idx" ON "reservations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "reservations_correlation_id_idx" ON "reservations" USING btree ("correlation_id");--> statement-breakpoint
@@ -355,10 +397,41 @@ CREATE UNIQUE INDEX "simulated_notifications_order_id_unique" ON "simulated_noti
 CREATE INDEX "simulated_notifications_order_id_idx" ON "simulated_notifications" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_sale_offer_id_idx" ON "simulated_notifications" USING btree ("sale_offer_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_run_id_idx" ON "simulated_notifications" USING btree ("run_id");--> statement-breakpoint
-CREATE INDEX "simulated_notifications_run_id_recorded_at_created_at_idx" ON "simulated_notifications" USING btree ("run_id","recorded_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);
---> statement-breakpoint
+CREATE INDEX "simulated_notifications_run_id_recorded_at_created_at_idx" ON "simulated_notifications" USING btree ("run_id","recorded_at" DESC NULLS LAST,"created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "simulated_notifications_run_id_correlation_id_idx" ON "simulated_notifications" USING btree ("run_id","correlation_id");--> statement-breakpoint
 -- A constant-expression partial unique index is the simplest durable guard
 -- against concurrent direct writers creating more than one nonterminal run.
 CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"
 ON "demo_runs" ((true))
 WHERE "status" IN ('starting', 'active', 'draining');
+--> statement-breakpoint
+ALTER TABLE "demo_run_finalizations" ADD CONSTRAINT "demo_run_finalizations_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_sale_offer_demo_runs_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_runs"("id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_run_summaries" ADD CONSTRAINT "demo_run_summaries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_preset_id_demo_presets_id_fk" FOREIGN KEY ("preset_id") REFERENCES "public"."demo_presets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_erp_call_id_erp_dispatch_calls_id_fk" FOREIGN KEY ("erp_call_id") REFERENCES "public"."erp_dispatch_calls"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_correlation_fk" FOREIGN KEY ("order_id","correlation_id") REFERENCES "public"."orders"("id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_dispatch_calls" ADD CONSTRAINT "erp_dispatch_calls_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "erp_dispatch_calls" ADD CONSTRAINT "erp_dispatch_calls_order_correlation_fk" FOREIGN KEY ("order_id","correlation_id") REFERENCES "public"."orders"("id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_reservation_id_reservations_id_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."reservations"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_events" ADD CONSTRAINT "order_events_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_recovery_jobs" ADD CONSTRAINT "order_recovery_jobs_order_id_orders_id_fk" FOREIGN KEY ("order_id") REFERENCES "public"."orders"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "order_recovery_jobs" ADD CONSTRAINT "order_recovery_jobs_unresolved_erp_call_fk" FOREIGN KEY ("unresolved_erp_call_id") REFERENCES "public"."erp_dispatch_calls"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_backing_reservation_fk" FOREIGN KEY ("reservation_id","sale_offer_id","correlation_id","quantity") REFERENCES "public"."reservations"("id","sale_offer_id","correlation_id","quantity") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "orders" ADD CONSTRAINT "orders_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservation_pending_persistence" ADD CONSTRAINT "reservation_pending_persistence_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservations" ADD CONSTRAINT "reservations_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "reservations" ADD CONSTRAINT "reservations_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "sale_offers" ADD CONSTRAINT "sale_offers_product_id_products_id_fk" FOREIGN KEY ("product_id") REFERENCES "public"."products"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_order_attribution_fk" FOREIGN KEY ("order_id","sale_offer_id","correlation_id") REFERENCES "public"."orders"("id","sale_offer_id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;

@@ -1,5 +1,5 @@
 {
-  "id": "5b9dfe04-02df-4bd5-a388-eaced2777201",
+  "id": "60c39395-92b1-4409-8462-258310464382",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -502,6 +502,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "replay_possible": {
+          "name": "replay_possible",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true
+        },
         "started_at": {
           "name": "started_at",
           "type": "timestamp with time zone",
@@ -689,6 +695,24 @@
           "primaryKey": false,
           "notNull": true
         },
+        "engine_policy_name": {
+          "name": "engine_policy_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "engine_policy_version": {
+          "name": "engine_policy_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "sale_offer_id": {
           "name": "sale_offer_id",
           "type": "uuid",
@@ -715,6 +739,12 @@
         },
         "finalized_at": {
           "name": "finalized_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "admin_reset_completed_at": {
+          "name": "admin_reset_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -869,6 +899,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "erp_call_id": {
+          "name": "erp_call_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "attempt_number": {
           "name": "attempt_number",
           "type": "integer",
@@ -881,6 +917,13 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
+        },
+        "disposition": {
+          "name": "disposition",
+          "type": "erp_outcome_disposition",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "terminal": {
           "name": "terminal",
@@ -975,6 +1018,22 @@
             }
           ],
           "isUnique": true,
+          "where": "\"erp_attempts\".\"erp_call_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_attempts_erp_call_id_unique": {
+          "name": "erp_attempts_erp_call_id_unique",
+          "columns": [
+            {
+              "expression": "erp_call_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1050,6 +1109,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "erp_attempts_run_id_correlation_id_idx": {
+          "name": "erp_attempts_run_id_correlation_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -1058,6 +1138,15 @@
           "tableFrom": "erp_attempts",
           "tableTo": "demo_runs",
           "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "erp_attempts_erp_call_id_erp_dispatch_calls_id_fk": {
+          "name": "erp_attempts_erp_call_id_erp_dispatch_calls_id_fk",
+          "tableFrom": "erp_attempts",
+          "tableTo": "erp_dispatch_calls",
+          "columnsFrom": ["erp_call_id"],
           "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -1093,6 +1182,326 @@
           "value": "\"erp_attempts\".\"finished_at\" >= \"erp_attempts\".\"started_at\""
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.erp_confirmation_ledger": {
+      "name": "erp_confirmation_ledger",
+      "schema": "",
+      "columns": {
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "public_order_id": {
+          "name": "public_order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sale_offer_id": {
+          "name": "sale_offer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "terminal_result": {
+          "name": "terminal_result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "erp_confirmation_ledger_run_id_idx": {
+          "name": "erp_confirmation_ledger_run_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "erp_confirmation_ledger_quantity_positive": {
+          "name": "erp_confirmation_ledger_quantity_positive",
+          "value": "\"erp_confirmation_ledger\".\"quantity\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.erp_dispatch_calls": {
+      "name": "erp_dispatch_calls",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "processing_generation": {
+          "name": "processing_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "public_order_id": {
+          "name": "public_order_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reservation_id": {
+          "name": "reservation_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sale_offer_id": {
+          "name": "sale_offer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dispatched_at": {
+          "name": "dispatched_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolved_at": {
+          "name": "resolved_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "erp_dispatch_calls_order_id_idx": {
+          "name": "erp_dispatch_calls_order_id_idx",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_dispatch_calls_run_id_idx": {
+          "name": "erp_dispatch_calls_run_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "erp_dispatch_calls_idempotency_key_idx": {
+          "name": "erp_dispatch_calls_idempotency_key_idx",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "erp_dispatch_calls_run_id_demo_runs_id_fk": {
+          "name": "erp_dispatch_calls_run_id_demo_runs_id_fk",
+          "tableFrom": "erp_dispatch_calls",
+          "tableTo": "demo_runs",
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "erp_dispatch_calls_order_correlation_fk": {
+          "name": "erp_dispatch_calls_order_correlation_fk",
+          "tableFrom": "erp_dispatch_calls",
+          "tableTo": "orders",
+          "columnsFrom": ["order_id", "correlation_id"],
+          "columnsTo": ["id", "correlation_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "erp_dispatch_calls_quantity_positive": {
+          "name": "erp_dispatch_calls_quantity_positive",
+          "value": "\"erp_dispatch_calls\".\"quantity\" > 0"
+        },
+        "erp_dispatch_calls_generation_nonnegative": {
+          "name": "erp_dispatch_calls_generation_nonnegative",
+          "value": "\"erp_dispatch_calls\".\"processing_generation\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.erp_scope_resilience_state": {
+      "name": "erp_scope_resilience_state",
+      "schema": "",
+      "columns": {
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cooldown_expires_at": {
+          "name": "cooldown_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "availability_retry_at": {
+          "name": "availability_retry_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "availability_circuit_open": {
+          "name": "availability_circuit_open",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "circuit_open_expires_at": {
+          "name": "circuit_open_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_probe_at": {
+          "name": "next_probe_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.order_dead_letters": {
@@ -1390,6 +1799,27 @@
           "method": "btree",
           "with": {}
         },
+        "order_events_run_id_correlation_id_idx": {
+          "name": "order_events_run_id_correlation_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "order_events_event_name_idx": {
           "name": "order_events_event_name_idx",
           "columns": [
@@ -1582,6 +2012,45 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "processing_generation": {
+          "name": "processing_generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "waiting_reason": {
+          "name": "waiting_reason",
+          "type": "order_waiting_reason",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "publication_owner": {
+          "name": "publication_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "unresolved_erp_call_id": {
+          "name": "unresolved_erp_call_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "attempt_counts": {
+          "name": "attempt_counts",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         }
       },
       "indexes": {
@@ -1646,12 +2115,26 @@
           "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "order_recovery_jobs_unresolved_erp_call_fk": {
+          "name": "order_recovery_jobs_unresolved_erp_call_fk",
+          "tableFrom": "order_recovery_jobs",
+          "tableTo": "erp_dispatch_calls",
+          "columnsFrom": ["unresolved_erp_call_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "order_recovery_jobs_generation_nonnegative": {
+          "name": "order_recovery_jobs_generation_nonnegative",
+          "value": "\"order_recovery_jobs\".\"processing_generation\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.orders": {
@@ -1709,6 +2192,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'queued'"
+        },
+        "failure_category": {
+          "name": "failure_category",
+          "type": "order_failure_category",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
         },
         "failure_code": {
           "name": "failure_code",
@@ -1889,6 +2379,27 @@
               "expression": "created_at",
               "isExpression": false,
               "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_run_id_correlation_id_idx": {
+          "name": "orders_run_id_correlation_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
@@ -2767,6 +3278,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "simulated_notifications_run_id_correlation_id_idx": {
+          "name": "simulated_notifications_run_id_correlation_id_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "correlation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2831,6 +3363,18 @@
       "schema": "public",
       "values": ["succeeded", "failed", "timed_out"]
     },
+    "public.erp_outcome_disposition": {
+      "name": "erp_outcome_disposition",
+      "schema": "public",
+      "values": [
+        "succeeded",
+        "capacity_rejected",
+        "temporarily_unavailable",
+        "uncertain_result",
+        "permanent_rejection",
+        "technical_failure"
+      ]
+    },
     "public.order_event_name": {
       "name": "order_event_name",
       "schema": "public",
@@ -2846,10 +3390,20 @@
         "erp.attempt.succeeded"
       ]
     },
+    "public.order_failure_category": {
+      "name": "order_failure_category",
+      "schema": "public",
+      "values": ["business_rejection", "technical"]
+    },
     "public.order_status": {
       "name": "order_status",
       "schema": "public",
       "values": ["queued", "processing", "confirmed", "failed"]
+    },
+    "public.order_waiting_reason": {
+      "name": "order_waiting_reason",
+      "schema": "public",
+      "values": ["local_admission", "erp_capacity", "erp_unavailable", "uncertain_result"]
     },
     "public.recovery_job_status": {
       "name": "recovery_job_status",
