@@ -83,4 +83,6 @@ While k6 is running, the load orchestrator samples generator resource use once p
 
 Per-run `networkDiagnostics` persist the effective `ipLocalPortRange`, `tcpTwReuse`, and `tcpTimestamps` values with the traffic completion record.
 
+The same `generatorCapacity` block is the host record that the [estimator calibration procedure](estimator_calibration.md) asks for when re-measuring the estimator allowances on a new host.
+
 Authenticated operators can read these values in the **Generator diagnostics** panel on a run's `/run-history/[runId]` detail page. Public run detail does not expose the diagnostic block. When validating a new host, compare sampled utilisation independently with `docker stats load-orchestrator`; the run record intentionally stores a bounded summary rather than a time series.

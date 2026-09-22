@@ -493,7 +493,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `DEMO_MAX_PRE_ALLOCATED_VUS` | `10000` | API hard cap for resolved constant-arrival preallocated VUs, whether automatic or explicit |
 | `DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS` | `600` | Deployment estimated occupancy ceiling in seconds (positive integer, at most 600); mutable policy may lower it for public and admin starts |
 | `DEMO_MAX_VUS` | `10000` | API hard cap for resolved constant-arrival max VUs, whether automatic or explicit |
-| `ESTIMATOR_JOB_OVERHEAD_MS` | `130` | Estimator per-job overhead beyond ERP latency (positive number); calibrated on the task 17b host, re-measure per deployment |
+| `ESTIMATOR_JOB_OVERHEAD_MS` | `130` | Estimator per-job overhead beyond ERP latency (positive number); calibrated on the task 17b host, re-measure per deployment with the [estimator calibration procedure](estimator_calibration.md) |
 | `ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS` | `15` | Estimator delay between the last notification and run finalization (positive number); same calibration origin |
 | `ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN` | `1.25` | Estimator margin multiplying the `1/(1-p)` retry demand (number at least 1); same calibration origin |
 | `ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS` | `1` | Estimator pause per excess attempt, anchored to the mock ERP `Retry-After: 1` (positive number) |

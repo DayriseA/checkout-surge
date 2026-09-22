@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { originalIncidentFixture } from "../packages/contracts/dist/testing.js";
-import { assertAcceptance, assertOutageEvidence, summarizeErpHttp } from "./runtime-acceptance.mjs";
+import {
+  assertAcceptance,
+  assertOutageEvidence,
+  calibrationEvidence,
+  summarizeErpHttp,
+} from "./runtime-acceptance.mjs";
 
 function settledIncident() {
   return {
@@ -98,4 +103,34 @@ test("outage accepts retained uncertainty and backoff beyond the outage, but rej
     { time: 12000, disposition: "temporarily_unavailable" },
   );
   assert.throws(() => assertOutageEvidence(report), /five seconds apart/);
+});
+
+test("calibration evidence reports job overhead, settlement delay and excess attempts", () => {
+  const evidence = calibrationEvidence(
+    {
+      confirmed: 2,
+      attempts: [{ status: "failed" }, { status: "succeeded" }, { status: "succeeded" }],
+      lastNotificationAt: "2026-09-22T10:00:00.000Z",
+      finalizedAt: "2026-09-22T10:00:04.500Z",
+    },
+    [
+      [1000, 1300],
+      [1000, 1500],
+      [0, 0], // Killed worker: no completion timestamps.
+    ],
+    200,
+  );
+  assert.equal(evidence.jobs, 2);
+  assert.equal(evidence.meanJobMs, 400);
+  assert.equal(evidence.maxJobMs, 500);
+  assert.equal(evidence.meanJobOverheadMs, 200);
+  assert.equal(evidence.settlementDelaySeconds, 4.5);
+  assert.equal(evidence.excessAttempts, 1);
+  const unsettled = calibrationEvidence(
+    { confirmed: 0, attempts: [], lastNotificationAt: null, finalizedAt: null },
+    [],
+    200,
+  );
+  assert.equal(unsettled.meanJobOverheadMs, null);
+  assert.equal(unsettled.settlementDelaySeconds, null);
 });
