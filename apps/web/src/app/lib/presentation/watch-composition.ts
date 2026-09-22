@@ -7,6 +7,7 @@ import {
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import type { RetainedTerminalRun, RunSignalLiveSample } from "../dashboard-projection-state";
+import type { AcceptedRunResult } from "./accepted-run-result";
 import {
   dashboardUpdateExpected,
   deriveFreshness,
@@ -45,6 +46,7 @@ export type WatchComposition =
       phase: "idle";
       latestCompletedRun: BackendRead<RunHistoryListItem | null>;
     })
+  | (WatchCompositionBase & { phase: "cancelled"; run: DemoRunSnapshot; automatic: boolean })
   | InProgressWatchComposition<"starting">
   | InProgressWatchComposition<"active">
   | InProgressWatchComposition<"draining">
@@ -52,6 +54,7 @@ export type WatchComposition =
   | TerminalWatchComposition<"failed">;
 
 export function deriveWatchComposition(input: {
+  acceptedResult?: AcceptedRunResult | undefined;
   recovery: BackendRead<DashboardProjection>;
   retainedTerminalRun: RetainedTerminalRun | null;
   latestCompletedRun: BackendRead<RunHistoryListItem | null>;
@@ -72,7 +75,21 @@ export function deriveWatchComposition(input: {
   const panelRecovery: BackendRead<DashboardProjection> = projection
     ? { status: "available", data: projection, httpStatus: 200 }
     : input.recovery;
-  const presentation = deriveRunPresentationState(panelRecovery, projection);
+  const savedCancellation =
+    input.acceptedResult?.status === "available" &&
+    input.acceptedResult.runId === projection?.currentRun?.runId
+      ? input.acceptedResult.cancellation
+      : undefined;
+  const discarded =
+    projection?.currentRun?.dataDiscarded === true || savedCancellation !== undefined;
+  const presentation: PresentationState = discarded
+    ? {
+        state: "cancelled",
+        label: "Cancelled",
+        tone: "idle",
+        description: "Its experiment data was discarded.",
+      }
+    : deriveRunPresentationState(panelRecovery, projection);
   const freshness = deriveFreshness({
     transportStatus: input.transportStatus,
     recoveredAt: projection?.recoveredAt ?? input.now.toISOString(),
@@ -102,6 +119,16 @@ export function deriveWatchComposition(input: {
     };
   }
 
+  if (discarded)
+    return {
+      phase: "cancelled",
+      freshness,
+      panelRecovery,
+      presentation,
+      run,
+      automatic: savedCancellation?.automatic ?? run.failureCategory === "automatic_reset",
+    };
+
   const phase = phaseFromPresentation(presentation);
   if (phase === "completed" || phase === "failed") {
     return {
@@ -128,7 +155,10 @@ export function deriveWatchComposition(input: {
 
 function phaseFromPresentation(
   presentation: PresentationState,
-): Exclude<WatchComposition["phase"], "checking" | "unavailable" | "idle" | "reset-recovery"> {
+): Exclude<
+  WatchComposition["phase"],
+  "checking" | "unavailable" | "idle" | "reset-recovery" | "cancelled"
+> {
   switch (presentation.state) {
     case "starting":
       return "starting";

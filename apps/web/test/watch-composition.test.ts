@@ -12,6 +12,30 @@ import type { RetainedTerminalRun } from "../src/app/lib/dashboard-projection-st
 import { deriveWatchComposition } from "../src/app/lib/presentation/watch-composition.js";
 
 describe("watch composition", () => {
+  it("selects saved cancellation before deriving stale same-run evidence, without cancelling another failure", () => {
+    const failed = run("failed");
+    const derive = (targetRunId: string) =>
+      deriveWatchComposition({
+        acceptedResult: {
+          status: "available",
+          runId: targetRunId,
+          presetName: "Preview 1k",
+          endedAt: "2026-07-30T12:00:04.000Z",
+          cancellation: { automatic: true },
+        },
+        recovery: available(projection(failed)),
+        retainedTerminalRun: null,
+        latestCompletedRun: { status: "available", data: null },
+        signalSamples: [],
+        transportStatus: "connected",
+        now: new Date("2026-07-30T12:00:04.000Z"),
+      });
+    const cancelled = derive(runId);
+    expect(cancelled).toMatchObject({ phase: "cancelled", automatic: true });
+    expect(cancelled).not.toHaveProperty("result");
+    expect(derive("99999999-9999-4999-8999-999999999999").phase).toBe("failed");
+  });
+
   it.each([
     ["starting", "starting"],
     ["active", "active"],

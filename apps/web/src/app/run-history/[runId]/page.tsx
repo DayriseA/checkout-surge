@@ -68,6 +68,8 @@ export default async function RunHistoryDetailPage({
   }
 
   if (publicDetail?.status === "available") {
+    if (publicDetail.data.summary.dataDiscarded)
+      return <PublicRunHistoryDetail detail={publicDetail.data} />;
     const { summary, result, overallDurationMs } = publicDetail.data;
     return (
       <>
@@ -91,9 +93,7 @@ export default async function RunHistoryDetailPage({
                 {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
               </time>
               {" · "}
-              {summary.failureCategory === "operator"
-                ? "Acceptance-to-stop duration: "
-                : "Overall duration: "}
+              {"Overall duration: "}
               {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
             </p>
             <StatusPill

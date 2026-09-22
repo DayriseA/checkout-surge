@@ -152,6 +152,7 @@ const demoRunSnapshotBaseShape = {
 const nonterminalDemoRunSnapshotShape = {
   finalizedAt: z.never().optional(),
   failureCategory: z.never().optional(),
+  dataDiscarded: z.never().optional(),
 };
 
 const failedDemoRunSnapshotSchema = z
@@ -163,6 +164,7 @@ const failedDemoRunSnapshotSchema = z
     trafficEndedAt: isoTimestampSchema.optional(),
     finalizedAt: isoTimestampSchema,
     failureCategory: publicRunFailureCategorySchema,
+    dataDiscarded: z.boolean().optional(),
   })
   .strict()
   .superRefine((run, context) => {
@@ -225,6 +227,7 @@ export const demoRunSnapshotSchema = z.discriminatedUnion("status", [
       trafficEndedAt: isoTimestampSchema,
       finalizedAt: isoTimestampSchema,
       failureCategory: z.never().optional(),
+      dataDiscarded: z.never().optional(),
     })
     .strict(),
   failedDemoRunSnapshotSchema,

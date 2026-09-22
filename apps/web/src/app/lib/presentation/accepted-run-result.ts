@@ -20,13 +20,15 @@ export interface AcceptedRunReportEvidence {
 }
 
 export type AcceptedRunResult =
-  | {
+  | ({
       status: "available";
       runId: string;
       presetName: string;
       endedAt: string;
-      reportEvidence?: AcceptedRunReportEvidence;
-    }
+    } & (
+      | { cancellation: { automatic: boolean }; reportEvidence?: never }
+      | { cancellation?: never; reportEvidence?: AcceptedRunReportEvidence }
+    ))
   | { status: "awaiting"; runId: string }
   | { status: "unavailable"; runId: string; retryAfterMs?: number };
 
@@ -41,12 +43,21 @@ export function acceptedRunResultFromRead(
           runId,
           presetName: read.data.summary.presetName,
           endedAt: read.data.summary.endedAt,
-          reportEvidence: {
-            result: read.data.result,
-            trafficDeliveryStatus: read.data.summary.trafficDeliverySummary.trafficDeliveryStatus,
-            transportAttemptCounts: read.data.summary.transportAttemptCounts,
-            transportFailures: read.data.summary.httpSummary.transportFailures,
-          },
+          ...(read.data.summary.dataDiscarded
+            ? {
+                cancellation: {
+                  automatic: read.data.summary.failureCategory === "automatic_reset",
+                },
+              }
+            : {
+                reportEvidence: {
+                  result: read.data.result,
+                  trafficDeliveryStatus:
+                    read.data.summary.trafficDeliverySummary.trafficDeliveryStatus,
+                  transportAttemptCounts: read.data.summary.transportAttemptCounts,
+                  transportFailures: read.data.summary.httpSummary.transportFailures,
+                },
+              }),
         }
       : { status: "unavailable", runId };
   }

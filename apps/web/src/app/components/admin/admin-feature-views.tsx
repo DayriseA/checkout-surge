@@ -478,7 +478,7 @@ export function AdminPresetView({
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
-                fields={runConfigFields.slice(0, 3)}
+                fields={inventoryFields}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
@@ -488,7 +488,7 @@ export function AdminPresetView({
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
-                fields={runConfigFields.slice(8)}
+                fields={erpFields}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
@@ -505,17 +505,7 @@ export function AdminPresetView({
               <RunConfigInputs
                 draft={draft}
                 errors={fieldErrors}
-                fields={runConfigFields.slice(3, 6)}
-                onBlur={onBlurField}
-                onUpdateDraft={onUpdateDraft}
-                prefix="preset"
-              />
-            </ConfigFieldset>
-            <ConfigFieldset disabled={isPending} legend="Circuit protection">
-              <RunConfigInputs
-                draft={draft}
-                errors={fieldErrors}
-                fields={runConfigFields.slice(6, 8)}
+                fields={workerFields}
                 onBlur={onBlurField}
                 onUpdateDraft={onUpdateDraft}
                 prefix="preset"
@@ -888,21 +878,21 @@ function RunConfigFields({
 }) {
   return (
     <>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+      <ConfigFieldset legend="Inventory">
         <RunConfigInputs
           draft={draft}
           errors={errors}
-          fields={runConfigFields.slice(0, 8)}
+          fields={inventoryFields}
           onBlur={onBlur}
           onUpdateDraft={onUpdateDraft}
           prefix={prefix}
         />
-      </div>
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+      </ConfigFieldset>
+      <ConfigFieldset legend="Per-run ERP">
         <RunConfigInputs
           draft={draft}
           errors={errors}
-          fields={runConfigFields.slice(8)}
+          fields={erpFields}
           onBlur={onBlur}
           onUpdateDraft={onUpdateDraft}
           prefix={prefix}
@@ -916,7 +906,17 @@ function RunConfigFields({
             onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
           />
         ) : null}
-      </div>
+      </ConfigFieldset>
+      <ConfigFieldset legend="Worker and backpressure">
+        <RunConfigInputs
+          draft={draft}
+          errors={errors}
+          fields={workerFields}
+          onBlur={onBlur}
+          onUpdateDraft={onUpdateDraft}
+          prefix={prefix}
+        />
+      </ConfigFieldset>
     </>
   );
 }
@@ -971,12 +971,16 @@ function RunConfigInputs({
   ));
 }
 
-const runConfigFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
+const inventoryFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["startingStock", "Starting stock"],
   ["quantityPerCheckout", "Quantity per checkout"],
   ["reservationHoldMinutes", "Hold minutes"],
+];
+const workerFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["orderProcessConcurrency", "Worker concurrency"],
   ["pendingPersistenceRetryAfterSeconds", "Persistence retry seconds"],
+];
+const erpFields: ReadonlyArray<[keyof RunConfigDraft, string, string?]> = [
   ["erpLatencyMs", "ERP latency ms"],
   ["erpMaxTps", "ERP max TPS"],
   ["erpErrorRate", "ERP error rate", "0.01"],

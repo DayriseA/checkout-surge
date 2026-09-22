@@ -55,6 +55,13 @@ describe("demo-run projections", () => {
       updatedAt: new Date("2026-07-21T10:00:03.000Z"),
     } satisfies typeof demoRuns.$inferSelect;
 
+    for (const failureReason of ["admin_reset", "auto_reset"] as const) {
+      expect(toDemoRunSnapshot({ ...row, failureReason })).toMatchObject({
+        dataDiscarded: true,
+        failureCategory: failureReason === "auto_reset" ? "automatic_reset" : "operator",
+      });
+    }
+    expect(toDemoRunSnapshot(row)).not.toHaveProperty("dataDiscarded");
     expect(toDemoRunSnapshot(row)).toEqual({
       runId: row.id,
       presetId: row.presetId,

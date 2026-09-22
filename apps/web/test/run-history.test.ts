@@ -2,12 +2,15 @@
 
 import {
   type AdminRunHistoryDetailResponse,
+  demoRunSnapshotSchema,
   deriveRunResult,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
   type PublicRunHistoryDetailResponse,
+  publicRunHistorySummarySchema,
   type RunHistoryListResponse,
+  runHistorySummarySchema,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -56,10 +59,13 @@ describe("run history", () => {
     summary.dataDiscarded = true;
     const list = renderToStaticMarkup(createElement(RunHistoryList, { history }));
     expect(list).toContain("Cancelled");
+    for (const label of ["Confirmed orders", "Convergence duration", "attempts ·", "units"])
+      expect(list).not.toContain(label);
 
     const publicDetail = detailFixture("failed");
     publicDetail.summary.dataDiscarded = true;
     publicDetail.summary.failureCategory = category;
+    publicRunHistorySummarySchema.parse(publicDetail.summary);
     const publicMarkup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail: publicDetail }),
     );
@@ -75,6 +81,14 @@ describe("run history", () => {
     const adminDetail = adminDetailFixture();
     adminDetail.summary.dataDiscarded = true;
     adminDetail.summary.failureCategory = category;
+    adminDetail.summary.status = "failed";
+    adminDetail.run = demoRunSnapshotSchema.parse({
+      ...adminDetail.run,
+      status: "failed",
+      failureCategory: category,
+      dataDiscarded: true,
+    });
+    runHistorySummarySchema.parse(adminDetail.summary);
     const adminMarkup = renderToStaticMarkup(
       createElement(AdminRunHistoryDetail, {
         detail: adminDetail,
@@ -93,31 +107,41 @@ describe("run history", () => {
     expect(adminMarkup).not.toContain("Evidence and reconciliation proof");
   });
 
-  it("labels operator-stop and work-cleanup boundaries without fabricating legacy completion", () => {
+  it.each([
+    "operator",
+    "automatic_reset",
+  ] as const)("composes one public/admin cancellation page for %s", async (category) => {
     const detail = detailFixture("failed");
-    detail.summary.failureCategory = "operator";
-    detail.summary.businessOutcomeSummary.notificationsRecorded = 0;
-    detail.run.finalizedAt = "2026-06-20T00:00:10.000Z";
-    detail.run.adminResetCompletedAt = "2026-06-20T00:00:20.000Z";
-    const output = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
-    expect(output).toContain("Operator stop decision");
-    expect(output).toContain("Work cleanup and history completed");
-    expect(output).toContain("Acceptance-to-stop duration");
-    expect(output).toContain("Acceptance-to-work-cleanup completion duration");
-    expect(output).toContain("20 s");
-    expect(renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }))).toBe(output);
-    delete detail.run.adminResetCompletedAt;
-    const legacy = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
-    expect(legacy).toContain("Unknown");
-    expect(legacy).not.toContain("2026-06-20 00:00:20 UTC");
-    const admin = adminDetailFixture();
-    admin.summary.failureCategory = "operator";
-    admin.run.adminResetCompletedAt = "2026-06-20T00:00:20.000Z";
-    const adminOutput = renderToStaticMarkup(
-      createElement(AdminRunHistoryDetail, { detail: admin }),
-    );
-    expect(adminOutput).toContain("Operator stop decision");
-    expect(adminOutput).toContain("Acceptance-to-work-cleanup completion duration");
+    detail.summary.dataDiscarded = true;
+    detail.summary.failureCategory = category;
+    publicRunHistorySummarySchema.parse(detail.summary);
+    for (const admin of [false, true]) {
+      hasValidAdminPageSession.mockResolvedValue(admin);
+      getRunHistoryDetail.mockResolvedValue({ status: "available", data: detail });
+      const adminDetail = adminDetailFixture();
+      adminDetail.summary = {
+        ...adminDetail.summary,
+        status: "failed",
+        failureCategory: category,
+        dataDiscarded: true,
+      };
+      adminDetail.run = demoRunSnapshotSchema.parse({
+        ...adminDetail.run,
+        status: "failed",
+        failureCategory: category,
+        dataDiscarded: true,
+      });
+      runHistorySummarySchema.parse(adminDetail.summary);
+      getAdminRunHistoryDetail.mockResolvedValue({ status: "available", data: adminDetail });
+      const html = renderToStaticMarkup(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: detail.summary.runId }) }),
+      );
+      expect(html.match(/<h1[ >]/g)).toHaveLength(1);
+      expect(html.match(/Back to run history/g)).toHaveLength(1);
+      expect(html).toContain("Cancelled");
+      expect(html).not.toContain(">Failed<");
+      expect(html).not.toContain("Overall duration");
+    }
   });
 
   afterEach(cleanup);
@@ -582,45 +606,6 @@ describe("run history", () => {
 
     fireEvent.click(screen.getByRole("link", { name: "View technical measurements" }));
     expect(disclosure?.open).toBe(true);
-  });
-
-  it("keeps operator-stop guidance and unknown cleanup qualification beside the result", () => {
-    const detail = detailFixture("failed");
-    detail.summary.failureCategory = "operator";
-    detail.result = deriveRunResult({
-      ...resultEvidence(detail),
-      generator: {
-        transportAttemptCounts: detail.summary.transportAttemptCounts,
-        httpSummary: detail.summary.httpSummary,
-      },
-    });
-    delete detail.run.adminResetCompletedAt;
-    delete detail.run.trafficStartedAt;
-    delete detail.run.trafficEndedAt;
-    detail.run.configSnapshot.trafficConfig = {
-      mode: "constant-arrival-rate",
-      ratePerSecond: 25,
-      startDelaySeconds: 0,
-      durationSeconds: 1,
-      quantityPerAttempt: 1,
-    };
-    const { container } = render(publicReport(detail));
-    const recap = screen.getByRole("heading", { name: "What happened" }).closest("section");
-
-    expect(screen.getByText(/stopped by an operator/).closest("[hidden]")).toBeNull();
-    expect(
-      screen.getByText(/reporting or cleanup may be incomplete/).closest("[hidden]"),
-    ).toBeNull();
-    expect(recap?.textContent).toContain("Checkout attempts start and end were not recorded.");
-    expect(recap?.textContent).not.toContain("arrived");
-    expect(recap?.textContent).not.toContain("Buyer traffic");
-    expect(recap?.textContent).toContain(
-      "10 units reserved / 10 unique reservations; 10 attempts turned away because stock ran out.",
-    );
-    expect(recap?.textContent).toContain("Operator stop decision: 00:00:10 UTC.");
-    expect(
-      container.querySelector<HTMLDetailsElement>("#report-advanced-lifecycle details")?.open,
-    ).toBe(false);
   });
 
   it("keeps durable comparison facts visible when final inventory was not recorded", () => {

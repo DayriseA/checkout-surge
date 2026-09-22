@@ -5,6 +5,7 @@ import {
   demoRunSnapshotSchema,
   type InventoryStatus,
   internalRunFailureReasonSchema,
+  isDestructiveResetReason,
   type TerminalInventorySnapshot,
   toPublicRunFailureCategory,
 } from "@checkout-surge/contracts";
@@ -36,6 +37,7 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.adminResetCompletedAt
       ? { adminResetCompletedAt: run.adminResetCompletedAt.toISOString() }
       : {}),
+    ...(isDestructiveResetReason(run.failureReason) ? { dataDiscarded: true } : {}),
     ...(run.failureReason
       ? {
           failureCategory: toPublicRunFailureCategory(

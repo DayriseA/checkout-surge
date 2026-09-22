@@ -115,19 +115,10 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
-              [
-                summary.failureCategory === "operator"
-                  ? "Acceptance-to-stop duration"
-                  : "Overall run duration",
-                overallDuration,
-              ],
+              ["Overall run duration", overallDuration],
               ["Traffic started", formatDate(run.trafficStartedAt)],
               ["Traffic ended", formatDate(run.trafficEndedAt)],
-              [
-                summary.failureCategory === "operator" ? "Operator stop decision" : "Finalized",
-                formatDate(run.finalizedAt),
-              ],
-              ...resetCompletionFacts(run, summary),
+              ["Finalized", formatDate(run.finalizedAt)],
               ["Evidence recorded", formatDate(summary.capturedAt)],
               ...(detail.internalFailureReason
                 ? [["Failure code", codeValue(detail.internalFailureReason)] as [string, ReactNode]]
@@ -1207,19 +1198,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
                 ["Run accepted", formatDate(summary.startedAt)],
                 ["Checkout traffic started", formatDate(run.trafficStartedAt)],
                 ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
-                [
-                  summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended",
-                  formatDate(run.finalizedAt),
-                ],
-                ...(summary.failureCategory === "operator"
-                  ? [
-                      [
-                        "Acceptance-to-stop duration",
-                        formatDurationMs(detail.overallDurationMs) ?? "Unknown",
-                      ] as [string, ReactNode],
-                    ]
-                  : []),
-                ...resetCompletionFacts(run, summary),
+                ["Run ended", formatDate(run.finalizedAt)],
               ]}
               title="Lifecycle"
             />
@@ -1376,7 +1355,7 @@ function runRecap(
   detail: PublicRunHistoryDetailResponse,
   counts: ReturnType<typeof derivePublicRunSummary>["counts"],
 ): string[] {
-  const { run, summary } = detail;
+  const { run } = detail;
   const trafficSubject =
     run.configSnapshot.trafficConfig.mode === "buyer-spike" ? "Buyer traffic" : "Checkout attempts";
   const time = (value: string | undefined) =>
@@ -1393,15 +1372,8 @@ function runRecap(
     trafficRecap,
     `${count(counts.reservedUnits)} units reserved / ${count(counts.uniqueReservations)} unique reservations; ${count(counts.soldOutDecisions)} attempts turned away because stock ran out.`,
     `Orders reached their recorded outcome: ${count(counts.confirmedOrders)} confirmed, ${count(counts.failedOrders)} failed, ${count(counts.pendingOrders)} awaiting confirmation.`,
-    `${summary.failureCategory === "operator" ? "Operator stop decision" : "Run ended"}: ${time(run.finalizedAt)}.`,
+    `Run ended: ${time(run.finalizedAt)}.`,
   ];
-  if (summary.failureCategory === "operator") {
-    lines.push(
-      run.adminResetCompletedAt
-        ? `Work cleanup and history completed: ${time(run.adminResetCompletedAt)}.`
-        : "Work cleanup and history completion was not recorded; reporting or cleanup may be incomplete, and worker work may still settle.",
-    );
-  }
   return lines;
 }
 
@@ -1460,23 +1432,4 @@ function adminDeliveryLabel(
 
 function codeValue(value: string): ReactNode {
   return <code>{value}</code>;
-}
-
-function resetCompletionFacts(
-  run: { adminResetCompletedAt?: string | undefined },
-  summary: { failureCategory?: string | undefined; startedAt?: string | undefined },
-): Array<[string, ReactNode]> {
-  if (summary.failureCategory !== "operator") return [];
-  const duration =
-    run.adminResetCompletedAt && summary.startedAt
-      ? Date.parse(run.adminResetCompletedAt) - Date.parse(summary.startedAt)
-      : null;
-  return [
-    ["Work cleanup and history completed", formatDate(run.adminResetCompletedAt)],
-    ["Acceptance-to-work-cleanup completion duration", formatDurationMs(duration) ?? "Unknown"],
-    [
-      "Reset context",
-      "Active work may finish after the operator stop decision. Counts show real confirmations and recorded notifications; removed queued work may remain incomplete.",
-    ],
-  ];
 }

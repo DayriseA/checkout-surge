@@ -132,6 +132,7 @@ export function OperatorDashboard({
     return () => clearInterval(interval);
   }, []);
   const composition = deriveWatchComposition({
+    acceptedResult: accepted.result,
     recovery,
     retainedTerminalRun:
       resetRunId && retainedTerminalRun?.runId !== resetRunId ? null : retainedTerminalRun,
@@ -157,7 +158,6 @@ export function OperatorDashboard({
       {trackedResult && !sameRunAccepted ? (
         <AcceptedResultNarrative
           onRetry={() => void accepted.retryNow()}
-          operatorReset={acceptedResult === undefined}
           result={trackedResult}
           retriesExhausted={accepted.retriesExhausted}
         />
@@ -245,6 +245,14 @@ export function WatchNarrative({
   sharedDemo?: boolean;
 }) {
   switch (composition.phase) {
+    case "cancelled":
+      return (
+        <CancelledResult
+          runId={composition.run.runId}
+          presetName={composition.run.presetName}
+          automatic={composition.automatic}
+        />
+      );
     case "reset-recovery":
       return (
         <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
@@ -704,17 +712,49 @@ function InvalidAcceptedRunContext() {
   );
 }
 
+function CancelledResult({
+  runId,
+  presetName,
+  automatic,
+}: {
+  runId: string;
+  presetName: string;
+  automatic: boolean;
+}) {
+  return (
+    <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
+      <h2 className="m-0 text-xl font-bold text-ink">Cancelled</h2>
+      <p>
+        {presetName} · <code>{runId}</code>
+      </p>
+      <p>
+        This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
+        data was discarded.
+      </p>
+      <Link className={secondaryActionClassName} href={`/run-history/${runId}`}>
+        View run report
+      </Link>
+    </section>
+  );
+}
+
 function AcceptedResultNarrative({
   onRetry,
-  operatorReset = false,
   result,
   retriesExhausted,
 }: {
-  operatorReset?: boolean;
   onRetry: () => void;
   result: AcceptedRunResult;
   retriesExhausted: boolean;
 }) {
+  if (result.status === "available" && result.cancellation)
+    return (
+      <CancelledResult
+        runId={result.runId}
+        presetName={result.presetName}
+        automatic={result.cancellation.automatic}
+      />
+    );
   const reportEvidence = result.status === "available" ? result.reportEvidence : undefined;
   const summary = reportEvidence
     ? derivePublicRunSummary({
@@ -735,9 +775,7 @@ function AcceptedResultNarrative({
       className="col-span-12 rounded-lg border border-border bg-surface p-4"
       data-accepted-result=""
     >
-      <p className="m-0 text-xs font-bold uppercase text-muted">
-        {operatorReset ? "Operator-stopped run" : "Your result"}
-      </p>
+      <p className="m-0 text-xs font-bold uppercase text-muted">Your result</p>
       {summary && resultIdentity ? (
         <>
           <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -769,7 +807,7 @@ function AcceptedResultNarrative({
       )}
       {result.status === "unavailable" && retriesExhausted ? (
         <button className={`${secondaryActionClassName} mt-3`} onClick={onRetry} type="button">
-          {operatorReset ? "Check stopped result again" : "Check accepted result again"}
+          Check accepted result again
         </button>
       ) : null}
     </section>
@@ -819,6 +857,7 @@ function TechnicalGroups({
   stoppedRun: boolean;
   syncIssue: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
 }) {
+  if (composition.phase === "cancelled") return null;
   // A composition carrying a projection is a run phase, so its run-owned evidence exists here.
   const runComposition = "projection" in composition ? composition : null;
   const projection = runComposition?.projection ?? null;

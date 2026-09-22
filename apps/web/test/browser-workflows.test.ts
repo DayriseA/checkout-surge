@@ -17,6 +17,7 @@ import {
   type PublicRunHistoryDetailResponse,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyResponse,
+  publicRunHistorySummarySchema,
   type RunHistoryListItem,
   type RunHistoryListResponse,
   type RunHistorySummary,
@@ -2212,6 +2213,48 @@ describe("accepted Watch result handoff", () => {
   const newerRunId = "66666666-6666-4666-8666-666666666666";
 
   it.each([
+    "operator",
+    "automatic_reset",
+  ] as const)("retains saved %s cancellation on reload and beside a successor", (failureCategory) => {
+    const detail = runHistoryDetailFixtureFor(acceptedRunId);
+    detail.summary = publicRunHistorySummarySchema.parse({
+      ...detail.summary,
+      status: "failed",
+      failureCategory,
+      dataDiscarded: true,
+    });
+    detail.result = { ...detail.result, outcome: "failed", failureCategory };
+    detail.run = {
+      ...detail.run,
+      status: "failed",
+      trafficStatus: "succeeded",
+      finalizedAt: detail.summary.endedAt,
+    };
+    const acceptedResult = acceptedRunResultFromRead(acceptedRunId, {
+      status: "available",
+      data: detail,
+    });
+    expect(acceptedResult).toMatchObject({
+      status: "available",
+      cancellation: { automatic: failureCategory === "automatic_reset" },
+    });
+    expect(acceptedResult).not.toHaveProperty("reportEvidence");
+    for (const currentRun of [null, demoRunFixture({ runId: newerRunId, status: "active" })]) {
+      const html = renderToStaticMarkup(
+        createElement(OperatorDashboard, {
+          acceptedResult,
+          initialRecovery: available(dashboardRecoveryFixture({ currentRun })),
+        }),
+      );
+      expect(html).toContain("Cancelled");
+      expect(html).toContain(`/run-history/${acceptedRunId}`);
+      expect(html).not.toContain("The run failed");
+      expect(html).not.toContain("Reconciliation warning");
+      if (currentRun) expect(html).toContain("The surge is under way");
+    }
+  });
+
+  it.each([
     "accepted",
     "operator-reset",
     "operator-reset-with-old-recap",
@@ -2272,7 +2315,7 @@ describe("accepted Watch result handoff", () => {
     );
     expect(document.querySelector(`a[href="/run-history/${previousRun.runId}"]`)).toBeNull();
     if (origin !== "accepted") {
-      expect(screen.getByText("Operator-stopped run")).toBeTruthy();
+      expect(screen.getByText("Your result")).toBeTruthy();
       act(() =>
         FakeEventSource.instances[0]?.emit(
           "message",

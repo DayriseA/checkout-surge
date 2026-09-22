@@ -190,8 +190,6 @@ function pendingOrdersSentence(result: RunResult): string {
 }
 
 function failedSentence(result: RunResult): string {
-  if (result.failureCategory === "automatic_reset")
-    return "The run was cancelled by an automatic reset. Its experiment data was discarded.";
   const category = result.failureCategory
     ? ` due to a ${result.failureCategory} failure`
     : "; the failure category is unavailable";

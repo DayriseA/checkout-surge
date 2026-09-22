@@ -385,12 +385,24 @@ describe("admin feature controllers", () => {
     expect(screen.getByText(/Runtime budgets, custom limits/).closest("details")?.open).toBe(false);
   });
 
-  it("groups preset configuration into five named fieldsets", () => {
+  it("groups preset configuration by inventory, ERP and worker ownership", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
     for (const name of ["Traffic", "Inventory", "Per-run ERP", "Worker and backpressure"]) {
       expect(screen.getByRole("group", { name })).toBeTruthy();
     }
+  });
+
+  it("places each preset ERP and worker input once under its owning group", () => {
+    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
+    const erp = screen.getByRole("group", { name: "Per-run ERP" });
+    for (const label of ["ERP latency ms", "ERP max TPS", "ERP error rate", "ERP forced outage"]) {
+      expect(within(erp).getAllByLabelText(label)).toHaveLength(1);
+    }
+    const worker = screen.getByRole("group", { name: "Worker and backpressure" });
+    for (const label of ["Worker concurrency", "Persistence retry seconds"])
+      expect(within(worker).getAllByLabelText(label)).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: "Circuit protection" })).toBeNull();
   });
 
   it("keeps the runtime-policy and preset traffic radio groups independent", () => {

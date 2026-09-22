@@ -59,9 +59,11 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           <h2 className="m-0 break-words text-lg font-bold leading-tight text-ink">
             {summary.presetName}
           </h2>
-          <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
-            {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
-          </p>
+          {!summary.dataDiscarded ? (
+            <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
+              {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
+            </p>
+          ) : null}
           <time className="mt-1 block text-sm text-muted" dateTime={summary.occurredAt}>
             {formatInstantUtc(summary.occurredAt)}
             <RelativeTime instant={summary.occurredAt} />
@@ -92,40 +94,47 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
         </div>
       </div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-4">
-        <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
-        {summary.businessRejectedOrders === undefined ||
-        summary.technicallyFailedOrders === undefined ? (
-          <Fact label="Failed orders" value={number(summary.failedOrders)} />
-        ) : (
-          <>
-            <Fact label="Business-rejected orders" value={number(summary.businessRejectedOrders)} />
+      {!summary.dataDiscarded ? (
+        <>
+          <div className="mt-4 grid gap-4 sm:grid-cols-4">
+            <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
+            {summary.businessRejectedOrders === undefined ||
+            summary.technicallyFailedOrders === undefined ? (
+              <Fact label="Failed orders" value={number(summary.failedOrders)} />
+            ) : (
+              <>
+                <Fact
+                  label="Business-rejected orders"
+                  value={number(summary.businessRejectedOrders)}
+                />
+                <Fact
+                  label="Technically failed orders"
+                  value={number(summary.technicallyFailedOrders)}
+                />
+              </>
+            )}
             <Fact
-              label="Technically failed orders"
-              value={number(summary.technicallyFailedOrders)}
+              label="Overall duration"
+              value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
             />
-          </>
-        )}
-        <Fact
-          label="Overall duration"
-          value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
-        />
-      </div>
-      <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
-        <Fact
-          label={publicVocabulary.uniqueReservationsSecured}
-          value={number(summary.uniqueReservations)}
-        />
-        <Fact label="Sold-out rejections" value={number(summary.soldOutRejections)} />
-        <Fact
-          label="Convergence duration"
-          value={
-            summary.convergenceDurationSeconds === null
-              ? "not recorded"
-              : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
-          }
-        />
-      </div>
+          </div>
+          <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
+            <Fact
+              label={publicVocabulary.uniqueReservationsSecured}
+              value={number(summary.uniqueReservations)}
+            />
+            <Fact label="Sold-out rejections" value={number(summary.soldOutRejections)} />
+            <Fact
+              label="Convergence duration"
+              value={
+                summary.convergenceDurationSeconds === null
+                  ? "not recorded"
+                  : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
+              }
+            />
+          </div>
+        </>
+      ) : null}
     </article>
   );
 }

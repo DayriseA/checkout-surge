@@ -16,6 +16,43 @@ import type { RetainedTerminalRun } from "../src/app/lib/dashboard-projection-st
 import { deriveWatchComposition } from "../src/app/lib/presentation/watch-composition.js";
 
 describe("watch narrative", () => {
+  it.each([
+    "operator",
+    "automatic_reset",
+  ] as const)("keeps %s discarded live and retained runs neutral", (failureCategory) => {
+    const terminal = terminalProjection("failed");
+    if (terminal.currentRun?.status !== "failed") throw new Error("Expected failed run");
+    terminal.currentRun = { ...terminal.currentRun, failureCategory, dataDiscarded: true };
+    const retained = {
+      runId,
+      configSnapshot: terminal.currentRun.configSnapshot,
+      terminalRecap: terminal,
+    };
+    for (const html of [
+      markup(available(terminal)),
+      markup(available(projection(null)), retained),
+      dashboardMarkup(available(terminal)),
+    ]) {
+      expect(html).toContain("Cancelled");
+      expect(html).toContain(failureCategory === "automatic_reset" ? "an automatic" : "an admin");
+      expect(html).toContain(`/run-history/${runId}`);
+      for (const copy of [
+        "orders remain pending",
+        "Reconciliation warning",
+        "The run failed",
+        "Confirmed orders",
+      ])
+        expect(html).not.toContain(copy);
+    }
+    const successor = projection({
+      ...run("active"),
+      runId: "99999999-9999-4999-8999-999999999999",
+    });
+    const next = markup(available(successor), retained);
+    expect(next).toContain("The surge is under way");
+    expect(next).not.toContain("Cancelled");
+  });
+
   it("shows global operator recovery on fresh idle navigation without substituting previous history", () => {
     const output = markup(
       available({

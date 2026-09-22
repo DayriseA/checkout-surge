@@ -868,6 +868,9 @@ describe("run lifecycle contracts", () => {
 
     for (const snapshot of legalSnapshots) {
       expect(demoRunSnapshotSchema.safeParse(snapshot).success).toBe(true);
+      expect(demoRunSnapshotSchema.safeParse({ ...snapshot, dataDiscarded: true }).success).toBe(
+        snapshot.status === "failed",
+      );
     }
 
     const incoherentSnapshots = [
