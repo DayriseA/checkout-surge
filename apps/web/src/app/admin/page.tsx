@@ -25,13 +25,13 @@ export default async function AdminPage() {
     : null;
   return (
     <>
-      <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
-        <div>
-          <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Admin console</h1>
-          <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Protected operator controls and service state for supervised demo runs.
-          </p>
-        </div>
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
+        <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
+          Admin console
+        </h1>
+        <p className="m-0 max-w-[52ch] leading-6 text-muted">
+          Protected operator controls and service state for supervised demo runs.
+        </p>
       </header>
       {reads ? (
         <AdminAuthenticatedSurface

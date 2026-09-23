@@ -40,14 +40,14 @@ import {
 export type { RealtimeConnectionStatus } from "../lib/presentation/freshness";
 
 const panelClassName =
-  "min-w-0 rounded-lg border border-border bg-surface p-4 max-[900px]:col-span-full";
+  "min-w-0 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4 max-[900px]:col-span-full";
 const panelNarrowClassName = `${panelClassName} col-span-4`;
 /** Two half-width panels pair into one full row instead of orphaning a third of the grid. */
 const panelHalfClassName = `${panelClassName} col-span-6`;
 const panelWideClassName = `${panelClassName} col-span-8`;
 const panelFullClassName = `${panelClassName} col-span-12`;
 const panelHeaderClassName = "mb-4 flex items-start justify-between gap-3";
-const eyebrowClassName = "m-0 text-xs font-bold uppercase text-muted";
+const eyebrowClassName = "m-0 text-xs font-medium text-muted";
 const panelTitleClassName = "m-0 mt-1 text-base font-bold leading-tight text-ink";
 const emptyStateClassName = "m-0 leading-6 text-muted";
 const factGridClassName = "m-0 grid grid-cols-3 gap-3 max-[560px]:grid-cols-2";
@@ -57,7 +57,7 @@ const stackedFactGridClassName = "m-0 grid gap-3";
 const factItemClassName = "min-w-0";
 const leadSentenceClassName = "m-0 mb-1 text-base font-bold leading-6 text-ink";
 const leadDetailClassName = "m-0 mb-3 text-xs leading-5 text-muted";
-const factTermClassName = "mb-1 text-xs font-bold text-muted";
+const factTermClassName = "mb-0.5 text-xs font-medium text-muted";
 const factValueClassName = "m-0 [overflow-wrap:anywhere] text-base font-bold text-ink";
 const smallValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
 /** The unit tag carried by load-generator latency samples. */
@@ -300,7 +300,9 @@ export function RealtimeRecoveryNotice({
 }) {
   if (realtimeStatus !== "disconnected") return null;
   return (
-    <section className={`${className} rounded-lg border border-border bg-surface p-4`}>
+    <section
+      className={`${className} rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4`}
+    >
       {reconnectExhausted ? (
         <>
           <p className="m-0 leading-6 text-muted-strong">
@@ -708,9 +710,7 @@ export function SystemStatusPanel({ recovery }: { recovery: BackendRead<Dashboar
             <Fact label="Last updated" value={formatExpectedTime(queue.observedAt)} small />
           </dl>
           <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
-            <summary className="cursor-pointer font-semibold text-muted-strong">
-              Backlog details
-            </summary>
+            <summary className="disclosure font-semibold text-ink">Backlog details</summary>
             <dl className={factGridClassName}>
               <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
               <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />

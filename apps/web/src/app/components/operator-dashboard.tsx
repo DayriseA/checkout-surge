@@ -59,9 +59,9 @@ import { WatchSignalStrip } from "./watch-signal-strip";
 
 const actionClassName = `inline-flex items-center ${primaryButtonClassName}`;
 const secondaryActionClassName = `${neutralLinkButtonClassName} text-base`;
-const tileClassName = "min-w-0 rounded-lg border border-border bg-surface-muted p-2";
-const tileValueClassName = "m-0 text-2xl font-bold leading-tight text-ink";
-const tileLabelClassName = "m-0 text-xs font-bold text-muted";
+const tileClassName = "min-w-0 rounded-xl bg-surface-muted px-3.5 py-3";
+const tileValueClassName = "type-title m-0 text-[1.75rem] leading-none text-ink";
+const tileLabelClassName = "m-0 mt-1.5 text-xs font-medium text-muted";
 
 export function OperatorDashboard({
   acceptedResult,
@@ -262,7 +262,7 @@ export function WatchNarrative({
       );
     case "reset-recovery":
       return (
-        <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
+        <section className="col-span-12 rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
           <h2>Operator stop recovery</h2>
           <p>
             The operator stop decision is recorded. Work cleanup and history are incomplete, so this
@@ -274,7 +274,7 @@ export function WatchNarrative({
     case "checking":
     case "unavailable":
       return (
-        <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
+        <section className="col-span-12 rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
           <ErrorNotice
             context="watch-read"
             {...(onRetry ? { onRetry } : {})}
@@ -357,15 +357,15 @@ function RunCard({
   return (
     <section
       aria-label={terminal ? "Run conclusion" : undefined}
-      className="col-span-12 grid gap-2 rounded-lg border border-border bg-surface p-2"
+      className="col-span-12 grid gap-4 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
     >
       <IdentityLine composition={composition} sharedDemo={sharedDemo} />
       <div>
-        <p className="m-0 text-xs font-bold uppercase text-muted">
+        <p className="m-0 text-xs font-medium text-muted">
           {terminal ? "Final result" : "In progress"}
         </p>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h2 className="m-0 text-xl font-bold leading-tight text-ink">
+          <h2 className="type-title m-0 text-2xl leading-tight text-ink">
             {terminal ? summary?.title : runPhaseTitle(composition.phase)}
           </h2>
           <p className="m-0 text-sm leading-6 text-muted-strong">
@@ -491,8 +491,8 @@ function IdentityLine({
   const facts = deriveRunConfigFacts(composition.run.configSnapshot);
   const step = phaseSteps[composition.phase];
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-      <p className="m-0 text-sm font-semibold text-muted-strong">
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border pb-3">
+      <p className="m-0 text-sm font-semibold text-ink">
         {composition.run.presetName} · {facts.surgeValue}{" "}
         {facts.surgeLabel === "Buyers" ? "buyers" : "attempts"} · {facts.startingStock} units
         {sharedDemo ? " · Now running in the shared demo" : ""}
@@ -502,13 +502,20 @@ function IdentityLine({
           {phaseStepNames.map((name, index) => (
             <li className="flex items-center gap-1" key={name}>
               {index > 0 ? (
-                <span aria-hidden="true" className="text-muted">
-                  →
-                </span>
+                <span
+                  aria-hidden="true"
+                  className={`block h-px w-3 ${index <= step ? "bg-ink" : "bg-border"}`}
+                />
               ) : null}
               <span
                 aria-current={index === step ? "step" : undefined}
-                className={index === step ? "font-bold text-ink" : "text-muted"}
+                className={`rounded-full px-2 py-0.5 ${
+                  index === step
+                    ? "bg-ink font-semibold text-white"
+                    : index < step
+                      ? "font-medium text-ink"
+                      : "text-muted"
+                }`}
               >
                 {name}
               </span>
@@ -548,7 +555,7 @@ function CountsRow({
     confirmed <= progressDenominator;
   return (
     <div
-      className={`grid ${liveOutcome === undefined ? "grid-cols-4" : "grid-cols-5"} gap-3 max-[700px]:grid-cols-2`}
+      className={`grid ${liveOutcome === undefined ? "grid-cols-4" : "grid-cols-5"} gap-2 max-[700px]:grid-cols-2`}
     >
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(remainingStock)}</p>
@@ -563,7 +570,7 @@ function CountsRow({
         {progress ? (
           <meter
             aria-label={`${format(confirmed)} of ${format(progressDenominator)} orders confirmed`}
-            className="meter mt-2 block h-2 w-full rounded-full border-0 bg-surface"
+            className="meter mt-2.5 block h-1.5 w-full rounded-full border-0 bg-surface"
             max={progressDenominator}
             value={confirmed}
           />
@@ -667,7 +674,7 @@ function SyncNotice({
   return (
     <div
       aria-live="polite"
-      className="col-span-12 grid gap-1 rounded-lg border border-border bg-surface-muted p-3 leading-6 text-muted-strong"
+      className="col-span-12 grid gap-1 rounded-xl border border-border bg-surface-muted px-4 py-3 text-sm leading-6 text-muted-strong"
       data-sync-warning=""
       role="status"
     >
@@ -702,9 +709,9 @@ function SyncNotice({
 
 function InvalidAcceptedRunContext() {
   return (
-    <section className="col-span-12 rounded-lg border border-warning bg-warning-soft p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Saved run report</p>
-      <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+    <section className="col-span-12 rounded-2xl border border-warning-line bg-warning-soft p-5">
+      <p className="m-0 text-xs font-medium text-muted">Saved run report</p>
+      <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
         This Watch link is invalid
       </h2>
       <p className="m-0 mt-2 leading-6 text-muted-strong">
@@ -732,8 +739,8 @@ function CancelledResult({
   automatic: boolean;
 }) {
   return (
-    <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
-      <h2 className="m-0 text-xl font-bold text-ink">Cancelled</h2>
+    <section className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+      <h2 className="type-title m-0 text-xl text-ink">Cancelled</h2>
       <p>
         {presetName} · <code>{runId}</code>
       </p>
@@ -783,14 +790,14 @@ function AcceptedResultNarrative({
       : null;
   return (
     <section
-      className="col-span-12 rounded-lg border border-border bg-surface p-4"
+      className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       data-accepted-result=""
     >
-      <p className="m-0 text-xs font-bold uppercase text-muted">Your result</p>
+      <p className="m-0 text-xs font-medium text-muted">Your result</p>
       {summary && resultIdentity ? (
         <>
           <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h2 className="m-0 text-xl font-bold leading-tight text-ink">{summary.title}</h2>
+            <h2 className="type-title m-0 text-xl leading-tight text-ink">{summary.title}</h2>
             <p className="m-0 text-sm leading-6 text-muted-strong">{summary.sentence}</p>
           </div>
           <p className="m-0 mt-1 text-sm text-muted">{resultIdentity}</p>
@@ -800,7 +807,7 @@ function AcceptedResultNarrative({
           <PublicRunCaveatList caveats={summary.caveats} />
         </>
       ) : (
-        <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+        <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
           {result.status === "available" ? "Result available" : "Result being checked"}
         </h2>
       )}
@@ -830,9 +837,9 @@ function AcceptedResultNarrative({
 
 function IdleNarrative() {
   return (
-    <section className="col-span-12 rounded-lg border border-border bg-surface p-6">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Ready when you are</p>
-      <h2 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">Choose a simulation</h2>
+    <section className="col-span-12 rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
+      <p className="m-0 text-xs font-medium text-muted">Ready when you are</p>
+      <h2 className="type-title m-0 mt-0.5 text-2xl leading-tight text-ink">Choose a simulation</h2>
       <p className="m-0 mt-3 max-w-[66ch] leading-6 text-muted">
         Choose a flash-sale scenario, then return here to follow it from setup through the final
         result.
@@ -918,23 +925,23 @@ function TechnicalGroups({
     <div className="col-span-12" id="watch-advanced-scenario" tabIndex={-1}>
       <div className="grid grid-cols-12 gap-4">
         <ScenarioStrip configSnapshot={run.configSnapshot} />
-        <section className="col-span-12 rounded-lg border border-border bg-surface p-4">
-          <h2 className="m-0 text-base font-bold leading-tight text-ink">Run identity</h2>
+        <section className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+          <h2 className="type-title m-0 text-base leading-tight text-ink">Run identity</h2>
           <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
             <div className="min-w-0">
-              <dt className="mb-1 text-xs font-bold text-muted">Run UUID</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">Run UUID</dt>
               <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
                 <code>{run.runId}</code>
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="mb-1 text-xs font-bold text-muted">Started</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">Started</dt>
               <dd className="m-0 text-sm font-semibold text-ink">
                 {formatInstantUtc(run.startedAt) ?? "—"}
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="mb-1 text-xs font-bold text-muted">Finalized</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">Finalized</dt>
               <dd className="m-0 text-sm font-semibold text-ink">
                 {formatInstantUtc(run.finalizedAt) ?? "—"}
               </dd>
@@ -946,14 +953,14 @@ function TechnicalGroups({
   ) : null;
   return (
     <details
-      className="col-span-12 rounded-lg border border-border bg-surface"
+      className="col-span-12 rounded-2xl border border-border bg-surface-muted/60"
       open
       ref={detailsRef}
     >
-      <summary className="cursor-pointer rounded-lg px-4 py-3 font-bold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+      <summary className="disclosure type-title rounded-2xl px-5 py-3.5 text-base text-ink">
         Technical details
       </summary>
-      <div className="grid grid-cols-12 gap-4 border-t border-border p-4">
+      <div className="grid grid-cols-12 gap-4 border-t border-border p-4 max-[560px]:p-3">
         {runComposition && projection && run ? (
           livePhase ? (
             <>
@@ -966,8 +973,8 @@ function TechnicalGroups({
                   />
                 </div>
               </div>
-              <details className="col-span-12 rounded-lg border border-border bg-surface-muted p-4">
-                <summary className="cursor-pointer font-semibold text-muted-strong">
+              <details className="col-span-12 rounded-2xl border border-border bg-surface px-5 py-3.5">
+                <summary className="disclosure font-semibold text-ink">
                   Run context
                   <span className="ml-2 text-sm font-normal text-muted">
                     {runContextSummary(run)}

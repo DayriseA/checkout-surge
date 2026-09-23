@@ -14,12 +14,12 @@ export function ConfigGroup({
 }) {
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <h3 className="m-0 flex items-center gap-2 text-sm font-bold text-ink">
+      <h3 className="m-0 flex items-center gap-2 text-sm font-semibold text-ink">
         {title}
         {hint ? <FieldHint label={title} text={hint} /> : null}
       </h3>
       {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
-      <dl className="m-0 mt-3 grid gap-2">{children}</dl>
+      <dl className="m-0 mt-2 grid max-w-[30rem] gap-1.5">{children}</dl>
     </section>
   );
 }
@@ -39,7 +39,7 @@ export function FieldRow({
         {label}
         {hint ? <FieldHint label={label} text={hint} /> : null}
       </dt>
-      <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
+      <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-ink">
         {value}
       </dd>
     </div>

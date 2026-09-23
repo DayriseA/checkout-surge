@@ -77,7 +77,7 @@ export default async function RunHistoryDetailPage({
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
           </Link>
-          <h1 className="m-0 mt-4 text-4xl font-bold leading-tight text-ink">
+          <h1 className="type-display m-0 mt-4 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
             {summary.presetName}
           </h1>
           <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
@@ -158,7 +158,9 @@ export default async function RunHistoryDetailPage({
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
           </Link>
-          <h1 className="m-0 mt-4 text-4xl font-bold leading-tight text-ink">Run history detail</h1>
+          <h1 className="type-display m-0 mt-4 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
+            Run history detail
+          </h1>
           <p className="mt-3 max-w-[66ch] [overflow-wrap:anywhere] leading-6 text-muted">{runId}</p>
         </div>
         <StatusPill
@@ -168,8 +170,8 @@ export default async function RunHistoryDetailPage({
           }}
         />
       </header>
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Run history detail</p>
+      <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+        <p className="m-0 text-xs font-medium text-muted">Run history detail</p>
         <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Detail unavailable</h2>
         <ErrorNotice
           context={{ surface: "history-detail", protected: isAdmin }}
@@ -181,14 +183,14 @@ export default async function RunHistoryDetailPage({
   ) : (
     <>
       <header className="mb-4">
-        <h1 className="m-0 text-4xl font-bold leading-tight text-ink">
+        <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
           This report is not available
         </h1>
         <p className="mt-3 max-w-[66ch] leading-6 text-muted">
           We could not load a saved report from this link.
         </p>
       </header>
-      <section className="rounded-lg border border-border bg-surface p-4">
+      <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
         <ErrorNotice
           context={{ surface: "history-detail", protected: false }}
           protectedDetails={false}

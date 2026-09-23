@@ -20,11 +20,11 @@ export function RunDiagnostics({
         .length
     : 0;
   return (
-    <details className="rounded-lg border border-border bg-surface">
-      <summary className="cursor-pointer px-4 py-3">
-        <h2 className="m-0 inline text-base font-bold text-ink">Generator diagnostics</h2>
+    <details className="rounded-2xl border border-border bg-surface">
+      <summary className="disclosure flex-wrap px-5 py-3.5">
+        <h2 className="type-title m-0 inline text-base text-ink">Generator diagnostics</h2>
         <span
-          className={`ml-3 text-xs font-bold uppercase ${warningCount > 0 ? "text-warning" : "text-muted"}`}
+          className={`text-xs font-semibold ${warningCount > 0 ? "text-warning" : "text-muted"}`}
         >
           {formatNumber(warningCount)} warnings ·{" "}
           {formatNumber(summary?.stderrLineCountRetained ?? 0)} stderr retained ·{" "}

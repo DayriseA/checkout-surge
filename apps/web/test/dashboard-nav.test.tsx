@@ -32,16 +32,15 @@ describe("DashboardNav", () => {
       .filter((link) => link.getAttribute("aria-current") === "page");
     expect(currentLinks).toHaveLength(1);
     expect(currentLinks[0]?.textContent).toBe(expectedName);
-    expect(currentLinks[0]?.classList.contains("bg-surface-muted")).toBe(true);
-    expect(currentLinks[0]?.classList.contains("text-ink")).toBe(true);
-    expect(currentLinks[0]?.classList.contains("text-muted-strong")).toBe(false);
-    expect(currentLinks[0]?.classList.contains("underline")).toBe(true);
-    expect(currentLinks[0]?.classList.contains("underline-offset-4")).toBe(true);
+    expect(currentLinks[0]?.classList.contains("text-white")).toBe(true);
+    expect(currentLinks[0]?.classList.contains("after:bg-signal")).toBe(true);
+    expect(currentLinks[0]?.classList.contains("text-white/70")).toBe(false);
+    expect(currentLinks[0]?.classList.contains("max-[900px]:bg-surface-muted")).toBe(true);
 
     for (const link of navigation.querySelectorAll("a:not([aria-current])")) {
-      expect(link.classList.contains("text-muted-strong")).toBe(true);
-      expect(link.classList.contains("text-ink")).toBe(false);
-      expect(link.classList.contains("underline")).toBe(false);
+      expect(link.classList.contains("text-white/70")).toBe(true);
+      expect(link.classList.contains("text-white")).toBe(false);
+      expect(link.classList.contains("after:bg-signal")).toBe(false);
     }
   });
 
@@ -52,7 +51,7 @@ describe("DashboardNav", () => {
     const toggle = screen.getByRole("button", { name: "Menu" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(toggle.classList).toContain("min-h-11");
-    expect(toggle.classList).toContain("border-control-border");
+    expect(toggle.classList).toContain("border-white/30");
 
     toggle.focus();
     await user.keyboard("{Enter}");

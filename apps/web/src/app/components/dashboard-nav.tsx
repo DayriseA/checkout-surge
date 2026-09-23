@@ -14,7 +14,10 @@ const dashboardNavItems = [
 ] as const;
 
 const linkClassName =
-  "inline-flex min-h-11 items-center rounded-lg px-2.5 py-2 text-sm font-semibold hover:bg-surface-muted hover:text-ink";
+  "relative inline-flex min-h-11 items-center rounded-md px-3 py-2 text-sm font-medium transition-colors min-[901px]:hover:text-white max-[900px]:hover:bg-surface-muted";
+const currentLinkClassName =
+  "text-white after:absolute after:inset-x-3 after:-bottom-[7px] after:h-[3px] after:rounded-full after:bg-signal max-[900px]:bg-surface-muted max-[900px]:text-ink max-[900px]:after:inset-x-auto max-[900px]:after:inset-y-2 max-[900px]:after:left-0 max-[900px]:after:h-auto max-[900px]:after:w-[3px]";
+const otherLinkClassName = "text-white/70 max-[900px]:text-muted-strong";
 
 function isCurrentRoute(pathname: string, href: string) {
   return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
@@ -56,13 +59,13 @@ export function DashboardNav({ children }: { children: ReactNode }) {
   return (
     <nav
       aria-label="Dashboard routes"
-      className="relative flex items-center justify-end gap-1 max-[420px]:w-full"
+      className="relative flex items-center justify-end gap-1"
       ref={navigationRef}
     >
       <button
         aria-controls="dashboard-navigation-panel"
         aria-expanded={open}
-        className="hidden min-h-11 rounded-lg border border-control-border bg-surface px-3.5 py-2.5 text-sm font-semibold text-ink max-[900px]:block"
+        className="hidden min-h-11 rounded-lg border border-white/30 px-3.5 py-2 text-sm font-semibold text-white hover:bg-reservoir-raised focus-visible:outline-signal max-[900px]:block"
         onClick={() => setOpen((current) => !current)}
         ref={toggleRef}
         type="button"
@@ -70,7 +73,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
         Menu
       </button>
       <div
-        className={`flex flex-wrap justify-end gap-1 max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-20 max-[900px]:mt-2 max-[900px]:min-w-52 max-[900px]:flex-col max-[900px]:flex-nowrap max-[900px]:items-stretch max-[900px]:justify-start max-[900px]:max-h-[calc(100dvh-5rem)] max-[900px]:overflow-y-auto max-[900px]:rounded-lg max-[900px]:border max-[900px]:border-border max-[900px]:bg-surface max-[900px]:p-2 max-[900px]:shadow-lg ${
+        className={`flex flex-wrap items-center justify-end gap-0.5 max-[900px]:absolute max-[900px]:right-0 max-[900px]:top-full max-[900px]:z-20 max-[900px]:mt-2 max-[900px]:min-w-52 max-[900px]:flex-col max-[900px]:flex-nowrap max-[900px]:items-stretch max-[900px]:justify-start max-[900px]:max-h-[calc(100dvh-5rem)] max-[900px]:overflow-y-auto max-[900px]:rounded-lg max-[900px]:border max-[900px]:border-border max-[900px]:bg-surface max-[900px]:p-2 max-[900px]:shadow-[0_18px_40px_-12px_rgb(13_27_42/0.35)] ${
           open ? "max-[900px]:flex" : "max-[900px]:hidden"
         }`}
         id="dashboard-navigation-panel"
@@ -80,7 +83,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
           return (
             <Link
               aria-current={isCurrent ? "page" : undefined}
-              className={`${linkClassName} ${isCurrent ? "bg-surface-muted text-ink underline underline-offset-4" : "text-muted-strong"}`}
+              className={`${linkClassName} ${isCurrent ? currentLinkClassName : otherLinkClassName}`}
               href={item.href}
               key={item.href}
             >
@@ -89,7 +92,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
           );
         })}
         <a
-          className={`${linkClassName} text-muted-strong`}
+          className={`${linkClassName} ${otherLinkClassName}`}
           href={publicNarrative.repositoryUrl}
           rel="noopener noreferrer"
           target="_blank"

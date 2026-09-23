@@ -7,7 +7,8 @@ import {
   runResultOutcomeTone,
 } from "../lib/presentation/public-vocabulary";
 import { formatRunCount } from "../lib/presentation/run-history-count";
-import { neutralLinkButtonClassName } from "./control-styles";
+import type { PresentationTone } from "../lib/presentation/run-presentation-state";
+import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-styles";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
 import { RunHistoryRowControls } from "./run-history-row-controls";
@@ -18,13 +19,13 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
     return history.totalCount > 0 ? (
       <OutOfRangePageState history={history} />
     ) : (
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">No runs yet</h2>
+      <section className="rounded-2xl border border-border bg-surface p-6">
+        <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
+        <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">No runs yet</h2>
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
           Finished runs appear here after their final evidence is recorded.
         </p>
-        <Link className={`${neutralLinkButtonClassName} mt-3`} href="/demo">
+        <Link className={`${primaryButtonClassName} mt-4`} href="/demo">
           Start a simulation
         </Link>
       </section>
@@ -33,9 +34,9 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
 
   const hasMultiplePages = history.totalCount > history.pageSize;
   return (
-    <div className="grid gap-3">
-      <div className="rounded-lg border border-border bg-surface p-4">
-        <p className="m-0 text-sm leading-6 text-muted">
+    <div className="grid gap-2">
+      <div className="px-1 pb-1">
+        <p className="m-0 max-w-[90ch] text-sm leading-6 text-muted">
           Convergence measures from the end of traffic dispatch until every reserved order reached a
           confirmed or failed outcome. Overall duration covers the entire run.
         </p>
@@ -51,26 +52,39 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
   );
 }
 
+const resultStripeClassNames: Record<PresentationTone, string> = {
+  danger: "before:bg-danger",
+  idle: "before:bg-control-border",
+  ok: "before:bg-ok",
+  progress: "before:bg-info",
+  warning: "before:bg-signal",
+};
+
 function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
+  const tone = summary.dataDiscarded ? "idle" : runResultOutcomeTone(summary.resultOutcome);
   return (
-    <article className="rounded-lg border border-border bg-surface p-4">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+    <article
+      className={`relative overflow-hidden rounded-xl border border-border bg-surface py-3.5 pl-6 pr-4 before:absolute before:inset-y-0 before:left-0 before:w-1 ${resultStripeClassNames[tone]}`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 basis-full flex-1 sm:basis-auto">
-          <h2 className="m-0 break-words text-lg font-bold leading-tight text-ink">
+          <h2 className="type-title m-0 break-words text-base leading-tight text-ink">
             {summary.presetName}
           </h2>
-          {!summary.dataDiscarded ? (
-            <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
-              {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
-            </p>
-          ) : null}
-          <time className="mt-1 block text-sm text-muted" dateTime={summary.occurredAt}>
-            {formatInstantUtc(summary.occurredAt)}
-            <RelativeTime instant={summary.occurredAt} />
-          </time>
+          <p className="m-0 mt-0.5 flex flex-wrap gap-x-3 text-sm text-muted">
+            {!summary.dataDiscarded ? (
+              <span className="font-medium text-muted-strong">
+                {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
+              </span>
+            ) : null}
+            <time dateTime={summary.occurredAt}>
+              {formatInstantUtc(summary.occurredAt)}
+              <RelativeTime instant={summary.occurredAt} />
+            </time>
+          </p>
         </div>
         <div className="min-w-0 break-words">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Result</p>
+          <p className="sr-only">Result</p>
           <StatusPill
             status={
               summary.dataDiscarded
@@ -95,8 +109,8 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         </div>
       </div>
       {!summary.dataDiscarded ? (
-        <>
-          <div className="mt-4 grid gap-4 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-x-5 gap-y-3 border-t border-border pt-3">
+          <div className="contents">
             <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
             {summary.businessRejectedOrders === undefined ||
             summary.technicallyFailedOrders === undefined ? (
@@ -118,7 +132,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
               value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
             />
           </div>
-          <div className="mt-4 grid gap-4 border-t border-border pt-4 sm:grid-cols-3">
+          <div className="contents">
             <Fact
               label={publicVocabulary.uniqueReservationsSecured}
               value={number(summary.uniqueReservations)}
@@ -133,7 +147,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
               }
             />
           </div>
-        </>
+        </div>
       ) : null}
     </article>
   );
@@ -142,17 +156,17 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <p className="m-0 text-xs font-bold uppercase text-muted">{label}</p>
-      <p className="m-0 mt-1 text-sm font-semibold text-ink">{value}</p>
+      <p className="m-0 text-xs text-muted">{label}</p>
+      <p className="m-0 mt-0.5 text-sm font-semibold text-ink">{value}</p>
     </div>
   );
 }
 
 function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4">
-      <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
-      <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+    <section className="rounded-2xl border border-border bg-surface p-6">
+      <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
+      <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
         Page {history.page} does not exist
       </h2>
       <p className="m-0 mt-3 text-sm text-muted">
@@ -170,10 +184,7 @@ function PaginationControls({ history }: { history: RunHistoryListResponse }) {
   const hasPrevious = history.page > 1;
   const hasNext = history.page * history.pageSize < history.totalCount;
   return (
-    <nav
-      aria-label="Run history pages"
-      className="ml-auto flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-3"
-    >
+    <nav aria-label="Run history pages" className="ml-auto flex flex-wrap items-center gap-3">
       <p className="m-0 text-sm font-semibold text-muted-strong">
         Page {history.page} · {formatRunCount(history.totalCount)}
       </p>

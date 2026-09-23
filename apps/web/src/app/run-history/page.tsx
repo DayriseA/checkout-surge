@@ -30,10 +30,12 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
       : "unavailable";
   return (
     <>
-      <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
-        <div>
-          <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Run history</h1>
-          <p className="mt-3 max-w-[66ch] leading-6 text-muted">
+      <header className="mb-5 grid grid-cols-[1fr_auto] items-end gap-x-8 gap-y-3 max-[900px]:grid-cols-1 max-[900px]:items-start">
+        <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
+          <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
+            Run history
+          </h1>
+          <p className="m-0 max-w-[60ch] leading-6 text-muted">
             See which simulation ran, when it ran, and what happened, with one saved report for each
             run.
           </p>
@@ -48,9 +50,9 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
       {history.status === "available" ? (
         <HistorySurface authenticated={authenticated} history={history.data} />
       ) : (
-        <section className="rounded-lg border border-border bg-surface p-4">
-          <p className="m-0 text-xs font-bold uppercase text-muted">Finished runs</p>
-          <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+        <section className="rounded-2xl border border-border bg-surface p-6">
+          <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
+          <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
             History unavailable
           </h2>
           <ErrorNotice

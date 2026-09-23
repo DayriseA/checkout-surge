@@ -5,7 +5,11 @@ import {
 } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { neutralLinkButtonClassName, primaryButtonClassName } from "./components/control-styles";
+import {
+  neutralLinkButtonClassName,
+  primaryButtonClassName,
+  textLinkClassName,
+} from "./components/control-styles";
 import { publicNarrative, publicVocabulary } from "./lib/presentation/public-vocabulary";
 
 export const metadata: Metadata = {
@@ -13,54 +17,137 @@ export const metadata: Metadata = {
 };
 export const dynamic = "force-dynamic";
 
-const sectionClassName = "mt-4 rounded-lg border border-border bg-surface p-5";
-const termLinkClassName = "font-semibold text-accent underline";
+const sectionClassName =
+  "scroll-mt-24 border-t border-border py-8 first:border-t-0 first:pt-0 max-[560px]:py-6";
+const headingClassName = "type-title m-0 text-2xl leading-tight text-ink";
+const proseClassName = "mt-3 max-w-[68ch] text-base leading-7 text-muted-strong";
+const termLinkClassName = textLinkClassName;
 const occupancyCeilingMinutes = estimatedDemoOccupancyCeilingSeconds / 60;
 const graceNoticeMinutes = automaticRunResetGraceNoticeSeconds / 60;
 const automaticResetMinutes = automaticRunResetDeadlineSeconds / 60;
 
+const contents = [
+  ["failure-story", "The failure story"],
+  ["redis-fast-path", "Atomic scarcity"],
+  ["queue-protection", "Protecting the ERP"],
+  ["real-and-simulated", "Real and simulated"],
+  ["gold-signals", "Four signals"],
+  ["run-finish", "How a run finishes"],
+  ["success", "What success means"],
+  ["run-reset", "Admission and reset"],
+  ["limits-and-source", "Limits"],
+  ["glossary", "Glossary"],
+] as const;
+
 export default function OverviewPage() {
   return (
     <>
-      <header className="rounded-lg border border-border bg-surface p-8 max-[560px]:p-5">
-        <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Checkout-Surge</h1>
-        <p className="mt-3 max-w-[66ch] text-lg leading-7 text-muted-strong">
-          A flash-sale checkout that sells limited stock to a surge of buyers without overselling,
-          while protecting a deliberately slow back-office system.
-        </p>
-        <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-          Start a simulated sale on a real API, Redis, PostgreSQL, and BullMQ stack and watch it
-          unfold live, or read on for how it works.
-        </p>
-        <div className="mt-5 flex flex-wrap gap-3">
-          <TryDemoLink />
-          <a className={`${neutralLinkButtonClassName} text-base`} href="#failure-story">
-            How it works
-          </a>
+      <header className="grid gap-8 pb-10 pt-6 max-[560px]:pb-8 max-[560px]:pt-2">
+        <SurgeBand />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-10 gap-y-6 max-[900px]:grid-cols-1">
+          <div>
+            <h1 className="type-display m-0 text-[clamp(2.75rem,7.5vw,5.75rem)] leading-[0.92] text-ink">
+              Checkout-Surge
+            </h1>
+            <p className="m-0 mt-5 max-w-[46ch] text-xl leading-8 text-ink max-[560px]:text-lg max-[560px]:leading-7">
+              A flash-sale checkout that sells limited stock to a surge of buyers without
+              overselling, while protecting a deliberately slow back-office system.
+            </p>
+            <p className="m-0 mt-3 max-w-[60ch] leading-6 text-muted">
+              Start a simulated sale on a real API, Redis, PostgreSQL, and BullMQ stack and watch it
+              unfold live, or read on for how it works.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <TryDemoLink />
+            <a className={`${neutralLinkButtonClassName} text-base`} href="#failure-story">
+              How it works
+            </a>
+          </div>
         </div>
       </header>
-      <TechnicalAbout />
+      <div className="grid grid-cols-[13rem_minmax(0,1fr)] items-start gap-10 rounded-2xl border border-border bg-surface px-10 py-10 max-[900px]:grid-cols-1 max-[900px]:gap-6 max-[900px]:px-6 max-[900px]:py-8 max-[560px]:px-4">
+        <nav
+          aria-label="On this page"
+          className="sticky top-24 grid gap-0.5 text-sm max-[900px]:hidden"
+        >
+          <p className="m-0 mb-2 text-sm font-semibold text-ink">On this page</p>
+          {contents.map(([id, label]) => (
+            <a
+              className="rounded-md border-l-2 border-border py-1 pl-3 text-muted hover:border-accent hover:text-ink"
+              href={`#${id}`}
+              key={id}
+            >
+              {label}
+            </a>
+          ))}
+        </nav>
+        <div className="min-w-0">
+          <TechnicalAbout />
+        </div>
+      </div>
       <section
         aria-labelledby="try-demo-heading"
-        className={`${sectionClassName} flex flex-wrap items-center justify-between gap-4`}
+        className="mt-6 flex flex-wrap items-center justify-between gap-5 rounded-2xl bg-reservoir px-10 py-8 text-white max-[900px]:px-6 max-[560px]:px-4"
       >
         <div>
-          <h2 className="m-0 text-xl font-bold text-ink" id="try-demo-heading">
+          <h2 className="type-title m-0 text-2xl text-white" id="try-demo-heading">
             See it under load
           </h2>
-          <p className="mt-2 leading-7 text-muted-strong">
+          <p className="m-0 mt-1 leading-7 text-white/75">
             Choose a simulation, start it, and watch a simulated flash sale unfold.
           </p>
         </div>
-        <TryDemoLink />
+        <TryDemoLink onDark />
       </section>
     </>
   );
 }
 
-function TryDemoLink() {
+/**
+ * The hero's signature: a dense, uneven surge of arrivals meets one gate and leaves as an evenly
+ * spaced line, the same shape as the brand mark. Decorative only.
+ */
+function SurgeBand() {
+  const arrivalCount = 56;
+  const arrivals = Array.from({ length: arrivalCount }, (_, index) => {
+    const progress = index / (arrivalCount - 1);
+    const jitter = 0.55 + 0.45 * Math.abs(Math.sin(index * 2.3));
+    return { height: 10 + 90 * progress ** 1.3 * jitter, opacity: 0.2 + progress * 0.7 };
+  });
   return (
-    <Link className={`inline-flex items-center ${primaryButtonClassName}`} href="/demo">
+    <div aria-hidden="true" className="flex h-16 items-center gap-4 max-[560px]:h-12">
+      <div className="flex h-full flex-[3] items-center justify-between">
+        {arrivals.map((arrival, index) => (
+          <span
+            className="block w-[3px] rounded-full bg-ink max-[560px]:w-[2px]"
+            // biome-ignore lint/suspicious/noArrayIndexKey: A fixed decorative sequence.
+            key={index}
+            style={{ height: `${arrival.height}%`, opacity: arrival.opacity }}
+          />
+        ))}
+      </div>
+      <span className="block h-full w-2.5 shrink-0 rounded-sm bg-signal" />
+      <div className="flex h-full flex-[2] items-center justify-between pl-1">
+        {Array.from({ length: 12 }, (_, index) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: A fixed decorative sequence.
+          <span className="block size-1.5 rounded-full bg-ink" key={index} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TryDemoLink({ onDark = false }: { onDark?: boolean }) {
+  return (
+    <Link
+      className={
+        onDark
+          ? "inline-flex min-h-11 items-center rounded-lg bg-signal px-5 py-2 text-base font-semibold text-ink transition-colors hover:bg-[#ffc94d] focus-visible:outline-signal"
+          : `${primaryButtonClassName} px-5 text-base`
+      }
+      href="/demo"
+    >
       Try the demo
     </Link>
   );
@@ -70,8 +157,8 @@ function TechnicalAbout() {
   return (
     <>
       <section className={sectionClassName} id="failure-story" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">The flash-sale failure story</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>The flash-sale failure story</h2>
+        <p className={proseClassName}>
           Simulated buyers arrive together and compete for fewer units than they want. If every
           checkout waits for a slower back-office system before deciding who gets stock, requests
           pile up, buyers retry, and separate decisions can oversell the same inventory. The safe
@@ -80,8 +167,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="redis-fast-path" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">Redis makes the atomic scarcity decision</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>Redis makes the atomic scarcity decision</h2>
+        <p className={proseClassName}>
           The API asks Redis to reserve each unit immediately in one atomic operation. Competing
           attempts therefore cannot spend the same unit, while PostgreSQL remains the durable record
           for reservations, orders, attempts, and final outcomes. Putting the initial stock decision
@@ -92,8 +179,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="queue-protection" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">The queue protects the simulated ERP</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>The queue protects the simulated ERP</h2>
+        <p className={proseClassName}>
           Orders for unique reservations enter a BullMQ queue. Workers take that{" "}
           <a className={termLinkClassName} href="#backpressure">
             backlog
@@ -110,14 +197,14 @@ function TechnicalAbout() {
           </a>
           , which discards the whole run.
         </p>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <p className={proseClassName}>
           The worker is configured with the ERP’s declared capacity, as is common with mainstream
           ERP and SaaS APIs that publish their limits. When a downstream limit is unknown or
           variable, an adaptive client-side limiter, such as the adaptive retry mode of the AWS
           SDKs, is the appropriate technique. This demo deliberately shows the common case of a
           known limit.
         </p>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <p className={proseClassName}>
           An ERP call can also end without a usable answer, such as a timeout. The worker never
           retries such an{" "}
           <a className={termLinkClassName} href="#uncertain-result">
@@ -130,18 +217,24 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="real-and-simulated" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">What is real and what is simulated</h2>
-        <div className="mt-3 grid grid-cols-2 gap-4 max-[700px]:grid-cols-1">
-          <div>
-            <h3 className="m-0 text-base font-bold text-ink">Real demo components</h3>
-            <p className="mt-2 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>What is real and what is simulated</h2>
+        <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border max-[700px]:grid-cols-1">
+          <div className="bg-surface p-5">
+            <h3 className="m-0 flex items-center gap-2 text-base font-bold text-ink">
+              <span aria-hidden="true" className="size-2.5 rounded-full bg-ok" />
+              Real demo components
+            </h3>
+            <p className="mb-0 mt-2 leading-7 text-muted-strong">
               A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime execute the
               reservation, durable-record, and background-processing paths.
             </p>
           </div>
-          <div>
-            <h3 className="m-0 text-base font-bold text-ink">Simulated business activity</h3>
-            <p className="mt-2 leading-7 text-muted-strong">
+          <div className="bg-surface p-5">
+            <h3 className="m-0 flex items-center gap-2 text-base font-bold text-ink">
+              <span aria-hidden="true" className="size-2.5 rounded-full bg-signal" />
+              Simulated business activity
+            </h3>
+            <p className="mb-0 mt-2 leading-7 text-muted-strong">
               The buyers are simulated by the load generator (k6). Legacy-ERP delay, capacity,
               failures, and outages are simulated, and post-confirmation notifications are{" "}
               {publicVocabulary.notifications}. There is no production external ERP or notification
@@ -152,8 +245,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="gold-signals" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">Four signals tell one causal story</h2>
-        <ol className="mt-3 grid gap-3 pl-5 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>Four signals tell one causal story</h2>
+        <ol className="mt-4 grid max-w-[68ch] list-none gap-4 p-0 leading-7 text-muted-strong [counter-reset:signal] [&>li]:relative [&>li]:pl-10 [&>li]:[counter-increment:signal] [&>li]:before:absolute [&>li]:before:left-0 [&>li]:before:top-0.5 [&>li]:before:grid [&>li]:before:size-7 [&>li]:before:place-items-center [&>li]:before:rounded-full [&>li]:before:bg-ink [&>li]:before:text-xs [&>li]:before:font-bold [&>li]:before:text-white [&>li]:before:content-[counter(signal)]">
           <li>
             <strong className="text-ink">Request arrival</strong> shows checkout attempts starting
             at the load generator, so the opening surge is visible rather than inferred from
@@ -177,8 +270,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="run-finish" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">How a run finishes</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>How a run finishes</h2>
+        <p className={proseClassName}>
           Once the load generator has sent its last attempt, the run enters a finishing phase and
           stops accepting new traffic. An empty queue is not the end. The run completes only when
           nothing is queued, processing, or waiting to retry, every uncertain ERP call has been
@@ -189,8 +282,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="success" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">What success means</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>What success means</h2>
+        <p className={proseClassName}>
           Every unique reservation must first reach a durable confirmed or failed order outcome. A
           run completes successfully only when the finishing phase has settled every remaining
           obligation and oversold units and failed or pending orders are all zero. Accepted
@@ -204,8 +297,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="run-reset" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">Admission, grace period, and reset</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>Admission, grace period, and reset</h2>
+        <p className={proseClassName}>
           Before a run starts, the API estimates how long the chosen configuration would occupy the
           demo and rejects it when that conservative estimate exceeds the demo limit of at most{" "}
           {occupancyCeilingMinutes} minutes. The estimate serves admission only: an accepted run
@@ -219,8 +312,8 @@ function TechnicalAbout() {
       </section>
 
       <section className={sectionClassName} id="limits-and-source" tabIndex={-1}>
-        <h2 className="m-0 text-xl font-bold text-ink">Results are environment-dependent</h2>
-        <p className="mt-3 leading-7 text-muted-strong">
+        <h2 className={headingClassName}>Results are environment-dependent</h2>
+        <p className={proseClassName}>
           Throughput and timing depend on the host, available resources, configuration, and
           competing processes. A local or containerized result is not universal production evidence,
           a hosted benchmark, or a production-readiness claim.
@@ -236,7 +329,7 @@ function TechnicalAbout() {
 function RepositoryLink() {
   return (
     <a
-      className="mt-3 inline-block font-semibold text-accent underline"
+      className={`mt-3 inline-block ${textLinkClassName}`}
       href={publicNarrative.repositoryUrl}
       rel="noopener noreferrer"
       target="_blank"
@@ -249,8 +342,10 @@ function RepositoryLink() {
 
 function ArchitectureDiagram() {
   return (
-    <figure className="m-0 mt-5">
-      <p className="m-0 mb-2 text-sm text-muted">Architecture diagram scrolls sideways.</p>
+    <figure className="m-0 mt-6 rounded-xl border border-border bg-surface-muted p-5 max-[560px]:p-3">
+      <p className="m-0 mb-2 text-sm text-muted min-[1100px]:sr-only">
+        Architecture diagram scrolls sideways.
+      </p>
       <section
         aria-label="Scrollable architecture diagram"
         className="overflow-x-auto"
@@ -259,7 +354,7 @@ function ArchitectureDiagram() {
       >
         <svg
           aria-labelledby="architecture-diagram-title architecture-diagram-description"
-          className="h-auto min-w-[900px] w-full"
+          className="h-auto min-w-[900px] w-full text-ink"
           role="img"
           viewBox="0 0 980 210"
         >
@@ -281,7 +376,7 @@ function ArchitectureDiagram() {
               <path d="M0 0 8 4 0 8z" fill="currentColor" />
             </marker>
           </defs>
-          <g fill="none" markerEnd="url(#architecture-arrow)" stroke="currentColor" strokeWidth="3">
+          <g fill="none" markerEnd="url(#architecture-arrow)" stroke="currentColor" strokeWidth="2">
             <path d="M130 65h40" />
             <path d="M290 65h40" />
             <path d="M450 65v80h40" />
@@ -319,20 +414,29 @@ function DiagramNode({
 }) {
   const fill =
     tone === "fast"
-      ? "var(--color-accent-soft)"
+      ? "var(--color-signal)"
       : tone === "slow"
-        ? "var(--color-warning-soft)"
+        ? "var(--color-signal-soft)"
         : tone === "durable"
-          ? "var(--color-info-soft)"
-          : "var(--color-surface-muted)";
+          ? "var(--color-accent-soft)"
+          : "var(--color-surface)";
 
   return (
     <g>
-      <rect fill={fill} height="60" rx="10" stroke="currentColor" width="120" x={x} y={y} />
+      <rect
+        fill={fill}
+        height="60"
+        rx="8"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        width="120"
+        x={x}
+        y={y}
+      />
       <text
         fill="currentColor"
         fontSize="13"
-        fontWeight="700"
+        fontWeight="650"
         textAnchor="middle"
         x={x + 60}
         y={y + 35}
@@ -415,14 +519,14 @@ function PublicGlossary() {
       id="glossary"
       tabIndex={-1}
     >
-      <h2 className="m-0 text-xl font-bold text-ink" id="glossary-heading">
+      <h2 className={headingClassName} id="glossary-heading">
         Glossary
       </h2>
-      <dl className="mt-3 grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
+      <dl className="mb-0 mt-4 grid grid-cols-2 gap-x-10 max-[700px]:grid-cols-1">
         {terms.map(([id, term, definition]) => (
-          <div className="rounded-lg bg-surface-muted p-3" id={id} key={id} tabIndex={-1}>
+          <div className="scroll-mt-24 border-t border-border py-3" id={id} key={id} tabIndex={-1}>
             <dt className="font-bold text-ink">{term}</dt>
-            <dd className="m-0 mt-1 leading-6 text-muted-strong">{definition}</dd>
+            <dd className="m-0 mt-1 text-sm leading-6 text-muted-strong">{definition}</dd>
           </div>
         ))}
       </dl>

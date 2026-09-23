@@ -33,7 +33,7 @@ export function RunFailureExplanation({
       : null;
   return (
     <section className="mt-3 text-sm leading-6 text-muted-strong" aria-label="Failure explanation">
-      <h2 className="m-0 text-xl font-bold leading-tight text-ink">
+      <h2 className="type-title m-0 text-xl leading-tight text-ink">
         {known ? "Virtual user limit reached" : "Traffic failed — exact cause not identified"}
       </h2>
       <p className="m-0 mt-2">
@@ -68,11 +68,11 @@ export function RunFailureExplanation({
         </p>
       ) : null}
       {settled ? (
-        <p className="m-0 mt-3 rounded border border-border bg-surface-muted p-3 font-semibold text-ink">
+        <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3 font-semibold text-ink">
           All {formatCount(business.confirmedOrders)} accepted orders were confirmed and notified.
         </p>
       ) : (
-        <p className="m-0 mt-3 rounded border border-border bg-surface-muted p-3">
+        <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3">
           Business outcomes: {formatCount(business.confirmedOrders)} orders confirmed,{" "}
           {formatCount(business.failedOrders)} failed,{" "}
           {formatCount(business.queuedOrders + business.processingOrders)} pending;{" "}
@@ -94,7 +94,7 @@ export function RunFailureExplanation({
           : "Review the recorded traffic measurements and generator diagnostics before retrying. The report does not establish which setting or component caused the failure."}
       </p>
       <details className="mt-3 border-t border-border pt-2">
-        <summary className="cursor-pointer font-semibold text-ink">Why this diagnosis?</summary>
+        <summary className="disclosure font-semibold text-ink">Why this diagnosis?</summary>
         <p className="m-0 mt-2">
           {known
             ? "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays."
@@ -129,7 +129,7 @@ export function RunFailureExplanation({
         ) : null}
       </details>
       <details className="mt-2 border-t border-border pt-2">
-        <summary className="cursor-pointer font-semibold text-ink">Measurement coverage</summary>
+        <summary className="disclosure font-semibold text-ink">Measurement coverage</summary>
         <p className="m-0 mt-2">
           {formatCount(counts.unstartedRequests)} planned requests were never sent;{" "}
           {formatCount(counts.interruptedRequests)} launched requests did not complete. Outcomes and

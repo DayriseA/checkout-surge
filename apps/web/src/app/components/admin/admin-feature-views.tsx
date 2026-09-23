@@ -29,14 +29,32 @@ import { formatCount } from "../../lib/presentation/format";
 import { ratioToPercent } from "../../lib/presentation/percent";
 import { trafficModeLabel } from "../../lib/presentation/public-vocabulary";
 import { ConfigGroup, FieldRow } from "../config-presentation";
-import { buttonClassName, inputClassName, primaryButtonClassName } from "../control-styles";
+import {
+  buttonClassName,
+  fieldHelpClassName,
+  fieldLabelClassName,
+  inputClassName,
+  panelClassName,
+  primaryButtonClassName,
+  settingsFieldsetClassName,
+  settingsLegendClassName,
+} from "../control-styles";
 import { ErrorNotice } from "../error-notice";
 import { FieldHint } from "../field-hint";
 import { StatusPill } from "../status-pill";
 import { AdminNoticeView } from "./admin-notice";
 
-export const panelClassName = "min-w-0 self-start rounded-lg border border-border bg-surface p-4";
-export { buttonClassName, primaryButtonClassName };
+export { buttonClassName, panelClassName, primaryButtonClassName };
+
+export const eyebrowClassName = "m-0 text-xs font-medium text-muted";
+export const panelTitleClassName =
+  "type-title m-0 mt-0.5 flex items-center gap-2 text-lg leading-tight text-ink";
+const fieldGridClassName =
+  "grid grid-cols-[repeat(auto-fill,minmax(min(100%,12.5rem),1fr))] items-start gap-3";
+const presetListButtonClassName =
+  "flex min-h-10 w-full items-center rounded-lg border px-3 py-2 text-left text-sm font-semibold transition-colors enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-55";
+const reasonClassName = "m-0 mt-1 max-w-64 text-xs leading-4 text-muted";
+const subheadingClassName = "m-0 flex items-center gap-2 text-sm font-semibold text-ink";
 
 export function AdminRuntimePolicyView({
   draft,
@@ -73,12 +91,12 @@ export function AdminRuntimePolicyView({
     <section className={`${panelClassName} lg:col-span-2`} id="public-runtime-policy">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="m-0 text-xs font-bold uppercase text-muted">Public policy</p>
-          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+          <p className={eyebrowClassName}>Public policy</p>
+          <h2 className={panelTitleClassName}>
             Public runtime policy{" "}
             <FieldHint label="Public runtime policy" text={adminFieldHints.publicPolicy} />
           </h2>
-          <p className="m-0 mt-2 text-sm text-muted">
+          <p className="m-0 mt-1 text-sm text-muted">
             Shared policy for future public starts. Already accepted runs keep their snapshots.
           </p>
         </div>
@@ -94,8 +112,8 @@ export function AdminRuntimePolicyView({
           }}
         />
       </div>
-      <details className="rounded border border-border px-3 py-2">
-        <summary className="cursor-pointer font-semibold text-muted-strong">
+      <details className="rounded-xl border border-border px-4 py-3">
+        <summary className="disclosure text-sm font-semibold text-ink">
           Runtime budgets, custom limits, and deployment hard caps
         </summary>
         <div className="mt-4">
@@ -109,7 +127,7 @@ export function AdminRuntimePolicyView({
                   prefix="runtime-policy"
                 />
               ) : null}
-              <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+              <div className={fieldGridClassName}>
                 <Checkbox
                   label="Enforce public budget"
                   hint={adminFieldHints.publicBudget}
@@ -145,7 +163,7 @@ export function AdminRuntimePolicyView({
                 />
               </div>
               <div className="grid gap-3">
-                <p className="m-0 flex items-center gap-2 text-xs font-bold uppercase text-muted">
+                <p className={subheadingClassName}>
                   Public custom defaults{" "}
                   <FieldHint label="Public custom defaults" text={adminFieldHints.publicDefaults} />
                 </p>
@@ -170,11 +188,11 @@ export function AdminRuntimePolicyView({
                 />
               </div>
               <div className="grid gap-3">
-                <p className="m-0 flex items-center gap-2 text-xs font-bold uppercase text-muted">
+                <p className={subheadingClassName}>
                   Public custom limits{" "}
                   <FieldHint label="Public custom limits" text={adminFieldHints.publicLimits} />
                 </p>
-                <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+                <div className={fieldGridClassName}>
                   {policyLimitFields.map(([field, label, step]) => (
                     <DraftInput
                       key={field}
@@ -206,8 +224,8 @@ export function AdminRuntimePolicyView({
                   />
                 </div>
               </div>
-              <dl className="m-0 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2">
-                <div className="col-span-full flex items-center gap-2 text-xs font-bold text-muted">
+              <dl className="m-0 grid grid-cols-4 gap-3 rounded-xl bg-surface-muted p-4 max-[900px]:grid-cols-2">
+                <div className="col-span-full flex items-center gap-2 text-sm font-semibold text-ink">
                   Deployment hard caps{" "}
                   <FieldHint
                     label="Deployment hard caps"
@@ -404,14 +422,18 @@ export function AdminPresetView({
           />
         }
       />
-      <div className="grid grid-cols-[minmax(180px,260px)_1fr] gap-4 max-[800px]:grid-cols-1">
+      <div className="grid grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)] gap-6 max-[800px]:grid-cols-1">
         {/* biome-ignore lint/a11y/useSemanticElements: C04 intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
-        <div aria-label="Preset selection" className="grid content-start gap-2" role="group">
+        <div
+          aria-label="Preset selection"
+          className="grid content-start gap-1 min-[801px]:sticky min-[801px]:top-20"
+          role="group"
+        >
           {presets.map((preset) => (
             <button
               aria-describedby={actionPendingReason ? presetListPendingReasonId : undefined}
               aria-pressed={preset.slug === selectedPreset?.slug}
-              className={`${preset.slug === selectedPreset?.slug ? primaryButtonClassName : buttonClassName} [overflow-wrap:anywhere]`}
+              className={`${presetListButtonClassName} ${preset.slug === selectedPreset?.slug ? "border-accent bg-accent text-white" : "border-transparent text-muted-strong enabled:hover:bg-surface-muted enabled:hover:text-ink"} [overflow-wrap:anywhere]`}
               disabled={isPending}
               key={preset.slug}
               onClick={() => onSelect(preset.slug)}
@@ -428,9 +450,9 @@ export function AdminPresetView({
           {presetsRead.status === "unavailable" ? <Unavailable read={presetsRead} /> : null}
         </div>
         {selectedPreset && draft ? (
-          <div className="grid gap-4">
+          <div className="grid min-w-0 gap-4 border-l border-border pl-6 max-[800px]:border-l-0 max-[800px]:pl-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="m-0 text-lg font-bold text-ink">{selectedPreset.display.name}</h3>
+              <h3 className="type-title m-0 text-xl text-ink">{selectedPreset.display.name}</h3>
               <span aria-live="polite" role="status">
                 <StatusPill
                   status={{
@@ -441,7 +463,7 @@ export function AdminPresetView({
               </span>
             </div>
             {!selectedPreset.isEditable ? (
-              <p className="m-0 rounded border border-warning bg-warning-soft p-3 text-sm font-semibold text-warning">
+              <p className="m-0 rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-sm font-semibold text-warning">
                 You're editing values for a one-off run — {selectedPreset.display.name} itself can't
                 be changed
               </p>
@@ -468,7 +490,7 @@ export function AdminPresetView({
               />
             </ConfigGroup>
             <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">{draft.description}</p>
-            <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_8rem] gap-3 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
               <DraftInput
                 label="Name"
                 hint={adminFieldHints.presetName}
@@ -504,69 +526,71 @@ export function AdminPresetView({
                 disabled={isPending || !selectedPreset.isEditable}
               />
             </div>
-            <ConfigFieldset disabled={isPending} legend="Traffic">
-              <TrafficEditor
+            <div className="border-y border-border">
+              <ConfigFieldset disabled={isPending} legend="Traffic">
+                <TrafficEditor
+                  disabled={isPending}
+                  draft={draft}
+                  errors={fieldErrors}
+                  hardCaps={hardCaps}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="preset"
+                />
+              </ConfigFieldset>
+              <ConfigFieldset disabled={isPending} legend="Inventory">
+                <RunConfigInputs
+                  draft={draft}
+                  errors={fieldErrors}
+                  fields={inventoryFields}
+                  disabled={isPending}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="preset"
+                />
+              </ConfigFieldset>
+              <ConfigFieldset
                 disabled={isPending}
-                draft={draft}
-                errors={fieldErrors}
-                hardCaps={hardCaps}
-                onBlur={onBlurField}
-                onUpdateDraft={onUpdateDraft}
-                prefix="preset"
-              />
-            </ConfigFieldset>
-            <ConfigFieldset disabled={isPending} legend="Inventory">
-              <RunConfigInputs
-                draft={draft}
-                errors={fieldErrors}
-                fields={inventoryFields}
+                hint={adminFieldHints.perRunErp}
+                legend="Per-run ERP"
+              >
+                <RunConfigInputs
+                  draft={draft}
+                  errors={fieldErrors}
+                  fields={erpFields}
+                  disabled={isPending}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="preset"
+                />
+                <Checkbox
+                  label="ERP forced outage"
+                  hint={adminDraftFieldHints.erpForcedOutage}
+                  disabled={isPending}
+                  id="preset-erpForcedOutage"
+                  checked={draft.erpForcedOutage}
+                  error={fieldErrors.erpForcedOutage}
+                  onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
+                />
+              </ConfigFieldset>
+              <ConfigFieldset
                 disabled={isPending}
-                onBlur={onBlurField}
-                onUpdateDraft={onUpdateDraft}
-                prefix="preset"
-              />
-            </ConfigFieldset>
-            <ConfigFieldset
-              disabled={isPending}
-              hint={adminFieldHints.perRunErp}
-              legend="Per-run ERP"
-            >
-              <RunConfigInputs
-                draft={draft}
-                errors={fieldErrors}
-                fields={erpFields}
-                disabled={isPending}
-                onBlur={onBlurField}
-                onUpdateDraft={onUpdateDraft}
-                prefix="preset"
-              />
-              <Checkbox
-                label="ERP forced outage"
-                hint={adminDraftFieldHints.erpForcedOutage}
-                disabled={isPending}
-                id="preset-erpForcedOutage"
-                checked={draft.erpForcedOutage}
-                error={fieldErrors.erpForcedOutage}
-                onChange={(value) => onUpdateDraft({ erpForcedOutage: value })}
-              />
-            </ConfigFieldset>
-            <ConfigFieldset
-              disabled={isPending}
-              hint={adminFieldHints.workerBackpressure}
-              legend="Worker and backpressure"
-            >
-              <RunConfigInputs
-                draft={draft}
-                errors={fieldErrors}
-                fields={workerFields}
-                disabled={isPending}
-                onBlur={onBlurField}
-                onUpdateDraft={onUpdateDraft}
-                prefix="preset"
-              />
-            </ConfigFieldset>
+                hint={adminFieldHints.workerBackpressure}
+                legend="Worker and backpressure"
+              >
+                <RunConfigInputs
+                  draft={draft}
+                  errors={fieldErrors}
+                  fields={workerFields}
+                  disabled={isPending}
+                  onBlur={onBlurField}
+                  onUpdateDraft={onUpdateDraft}
+                  prefix="preset"
+                />
+              </ConfigFieldset>
+            </div>
             {effectiveConfig ? <EffectiveRunPreview config={effectiveConfig} /> : null}
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-start gap-2">
               <div>
                 <button
                   aria-describedby={
@@ -585,13 +609,13 @@ export function AdminPresetView({
                   Run once with these values
                 </button>
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={startPendingReasonId}>
+                  <p className={reasonClassName} id={startPendingReasonId}>
                     {actionPendingReason}
                   </p>
                 ) : null}
                 {admissionNotice}
                 {startBlockedReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={startBlockedReasonId}>
+                  <p className={reasonClassName} id={startBlockedReasonId}>
                     {startBlockedReason}
                   </p>
                 ) : null}
@@ -610,7 +634,7 @@ export function AdminPresetView({
                   Save preset
                 </button>
                 {saveReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={saveReasonId}>
+                  <p className={reasonClassName} id={saveReasonId}>
                     {saveReason}
                   </p>
                 ) : null}
@@ -630,7 +654,7 @@ export function AdminPresetView({
                   text={adminFieldHints.copyToCustom}
                 />
                 {actionPendingReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={copyPendingReasonId}>
+                  <p className={reasonClassName} id={copyPendingReasonId}>
                     {actionPendingReason}
                   </p>
                 ) : null}
@@ -646,14 +670,14 @@ export function AdminPresetView({
                   Archive preset
                 </button>
                 {archiveReason ? (
-                  <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={archiveReasonId}>
+                  <p className={reasonClassName} id={archiveReasonId}>
                     {archiveReason}
                   </p>
                 ) : null}
               </div>
             </div>
             <form
-              className="grid grid-cols-[minmax(160px,1fr)_auto] gap-2 max-[560px]:grid-cols-1"
+              className="grid grid-cols-[minmax(10rem,22rem)_auto] items-start gap-2 max-[560px]:grid-cols-1"
               onSubmit={(event) => {
                 event.preventDefault();
                 const targetSlug = String(
@@ -673,7 +697,7 @@ export function AdminPresetView({
               />
               <button
                 aria-describedby={duplicateReason ? duplicateReasonId : undefined}
-                className={`${buttonClassName} self-end`}
+                className={`${buttonClassName} min-[561px]:mt-7`}
                 disabled={isPending || selectedPreset.slug === "public-custom"}
                 type="submit"
               >
@@ -721,12 +745,12 @@ function archiveUnavailableReason(preset: AdminPresetListItem): string | null {
 export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnapshot }) {
   const traffic = config.trafficConfig;
   return (
-    <details className="rounded border border-border px-3 py-2">
-      <summary className="cursor-pointer font-semibold text-muted-strong">
+    <details className="rounded-xl border border-border px-4 py-3">
+      <summary className="disclosure text-sm font-semibold text-ink">
         Effective run preview{" "}
         <FieldHint label="Effective run preview" text={adminFieldHints.effectiveRunPreview} />
       </summary>
-      <div className="mt-3 grid gap-3">
+      <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 max-[700px]:grid-cols-1">
         <ConfigGroup title="Traffic">
           <FieldRow label="Mode" value={traffic.mode} />
           {traffic.mode === "buyer-spike" ? (
@@ -800,18 +824,20 @@ function TrafficEditor({
       <fieldset
         aria-describedby={errors.mode ? `${prefix}-mode-error` : undefined}
         aria-invalid={errors.mode ? true : undefined}
-        className="m-0 flex flex-wrap gap-2 border-0 p-0"
+        className="m-0 flex min-w-0 flex-wrap items-center gap-2 border-0 p-0"
         id={`${prefix}-mode`}
         tabIndex={-1}
       >
-        <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
+        <legend className="float-left mr-1 flex min-h-10 items-center text-sm font-semibold text-ink">
+          Traffic pattern
+        </legend>
         <FieldHint
           label="Traffic pattern"
           text={`${fieldHints.trafficPattern} Technically, k6 per-vu-iterations (one virtual user per buyer) versus constant-arrival-rate.`}
         />
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <label
-            className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong"
+            className="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-sm font-semibold text-muted-strong has-checked:border-accent has-checked:bg-accent-soft has-checked:text-ink has-disabled:cursor-not-allowed has-disabled:opacity-55"
             key={mode}
           >
             <input
@@ -831,7 +857,7 @@ function TrafficEditor({
           {errors.mode.message}
         </span>
       ) : null}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+      <div className={fieldGridClassName}>
         {draft.mode === "buyer-spike" ? (
           <>
             <DraftInput
@@ -1011,14 +1037,11 @@ function ConfigFieldset({
   legend: string;
 }) {
   return (
-    <fieldset
-      aria-disabled={disabled || undefined}
-      className="m-0 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] items-start gap-3 rounded border border-border p-3"
-    >
-      <legend className="px-1 text-sm font-bold text-ink">
+    <fieldset aria-disabled={disabled || undefined} className={settingsFieldsetClassName}>
+      <legend className={settingsLegendClassName}>
         {legend} {hint ? <FieldHint label={legend} text={hint} /> : null}
       </legend>
-      {children}
+      <div className={fieldGridClassName}>{children}</div>
     </fieldset>
   );
 }
@@ -1137,11 +1160,11 @@ export function AdminErpDiagnosticsView({
           />
         }
       />
-      <p className="m-0 mb-4 text-sm text-muted">
+      <p className="m-0 mb-4 text-sm leading-6 text-muted">
         Runs use the ERP settings frozen when they start. These controls change fallback behaviour
         for calls that carry no run settings; they do not change an accepted run.
       </p>
-      <div className="mb-4 grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+      <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-xl bg-surface-muted px-4 pb-3 max-[560px]:grid-cols-1">
         <ConfigGroup
           title="Accepted run snapshot (per-run)"
           hint="The ERP settings frozen into the active run. These are what the running run's orders actually use."
@@ -1181,7 +1204,7 @@ export function AdminErpDiagnosticsView({
           prefix="erp-chaos"
         />
       ) : null}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,16rem),1fr))] gap-3">
+      <div className={fieldGridClassName}>
         <LabeledTextInput
           error={fieldErrors.latencyMs}
           help={
@@ -1239,7 +1262,7 @@ export function AdminErpDiagnosticsView({
         />
       </div>
       <div className="mt-4">
-        <p className="m-0 mb-2 text-sm text-muted">
+        <p className="m-0 mb-2 text-xs leading-5 text-muted">
           Reset ERP controls restores the process's initial fallback configuration, not a clean
           healthy preset.
         </p>
@@ -1264,7 +1287,7 @@ export function AdminErpDiagnosticsView({
           </button>
         </div>
         {controlsDisabledReason ? (
-          <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={controlsDisabledReasonId}>
+          <p className={reasonClassName} id={controlsDisabledReasonId}>
             {controlsDisabledReason}
           </p>
         ) : null}
@@ -1432,8 +1455,8 @@ function Checkbox({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="grid gap-1">
-      <div className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
+    <div className="grid content-start gap-1 min-[561px]:pt-6">
+      <div className="flex min-h-10 items-center gap-2 text-sm font-semibold text-ink">
         <label className="flex items-center gap-2">
           <input
             aria-describedby={error && id ? `${id}-error` : undefined}
@@ -1471,8 +1494,8 @@ function PanelHeading({
   return (
     <div className="mb-4 flex items-start justify-between gap-3">
       <div>
-        <p className="m-0 text-xs font-bold uppercase text-muted">{eyebrow}</p>
-        <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+        <p className={eyebrowClassName}>{eyebrow}</p>
+        <h2 className={panelTitleClassName}>
           {title}
           {hint ? <FieldHint label={title} text={hint} /> : null}
         </h2>
@@ -1485,8 +1508,10 @@ function PanelHeading({
 export function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="mb-1 text-xs font-bold text-muted">{label}</dt>
-      <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">{value}</dd>
+      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dd className="m-0 mt-0.5 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -1524,9 +1549,11 @@ function LabeledTextInput({
 }) {
   const controlId = id ?? name;
   return (
-    <div className="grid gap-1 text-sm font-semibold text-muted-strong">
-      <div className="flex items-center gap-2">
-        <label htmlFor={controlId}>{label}</label>
+    <div className="grid min-w-0 content-start gap-1">
+      <div className="flex min-h-6 items-center gap-1.5">
+        <label className={fieldLabelClassName} htmlFor={controlId}>
+          {label}
+        </label>
         {hint ? <FieldHint label={label} text={hint} /> : null}
       </div>
       <input
@@ -1550,7 +1577,7 @@ function LabeledTextInput({
         value={value}
       />
       {help && controlId ? (
-        <span className="text-xs font-normal text-muted" id={`${controlId}-help`}>
+        <span className={fieldHelpClassName} id={`${controlId}-help`}>
           {help}
         </span>
       ) : null}
@@ -1579,9 +1606,13 @@ function ValidationSummary({
   }, []);
   if (entries.length === 0 && formErrors.length === 0) return null;
   return (
-    <div className="rounded border border-danger p-3 text-sm" ref={ref} tabIndex={-1}>
+    <div
+      className="rounded-lg border border-danger-line bg-danger-soft p-3 text-sm text-danger"
+      ref={ref}
+      tabIndex={-1}
+    >
       <p className="m-0 font-bold">Correct the highlighted fields.</p>
-      <ul className="mb-0 mt-2">
+      <ul className="mb-0 mt-2 pl-5 [&_a]:font-semibold [&_a]:underline">
         {entries.map(([field, error]) => (
           <li key={field}>
             <a href={`#${prefix}-${field}`}>{error.message}</a>

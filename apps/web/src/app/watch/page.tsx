@@ -45,8 +45,10 @@ export default async function WatchPage({
 
   return (
     <>
-      <header className="mb-2 flex items-baseline gap-4 max-[900px]:block">
-        <h1 className="m-0 shrink-0 text-2xl font-bold leading-tight text-ink">Live watch</h1>
+      <header className="mb-4 flex items-baseline gap-5 max-[900px]:block">
+        <h1 className="type-display m-0 shrink-0 text-[1.75rem] leading-none text-ink">
+          Live watch
+        </h1>
         <p className="m-0 text-sm leading-5 text-muted max-[900px]:mt-1">
           Follow the flash sale from live activity to the final result; technical details are
           available below.

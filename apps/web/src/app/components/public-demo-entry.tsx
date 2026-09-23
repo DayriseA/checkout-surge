@@ -42,7 +42,14 @@ import {
   deriveRunPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
-import { inputClassName, primaryButtonClassName } from "./control-styles";
+import {
+  fieldHelpClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+  settingsFieldsetClassName,
+  settingsLegendClassName,
+} from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { FieldHint } from "./field-hint";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
@@ -53,8 +60,9 @@ import { useRunEstimate } from "./use-run-estimate";
 
 const recoveryPollIntervalMs = 15_000;
 const readinessPollIntervalMs = 60_000;
-const panelClassName = "min-w-0 rounded-lg border border-border bg-surface p-4";
+const boardClassName = "min-w-0 rounded-2xl border border-border bg-surface";
 const recommendedPresetSlug = "preview-1k";
+const customFieldsetClassName = `${settingsFieldsetClassName} px-5 max-[560px]:px-4`;
 
 type TrafficMode = AcceptedRunConfigSnapshot["trafficConfig"]["mode"];
 
@@ -413,14 +421,21 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   }
 
   return (
-    <div className="grid grid-cols-12 gap-4">
-      <section className={`${panelClassName} col-span-12`}>
-        <div className="mb-4 flex items-start justify-between gap-3 max-[700px]:flex-col">
-          <div>
-            <p className="m-0 text-xs font-bold uppercase text-muted">Public demo</p>
-            <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+    <div className="grid gap-5">
+      <section
+        aria-labelledby="curated-presets-heading"
+        className={boardClassName}
+        id="public-start-controls"
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4 max-[700px]:flex-col max-[560px]:px-4">
+          <div className="min-w-0">
+            <h2
+              className="type-title m-0 text-lg leading-tight text-ink"
+              id="curated-presets-heading"
+            >
               Curated surge presets
             </h2>
+            <SharedRuntimeDisclosure />
           </div>
           <StartGate
             isStarting={startingSlug !== null}
@@ -447,9 +462,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             startOptionsAvailable={startOptionsAvailable}
           />
         </div>
-        <SharedRuntimeDisclosure />
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 max-[700px]:grid-cols-1">
+          <div className="divide-y divide-border">
             {curatedPresets.map((preset) => {
               const facts = derivePresetCardFacts(preset);
               const isRecommended = preset.slug === recommendedPresetSlug;
@@ -457,39 +471,51 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               return (
                 <article
                   aria-labelledby={headingId}
-                  className={`min-w-0 rounded-lg border p-3 ${
-                    isRecommended ? "border-accent bg-accent-soft" : "border-border"
+                  className={`relative grid min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_11.5rem] items-start gap-x-6 gap-y-2 px-5 py-3.5 max-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_11.5rem] max-[760px]:grid-cols-1 max-[560px]:px-4 ${
+                    isRecommended
+                      ? "bg-signal-soft/45 before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-signal"
+                      : ""
                   }`}
                   key={preset.slug}
                 >
-                  <div className="mb-3 grid gap-1">
-                    {isRecommended ? (
-                      <span className="w-fit rounded-full bg-accent px-2 py-1 text-xs font-bold text-white">
-                        Recommended: start here
-                      </span>
-                    ) : null}
-                    <h3 className="m-0 text-base font-bold text-ink" id={headingId}>
-                      {preset.display.name}
-                    </h3>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="type-title m-0 text-base leading-snug text-ink" id={headingId}>
+                        {preset.display.name}
+                      </h3>
+                      {isRecommended ? (
+                        <span className="rounded-full bg-signal px-2 py-0.5 text-xs font-semibold text-ink">
+                          Recommended: start here
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="m-0 mt-1 text-sm leading-5 text-muted">
+                      {preset.display.description}
+                    </p>
                   </div>
-                  <dl className="m-0 mb-3 grid grid-cols-3 gap-3 text-sm max-[900px]:grid-cols-2">
-                    <Fact label={facts.demandLabel} value={facts.demandValue} />
-                    <Fact
-                      label={publicVocabulary.startingStock}
-                      value={formatCount(preset.inventoryConfig.startingStock) ?? "not configured"}
-                    />
+                  <DemandGauge
+                    demandLabel={facts.demandLabel}
+                    demandNoun={facts.surgeLabel === "Buyers" ? "buyers" : "attempts"}
+                    demandValue={facts.demandValue}
+                    stock={preset.inventoryConfig.startingStock}
+                    uniqueAttempts={facts.uniqueAttempts}
+                  />
+                  <dl className="m-0 max-[1100px]:col-start-1 max-[1100px]:row-start-2 max-[760px]:row-start-auto">
                     <Fact label="What happens" value={facts.distinguishingBehavior} />
                   </dl>
-                  <details className="mb-3">
-                    <summary className="cursor-pointer rounded text-sm font-semibold text-accent ring-accent focus-visible:outline-none focus-visible:ring-2">
+                  <PublicPresetStart
+                    preset={preset}
+                    disabled={startDisabled}
+                    starting={startingSlug === preset.slug}
+                    onStart={() => startRun(preset.slug)}
+                  />
+                  <details className="col-span-full -mt-1">
+                    <summary className="disclosure rounded text-sm font-semibold text-accent">
                       Technical details
                       <span className="sr-only"> for {preset.display.name}</span>
                     </summary>
-                    <div className="mt-3 grid gap-3">
-                      <p className="m-0 text-sm leading-5 text-muted">
-                        {preset.display.description}
-                      </p>
-                      <dl className="m-0 grid grid-cols-2 gap-3 text-sm">
+                    <div className="mt-3 grid gap-3 rounded-lg border border-border bg-surface p-4">
+                      <dl className="m-0 grid grid-cols-4 gap-x-5 gap-y-3 text-sm max-[1100px]:grid-cols-3 max-[760px]:grid-cols-2 max-[420px]:grid-cols-1">
                         <Fact
                           label="Scenario"
                           value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
@@ -519,40 +545,46 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       </ConditionalCaveat>
                     </div>
                   </details>
-                  <PublicPresetStart
-                    preset={preset}
-                    disabled={startDisabled}
-                    starting={startingSlug === preset.slug}
-                    onStart={() => startRun(preset.slug)}
-                  />
                 </article>
               );
             })}
           </div>
         ) : surface.presets.status === "unavailable" ? (
-          <Unavailable onRetry={reloadPage} read={surface.presets} />
+          <div className="p-5">
+            <Unavailable onRetry={reloadPage} read={surface.presets} />
+          </div>
         ) : (
-          <p className="m-0 text-muted">No curated public presets are currently available.</p>
+          <p className="m-0 p-5 text-muted">No curated public presets are currently available.</p>
         )}
       </section>
 
       <details
-        className={`${panelClassName} col-span-12`}
+        className={`${boardClassName} group`}
         onToggle={(event) => setCustomBuilderOpen(event.currentTarget.open)}
         ref={customBuilderRef}
       >
-        <summary className="cursor-pointer text-base font-bold text-ink">
-          Customize a scenario
+        <summary className="flex cursor-pointer list-none items-center gap-3 rounded-2xl px-5 py-4 max-[560px]:px-4 [&::-webkit-details-marker]:hidden">
+          <span
+            aria-hidden="true"
+            className="grid size-7 shrink-0 place-items-center rounded-full border border-control-border text-sm font-bold text-ink transition-transform group-open:rotate-45"
+          >
+            +
+          </span>
+          <span className="type-title text-lg leading-tight text-ink">Customize a scenario</span>
           {!customBuilderOpen && customDraftEdited ? (
-            <span className="ml-2 text-sm font-normal text-muted">Edited settings retained</span>
-          ) : null}
+            <span className="text-sm font-normal text-muted">Edited settings retained</span>
+          ) : (
+            <span className="text-sm font-normal text-muted max-[700px]:hidden">
+              Set your own buyers, stock, and ERP speed within the public limits.
+            </span>
+          )}
         </summary>
         {runtimePolicy && customPreset && customConfig ? (
           <form
             aria-describedby={groupError("form") ? "custom-form-error" : undefined}
             aria-invalid={groupError("form") ? true : undefined}
             aria-label="Custom run builder"
-            className="mt-4 grid gap-4"
+            className="grid border-t border-border"
             onSubmit={(event) => {
               event.preventDefault();
               if (customStartDisabled) return;
@@ -605,9 +637,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <fieldset
               aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${groupError("traffic") ? " custom-traffic-validation-error" : ""}`}
               aria-invalid={totalRequestsError || groupError("traffic") ? true : undefined}
-              className="grid gap-3 rounded-lg border border-border p-3"
+              className={customFieldsetClassName}
             >
-              <legend className="px-1 font-bold text-ink">Buyers</legend>
+              <legend className={settingsLegendClassName}>Buyers</legend>
               <TrafficModeSelector
                 allowedModes={runtimePolicy.publicCustomLimits.allowedTrafficModes}
                 mode={customDraft.mode}
@@ -630,7 +662,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       unit="buyers"
                       value={customDraft.buyerCount}
                     />
-                    <div className="grid content-start gap-1 text-sm font-semibold text-muted-strong">
+                    <div className="grid content-start gap-1 text-sm font-semibold text-ink min-[561px]:pt-7">
                       <div className="flex min-h-11 items-center gap-2">
                         <input
                           aria-describedby="custom-duplicate-description"
@@ -650,10 +682,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           text={fieldHints.duplicateBuyerAttempt}
                         />
                       </div>
-                      <span
-                        className="font-normal leading-5 text-muted"
-                        id="custom-duplicate-description"
-                      >
+                      <span className={fieldHelpClassName} id="custom-duplicate-description">
                         Doubles the planned attempts.
                       </span>
                     </div>
@@ -722,22 +751,24 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <fieldset
               aria-describedby={groupError("stock") ? "custom-stock-validation-error" : undefined}
               aria-invalid={groupError("stock") ? true : undefined}
-              className="grid gap-3 rounded-lg border border-border p-3"
+              className={customFieldsetClassName}
             >
-              <legend className="px-1 font-bold text-ink">Stock</legend>
-              <LabeledInput
-                hint={fieldHints.startingStock}
-                id="custom-stock"
-                label="Starting stock"
-                max={runtimePolicy.publicCustomLimits.maxStartingStock}
-                min={0}
-                onChange={(startingStock) =>
-                  updateCustomDraft((draft) => ({ ...draft, startingStock }))
-                }
-                submittedError={fieldError("custom-stock")}
-                unit="units"
-                value={customDraft.startingStock}
-              />
+              <legend className={settingsLegendClassName}>Stock</legend>
+              <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
+                <LabeledInput
+                  hint={fieldHints.startingStock}
+                  id="custom-stock"
+                  label="Starting stock"
+                  max={runtimePolicy.publicCustomLimits.maxStartingStock}
+                  min={0}
+                  onChange={(startingStock) =>
+                    updateCustomDraft((draft) => ({ ...draft, startingStock }))
+                  }
+                  submittedError={fieldError("custom-stock")}
+                  unit="units"
+                  value={customDraft.startingStock}
+                />
+              </div>
               {groupError("stock") ? (
                 <CustomValidationError
                   error={groupError("stock")}
@@ -749,9 +780,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <fieldset
               aria-describedby={groupError("erp") ? "custom-erp-validation-error" : undefined}
               aria-invalid={groupError("erp") ? true : undefined}
-              className="grid gap-3 rounded-lg border border-border p-3"
+              className={customFieldsetClassName}
             >
-              <legend className="px-1 font-bold text-ink">Slow ERP</legend>
+              <legend className={settingsLegendClassName}>Slow ERP</legend>
               <p className="m-0 text-sm text-muted">
                 The ERP is the simulated back-office system that confirms each order after its stock
                 is reserved. Here it is deliberately slow and unreliable.
@@ -803,11 +834,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             </fieldset>
 
             <details
-              className="rounded-lg border border-border p-3"
+              className="border-b border-border px-5 py-4 max-[560px]:px-4"
               id="custom-protection-settings"
               ref={advancedSettingsRef}
             >
-              <summary className="cursor-pointer font-bold text-ink">
+              <summary className="disclosure text-sm font-semibold text-ink">
                 Advanced protection settings{" "}
                 <FieldHint
                   label="Advanced protection settings"
@@ -819,7 +850,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   groupError("advanced") ? "custom-advanced-validation-error" : undefined
                 }
                 aria-invalid={groupError("advanced") ? true : undefined}
-                className="mt-3 grid gap-3"
+                className="m-0 mt-3 grid min-w-0 gap-3 border-0 p-0 min-[900px]:ml-44"
               >
                 <legend className="sr-only">Advanced protection settings</legend>
                 <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
@@ -861,24 +892,37 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               </fieldset>
             </details>
 
-            {groupError("form") ? (
-              <CustomValidationError error={groupError("form")} id="custom-form-error" />
-            ) : null}
-            <p className="m-0 text-sm leading-6 text-muted-strong">
-              {publicRunBudgetCopy(runtimePolicy)}
-            </p>
-            {customSubmissionFailure ? (
-              <CustomErrorSummary failure={customSubmissionFailure} summaryRef={customSummaryRef} />
-            ) : null}
-            <RunEstimateNotice state={customEstimate.state} mode="public" />
-            <button className={primaryButtonClassName} disabled={customStartDisabled} type="submit">
-              {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
-            </button>
+            <div className="grid gap-3 rounded-b-2xl bg-surface-muted px-5 py-4 max-[560px]:px-4">
+              {groupError("form") ? (
+                <CustomValidationError error={groupError("form")} id="custom-form-error" />
+              ) : null}
+              {customSubmissionFailure ? (
+                <CustomErrorSummary
+                  failure={customSubmissionFailure}
+                  summaryRef={customSummaryRef}
+                />
+              ) : null}
+              <RunEstimateNotice state={customEstimate.state} mode="public" />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="m-0 text-sm leading-5 text-muted-strong">
+                  {publicRunBudgetCopy(runtimePolicy)}
+                </p>
+                <button
+                  className={`${primaryButtonClassName} min-w-44`}
+                  disabled={customStartDisabled}
+                  type="submit"
+                >
+                  {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
+                </button>
+              </div>
+            </div>
           </form>
         ) : surface.runtimePolicy.status === "unavailable" ? (
-          <Unavailable onRetry={reloadPage} read={surface.runtimePolicy} />
+          <div className="border-t border-border p-5">
+            <Unavailable onRetry={reloadPage} read={surface.runtimePolicy} />
+          </div>
         ) : (
-          <p className="m-0 text-muted">Public custom is unavailable.</p>
+          <p className="m-0 border-t border-border p-5 text-muted">Public custom is unavailable.</p>
         )}
       </details>
     </div>
@@ -913,12 +957,12 @@ function PublicPresetStart({
   const [rejection, setRejection] = useState<EstimateAdmissionRejectionDetails>();
   const blocked = disabled || rejection !== undefined;
   return (
-    <>
+    <div className="grid min-w-0 gap-1 max-[760px]:max-w-72">
       {rejection ? (
         <RunEstimateNotice state={{ status: "rejected", result: rejection }} mode="public" />
       ) : null}
       <button
-        className={`${primaryButtonClassName} mt-3 enabled:cursor-pointer enabled:hover:brightness-90 enabled:active:brightness-75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
+        className={`${primaryButtonClassName} w-full`}
         disabled={blocked}
         onClick={async () => {
           if (blocked) return;
@@ -928,7 +972,7 @@ function PublicPresetStart({
       >
         {starting ? `Starting ${preset.display.name}` : `Start ${preset.display.name}`}
       </button>
-    </>
+    </div>
   );
 }
 
@@ -937,6 +981,7 @@ export function derivePresetCardFacts(preset: DemoPresetContract) {
   const uniqueAttempts = configFacts.uniqueAttempts;
 
   return {
+    uniqueAttempts,
     surgeLabel: configFacts.surgeLabel,
     surgeValue: configFacts.surgeValue,
     hasDuplicateAttempts: configFacts.hasDuplicateAttempts,
@@ -1082,7 +1127,7 @@ function CustomErrorSummary({
     return (
       <div
         aria-label="Operation failure"
-        className="grid gap-1 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 text-danger"
+        className="grid gap-1 rounded-lg border border-danger-line bg-danger-soft p-3 text-danger"
         ref={summaryRef}
         role="alert"
         tabIndex={-1}
@@ -1097,7 +1142,7 @@ function CustomErrorSummary({
   return (
     <div
       aria-labelledby="custom-error-summary-title"
-      className="grid gap-2 rounded-lg border border-[#f7b4ad] bg-danger-soft p-3 text-danger"
+      className="grid gap-2 rounded-lg border border-danger-line bg-danger-soft p-3 text-danger"
       ref={summaryRef}
       role="alert"
       tabIndex={-1}
@@ -1128,15 +1173,64 @@ function CustomErrorSummary({
 function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="mb-1 text-xs font-bold text-muted">{label}</dt>
-      <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">{value}</dd>
+      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dd className="m-0 mt-0.5 [overflow-wrap:anywhere] text-sm font-semibold leading-5 text-ink">
+        {value}
+      </dd>
     </div>
   );
 }
 
+/**
+ * Demand against supply at a glance: the ink segment is the stock that can sell, the signal
+ * segment the demand that will meet a sold-out answer.
+ */
+function DemandGauge({
+  demandLabel,
+  demandNoun,
+  demandValue,
+  stock,
+  uniqueAttempts,
+}: {
+  demandLabel: string;
+  demandNoun: string;
+  demandValue: string;
+  stock: number;
+  uniqueAttempts: number;
+}) {
+  const sellableShare = uniqueAttempts > 0 ? Math.min(1, stock / uniqueAttempts) : 1;
+  return (
+    <div className="grid min-w-0 gap-1.5">
+      <dl className="m-0 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <Fact label={demandLabel} value={demandValue} />
+        <div className="min-w-0 text-right max-[760px]:text-left">
+          <dt className="text-xs font-medium text-muted">{publicVocabulary.startingStock}</dt>
+          <dd className="m-0 mt-0.5 text-sm font-semibold leading-5 text-ink">
+            {formatCount(stock) ?? "not configured"}
+          </dd>
+        </div>
+      </dl>
+      <div aria-hidden="true" className="flex h-2 overflow-hidden rounded-full bg-signal">
+        <span className="block h-full bg-ink" style={{ width: `${sellableShare * 100}%` }} />
+      </div>
+      <p className="m-0 text-xs text-muted">
+        {demandPressureCopy(uniqueAttempts, stock, demandNoun)}
+      </p>
+    </div>
+  );
+}
+
+function demandPressureCopy(uniqueAttempts: number, stock: number, noun: string): string {
+  if (stock === 0) return "No stock to sell";
+  if (uniqueAttempts <= stock) return `Enough stock for all ${noun}`;
+  const ratio = uniqueAttempts / stock;
+  const rounded = ratio < 10 ? Math.round(ratio * 10) / 10 : Math.round(ratio);
+  return `${rounded}× more ${noun} than units`;
+}
+
 function SharedRuntimeDisclosure() {
   return (
-    <p className="m-0 mb-4 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm leading-6 text-muted-strong">
+    <p className="m-0 mt-1 max-w-[72ch] text-sm leading-5 text-muted">
       Starting a bounded run uses the one shared demo runtime — other visitors can&apos;t start
       until it finishes. A successful start opens the live view.
     </p>
@@ -1341,14 +1435,16 @@ function TrafficModeSelector({
   onChange: (mode: TrafficMode) => void;
 }) {
   return (
-    <fieldset className="m-0 flex flex-wrap gap-3 border-0 p-0">
-      <legend className="text-sm font-semibold text-muted-strong">Traffic pattern</legend>
+    <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-0 p-0">
+      <legend className="float-left mr-1 flex min-h-11 items-center text-sm font-semibold text-ink">
+        Traffic pattern
+      </legend>
       <FieldHint label="Traffic pattern" text={fieldHints.trafficPattern} />
       {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => {
         const id = `custom-traffic-mode-${trafficMode}`;
         return (
           <label
-            className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong"
+            className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-sm font-semibold text-muted-strong has-checked:border-accent has-checked:bg-accent-soft has-checked:text-ink has-disabled:cursor-not-allowed has-disabled:opacity-55"
             htmlFor={id}
             key={trafficMode}
           >
@@ -1400,9 +1496,9 @@ function LabeledInput({
   const visibleError = error ?? submittedError;
 
   return (
-    <div className="grid content-start gap-1 text-sm text-muted-strong">
-      <div className="flex items-center gap-2">
-        <label className="font-semibold" htmlFor={id}>
+    <div className="grid min-w-0 content-start gap-1 text-sm text-muted-strong">
+      <div className="flex min-h-6 items-center gap-1.5">
+        <label className={fieldLabelClassName} htmlFor={id}>
           {label} ({unit})
         </label>
         <FieldHint label={label} text={hint} />
@@ -1424,12 +1520,12 @@ function LabeledInput({
         type="number"
         value={value}
       />
-      <span className="font-normal leading-5 text-muted" id={descriptionId}>
+      <span className={fieldHelpClassName} id={descriptionId}>
         Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}.
         {instruction ? ` ${instruction}` : ""}
       </span>
       {visibleError ? (
-        <span className="font-semibold text-danger" id={errorId}>
+        <span className="text-xs font-semibold text-danger" id={errorId}>
           {visibleError}
         </span>
       ) : null}

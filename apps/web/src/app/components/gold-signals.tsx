@@ -224,9 +224,9 @@ export function GoldSignals(input: GoldSignalInput) {
   const terminalRun = input.runStatus === "completed" || input.runStatus === "failed";
   if (!hasEvidence) {
     return (
-      <section className="col-span-full rounded-lg border border-border bg-surface p-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Sale evidence</p>
-        <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+      <section className="col-span-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+        <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
+        <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
           Arrival → reservation → backlog → confirmation
         </h2>
         <SignalHeadlineGrid headlines={headlines} />
@@ -234,10 +234,10 @@ export function GoldSignals(input: GoldSignalInput) {
     );
   }
   return (
-    <section className="col-span-full rounded-lg border border-border bg-surface p-4">
+    <section className="col-span-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="mb-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Sale evidence</p>
-        <h2 className="m-0 mt-1 text-xl font-bold leading-tight text-ink">
+        <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
+        <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
           Arrival → reservation → backlog → confirmation
         </h2>
         <p className="m-0 mt-1 text-xs leading-5 text-muted">
@@ -376,7 +376,7 @@ function SignalPanel({
           xMax={xMax}
         />
         <details className="mt-2 text-xs text-muted">
-          <summary className="cursor-pointer font-semibold">Text samples</summary>
+          <summary className="disclosure font-semibold">Text samples</summary>
           {points.length === 0 ? (
             <p>No samples retained.</p>
           ) : (

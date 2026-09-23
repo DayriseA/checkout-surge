@@ -32,15 +32,15 @@ export function WatchSignalStrip({
   onReveal: (targetId: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-4 gap-3 max-[700px]:grid-cols-2" data-watch-signals="">
+    <div className="grid grid-cols-4 gap-2 max-[700px]:grid-cols-2" data-watch-signals="">
       {stripSignals.map(({ chart, targetId, title }) => (
         <button
-          className="block rounded-lg border border-border bg-surface-muted p-2 text-left [&_svg]:h-14"
+          className="block cursor-pointer rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent [&_svg]:h-14"
           key={chart}
           onClick={() => onReveal(hasEvidence ? targetId : fallbackTargetId)}
           type="button"
         >
-          <span className="block text-xs font-bold text-muted">{title}</span>
+          <span className="block text-xs font-medium text-muted">{title}</span>
           <SignalSparkline
             ariaLabel={`${title} sparkline`}
             area={charts[chart].area}
@@ -49,7 +49,7 @@ export function WatchSignalStrip({
             secondary={charts[chart].secondary}
             xMax={charts[chart].xMax}
           />
-          <span className="mt-1 block text-xs font-semibold leading-5 text-muted-strong">
+          <span className="mt-1 block text-xs font-semibold leading-5 text-ink">
             {headlines[chart].summaryValue}
           </span>
           <span className="sr-only">{`${title} over the run: ${headlines[chart].summaryValue}`}</span>

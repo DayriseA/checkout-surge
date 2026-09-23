@@ -197,7 +197,7 @@ export function TransportObservationSection({
           />
         ) : null}
       </dl>
-      <h4 className="m-0 mt-4 text-xs font-bold uppercase text-muted">Load-generator outcomes</h4>
+      <h4 className="m-0 mt-4 text-xs font-medium text-muted">Load-generator outcomes</h4>
       <dl className="m-0 mt-2 grid gap-2">
         <ObservationRow
           label={publicVocabulary.acceptedResponses}
@@ -279,7 +279,7 @@ function FastReservationEvidence({ summary }: { summary: ServerReservationTiming
 function ClientTimingBreakdown({ summary }: { summary: HttpTimingBreakdownSummary }) {
   return (
     <div className="mt-4 border-t border-border pt-3">
-      <h4 className="m-0 text-xs font-bold uppercase text-muted">Observed response timing</h4>
+      <h4 className="m-0 text-xs font-medium text-muted">Observed response timing</h4>
       <p className="m-0 mt-0.5 text-xs text-muted">
         Load-generator timing; waiting includes server and dependency queueing
       </p>
@@ -488,7 +488,7 @@ function SurvivorshipWarning({
 export function ConditionalCaveat({ children, show }: { children: ReactNode; show: boolean }) {
   if (!show) return null;
   return (
-    <p className="m-0 mt-3 rounded-lg border border-[#ecd08f] bg-warning-soft p-3 text-xs leading-5 text-warning">
+    <p className="m-0 mt-3 rounded-lg border border-warning-line bg-warning-soft p-3 text-xs leading-5 text-warning">
       {children}
     </p>
   );
@@ -531,7 +531,7 @@ function PanelFact({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="mb-1 text-xs font-bold text-muted">{label}</dt>
+      <dt className="mb-0.5 text-xs font-medium text-muted">{label}</dt>
       <dd className="m-0 [overflow-wrap:anywhere] text-base font-bold text-ink">
         {value}
         {note ? (

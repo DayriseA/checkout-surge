@@ -102,10 +102,10 @@ export function AdminSignInView({
   passphrase: string;
 }) {
   return (
-    <section className="max-w-[520px] rounded-lg border border-border bg-surface p-4">
-      <div className="mb-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Admin sign-in</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+    <section className="max-w-[440px] rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
+      <div className="mb-5">
+        <p className="m-0 text-xs font-medium text-muted">Admin sign-in</p>
+        <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
           Protected operator surface
         </h2>
       </div>
@@ -117,8 +117,8 @@ export function AdminSignInView({
           onSignIn();
         }}
       >
-        <div className="grid gap-1 text-sm font-semibold text-muted-strong">
-          <div className="flex items-center gap-2">
+        <div className="grid gap-1 text-sm font-semibold text-ink">
+          <div className="flex items-center gap-1.5">
             <label htmlFor="admin-passphrase">Admin passphrase</label>
             <FieldHint label="Admin passphrase" text={adminFieldHints.adminPassphrase} />
           </div>

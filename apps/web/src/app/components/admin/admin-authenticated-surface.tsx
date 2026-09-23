@@ -90,8 +90,10 @@ import {
   currentRunStatus,
   EffectiveChangeList,
   EffectiveRunPreview,
+  eyebrowClassName,
   Fact,
   panelClassName,
+  panelTitleClassName,
   Unavailable,
 } from "./admin-feature-views";
 import { AdminNoticeView } from "./admin-notice";
@@ -158,18 +160,22 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   }, [props.initialRuntimePolicy]);
 
   return (
-    <>
+    <div className="grid grid-cols-[11rem_minmax(0,1fr)] items-start gap-6 max-[1100px]:grid-cols-1">
       <nav
         aria-label="Admin console sections"
-        className="mb-4 flex flex-wrap gap-x-4 gap-y-2 text-sm font-semibold"
+        className="sticky top-20 grid gap-0.5 text-sm max-[1100px]:static max-[1100px]:flex max-[1100px]:gap-1 max-[1100px]:overflow-x-auto max-[1100px]:pb-1"
       >
         {adminSections.map(([id, label]) => (
-          <a className="text-accent [overflow-wrap:anywhere]" href={`#${id}`} key={id}>
+          <a
+            className="rounded-md border-l-2 border-border py-1.5 pl-3 text-muted-strong [overflow-wrap:anywhere] hover:border-accent hover:text-ink max-[1100px]:shrink-0 max-[1100px]:rounded-full max-[1100px]:border max-[1100px]:bg-surface max-[1100px]:px-3 max-[1100px]:[overflow-wrap:normal]"
+            href={`#${id}`}
+            key={id}
+          >
             {label}
           </a>
         ))}
       </nav>
-      <div className="grid items-start gap-4 lg:grid-cols-2">
+      <div className="grid min-w-0 items-start gap-4 lg:grid-cols-2">
         <RealtimeRecoveryNotice
           className="lg:col-span-2"
           realtimeStatus={realtimeStatus}
@@ -232,7 +238,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
         />
         <AdminDiagnosticsLinks />
       </div>
-    </>
+    </div>
   );
 }
 
@@ -261,12 +267,17 @@ function AdminRoutineActions({
   const refreshDisabledReasonId = useId();
 
   return (
-    <section className={`${panelClassName} lg:col-span-2`} id="routine-actions">
-      <h2 className="m-0 text-base font-bold leading-tight text-ink">Routine actions</h2>
-      <p className="m-0 mt-2 text-sm text-muted">
-        Review shared state before using the controls in each section.
-      </p>
-      <div className="mt-4 flex flex-wrap gap-2">
+    <section
+      className={`${panelClassName} flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 lg:col-span-2`}
+      id="routine-actions"
+    >
+      <div>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Routine actions</h2>
+        <p className="m-0 mt-0.5 text-sm text-muted">
+          Review shared state before using the controls in each section.
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2">
         <div>
           <button
             aria-describedby={refreshDisabledReason ? refreshDisabledReasonId : undefined}
@@ -278,7 +289,10 @@ function AdminRoutineActions({
             {isRefreshing ? "Refreshing current run" : "Refresh current run"}
           </button>
           {refreshDisabledReason ? (
-            <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={refreshDisabledReasonId}>
+            <p
+              className="m-0 mt-1 max-w-64 text-xs leading-4 text-muted"
+              id={refreshDisabledReasonId}
+            >
               {refreshDisabledReason}
             </p>
           ) : null}
@@ -296,9 +310,12 @@ function AdminRoutineActions({
 
 function AdminDiagnosticsLinks() {
   return (
-    <section className={`${panelClassName} lg:col-span-2`} id="diagnostics-links">
-      <h2 className="m-0 text-base font-bold leading-tight text-ink">Diagnostics links</h2>
-      <div className="mt-4 flex flex-wrap gap-2">
+    <section
+      className={`${panelClassName} flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 lg:col-span-2`}
+      id="diagnostics-links"
+    >
+      <h2 className="type-title m-0 text-base leading-tight text-ink">Diagnostics links</h2>
+      <div className="flex flex-wrap gap-2">
         <a className={buttonClassName} href="/watch">
           Live dashboard
         </a>
@@ -323,8 +340,8 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
     <section className={panelClassName} id="readiness">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className="m-0 text-xs font-bold uppercase text-muted">Readiness</p>
-          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+          <p className={eyebrowClassName}>Readiness</p>
+          <h2 className={panelTitleClassName}>
             Shared dependencies{" "}
             <FieldHint label="Shared dependencies" text={adminFieldHints.sharedDependencies} />
           </h2>
@@ -342,12 +359,15 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
         <ErrorNotice context="admin-read" read={read} />
       ) : null}
       {checks.length > 0 ? (
-        <details className="mt-3 rounded border border-border px-3 py-2 text-sm text-muted-strong">
-          <summary className="cursor-pointer font-semibold">Readiness probe details</summary>
-          <dl className="mt-2 grid gap-1">
+        <details className="mt-3 rounded-xl border border-border px-4 py-3 text-sm text-muted-strong">
+          <summary className="disclosure font-semibold text-ink">Readiness probe details</summary>
+          <dl className="mb-0 mt-2 grid gap-1">
             {checks.map((check) => (
-              <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2" key={check.name}>
-                <dt>{check.name}</dt>
+              <div
+                className="grid grid-cols-[minmax(8rem,auto)_minmax(0,1fr)] gap-3"
+                key={check.name}
+              >
+                <dt className="font-medium text-ink">{check.name}</dt>
                 <dd className="m-0 [overflow-wrap:anywhere]">
                   {check.status}
                   {check.message ? ` — ${check.message}` : ""}
@@ -401,8 +421,8 @@ export function AdminCurrentRunPanel({
     <section className={panelClassName} id="current-run">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className="m-0 text-xs font-bold uppercase text-muted">Live status</p>
-          <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+          <p className={eyebrowClassName}>Live status</p>
+          <h2 className={panelTitleClassName}>
             Current run <FieldHint label="Current run" text={adminFieldHints.currentRun} />
           </h2>
         </div>
@@ -421,10 +441,10 @@ export function AdminCurrentRunPanel({
       </div>
       {recovery.status === "available" ? (
         <>
-          <p className="m-0 mb-3 text-sm font-semibold text-muted-strong" role="status">
+          <p className="m-0 mb-3 text-sm font-medium text-muted-strong" role="status">
             Traffic: {recovery.data.currentRun?.trafficStatus ?? "not active"}
           </p>
-          <dl className="m-0 grid gap-3">
+          <dl className="m-0 grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
             <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
             <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
             <Fact
@@ -453,7 +473,7 @@ export function AdminCurrentRunPanel({
             : "Refresh status"}
       </button>
       {refreshDisabledReason ? (
-        <p className="m-0 mt-1 max-w-64 text-xs text-muted" id={refreshDisabledReasonId}>
+        <p className="m-0 mt-1 max-w-64 text-xs leading-4 text-muted" id={refreshDisabledReasonId}>
           {refreshDisabledReason}
         </p>
       ) : null}
@@ -1351,8 +1371,8 @@ export function AdminMaintenancePanel({
   return (
     <section className={panelClassName} id="maintenance">
       <div className="mb-4">
-        <p className="m-0 text-xs font-bold uppercase text-muted">Maintenance</p>
-        <h2 className="m-0 mt-1 flex items-center gap-2 text-base font-bold leading-tight text-ink">
+        <p className={eyebrowClassName}>Maintenance</p>
+        <h2 className={panelTitleClassName}>
           Recovery and cleanup{" "}
           <FieldHint label="Recovery and cleanup" text={adminFieldHints.recovery} />
         </h2>
@@ -1376,7 +1396,10 @@ export function AdminMaintenancePanel({
         </button>
       </div>
       {incomplete ? (
-        <p role="status">
+        <p
+          className="mb-0 mt-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning"
+          role="status"
+        >
           Operator stop decision recorded. Work cleanup and history are incomplete; worker work may
           still settle. Starts are blocked. Retry Reset to complete recovery.
         </p>

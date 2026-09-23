@@ -103,8 +103,8 @@ export function RunConclusion({
       className={`col-span-full rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
       aria-label="Run conclusion"
     >
-      <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
-      <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">
+      <p className="m-0 text-xs font-medium text-muted">Final result</p>
+      <p className="type-title m-0 mt-0.5 text-lg leading-7 text-ink">
         {runConclusionSentence(result)}
       </p>
       {showReconciliationStatus ? <ReconciliationStatus result={result} /> : null}
@@ -150,8 +150,8 @@ export function PublicRunConclusion({
       className={`col-span-full rounded-lg border p-4 ${failureExplanation ? "border-border bg-surface" : publicConclusionClassName(result, summary)}`}
       aria-label="Run conclusion"
     >
-      <p className="m-0 text-xs font-bold uppercase text-muted">Final result</p>
-      <p className="m-0 mt-1 text-lg font-bold leading-7 text-ink">{summary.title}</p>
+      <p className="m-0 text-xs font-medium text-muted">Final result</p>
+      <p className="type-title m-0 mt-0.5 text-lg leading-7 text-ink">{summary.title}</p>
       {failureExplanation ? (
         <p className="m-0 mt-1 text-sm font-semibold text-danger">Traffic failure</p>
       ) : (
@@ -219,7 +219,7 @@ export function PublicRunConclusionProof({
 }) {
   const content = (
     <>
-      {targetId ? <h2 className="m-0 text-base font-bold text-ink">Consistency</h2> : null}
+      {targetId ? <h2 className="type-title m-0 text-base text-ink">Consistency</h2> : null}
       <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
       <ReconciliationStatus result={result} />
       <ConclusionEvidence result={result} showCanonicalCodes={false} />
@@ -228,7 +228,7 @@ export function PublicRunConclusionProof({
   if (alwaysVisible) {
     return (
       <section
-        className="rounded-lg border border-border bg-surface p-4"
+        className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
         {...(targetId ? { id: targetId, tabIndex: -1 } : {})}
       >
         {content}
@@ -295,7 +295,7 @@ function ConclusionEvidence({
         ))}
       </div>
       <details className="mt-4 rounded border border-border px-3 py-2 text-sm">
-        <summary className="cursor-pointer font-semibold text-muted-strong">
+        <summary className="disclosure font-semibold text-ink">
           Evidence and reconciliation proof
         </summary>
         <div className="mt-3 grid gap-2">

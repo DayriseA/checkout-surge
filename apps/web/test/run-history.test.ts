@@ -942,7 +942,7 @@ describe("run history", () => {
       expect([...(region?.parentElement?.classList ?? [])]).toEqual(
         expect.arrayContaining(["min-w-0", "max-w-full"]),
       );
-      expect([...(region?.closest("section.rounded-lg")?.classList ?? [])]).toEqual(
+      expect([...(region?.closest("section.rounded-2xl")?.classList ?? [])]).toEqual(
         expect.arrayContaining(["min-w-0", "max-w-full"]),
       );
     }

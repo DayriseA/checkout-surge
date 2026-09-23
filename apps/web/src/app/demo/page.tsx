@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { textLinkClassName } from "../components/control-styles";
 import { PublicDemoEntry } from "../components/public-demo-entry";
 import { getPublicDemoSurface } from "../lib/api";
 
@@ -10,23 +11,23 @@ export default async function DemoDashboardPage() {
   const surface = await getPublicDemoSurface();
   return (
     <>
-      <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
-        <div>
-          <h1 className="m-0 text-4xl font-bold leading-tight text-ink">Checkout-Surge demo</h1>
-          <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-            Choose a simulation, start it, and watch a simulated flash sale unfold.
-          </p>
-        </div>
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
+        <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
+          Checkout-Surge demo
+        </h1>
+        <p className="m-0 max-w-[52ch] leading-6 text-muted">
+          Choose a simulation, start it, and watch a simulated flash sale unfold.
+        </p>
       </header>
       <PublicDemoEntry surface={surface} />
       <section
         aria-labelledby="demo-mental-model"
-        className="mt-4 rounded-lg border border-border bg-surface p-5"
+        className="mt-5 grid grid-cols-[15rem_minmax(0,1fr)] gap-x-8 gap-y-2 px-5 py-2 max-[800px]:grid-cols-1 max-[560px]:px-0"
       >
-        <h2 className="m-0 text-xl font-bold text-ink" id="demo-mental-model">
+        <h2 className="type-title m-0 text-lg leading-7 text-ink" id="demo-mental-model">
           How the surge stays safe
         </h2>
-        <p className="mt-3 max-w-[80ch] leading-7 text-muted-strong">
+        <p className="m-0 max-w-[80ch] text-sm leading-6 text-muted-strong">
           Simulated buyers compete for limited stock. Redis atomically reserves units immediately
           without overselling, and orders for unique reservations wait in a BullMQ queue. Workers
           drain that queue at a safe rate while calling a deliberately slow simulated ERP; a run
@@ -35,7 +36,7 @@ export default async function DemoDashboardPage() {
           universal production evidence.
         </p>
         <Link
-          className="mt-3 inline-block font-semibold text-accent underline"
+          className={`${textLinkClassName} text-sm min-[801px]:col-start-2`}
           href="/#failure-story"
         >
           How this works

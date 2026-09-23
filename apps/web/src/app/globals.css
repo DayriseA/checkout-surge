@@ -1,26 +1,94 @@
 @import "tailwindcss";
+@import "@fontsource-variable/archivo/wdth.css";
 
+/*
+ * Floodgate palette: a cool concrete page, paper surfaces, reservoir-navy ink and actions,
+ * and one sodium-lamp signal colour reserved for surge pressure, the current route, and focus
+ * on dark ground. Status tones keep their own hues so "ok" never borrows the action colour.
+ */
 @theme {
   --font-sans:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --color-page: #f5f7f8;
+    "Archivo Variable", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Menlo, Consolas, monospace;
+  --color-page: #eceef1;
   --color-surface: #ffffff;
-  --color-surface-muted: #eef2f3;
-  --color-border: #d7dee2;
-  /* #808b93 is 3.48:1 against surface (#fff) and 3.24:1 against page (#f5f7f8). */
-  --color-control-border: #808b93;
-  --color-foreground: #172026;
-  --color-muted: #63717a;
-  --color-muted-strong: #40505a;
-  --color-accent: #047857;
-  --color-accent-soft: #d9f6ea;
-  --color-info: #175cd3;
-  --color-info-soft: #e8f1ff;
-  --color-warning: #9a5b00;
-  --color-warning-soft: #fff2cf;
+  --color-surface-muted: #f3f4f6;
+  --color-border: #d9dde3;
+  /* #7a8492 is 3.68:1 against surface (#fff) and 3.13:1 against page (#eceef1). */
+  --color-control-border: #7a8492;
+  --color-foreground: #0d1b2a;
+  --color-muted: #5a6575;
+  --color-muted-strong: #344052;
+  --color-accent: #17325a;
+  --color-accent-hover: #0d1b2a;
+  --color-accent-soft: #e4eaf3;
+  --color-ok: #06734f;
+  --color-ok-soft: #dcf2e8;
+  --color-info: #1f4fd1;
+  --color-info-soft: #e6edff;
+  --color-warning: #8a5300;
+  --color-warning-soft: #fff1cf;
+  --color-warning-line: #eccb85;
   --color-danger: #b42318;
-  --color-danger-soft: #fee4df;
-  --color-ink: #111827;
+  --color-danger-soft: #fde7e3;
+  --color-danger-line: #f3b4ab;
+  --color-ink: #0d1b2a;
+  --color-reservoir: #0d1b2a;
+  --color-reservoir-raised: #1b2c43;
+  --color-signal: #ffb81c;
+  --color-signal-soft: #fff3d4;
+}
+
+/* Expanded Archivo widths carry the display and title voice. */
+@utility type-display {
+  font-stretch: 125%;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+
+@utility type-title {
+  font-stretch: 112%;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    font-feature-settings: "ss01";
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  summary::marker {
+    color: var(--color-muted);
+  }
+
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-accent);
+    width: 1rem;
+    height: 1rem;
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+  }
+
+  ::selection {
+    background: var(--color-signal-soft);
+    color: var(--color-ink);
+  }
 }
 
 .meter {
@@ -35,11 +103,51 @@
 }
 
 .meter::-webkit-meter-optimum-value {
-  background: var(--color-accent);
+  background: var(--color-ok);
   border-radius: 999px;
 }
 
 .meter::-moz-meter-bar {
-  background: var(--color-accent);
+  background: var(--color-ok);
   border-radius: 999px;
+}
+
+/* Focus on the reservoir band uses the signal colour; the mobile menu panel is light again. */
+.site-header :focus-visible {
+  outline-color: var(--color-signal);
+}
+
+@media (max-width: 900px) {
+  .site-header #dashboard-navigation-panel :focus-visible {
+    outline-color: var(--color-ink);
+  }
+}
+
+/* One disclosure affordance for every summary: a small chevron that turns when open. */
+@utility disclosure {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+
+  &::-webkit-details-marker {
+    display: none;
+  }
+
+  &::before {
+    content: "";
+    flex: none;
+    width: 0.4rem;
+    height: 0.4rem;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: translateX(-1px) rotate(-45deg);
+    transition: transform 150ms ease;
+  }
+
+  details[open] > &::before {
+    transform: translateY(-2px) rotate(45deg);
+  }
 }

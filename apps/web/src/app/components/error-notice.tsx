@@ -42,8 +42,8 @@ export function ErrorNotice({
     onRetry && (action.kind === "retry" || action.kind === "check") ? onRetry : undefined;
   const toneClassName =
     resolvedPresentation.tone === "warning"
-      ? "border-[#ecd08f] bg-warning-soft text-warning"
-      : "border-[#f7b4ad] bg-danger-soft text-danger";
+      ? "border-warning-line bg-warning-soft text-warning"
+      : "border-danger-line bg-danger-soft text-danger";
   const actionNode: ReactNode = action.href ? (
     <a className={neutralLinkButtonClassName} href={action.href}>
       {action.label}
@@ -59,7 +59,7 @@ export function ErrorNotice({
   return (
     <div
       aria-live="polite"
-      className={`grid gap-1 rounded-lg border p-3 leading-6 ${toneClassName} ${className}`}
+      className={`grid gap-1 rounded-xl border px-4 py-3 text-sm leading-6 ${toneClassName} ${className}`}
       role="alert"
     >
       <strong>{resolvedPresentation.headline}</strong>
@@ -88,8 +88,8 @@ function TechnicalDetails({
 }) {
   if (!details || Object.keys(details).length === 0) return null;
   return (
-    <details className="mt-2 rounded border border-border bg-surface px-3 py-2 text-sm text-muted-strong">
-      <summary className="cursor-pointer font-semibold">Technical details</summary>
+    <details className="mt-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted-strong">
+      <summary className="disclosure font-semibold">Technical details</summary>
       <dl className="mt-2 grid gap-1">
         {details.code ? <Detail label="Code" value={details.code} /> : null}
         {details.httpStatus ? (

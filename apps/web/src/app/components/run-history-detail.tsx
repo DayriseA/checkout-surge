@@ -76,15 +76,15 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
   return (
     <div className="grid grid-cols-1 gap-4">
-      <header className="rounded-lg border border-border bg-surface p-4 min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]">
+      <header className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4 min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             {navigation}
-            <p className="m-0 text-xs font-bold uppercase text-muted">Run detail</p>
-            <h1 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">
+            <p className="m-0 text-xs font-medium text-muted">Run detail</p>
+            <h1 className="type-display m-0 mt-1 text-[1.875rem] leading-tight text-ink">
               {summary.presetName}
             </h1>
-            <p className="m-0 mt-2 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
+            <p className="m-0 mt-1.5 [overflow-wrap:anywhere] font-mono text-xs text-muted">
               {summary.runId}
             </p>
           </div>
@@ -128,7 +128,10 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         />
       ) : null}
 
-      <section aria-label="Run overview" className="rounded-lg border border-border bg-surface p-4">
+      <section
+        aria-label="Run overview"
+        className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
+      >
         <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
@@ -255,8 +258,8 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Run configuration</h2>
+      <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Run configuration</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
@@ -304,7 +307,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
       {failure && !detail.failureDiagnostic ? (
         <section className="rounded-lg border border-warning bg-warning-soft p-4">
-          <h2 className="m-0 text-base font-bold text-ink">What happened</h2>
+          <h2 className="type-title m-0 text-base text-ink">What happened</h2>
           <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
           <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
         </section>
@@ -329,8 +332,8 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       <RunHistoryFilter detail={detail} />
 
       {detail.query.filter && trace.length > 0 ? (
-        <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
-          <h2 className="m-0 text-base font-bold leading-tight text-ink">Chronological trace</h2>
+        <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+          <h2 className="type-title m-0 text-base leading-tight text-ink">Chronological trace</h2>
           <p className="m-0 mt-1 text-sm text-muted">
             Related records are ordered by timestamp, source type, then identifier.
           </p>
@@ -356,7 +359,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         </section>
       ) : null}
 
-      <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
+      <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
         <CollectionHeader
           cursorPaged={cursorPaged}
           filtered={detail.query.filter !== undefined}
@@ -548,9 +551,9 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
   return (
     <section
       aria-label="Search this run"
-      className="rounded-lg border border-border bg-surface p-4"
+      className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
     >
-      <h2 className="m-0 text-base font-bold leading-tight text-ink">Search this run</h2>
+      <h2 className="type-title m-0 text-base leading-tight text-ink">Search this run</h2>
       <p className="m-0 mt-1 text-sm text-muted">
         Search the protected run dataset, including records outside the recent-record view.
       </p>
@@ -649,7 +652,7 @@ function CollectionPanel({
   warningCount: number;
 }) {
   return (
-    <section className="min-w-0 max-w-full rounded-lg border border-border bg-surface p-4">
+    <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <CollectionHeader
         cursorPaged={cursorPaged}
         filtered={filtered}
@@ -709,9 +712,9 @@ function CollectionHeader({
   const displayedTotal = filtered ? matchedCount : totalCount;
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="m-0 text-base font-bold leading-tight text-ink">{title}</h2>
+      <h2 className="type-title m-0 text-base leading-tight text-ink">{title}</h2>
       <p
-        className={`m-0 text-xs font-bold uppercase ${warningCount > 0 ? "text-warning" : "text-muted"}`}
+        className={`m-0 text-xs font-semibold ${warningCount > 0 ? "text-warning" : "text-muted"}`}
       >
         {filtered
           ? `${formatNumber(matchedCount)} matches of ${formatNumber(totalCount)} total`
@@ -796,7 +799,7 @@ function DenseTable({
               <details>
                 <summary
                   aria-label={`Technical detail for ${row.identity}`}
-                  className="cursor-pointer font-semibold text-muted-strong"
+                  className="disclosure font-semibold text-muted-strong"
                 >
                   Technical detail
                 </summary>
@@ -865,7 +868,7 @@ function ExceptionSummary({
       }`}
       aria-label="Exception summary"
     >
-      <h2 className="m-0 text-base font-bold text-ink">Exception summary</h2>
+      <h2 className="type-title m-0 text-base text-ink">Exception summary</h2>
       <p
         className={`m-0 mt-2 text-sm font-semibold ${
           isFailure ? "text-danger" : needsAttention ? "text-warning" : "text-accent"
@@ -1000,23 +1003,23 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 
       <section
         aria-labelledby="report-final-counts"
-        className="rounded-lg border border-border bg-surface p-4"
+        className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       >
-        <h2 id="report-final-counts" className="m-0 text-base font-bold leading-tight text-ink">
+        <h2 id="report-final-counts" className="type-title m-0 text-base leading-tight text-ink">
           Final stock and orders
         </h2>
         <div className="mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-3 max-[600px]:grid-cols-2">
           {finalCounts.map(([label, value]) => (
-            <div className="rounded border border-border bg-surface-muted p-3" key={label}>
-              <p className="m-0 text-xl font-bold text-ink">{formatCount(value) ?? "—"}</p>
+            <div className="rounded-xl border border-border bg-surface-muted p-3" key={label}>
+              <p className="type-title m-0 text-xl text-ink">{formatCount(value) ?? "—"}</p>
               <p className="m-0 mt-1 text-xs text-muted">{label}</p>
             </div>
           ))}
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">What happened</h2>
+      <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+        <h2 className="type-title m-0 text-base leading-tight text-ink">What happened</h2>
         <ul className="mb-0 mt-3 grid gap-2 pl-5 text-sm leading-6 text-muted-strong">
           {runRecap(detail, publicSummary.counts).map((line) => (
             <li key={line}>{line}</li>
@@ -1025,7 +1028,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       </section>
 
       <section className="grid gap-3" id="report-advanced-signals">
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Signals</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Signals</h2>
         <GoldSignals
           acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
@@ -1043,10 +1046,10 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       />
 
       <section
-        className="rounded-lg border border-border bg-surface p-4"
+        className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
         id="report-advanced-scenario"
       >
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">Scenario settings</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Scenario settings</h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
@@ -1083,11 +1086,11 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       </section>
 
       <section
-        className="rounded-lg border border-border bg-surface p-4"
+        className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
         id="report-advanced-measurements"
         tabIndex={-1}
       >
-        <h2 className="m-0 text-base font-bold leading-tight text-ink">
+        <h2 className="type-title m-0 text-base leading-tight text-ink">
           Delivery and measurements
         </h2>
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1107,8 +1110,8 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           data-delivery-summary=""
         >
           {deliveryFigures.map(([label, value, note]) => (
-            <div className="rounded border border-border bg-surface-muted p-3" key={label}>
-              <p className="m-0 text-xl font-bold text-ink">{value}</p>
+            <div className="rounded-xl border border-border bg-surface-muted p-3" key={label}>
+              <p className="type-title m-0 text-xl text-ink">{value}</p>
               <p className="m-0 mt-1 text-xs text-muted">{label}</p>
               {note ? <p className="m-0 mt-1 text-xs text-muted">{note}</p> : null}
             </div>
@@ -1116,7 +1119,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         </div>
         {transportObservation.hasUnrecordedReplies ? (
           <p
-            className="m-0 mt-3 rounded-lg border border-[#ecd08f] bg-warning-soft p-3 text-xs leading-5 text-warning"
+            className="m-0 mt-3 rounded-lg border border-warning-line bg-warning-soft p-3 text-xs leading-5 text-warning"
             data-measurement-caveat=""
           >
             Checkout response p95 (client-observed) covers only the{" "}
@@ -1131,9 +1134,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           ERP share one host. This is not hosted benchmark evidence.
         </p>
         <details className="mt-4 rounded border border-border px-3 py-2">
-          <summary className="cursor-pointer font-semibold text-muted-strong">
-            All measurements
-          </summary>
+          <summary className="disclosure font-semibold text-ink">All measurements</summary>
           <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
             <TransportObservationSection
               arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
@@ -1186,9 +1187,9 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       </section>
 
       <section id="report-advanced-lifecycle">
-        <details className="rounded-lg border border-border bg-surface px-4 py-3">
-          <summary className="cursor-pointer">
-            <h2 className="m-0 inline text-base font-bold leading-tight text-ink">
+        <details className="rounded-2xl border border-border bg-surface px-5 py-3.5">
+          <summary className="disclosure">
+            <h2 className="type-title m-0 inline text-base leading-tight text-ink">
               Lifecycle and reference
             </h2>
           </summary>
@@ -1311,13 +1312,13 @@ function DiscardedRunDetail({
   automatic: boolean;
 }) {
   return (
-    <section className="rounded-lg border border-border bg-surface p-4">
+    <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         {navigation}
         {actions}
       </div>
-      <p className="m-0 mt-3 text-xs font-bold uppercase text-muted">Cancelled</p>
-      <h1 className="m-0 mt-1 text-2xl font-bold leading-tight text-ink">{presetName}</h1>
+      <p className="m-0 mt-3 text-xs font-medium text-muted">Cancelled</p>
+      <h1 className="type-display m-0 mt-1 text-[1.875rem] leading-tight text-ink">{presetName}</h1>
       <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
         This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
         data was discarded.

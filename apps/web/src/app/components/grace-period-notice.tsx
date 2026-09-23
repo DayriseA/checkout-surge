@@ -31,7 +31,7 @@ export function GracePeriodNotice({
   return (
     <section
       aria-label="Grace period notice"
-      className="rounded-lg border border-warning bg-warning-soft p-3"
+      className="rounded-xl border border-warning-line bg-warning-soft px-4 py-3"
       data-grace-period-notice=""
       role="status"
     >

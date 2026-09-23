@@ -12,7 +12,7 @@ export function AdminSignOut() {
   return (
     <div className="flex flex-wrap items-center gap-2">
       <button
-        className="inline-flex min-h-11 items-center rounded-lg px-2.5 py-2 text-sm font-semibold text-muted-strong hover:bg-surface-muted hover:text-ink disabled:opacity-60"
+        className="inline-flex min-h-11 items-center rounded-md px-3 py-2 text-sm font-medium text-white/70 transition-colors hover:text-white disabled:opacity-60 max-[900px]:text-muted-strong max-[900px]:hover:bg-surface-muted max-[900px]:hover:text-ink"
         disabled={pending}
         onClick={async () => {
           setPending(true);
@@ -38,7 +38,7 @@ export function AdminSignOut() {
         {pending ? "Signing out…" : "Sign out"}
       </button>
       {failed ? (
-        <p className="m-0 text-sm font-semibold text-danger" role="alert">
+        <p className="m-0 text-sm font-semibold text-signal max-[900px]:text-danger" role="alert">
           Admin sign-out failed.
         </p>
       ) : null}

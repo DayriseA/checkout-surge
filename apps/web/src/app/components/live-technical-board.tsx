@@ -166,10 +166,10 @@ interface BoardColumn {
 }
 
 const columnCountClassName = "grid grid-cols-4 gap-4 max-[900px]:grid-cols-2";
-const columnHeadingClassName = "m-0 text-xs font-bold uppercase text-muted";
+const columnHeadingClassName = "m-0 text-xs font-medium text-muted";
 const columnPrimaryValueClassName = "m-0 text-2xl font-bold leading-tight text-ink";
 const columnPrimaryCaptionClassName = "m-0 text-xs font-bold text-muted";
-const rowTermClassName = "mb-1 text-xs font-bold text-muted";
+const rowTermClassName = "mb-0.5 text-xs font-medium text-muted";
 const rowValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
 
 /**
@@ -352,7 +352,7 @@ export function LiveTechnicalBoard({
   ];
   const [attemptsDispatched, plannedAttempts] = values.dispatched;
   return (
-    <section className="col-span-12 min-w-0 rounded-lg border border-border bg-surface p-4">
+    <section className="col-span-12 min-w-0 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <FreshnessLine freshness={freshness} />
         <StatusPill status={deriveFreshnessPresentationState(freshness)} />
