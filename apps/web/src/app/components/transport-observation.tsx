@@ -119,8 +119,10 @@ export function TransportObservationSection({
   startDelaySeconds,
   surface,
   trafficStartedAt,
+  className = "",
 }: {
   arrivalSummary: RequestArrivalSummary;
+  className?: string;
   counts: TransportAttemptCounts;
   hideZeroExceptions?: boolean;
   httpTimingBreakdownSummary?: HttpTimingBreakdownSummary;
@@ -134,7 +136,7 @@ export function TransportObservationSection({
   const preparation = deriveHarnessPreparation(arrivalSummary, trafficStartedAt, startDelaySeconds);
 
   return (
-    <section className="min-w-0 border-t border-border pt-3">
+    <section className={`min-w-0 border-t border-border pt-3 ${className}`}>
       <FastReservationEvidence summary={serverReservationTimingSummary} />
       <div className="mt-4 border-t border-border pt-3">
         <RequestArrivalEvidence summary={arrivalSummary} showSeries={surface === "detail"} />
@@ -197,28 +199,30 @@ export function TransportObservationSection({
           />
         ) : null}
       </dl>
-      <h4 className="m-0 mt-4 text-xs font-medium text-muted">Load-generator outcomes</h4>
-      <dl className="m-0 mt-2 grid gap-2">
-        <ObservationRow
-          label={publicVocabulary.acceptedResponses}
-          value={formatNumber(httpSummary.acceptedResponses)}
-        />
-        <ObservationRow
-          label={publicVocabulary.soldOutRejectionsSeen}
-          value={formatNumber(httpSummary.soldOutResponses)}
-        />
-        {!hideZeroExceptions || httpSummary.unexpectedResponses > 0 ? (
+      <div>
+        <h4 className="m-0 mt-4 text-xs font-medium text-muted">Load-generator outcomes</h4>
+        <dl className="m-0 mt-2 grid gap-2">
           <ObservationRow
-            label="Unexpected"
-            value={formatNumber(httpSummary.unexpectedResponses)}
+            label={publicVocabulary.acceptedResponses}
+            value={formatNumber(httpSummary.acceptedResponses)}
           />
-        ) : null}
-        <ObservationRow
-          label="Checkout response p95 (client-observed)"
-          note={observation.hasUnrecordedReplies ? biasedLatencyNote : undefined}
-          value={formatMilliseconds(httpSummary.p95LatencyMs)}
-        />
-      </dl>
+          <ObservationRow
+            label={publicVocabulary.soldOutRejectionsSeen}
+            value={formatNumber(httpSummary.soldOutResponses)}
+          />
+          {!hideZeroExceptions || httpSummary.unexpectedResponses > 0 ? (
+            <ObservationRow
+              label="Unexpected"
+              value={formatNumber(httpSummary.unexpectedResponses)}
+            />
+          ) : null}
+          <ObservationRow
+            label="Checkout response p95 (client-observed)"
+            note={observation.hasUnrecordedReplies ? biasedLatencyNote : undefined}
+            value={formatMilliseconds(httpSummary.p95LatencyMs)}
+          />
+        </dl>
+      </div>
       {httpTimingBreakdownSummary ? (
         <ClientTimingBreakdown summary={httpTimingBreakdownSummary} />
       ) : null}

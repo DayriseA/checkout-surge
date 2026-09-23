@@ -76,19 +76,19 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
   return (
     <div className="grid grid-cols-1 gap-4">
-      <header className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4 min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            {navigation}
-            <p className="m-0 text-xs font-medium text-muted">Run detail</p>
-            <h1 className="type-display m-0 mt-1 text-[1.875rem] leading-tight text-ink">
+      {navigation}
+      <header className="rounded-2xl border border-border bg-surface px-5 py-3.5 max-[560px]:px-4 min-[900px]:sticky min-[900px]:top-14 min-[900px]:z-[5] min-[900px]:shadow-[0_8px_24px_-18px_rgb(13_27_42/0.5)]">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
+            <p className="sr-only">Run detail</p>
+            <h1 className="type-display m-0 text-2xl leading-tight text-ink">
               {summary.presetName}
             </h1>
-            <p className="m-0 mt-1.5 [overflow-wrap:anywhere] font-mono text-xs text-muted">
+            <p className="m-0 [overflow-wrap:anywhere] font-mono text-xs text-muted">
               {summary.runId}
             </p>
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2 max-[700px]:justify-start">
             <StatusPill
               status={{
                 ...runPresentation,
@@ -132,7 +132,8 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         aria-label="Run overview"
         className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       >
-        <div className="mt-4 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Run overview</h2>
+        <div className="mt-3 grid grid-cols-4 gap-x-6 gap-y-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
               ["Started", formatDate(summary.startedAt)],
@@ -146,16 +147,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 : []),
             ]}
             title="Lifecycle"
-          />
-          <TransportObservationSection
-            arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
-            counts={summary.transportAttemptCounts}
-            httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
-            httpSummary={summary.httpSummary}
-            serverReservationTimingSummary={summary.serverReservationTimingSummary}
-            startDelaySeconds={run.configSnapshot.trafficConfig.startDelaySeconds}
-            surface="detail"
-            {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
           />
           <FactList
             caption={simulatedErpLens.caption}
@@ -256,11 +247,22 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             title="Terminal inventory"
           />
         </div>
+        <TransportObservationSection
+          arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+          className="mt-5 gap-x-6 min-[900px]:columns-2 min-[1100px]:columns-3 [&>*]:break-inside-avoid"
+          counts={summary.transportAttemptCounts}
+          httpTimingBreakdownSummary={detail.httpTimingBreakdownSummary}
+          httpSummary={summary.httpSummary}
+          serverReservationTimingSummary={summary.serverReservationTimingSummary}
+          startDelaySeconds={run.configSnapshot.trafficConfig.startDelaySeconds}
+          surface="detail"
+          {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
+        />
       </section>
 
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
         <h2 className="type-title m-0 text-base leading-tight text-ink">Run configuration</h2>
-        <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
+        <div className="mt-3 grid grid-cols-4 gap-x-6 gap-y-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
               [
@@ -306,7 +308,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       />
 
       {failure && !detail.failureDiagnostic ? (
-        <section className="rounded-lg border border-warning bg-warning-soft p-4">
+        <section className="rounded-2xl border border-warning-line bg-warning-soft p-5">
           <h2 className="type-title m-0 text-base text-ink">What happened</h2>
           <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
           <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
@@ -329,100 +331,87 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         warningCount={detail.exceptionSummary.generatorWarnings}
       />
 
-      <RunHistoryFilter detail={detail} />
+      <div className="grid gap-3">
+        <RunHistoryFilter detail={detail} />
 
-      {detail.query.filter && trace.length > 0 ? (
-        <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-          <h2 className="type-title m-0 text-base leading-tight text-ink">Chronological trace</h2>
-          <p className="m-0 mt-1 text-sm text-muted">
-            Related records are ordered by timestamp, source type, then identifier.
-          </p>
-          <ScrollRegion accessibleName="Chronological trace">
-            <DenseTable
-              accessibleName="Chronological trace"
-              headers={["Time", "Source", "Order", "Activity", "Details"]}
-              rows={trace.map((entry) => ({
-                id: `${entry.source}-${entry.id}`,
-                identity: `${entry.source} ${entry.id}`,
-                cells: [
-                  formatDate(entry.timestamp),
-                  entry.source,
-                  entry.publicOrderId ?? "Run-level",
-                  entry.activity,
-                ],
-                details: entry.details.map(
-                  ([label, value]) => [label, codeValue(value)] as [string, ReactNode],
-                ),
-              }))}
-            />
-          </ScrollRegion>
-        </section>
-      ) : null}
+        {detail.query.filter && trace.length > 0 ? (
+          <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+            <h2 className="type-title m-0 text-base leading-tight text-ink">Chronological trace</h2>
+            <p className="m-0 mt-1 text-sm text-muted">
+              Related records are ordered by timestamp, source type, then identifier.
+            </p>
+            <ScrollRegion accessibleName="Chronological trace">
+              <DenseTable
+                accessibleName="Chronological trace"
+                headers={["Time", "Source", "Order", "Activity", "Details"]}
+                rows={trace.map((entry) => ({
+                  id: `${entry.source}-${entry.id}`,
+                  identity: `${entry.source} ${entry.id}`,
+                  cells: [
+                    formatDate(entry.timestamp),
+                    entry.source,
+                    entry.publicOrderId ?? "Run-level",
+                    entry.activity,
+                  ],
+                  details: entry.details.map(
+                    ([label, value]) => [label, codeValue(value)] as [string, ReactNode],
+                  ),
+                }))}
+              />
+            </ScrollRegion>
+          </section>
+        ) : null}
 
-      <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-        <CollectionHeader
+        <CollectionPanel
+          defaultOpen
+          emptyLabel={collectionEmptyLabel(
+            filtered,
+            cursorPaged,
+            detail.orders.matchedCount,
+            "order outcomes",
+            "No order outcomes were recorded for this run.",
+          )}
+          headers={["Public order", "Status", "Quantity", "Terminal time", "Details"]}
+          records={detail.orders.records.map((order) => ({
+            id: order.orderId,
+            identity: `order ${order.publicOrderId}`,
+            cells: [
+              order.publicOrderId,
+              <span className={order.status === "failed" ? "text-danger" : ""} key="status">
+                {order.status}
+                {order.failureCode ? (
+                  <>
+                    {" "}
+                    · <code>{order.failureCode}</code>
+                  </>
+                ) : null}
+              </span>,
+              formatNumber(order.quantity),
+              order.confirmedAt || order.failedAt ? (
+                formatDate(order.confirmedAt ?? order.failedAt)
+              ) : (
+                <span className="text-warning" key="terminal">
+                  Missing terminal evidence
+                </span>
+              ),
+            ],
+            details: [
+              ["Internal order", codeValue(order.orderId)],
+              ["Correlation", codeValue(order.correlationId)],
+              ["Queued", formatDate(order.queuedAt)],
+              ...(order.processingAt
+                ? [["Processing", formatDate(order.processingAt)] as [string, ReactNode]]
+                : []),
+            ],
+          }))}
           cursorPaged={cursorPaged}
-          filtered={detail.query.filter !== undefined}
-          matchedCount={detail.orders.matchedCount}
-          shownCount={detail.orders.records.length}
-          warningCount={detail.orders.warningCount}
           title="Order outcomes"
+          filtered={filtered}
+          matchedCount={detail.orders.matchedCount}
           totalCount={detail.orders.totalCount}
           truncated={detail.orders.truncated}
+          warningCount={detail.orders.warningCount}
         />
-        <ScrollRegion accessibleName="Order outcomes">
-          {detail.orders.records.length > 0 ? (
-            <DenseTable
-              accessibleName="Order outcomes"
-              headers={["Public order", "Status", "Quantity", "Terminal time", "Details"]}
-              rows={detail.orders.records.map((order) => ({
-                id: order.orderId,
-                identity: `order ${order.publicOrderId}`,
-                cells: [
-                  order.publicOrderId,
-                  <span className={order.status === "failed" ? "text-danger" : ""} key="status">
-                    {order.status}
-                    {order.failureCode ? (
-                      <>
-                        {" "}
-                        · <code>{order.failureCode}</code>
-                      </>
-                    ) : null}
-                  </span>,
-                  formatNumber(order.quantity),
-                  order.confirmedAt || order.failedAt ? (
-                    formatDate(order.confirmedAt ?? order.failedAt)
-                  ) : (
-                    <span className="text-warning" key="terminal">
-                      Missing terminal evidence
-                    </span>
-                  ),
-                ],
-                details: [
-                  ["Internal order", codeValue(order.orderId)],
-                  ["Correlation", codeValue(order.correlationId)],
-                  ["Queued", formatDate(order.queuedAt)],
-                  ...(order.processingAt
-                    ? [["Processing", formatDate(order.processingAt)] as [string, ReactNode]]
-                    : []),
-                ],
-              }))}
-            />
-          ) : (
-            <EmptyCollection
-              label={collectionEmptyLabel(
-                filtered,
-                cursorPaged,
-                detail.orders.matchedCount,
-                "order outcomes",
-                "No order outcomes were recorded for this run.",
-              )}
-            />
-          )}
-        </ScrollRegion>
-      </section>
-
-      <section className="grid min-w-0 max-w-full grid-cols-3 gap-4 max-[1100px]:grid-cols-1">
         <CollectionPanel
           emptyLabel={collectionEmptyLabel(
             filtered,
@@ -529,7 +518,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           truncated={detail.eventTimeline.truncated}
           warningCount={detail.eventTimeline.warningCount}
         />
-      </section>
+      </div>
     </div>
   );
 }
@@ -551,15 +540,17 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
   return (
     <section
       aria-label="Search this run"
-      className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
+      className="rounded-2xl border border-border bg-surface-muted px-5 py-4 max-[560px]:px-4"
     >
-      <h2 className="type-title m-0 text-base leading-tight text-ink">Search this run</h2>
-      <p className="m-0 mt-1 text-sm text-muted">
-        Search the protected run dataset, including records outside the recent-record view.
-      </p>
-      <form className="mt-3 flex flex-wrap items-end gap-3" method="get">
-        <div className="grid gap-1 text-sm font-semibold text-muted-strong">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <h2 className="type-title m-0 text-base leading-tight text-ink">Search this run</h2>
+        <p className="m-0 text-sm text-muted">
+          Search the protected run dataset, including records outside the recent-record view.
+        </p>
+      </div>
+      <form className="mt-3 flex flex-wrap items-start gap-3" method="get">
+        <div className="grid gap-1 text-sm font-semibold text-ink">
+          <div className="flex min-h-6 items-center gap-1.5">
             <label htmlFor="history-filter-kind">Identifier type</label>
             <FieldHint label="Identifier type" text={adminFieldHints.identifierType} />
           </div>
@@ -574,8 +565,8 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
             <option value="correlationId">Correlation ID</option>
           </select>
         </div>
-        <div className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-muted-strong">
-          <div className="flex items-center gap-2">
+        <div className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-ink">
+          <div className="flex min-h-6 items-center gap-1.5">
             <label htmlFor="history-filter-value">Identifier</label>
             <FieldHint label="Identifier" text={adminFieldHints.identifier} />
           </div>
@@ -590,12 +581,12 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
           />
           <span className="text-xs font-normal text-muted">Enter an exact identifier.</span>
         </div>
-        <button className={`${primaryButtonClassName} px-4 py-2`} type="submit">
+        <button className={`${primaryButtonClassName} min-[561px]:mt-7`} type="submit">
           Search
         </button>
         {filter ? (
           <a
-            className={`${neutralLinkButtonClassName} py-2 text-base`}
+            className={`${neutralLinkButtonClassName} min-[561px]:mt-7`}
             href={`/run-history/${encodeURIComponent(detail.summary.runId)}`}
           >
             Clear
@@ -604,7 +595,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
       </form>
       {filter ? (
         <p
-          className={`m-0 mt-3 text-sm font-semibold ${matchedCount === 0 ? "text-warning" : "text-muted-strong"}`}
+          className={`m-0 mt-2 text-sm font-semibold ${matchedCount === 0 ? "text-warning" : "text-muted-strong"}`}
           role="status"
         >
           {matchedCount === 0
@@ -613,7 +604,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
           {truncated ? " Some matching collections are display-limited on this page." : ""}
         </p>
       ) : (
-        <p className="m-0 mt-3 text-sm font-semibold text-muted-strong">
+        <p className="m-0 mt-2 text-xs text-muted">
           {detail.query.cursor
             ? `Showing up to ${formatNumber(detail.query.limit)} records per collection for this page.`
             : `Showing the newest ${formatNumber(detail.query.limit)} records per collection.`}
@@ -625,6 +616,7 @@ function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse })
 
 function CollectionPanel({
   cursorPaged,
+  defaultOpen = false,
   emptyLabel,
   headers,
   records,
@@ -636,6 +628,7 @@ function CollectionPanel({
   warningCount,
 }: {
   cursorPaged: boolean;
+  defaultOpen?: boolean;
   emptyLabel: string;
   headers: string[];
   records: Array<{
@@ -651,25 +644,32 @@ function CollectionPanel({
   truncated: boolean;
   warningCount: number;
 }) {
+  // Secondary collections start collapsed to keep the report scannable; a search opens them all.
   return (
-    <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-      <CollectionHeader
-        cursorPaged={cursorPaged}
-        filtered={filtered}
-        matchedCount={matchedCount}
-        shownCount={records.length}
-        title={title}
-        totalCount={totalCount}
-        truncated={truncated}
-        warningCount={warningCount}
-      />
-      <ScrollRegion accessibleName={title}>
-        {records.length > 0 ? (
-          <DenseTable accessibleName={title} headers={headers} rows={records} />
-        ) : (
-          <EmptyCollection label={emptyLabel} />
-        )}
-      </ScrollRegion>
+    <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface">
+      <details className="group/collection" open={defaultOpen || filtered}>
+        <summary className="disclosure w-full! rounded-2xl px-5 py-3.5 max-[560px]:px-4">
+          <CollectionHeader
+            cursorPaged={cursorPaged}
+            filtered={filtered}
+            matchedCount={matchedCount}
+            shownCount={records.length}
+            title={title}
+            totalCount={totalCount}
+            truncated={truncated}
+            warningCount={warningCount}
+          />
+        </summary>
+        <div className="border-t border-border px-5 pb-4 max-[560px]:px-4">
+          <ScrollRegion accessibleName={title}>
+            {records.length > 0 ? (
+              <DenseTable accessibleName={title} headers={headers} rows={records} />
+            ) : (
+              <EmptyCollection label={emptyLabel} />
+            )}
+          </ScrollRegion>
+        </div>
+      </details>
     </section>
   );
 }
@@ -711,7 +711,7 @@ function CollectionHeader({
 }) {
   const displayedTotal = filtered ? matchedCount : totalCount;
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <h2 className="type-title m-0 text-base leading-tight text-ink">{title}</h2>
       <p
         className={`m-0 text-xs font-semibold ${warningCount > 0 ? "text-warning" : "text-muted"}`}
@@ -763,12 +763,12 @@ function DenseTable({
   }>;
 }) {
   return (
-    <table className="w-full min-w-[42rem] border-collapse text-left text-sm">
+    <table className="w-full min-w-[42rem] border-collapse text-left text-[0.8125rem]">
       <caption className="sr-only">{accessibleName}</caption>
       <thead>
-        <tr className="border-b border-border text-xs uppercase text-muted">
+        <tr className="border-b border-border text-xs text-muted">
           {headers.map((header) => (
-            <th className="px-2 py-2 font-bold" key={header} scope="col">
+            <th className="px-2 py-2 font-medium" key={header} scope="col">
               {header}
             </th>
           ))}
@@ -776,26 +776,26 @@ function DenseTable({
       </thead>
       <tbody>
         {rows.map((row) => (
-          <tr className="border-b border-border last:border-b-0" key={row.id}>
+          <tr
+            className="border-b border-border last:border-b-0 hover:bg-surface-muted"
+            key={row.id}
+          >
             {row.cells.map((cell, index) =>
               index === 0 ? (
                 <th
-                  className="px-2 py-2 align-top font-semibold text-muted-strong"
+                  className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-xs font-medium text-ink"
                   key={headers[index]}
                   scope="row"
                 >
                   {cell}
                 </th>
               ) : (
-                <td
-                  className="px-2 py-2 align-top font-semibold text-muted-strong"
-                  key={headers[index]}
-                >
+                <td className="px-2 py-1.5 align-top text-muted-strong" key={headers[index]}>
                   {cell}
                 </td>
               ),
             )}
-            <td className="px-2 py-2 align-top">
+            <td className="px-2 py-1.5 align-top">
               <details>
                 <summary
                   aria-label={`Technical detail for ${row.identity}`}
@@ -803,7 +803,7 @@ function DenseTable({
                 >
                   Technical detail
                 </summary>
-                <dl className="mt-2 grid gap-1">
+                <dl className="mb-1 mt-2 grid gap-1">
                   {row.details.map(([label, value]) => (
                     <div key={label}>
                       <dt className="text-xs text-muted">{label}</dt>
@@ -859,18 +859,18 @@ function ExceptionSummary({
   const isFailure = outcome === "failed" || classification === "correctness_failure";
   return (
     <section
-      className={`rounded-lg border p-4 ${
+      className={`rounded-2xl border px-5 py-4 ${
         isFailure
           ? "border-danger bg-danger-soft"
           : needsAttention
             ? "border-warning bg-warning-soft"
             : "border-border bg-surface"
-      }`}
+      } flex flex-wrap items-baseline gap-x-4 gap-y-1`}
       aria-label="Exception summary"
     >
       <h2 className="type-title m-0 text-base text-ink">Exception summary</h2>
       <p
-        className={`m-0 mt-2 text-sm font-semibold ${
+        className={`m-0 text-sm font-semibold ${
           isFailure ? "text-danger" : needsAttention ? "text-warning" : "text-accent"
         }`}
       >
@@ -884,7 +884,7 @@ function ExceptionSummary({
               .join(" · ")}
       </p>
       {limitations.length > 0 ? (
-        <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">
+        <p className="m-0 text-sm text-muted-strong">
           Limitations ·{" "}
           {limitations.map(([label, count]) => `${label}: ${formatNumber(count)}`).join(" · ")}
         </p>

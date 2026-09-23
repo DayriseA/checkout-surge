@@ -972,7 +972,7 @@ describe("run history", () => {
     expect(markup).toMatch(/<h1[^>]*>Preview 1k<\/h1>/);
     expect(markup.match(/<h1\b/g)).toHaveLength(1);
     // Static markup verifies the responsive stacking contract, not browser geometry.
-    expect(markup).toContain("min-[900px]:sticky min-[900px]:top-16 min-[900px]:z-[5]");
+    expect(markup).toContain("min-[900px]:sticky min-[900px]:top-14 min-[900px]:z-[5]");
     expect(markup).not.toContain('aria-label="Select run 55555555-5555-4555-8555-555555555555"');
     expect(markup).toContain(
       'aria-label="Delete run Preview 1k (55555555-5555-4555-8555-555555555555)"',

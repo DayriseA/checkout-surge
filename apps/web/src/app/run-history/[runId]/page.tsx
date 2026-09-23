@@ -5,7 +5,7 @@ import {
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { neutralLinkButtonClassName } from "../../components/control-styles";
+import { neutralLinkButtonClassName, textLinkClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
 import {
@@ -134,7 +134,7 @@ export default async function RunHistoryDetailPage({
           }
           detail={adminDetail.data}
           navigation={
-            <Link className={`${neutralLinkButtonClassName} mb-4`} href="/run-history">
+            <Link className={`${textLinkClassName} w-fit text-sm`} href="/run-history">
               Back to run history
             </Link>
           }

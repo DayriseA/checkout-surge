@@ -100,11 +100,11 @@ export function RunConclusion({
   const hasCorrectnessFailure = result.maximumClassification === "correctness_failure";
   return (
     <section
-      className={`col-span-full rounded-lg border p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
+      className={`col-span-full rounded-2xl border p-5 max-[560px]:p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
       aria-label="Run conclusion"
     >
       <p className="m-0 text-xs font-medium text-muted">Final result</p>
-      <p className="type-title m-0 mt-0.5 text-lg leading-7 text-ink">
+      <p className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink">
         {runConclusionSentence(result)}
       </p>
       {showReconciliationStatus ? <ReconciliationStatus result={result} /> : null}
@@ -147,7 +147,7 @@ export function PublicRunConclusion({
   });
   return (
     <section
-      className={`col-span-full rounded-lg border p-4 ${failureExplanation ? "border-border bg-surface" : publicConclusionClassName(result, summary)}`}
+      className={`col-span-full rounded-2xl border p-5 max-[560px]:p-4 ${failureExplanation ? "border-border bg-surface" : publicConclusionClassName(result, summary)}`}
       aria-label="Run conclusion"
     >
       <p className="m-0 text-xs font-medium text-muted">Final result</p>
