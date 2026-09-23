@@ -18,3 +18,11 @@ until docker info >/dev/null 2>&1; do
 done
 
 echo "Docker daemon is ready. Start infrastructure explicitly with pnpm infra:up, pnpm test:infra:up, or pnpm runtime:up."
+
+if ! npm update -g @openai/codex @kilocode/cli; then
+  echo "Could not update Codex and Kilo Code CLI; continuing with the installed versions." >&2
+fi
+
+if ! claude update; then
+  echo "Could not update Claude Code; continuing with the installed version." >&2
+fi
