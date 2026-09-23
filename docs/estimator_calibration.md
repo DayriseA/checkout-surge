@@ -50,7 +50,7 @@ Run these scenarios sequentially, three times each, in this order. One repetitio
 | --- | --- | --- |
 | `original-incident` | Settlement; job overhead under declared-capacity dispatch with traffic and processing overlapping | 25 req/s for 60 s, stock 888, ERP 10/s at 250 ms, concurrency 5 |
 | `duplicate-attempts` | Job overhead at low ERP latency | 200 buyers, stock 200, ERP 200/s at 50 ms, concurrency 5 |
-| `surge-10k-preset-reference` | Job overhead at higher latency with all concurrency slots busy | Seeded `surge-10k` preset: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10 |
+| `concurrency-saturation-reference` | Job overhead at higher latency with all concurrency slots busy | The previous surge-10k configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10 |
 | `admin-failure-path` | Retry demand margin and excess-attempt pause | Seeded admin preset: 15 req/s for 12 s, stock 200, ERP 30/s at 300 ms, 25% injected transient errors, concurrency 4 |
 
 Each run lasts from a few seconds to under two minutes plus teardown; budget about 15 minutes for the twelve runs.
@@ -77,7 +77,7 @@ The direction is fixed: **the estimate must stay above every measured actual**. 
 
 | Variable | Rule |
 | --- | --- |
-| `ESTIMATOR_JOB_OVERHEAD_MS` | At least the largest `calibration.meanJobOverheadMs` across the `duplicate-attempts`, `surge-10k-preset-reference` and `original-incident` runs, rounded up to the next 10 ms. Means, not `maxJobMs`: the estimator models throughput (`concurrency / (latency + overhead)`), and a single slow job does not lower a run's throughput by its own excess. |
+| `ESTIMATOR_JOB_OVERHEAD_MS` | At least the largest `calibration.meanJobOverheadMs` across the `duplicate-attempts`, `concurrency-saturation-reference` and `original-incident` runs, rounded up to the next 10 ms. Means, not `maxJobMs`: the estimator models throughput (`concurrency / (latency + overhead)`), and a single slow job does not lower a run's throughput by its own excess. |
 | `ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS` | At least the largest `calibration.settlementDelaySeconds` across all runs plus a margin of one finalization poll interval (`DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS`, default 5 s), rounded up to a whole second. |
 | `ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN` | The estimator plans `orders / (1 - p) × margin` ERP attempts. For `admin-failure-path` (`orders = 180`, `p = 0.25`) the default `1.25` plans 300 attempts, that is 120 modelled excess attempts against an unmargined expectation of 60. Choose the smallest margin (at least `1`) such that `180 / 0.75 × margin - 180` is at least the largest observed `calibration.excessAttempts`; keep `1.25` unless a run exceeds 120. |
 | `ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS` | The pause the real ERP imposes after a transient error, in seconds. With the mock ERP it is `1` (`Retry-After: 1`); a deployment pointing the worker at another ERP uses that ERP's documented retry pause. |
@@ -93,7 +93,7 @@ If the numbers suggest values lower than the defaults, keep the defaults unless 
 3. Re-run the incident, the seeded public presets and the transient-error scenario once each; every command previews the estimate through `POST /demo/runs/estimate` and fails if the preview is not `admitted`:
 
    ```bash
-   for scenario in original-incident preview-1k surge-5k surge-10k-preset-reference idempotency-check-200 public-custom admin-failure-path; do
+   for scenario in original-incident preview-1k surge-5k surge-10k slow-erp-5k laggy-erp-5k concurrency-saturation-reference idempotency-check-200 public-custom admin-failure-path; do
      pnpm runtime:acceptance "$scenario" .cache/calibration-recheck || break
    done
    ```
@@ -125,7 +125,10 @@ Re-check (chosen values in place):
 | original-incident | | | |
 | preview-1k | | | |
 | surge-5k | | | |
-| surge-10k-preset-reference | | | |
+| surge-10k | | | |
+| slow-erp-5k | | | |
+| laggy-erp-5k | | | |
+| concurrency-saturation-reference | | | |
 | idempotency-check-200 | | | |
 | public-custom | | | |
 | admin-failure-path | | | |

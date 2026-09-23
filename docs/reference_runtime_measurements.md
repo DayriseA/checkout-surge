@@ -1,5 +1,7 @@
 # Reference Runtime Measurements
 
+
+These measurements used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS).
 This document records the measurements taken from Checkout-Surge's reference runtime — generator-side network/resource limits and the adaptive-ERP acceptance observations — and the configuration decisions those measurements justify. It is a record of one environment, not guidance.
 
 For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](scope_and_caveats.md#connection-establishment-ceiling).

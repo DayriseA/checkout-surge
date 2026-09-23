@@ -86,7 +86,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Start delay (seconds)");
     expect(markup).not.toContain("not the expected run duration");
     expect(markup).toContain("Unit: percent. Minimum: 0. Maximum: 25.");
-    expect(markup).not.toContain("Worker concurrency");
+    expect(markup).toContain("Worker concurrency / backpressure");
     expect(markup).not.toContain("Retry attempts");
     expect(markup).not.toContain("Initial retry backoff");
     expect(markup).not.toContain("Drain timeout");

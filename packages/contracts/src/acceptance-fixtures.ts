@@ -19,9 +19,7 @@ export interface AdaptiveErpFixtureExpectedCounts {
 
 /**
  * A named deterministic acceptance scenario (task 01). `config` parses with
- * `acceptedRunConfigSnapshotSchema`. The `surge-10k` reference reuses the
- * existing seeded preset by slug and intentionally carries no copied
- * configuration. Fixtures never contain production runtime resources (URLs,
+ * `acceptedRunConfigSnapshotSchema`. Fixtures never contain production runtime resources (URLs,
  * connection strings, or clients).
  */
 export interface AdaptiveErpScenarioFixture {
@@ -255,18 +253,29 @@ export function duplicateAttemptsFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Reference to the existing seeded `surge-10k` public preset. The preset's
- * configuration stays owned by its seed; this fixture carries only the slug
- * and the exact expected business totals (10,000 buyers, stock 1,000).
+ * The previous surge-10k configuration, frozen for calibration with all
+ * concurrency slots busy.
  */
-export function surge10kPresetReferenceFixture(): AdaptiveErpScenarioFixture {
+export function concurrencySaturationReferenceFixture(): AdaptiveErpScenarioFixture {
   return {
-    name: "surge-10k-preset-reference",
+    name: "concurrency-saturation-reference",
     description:
-      "Reference to the existing seeded public surge-10k preset: 10,000 buyers rush 1,000 units; configuration owned by the seed.",
-    operatorScope: "public",
-    presetSlug: "surge-10k",
-    config: null,
+      "The previous surge-10k configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10.",
+    operatorScope: "admin",
+    presetSlug: null,
+    config: {
+      trafficConfig: {
+        mode: "buyer-spike",
+        buyerCount: 10_000,
+        duplicateEachBuyerAttempt: false,
+        startDelaySeconds: 0,
+        maxDurationSeconds: 120,
+        quantityPerAttempt: 1,
+      },
+      inventoryConfig: { startingStock: 1000 },
+      erpConfig: { latencyMs: 150, maxTps: 250, errorRate: 0, forcedOutage: false },
+      backpressureConfig: backpressureConfig(10),
+    },
     expected: {
       plannedEmittedAttempts: 10_000,
       acceptedReservations: 1000,
@@ -288,6 +297,6 @@ export function acceptanceScenarioFixtures(): AdaptiveErpScenarioFixture[] {
     finiteOutageFixture(),
     latencyIncreaseFixture(),
     duplicateAttemptsFixture(),
-    surge10kPresetReferenceFixture(),
+    concurrencySaturationReferenceFixture(),
   ];
 }

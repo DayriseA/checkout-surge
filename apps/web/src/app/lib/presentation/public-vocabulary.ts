@@ -63,6 +63,10 @@ export function outcomeFocusLabel(focus: string): string {
       return "The final evidence remains available";
     case "idempotency":
       return "Duplicate clicks replay one reservation";
+    case "downstream_capacity":
+      return "A slow ERP sets the pace; orders wait in the queue";
+    case "downstream_latency":
+      return "Slow ERP responses limit orders in flight";
     case "failure_path":
       return "Failed orders and retries";
     default:

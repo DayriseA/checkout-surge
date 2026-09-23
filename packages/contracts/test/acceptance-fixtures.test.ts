@@ -20,16 +20,14 @@ describe("adaptive ERP acceptance fixtures", () => {
       "finite-outage",
       "latency-increase",
       "duplicate-attempts",
-      "surge-10k-preset-reference",
+      "concurrency-saturation-reference",
     ]);
   });
 
   it("parses every fixture scenario configuration with the accepted snapshot schema", () => {
     for (const fixture of acceptanceScenarioFixtures()) {
-      if (fixture.config === null) {
-        expect(fixture.presetSlug).toBe("surge-10k");
-        continue;
-      }
+      expect(fixture.config).not.toBeNull();
+      expect(fixture.presetSlug).toBeNull();
       expect(() => acceptedRunConfigWriteSchema.parse(fixture.config)).not.toThrow();
     }
   });

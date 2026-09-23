@@ -1,5 +1,7 @@
 # Scope and Caveats
 
+
+These measurements used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS).
 This page is the single authority for Checkout-Surge's accepted project boundary, intentional non-goals, current caveats, and deferred product decisions. Linked domain documents provide the technical rationale and operating instructions.
 
 ## Intentional Non-Goals

@@ -872,7 +872,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(counts).toEqual({
       products: 1,
       sale_offers: 1,
-      demo_presets: 8,
+      demo_presets: 10,
       public_runtime_policies: 1,
     });
     expect(

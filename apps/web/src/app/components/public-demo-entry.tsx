@@ -502,6 +502,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           label="Simulated ERP delay per order"
                           value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
                         />
+                        <Fact
+                          label="Worker concurrency / backpressure"
+                          value={deriveRunConfigFacts(preset).workerBackpressure}
+                        />
                         <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
                         <Fact
                           label="Expected sold-out rejections"
@@ -990,13 +994,13 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
 
   return {
     mode: traffic.mode,
-    buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "500",
+    buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "5000",
     duplicateEachBuyerAttempt:
       traffic.mode === "buyer-spike" ? traffic.duplicateEachBuyerAttempt : false,
-    maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "10",
-    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "50",
+    maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "80",
+    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "20",
     durationSeconds:
-      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "10",
+      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "30",
     startDelaySeconds: String(traffic.startDelaySeconds),
     startingStock: String(snapshot.inventoryConfig.startingStock),
     erpLatencyMs: String(snapshot.erpConfig.latencyMs),
@@ -1008,15 +1012,15 @@ function draftFromSnapshot(snapshot: AcceptedRunConfigSnapshot): CustomDraft {
 function fallbackDraft(): CustomDraft {
   return {
     mode: "buyer-spike",
-    buyerCount: "500",
+    buyerCount: "5000",
     duplicateEachBuyerAttempt: false,
-    maxDurationSeconds: "10",
-    ratePerSecond: "50",
-    durationSeconds: "10",
+    maxDurationSeconds: "80",
+    ratePerSecond: "20",
+    durationSeconds: "30",
     startDelaySeconds: "0",
-    startingStock: "100",
+    startingStock: "500",
     erpLatencyMs: "100",
-    erpMaxTps: "100",
+    erpMaxTps: "20",
     erpErrorRate: "0",
   };
 }

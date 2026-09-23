@@ -35,6 +35,19 @@ describe("admin drafts", () => {
     expect(rebuilt.backpressureConfig.queueName).toBe("orders:process");
   });
 
+  it("uses the standard traffic defaults when switching modes", () => {
+    expect(draftFromConfigSnapshot(presetFixture("buyer-spike"))).toMatchObject({
+      ratePerSecond: "20",
+      durationSeconds: "30",
+      preAllocatedVus: "20",
+      maxVus: "40",
+    });
+    expect(draftFromConfigSnapshot(presetFixture("constant-arrival-rate"))).toMatchObject({
+      buyerCount: "5000",
+      maxDurationSeconds: "80",
+    });
+  });
+
   it("rejects blank, fractional, and non-finite numeric drafts without fallbacks", () => {
     expect(buildSortOrder("").fieldErrors.sortOrder?.code).toBe("required");
     expect(buildSortOrder("2.5").fieldErrors.sortOrder?.code).toBe("not_an_integer");

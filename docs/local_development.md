@@ -149,7 +149,7 @@ pnpm runtime:soak:recovery
 
 It must cover more than two configured dashboard-recovery budget windows and requires an idle runtime; it is not part of the routine smoke.
 
-For public limited-inventory surge validation, start the surge presets from the dashboard: `preview-1k`, `surge-5k`, then `surge-10k`. The seeded public preset set also includes `idempotency-check-200` for duplicate-attempt correctness and `public-custom` as the read-only base for bounded run-scoped public custom starts. Each start creates a fresh run sale offer and Redis inventory namespace. The reference runtime keeps the public 10k shape at roughly 10,000 synthetic buy attempts in 1 second. `API_LISTEN_BACKLOG` defaults to `8192` so the API listener can absorb the connection burst after the Redis-first losing path rejects sold-out traffic. If `surge-10k` still reports `connection reset by peer` on a smaller host, treat that as a host/container networking limit to document rather than lowering the public preset.
+For public limited-inventory surge validation, start the surge presets from the dashboard: `preview-1k`, `surge-5k`, then `surge-10k`. The seeded public preset set also includes `slow-erp-5k` and `laggy-erp-5k` for downstream capacity and latency, `idempotency-check-200` for duplicate-attempt correctness and `public-custom` as the read-only base for bounded run-scoped public custom starts. Each start creates a fresh run sale offer and Redis inventory namespace. The reference runtime keeps the public 10k shape at roughly 10,000 synthetic buy attempts in 1 second. `API_LISTEN_BACKLOG` defaults to `8192` so the API listener can absorb the connection burst after the Redis-first losing path rejects sold-out traffic. If `surge-10k` still reports `connection reset by peer` on a smaller host, treat that as a host/container networking limit to document rather than lowering the public preset.
 
 Stop the full runtime:
 
@@ -523,7 +523,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `PUBLIC_CUSTOM_MAX_STARTING_STOCK` | `1000` | `runtime-setup` first-seed public custom starting-stock cap |
 | `PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS` | `2000` | `runtime-setup` first-seed public custom ERP-latency cap |
 | `PUBLIC_CUSTOM_MIN_ERP_MAX_TPS` | `1` | `runtime-setup` first-seed public custom minimum ERP TPS |
-| `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS` | `100` | `runtime-setup` first-seed public custom maximum ERP TPS |
+| `PUBLIC_CUSTOM_MAX_ERP_MAX_TPS` | `50` | `runtime-setup` first-seed public custom maximum ERP TPS |
 | `PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE` | `0.25` | `runtime-setup` first-seed public custom ERP error-rate cap |
 | `K6_BINARY` | `k6` host-native; `/usr/local/bin/k6` in compose | Load orchestrator |
 | `K6_CANCELLATION_TIMEOUT_MS` | `10000` (maximum `15000`) | End-to-end load-orchestrator bound from accepted exact-run cancellation through observed k6 child exit/reap |

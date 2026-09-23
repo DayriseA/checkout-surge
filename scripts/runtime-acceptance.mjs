@@ -359,13 +359,16 @@ export function readWorkerHttpEvidence(runId, since) {
 
 // Expected business totals only; configuration remains owned by the real seeded preset.
 const presetCounts = {
-  "preview-1k": [1000, 250, 750],
-  "surge-5k": [5000, 750, 4250],
+  "preview-1k": [1000, 500, 500],
+  "surge-5k": [5000, 500, 4500],
+  "surge-10k": [10000, 500, 9500],
+  "slow-erp-5k": [5000, 500, 4500],
+  "laggy-erp-5k": [5000, 500, 4500],
   "idempotency-check-200": [400, 200, 0],
-  "public-custom": [500, 100, 400],
+  "public-custom": [5000, 500, 4500],
   "admin-smoke-constant": [200, 200, 0],
   "admin-failure-path": [180, 180, 0],
-  custom: [100, 100, 0],
+  custom: [5000, 500, 4500],
 };
 
 function presetFixture(name) {
@@ -403,7 +406,7 @@ export async function runAcceptance(name, outputDirectory) {
       "original-incident-restart",
       "low-capacity-backlog",
       "duplicate-attempts",
-      "surge-10k-preset-reference",
+      "concurrency-saturation-reference",
       "finite-outage",
       "stable-high-latency",
       ...Object.keys(presetCounts),

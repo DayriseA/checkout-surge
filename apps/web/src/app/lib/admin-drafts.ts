@@ -138,16 +138,16 @@ export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
   const constantArrivalVus = traffic.mode === "constant-arrival-rate" ? traffic.k6Vus : undefined;
   return {
     mode: traffic.mode,
-    buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "1000",
+    buyerCount: traffic.mode === "buyer-spike" ? String(traffic.buyerCount) : "5000",
     duplicateEachBuyerAttempt:
       traffic.mode === "buyer-spike" ? traffic.duplicateEachBuyerAttempt : false,
-    maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "10",
-    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "50",
+    maxDurationSeconds: traffic.mode === "buyer-spike" ? String(traffic.maxDurationSeconds) : "80",
+    ratePerSecond: traffic.mode === "constant-arrival-rate" ? String(traffic.ratePerSecond) : "20",
     durationSeconds:
-      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "10",
+      traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "30",
     startDelaySeconds: String(traffic.startDelaySeconds),
-    preAllocatedVus: String(constantArrivalVus?.preAllocatedVus ?? 10),
-    maxVus: String(constantArrivalVus?.maxVus ?? 50),
+    preAllocatedVus: String(constantArrivalVus?.preAllocatedVus ?? 20),
+    maxVus: String(constantArrivalVus?.maxVus ?? 40),
     startingStock: String(config.inventoryConfig.startingStock),
     erpLatencyMs: String(config.erpConfig.latencyMs),
     erpMaxTps: String(config.erpConfig.maxTps),

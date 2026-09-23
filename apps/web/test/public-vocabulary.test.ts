@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isRunEvidenceSettled,
+  outcomeFocusLabel,
   publicStatusLabel,
   publicVocabulary,
   rateWindowLabel,
@@ -66,5 +67,14 @@ describe("public vocabulary", () => {
     expect(trafficModeLabel("buyer-spike")).toBe("Everyone at once");
     expect(trafficModeLabel("constant-arrival-rate")).toBe("Steady stream");
     expect(rateWindowLabel(1)).toBe("1-second window");
+  });
+
+  it("explains the two downstream constraints on public preset cards", () => {
+    expect(outcomeFocusLabel("downstream_capacity")).toBe(
+      "A slow ERP sets the pace; orders wait in the queue",
+    );
+    expect(outcomeFocusLabel("downstream_latency")).toBe(
+      "Slow ERP responses limit orders in flight",
+    );
   });
 });
