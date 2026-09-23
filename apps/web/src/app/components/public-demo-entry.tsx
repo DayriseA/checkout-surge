@@ -522,7 +522,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   <PublicPresetStart
                     preset={preset}
                     disabled={startDisabled}
-                    previewEnabled={!isBlocked && !isReadinessBlocked && !accepted}
                     starting={startingSlug === preset.slug}
                     onStart={() => startRun(preset.slug)}
                   />
@@ -903,32 +902,27 @@ export function readinessBlocksRunStart(readiness: BackendRead<HealthResponse>):
 function PublicPresetStart({
   preset,
   disabled,
-  previewEnabled,
   starting,
   onStart,
 }: {
   preset: DemoPresetContract;
   disabled: boolean;
-  previewEnabled: boolean;
   starting: boolean;
   onStart: () => Promise<EstimateAdmissionRejectionDetails | undefined>;
 }) {
-  const estimate = useRunEstimate(
-    { presetSlug: preset.slug },
-    "public",
-    previewEnabled,
-    JSON.stringify(preset),
-  );
+  const [rejection, setRejection] = useState<EstimateAdmissionRejectionDetails>();
+  const blocked = disabled || rejection !== undefined;
   return (
     <>
-      <RunEstimateNotice state={estimate.state} mode="public" />
+      {rejection ? (
+        <RunEstimateNotice state={{ status: "rejected", result: rejection }} mode="public" />
+      ) : null}
       <button
         className={`${primaryButtonClassName} mt-3 enabled:cursor-pointer enabled:hover:brightness-90 enabled:active:brightness-75 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`}
-        disabled={disabled || estimate.blocksStart}
+        disabled={blocked}
         onClick={async () => {
-          if (disabled || estimate.blocksStart) return;
-          const rejection = await onStart();
-          if (rejection) estimate.reject(rejection);
+          if (blocked) return;
+          setRejection(await onStart());
         }}
         type="button"
       >

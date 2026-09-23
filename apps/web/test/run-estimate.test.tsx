@@ -144,13 +144,11 @@ it("gives every contract vocabulary value English copy and keeps public outage/p
   ).not.toContain("30%");
 });
 
-it("uses the API decision despite display rounding and never advertises an allowed duration", () => {
+it("uses the API decision despite display rounding and stays silent when allowed", () => {
   const { rerender } = render(
     <RunEstimateNotice state={{ status: "allowed", result: estimateFixture() }} mode="public" />,
   );
-  expect(screen.getByRole("status").textContent).toBe(
-    "Configuration allowed. Admission is checked again when you start.",
-  );
+  expect(screen.queryByRole("status")).toBeNull();
   rerender(
     <RunEstimateNotice
       state={{ status: "rejected", result: estimateFixture("over_ceiling") }}
@@ -191,63 +189,61 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
   const previewPath = mode === "public" ? demoRunEstimateProxyPath : adminDemoRunEstimateProxyPath;
   const startPath = mode === "public" ? demoRunStartProxyPath : adminDemoRunStartProxyPath;
 
-  it.each([
-    "over_ceiling",
-    "unestimable",
-  ] as const)("blocks pending and %s previews with actionable copy", async (kind) => {
-    vi.useFakeTimers();
-    const fetchMock = vi.fn(async () => json({ result: estimateFixture(kind) }));
-    vi.stubGlobal("fetch", fetchMock);
-    mount();
-    expect(startButton().disabled).toBe(true);
-    expect(screen.getByText(/Checking whether/)).toBeTruthy();
-    await debounce();
-    expect(fetchMock.mock.calls).toHaveLength(1);
-    expect(startButton().disabled).toBe(true);
-    expect(screen.getByText("Configuration not allowed.")).toBeTruthy();
-    if (kind === "over_ceiling") expect(screen.getByText(/Conservative duration:/)).toBeTruthy();
-    else {
-      expect(screen.queryByText(/Conservative duration:/)).toBeNull();
-      if (mode === "public") expect(document.body.textContent).not.toMatch(/outage/i);
-    }
-    fireEvent.click(startButton());
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
+  it.runIf(mode === "admin").each(["over_ceiling", "unestimable"] as const)(
+    "blocks pending and %s previews with actionable copy",
+    async (kind) => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn(async () => json({ result: estimateFixture(kind) }));
+      vi.stubGlobal("fetch", fetchMock);
+      mount();
+      expect(startButton().disabled).toBe(true);
+      await debounce();
+      expect(fetchMock.mock.calls).toHaveLength(1);
+      expect(startButton().disabled).toBe(true);
+      expect(screen.getByText("Configuration not allowed.")).toBeTruthy();
+      if (kind === "over_ceiling") expect(screen.getByText(/Conservative duration:/)).toBeTruthy();
+      else expect(screen.queryByText(/Conservative duration:/)).toBeNull();
+      fireEvent.click(startButton());
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
 
-  it.each([
-    "network",
-    "malformed",
-  ] as const)("allows an authoritative start after a %s preview failure and hides admission immediately after acceptance", async (failure) => {
-    vi.useFakeTimers();
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === previewPath) {
-        if (failure === "network") throw new Error("offline");
-        return json({ result: { decision: "admitted" } });
-      }
-      if (String(input) === startPath) return json(accepted(mode), 202);
-      throw new Error(`Unexpected request ${input}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    mount();
-    await debounce();
-    expect(screen.getByText(/Preview unavailable. You can try starting/)).toBeTruthy();
-    expect(startButton().disabled).toBe(false);
-    await start();
-    expect(screen.queryByText(/Preview unavailable/)).toBeNull();
-    expect(startButton().disabled).toBe(true);
-    expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
-    await debounce();
-    expect(fetchMock.mock.calls.filter(([input]) => String(input) === previewPath)).toHaveLength(1);
-    if (mode === "admin")
-      expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toContain(
-        accepted(mode).run.runId,
+  it.runIf(mode === "admin").each(["network", "malformed"] as const)(
+    "allows an authoritative start after a %s preview failure and hides admission immediately after acceptance",
+    async (failure) => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) === previewPath) {
+          if (failure === "network") throw new Error("offline");
+          return json({ result: { decision: "admitted" } });
+        }
+        if (String(input) === startPath) return json(accepted(mode), 202);
+        throw new Error(`Unexpected request ${input}`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      mount();
+      await debounce();
+      expect(screen.getByText(/Preview unavailable. You can try starting/)).toBeTruthy();
+      expect(startButton().disabled).toBe(false);
+      await start();
+      expect(screen.queryByText(/Preview unavailable/)).toBeNull();
+      expect(startButton().disabled).toBe(true);
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
+      await debounce();
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === previewPath)).toHaveLength(
+        1,
       );
-  });
+      if (mode === "admin")
+        expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toContain(
+          accepted(mode).run.runId,
+        );
+    },
+  );
 
   it.each([
     "over_ceiling",
     "unestimable",
-  ] as const)("shows authoritative %s start rejection after an allowed preview", async (kind) => {
+  ] as const)("shows authoritative %s start rejection", async (kind) => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       String(input) === previewPath
@@ -279,6 +275,12 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
         ).disabled,
       ).toBe(true);
     expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
+    if (mode === "public") {
+      expect(fetchMock.mock.calls.filter(([input]) => String(input) === previewPath)).toHaveLength(
+        0,
+      );
+      if (kind === "unestimable") expect(document.body.textContent).not.toMatch(/outage/i);
+    }
   });
 
   it("makes no preview requests or admission display while a run is active", async () => {
@@ -299,9 +301,7 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
       );
     await debounce();
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(
-      screen.queryByText(/Checking whether|Configuration allowed|Conservative duration/),
-    ).toBeNull();
+    expect(screen.queryByText(/Conservative duration/)).toBeNull();
   });
 });
 
@@ -371,7 +371,6 @@ it.each([
     );
   const submission = fetchMock.mock.calls.find(([input]) => String(input) === startPath);
   expect(JSON.parse(String(submission?.[1]?.body))).toEqual(previewBody);
-  expect(screen.queryByText(/Configuration allowed/)).toBeNull();
   await debounce();
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
@@ -426,7 +425,6 @@ it("retains the accepted admin handoff after failed recovery until a newer autho
     `/watch?acceptedRunId=${accepted("admin").run.runId}`,
   );
   expect(start.disabled).toBe(true);
-  expect(screen.queryByText(/Checking whether|Configuration allowed/)).toBeNull();
   await debounce();
   expect(
     fetchMock.mock.calls.filter(([input]) => String(input) === adminDemoRunEstimateProxyPath),
@@ -437,8 +435,11 @@ it("retains the accepted admin handoff after failed recovery until a newer autho
   );
   await act(async () => fireEvent.click(screen.getByRole("button", { name: "Retry recovery" })));
   expect(screen.queryByText("Recovery failed; previous projection retained.")).toBeNull();
-  expect(screen.getByText(/Checking whether/)).toBeTruthy();
+  expect(start.disabled).toBe(true);
   await debounce();
+  expect(
+    fetchMock.mock.calls.filter(([input]) => String(input) === adminDemoRunEstimateProxyPath),
+  ).toHaveLength(2);
   expect(start.disabled).toBe(false);
 });
 

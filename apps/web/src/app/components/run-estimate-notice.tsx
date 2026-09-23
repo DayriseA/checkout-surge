@@ -8,15 +8,11 @@ export function RunEstimateNotice({
   state: RunEstimateState;
   mode: "public" | "admin";
 }) {
-  if (state.status === "inactive") return null;
+  if (state.status !== "unavailable" && state.status !== "rejected") return null;
   const lines =
-    state.status === "pending"
-      ? ["Checking whether this configuration is allowed…"]
-      : state.status === "unavailable"
-        ? ["Preview unavailable. You can try starting; the server will check admission again."]
-        : state.status === "allowed"
-          ? ["Configuration allowed. Admission is checked again when you start."]
-          : estimateRejectionCopy(state.result, mode);
+    state.status === "unavailable"
+      ? ["Preview unavailable. You can try starting; the server will check admission again."]
+      : estimateRejectionCopy(state.result, mode);
   return (
     <div role="status" aria-live="polite" className="my-2 text-sm text-muted-strong">
       {[...new Set(lines)].map((line) => (
