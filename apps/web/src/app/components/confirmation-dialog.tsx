@@ -1,13 +1,21 @@
 "use client";
 
 import { type ReactNode, useEffect, useId, useRef } from "react";
-import { buttonClassName, dangerLinkButtonClassName } from "./control-styles";
+import {
+  buttonClassName,
+  dangerLinkButtonClassName,
+  primaryButtonClassName,
+} from "./control-styles";
 
 export interface ConfirmationDialogProps {
   open: boolean;
   title: string;
   description: string;
   confirmLabel: string;
+  /** "danger" marks irreversible or data-losing actions; "default" is a plain confirmation. */
+  tone?: "danger" | "default";
+  /** Widens the dialog for tabular content such as run previews. */
+  wide?: boolean;
   pending?: boolean;
   confirmDisabled?: boolean;
   error?: ReactNode;
@@ -21,6 +29,8 @@ export function ConfirmationDialog({
   title,
   description,
   confirmLabel,
+  tone = "danger",
+  wide = false,
   pending = false,
   confirmDisabled = false,
   error,
@@ -31,6 +41,7 @@ export function ConfirmationDialog({
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const isDanger = tone === "danger";
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -43,7 +54,7 @@ export function ConfirmationDialog({
       aria-describedby={descriptionId}
       aria-labelledby={titleId}
       aria-modal="true"
-      className="m-auto w-[calc(100%-2rem)] max-w-lg rounded-2xl border-0 bg-surface p-0 shadow-[0_30px_80px_-20px_rgb(13_27_42/0.55)] backdrop:bg-reservoir/60 backdrop:backdrop-blur-[2px]"
+      className={`m-auto w-[calc(100%-2rem)] ${wide ? "max-w-2xl" : "max-w-lg"} rounded-2xl border-0 bg-surface p-0 shadow-[0_30px_80px_-20px_rgb(13_27_42/0.55)] backdrop:bg-reservoir/60 backdrop:backdrop-blur-[2px]`}
       onCancel={(event) => {
         event.preventDefault();
         if (!pending) onCancel();
@@ -51,11 +62,15 @@ export function ConfirmationDialog({
       ref={dialogRef}
       role="alertdialog"
     >
-      <div className="rounded-t-2xl border-t-4 border-danger px-6 pt-5">
-        <p className="m-0 flex items-center gap-1.5 text-xs font-semibold text-danger">
-          <span aria-hidden="true">⚠</span>Destructive action
-        </p>
-        <h2 className="type-title m-0 mt-1 text-xl leading-tight text-ink" id={titleId}>
+      <div
+        className={`rounded-t-2xl border-t-4 px-6 pt-5 ${isDanger ? "border-danger" : "border-accent"}`}
+      >
+        {isDanger ? (
+          <p className="m-0 mb-1 flex items-center gap-1.5 text-xs font-semibold text-danger">
+            <span aria-hidden="true">⚠</span>Destructive action
+          </p>
+        ) : null}
+        <h2 className="type-title m-0 text-xl leading-tight text-ink" id={titleId}>
           {title}
         </h2>
         <p className="mb-0 mt-3 leading-6 text-muted-strong" id={descriptionId}>
@@ -88,7 +103,7 @@ export function ConfirmationDialog({
           Cancel
         </button>
         <button
-          className={dangerLinkButtonClassName}
+          className={isDanger ? dangerLinkButtonClassName : primaryButtonClassName}
           disabled={pending || confirmDisabled}
           onClick={onConfirm}
           type="button"

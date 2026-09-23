@@ -71,6 +71,22 @@ describe("ConfirmationDialog", () => {
     );
   });
 
+  it("renders a non-destructive confirmation without danger styling", () => {
+    render(
+      <ConfirmationDialog
+        confirmLabel="Start run"
+        description="Start with this configuration."
+        onCancel={vi.fn()}
+        onConfirm={vi.fn()}
+        open
+        title="Start this run?"
+        tone="default"
+      />,
+    );
+    expect(screen.queryByText("Destructive action")).toBeNull();
+    expect(screen.getByRole("button", { name: "Start run" }).classList).toContain("bg-accent");
+  });
+
   it("does not attach backdrop-click dismissal behavior", () => {
     const onCancel = vi.fn();
     renderDialog({ onCancel, open: true });

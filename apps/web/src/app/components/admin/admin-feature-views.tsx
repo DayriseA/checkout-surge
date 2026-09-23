@@ -742,61 +742,67 @@ function archiveUnavailableReason(preset: AdminPresetListItem): string | null {
   return "The server reports this preset can't be archived right now.";
 }
 
-export function EffectiveRunPreview({ config }: { config: AcceptedRunConfigSnapshot }) {
+export function EffectiveRunPreview({
+  config,
+  defaultOpen = false,
+}: {
+  config: AcceptedRunConfigSnapshot;
+  defaultOpen?: boolean;
+}) {
   const traffic = config.trafficConfig;
   return (
-    <details className="rounded-xl border border-border px-4 py-3">
+    <details className="rounded-xl border border-border px-4 py-3" open={defaultOpen}>
       <summary className="disclosure text-sm font-semibold text-ink">
         Effective run preview{" "}
         <FieldHint label="Effective run preview" text={adminFieldHints.effectiveRunPreview} />
       </summary>
-      <div className="mt-3 grid grid-cols-2 gap-x-6 gap-y-3 max-[700px]:grid-cols-1">
-        <ConfigGroup title="Traffic">
-          <FieldRow label="Mode" value={traffic.mode} />
-          {traffic.mode === "buyer-spike" ? (
-            <>
-              <FieldRow label="Buyer count" value={traffic.buyerCount} />
-              <FieldRow
-                label="Duplicate attempts"
-                value={traffic.duplicateEachBuyerAttempt ? "yes" : "no"}
-              />
-              <FieldRow label="Max duration seconds" value={traffic.maxDurationSeconds} />
-            </>
-          ) : (
-            <>
-              <FieldRow label="Requests per second" value={traffic.ratePerSecond} />
-              <FieldRow label="Duration seconds" value={traffic.durationSeconds} />
-              <FieldRow label="Preallocated VUs" value={traffic.k6Vus?.preAllocatedVus ?? "—"} />
-              <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "—"} />
-            </>
-          )}
-          <FieldRow label="Start delay seconds" value={traffic.startDelaySeconds} />
-          <FieldRow label="Quantity per attempt" value={traffic.quantityPerAttempt} />
-        </ConfigGroup>
-        <ConfigGroup title="Inventory">
-          <FieldRow label="Starting stock" value={config.inventoryConfig.startingStock} />
-        </ConfigGroup>
-        <ConfigGroup title="Per-run ERP">
-          <FieldRow label="Latency ms" value={config.erpConfig.latencyMs} />
-          <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
-          <FieldRow label="Error rate" value={`${ratioToPercent(config.erpConfig.errorRate)}%`} />
-          <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
-        </ConfigGroup>
-        <ConfigGroup title="Worker and backpressure">
-          <FieldRow
-            label="Physical queue name"
-            value={config.backpressureConfig.physicalQueueName}
-          />
-          <FieldRow
-            label="Order process concurrency"
-            value={config.backpressureConfig.orderProcessConcurrency}
-          />
-          <FieldRow
-            label="Queue name"
-            value={config.backpressureConfig.queueName}
-            hint={adminFieldHints.queueName}
-          />
-        </ConfigGroup>
+      <div className="mt-3 grid grid-cols-2 items-start gap-x-6 gap-y-3 max-[700px]:grid-cols-1">
+        <div className="grid min-w-0 gap-3">
+          <ConfigGroup title="Traffic">
+            <FieldRow label="Mode" value={trafficModeLabel(traffic.mode)} />
+            {traffic.mode === "buyer-spike" ? (
+              <>
+                <FieldRow label="Buyer count" value={traffic.buyerCount} />
+                <FieldRow
+                  label="Duplicate attempts"
+                  value={traffic.duplicateEachBuyerAttempt ? "yes" : "no"}
+                />
+                <FieldRow label="Max duration seconds" value={traffic.maxDurationSeconds} />
+              </>
+            ) : (
+              <>
+                <FieldRow label="Requests per second" value={traffic.ratePerSecond} />
+                <FieldRow label="Duration seconds" value={traffic.durationSeconds} />
+                <FieldRow label="Preallocated VUs" value={traffic.k6Vus?.preAllocatedVus ?? "—"} />
+                <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "—"} />
+              </>
+            )}
+            <FieldRow label="Start delay seconds" value={traffic.startDelaySeconds} />
+            <FieldRow label="Quantity per attempt" value={traffic.quantityPerAttempt} />
+          </ConfigGroup>
+          <ConfigGroup title="Inventory">
+            <FieldRow label="Starting stock" value={config.inventoryConfig.startingStock} />
+          </ConfigGroup>
+        </div>
+        <div className="grid min-w-0 gap-3">
+          <ConfigGroup title="Per-run ERP">
+            <FieldRow label="Latency ms" value={config.erpConfig.latencyMs} />
+            <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
+            <FieldRow label="Error rate" value={`${ratioToPercent(config.erpConfig.errorRate)}%`} />
+            <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
+          </ConfigGroup>
+          <ConfigGroup title="Worker and backpressure">
+            <FieldRow
+              label="Physical queue name"
+              value={config.backpressureConfig.physicalQueueName}
+            />
+            <FieldRow
+              label="Order process concurrency"
+              value={config.backpressureConfig.orderProcessConcurrency}
+            />
+            <FieldRow label="Queue name" value={config.backpressureConfig.queueName} />
+          </ConfigGroup>
+        </div>
       </div>
     </details>
   );

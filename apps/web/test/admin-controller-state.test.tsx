@@ -1877,7 +1877,7 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     const dialog = screen.getByRole("alertdialog");
     expect(dialog.textContent).toContain("claim the one shared demo runtime");
-    expect(within(dialog).getByText("Effective run preview")).toBeTruthy();
+    expect(within(dialog).getByText("Effective run preview").closest("details")?.open).toBe(true);
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     expect(fetchMock).not.toHaveBeenCalled();

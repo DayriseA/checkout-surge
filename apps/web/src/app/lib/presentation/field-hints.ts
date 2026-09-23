@@ -59,7 +59,6 @@ export const adminFieldHints = {
     "Virtual users (VUs) are the load generator's reusable workers; each sends one request at a time. This many are ready before traffic starts. Too few for the rate and attempts are skipped, reported as partial delivery.",
   maxVus:
     "The most virtual users the load generator may add when responses slow down and every prepared one is busy. At least the preallocated count. For visitors, both values are derived from the arrival rate.",
-  queueName: "Logical queue name and the underlying BullMQ queue. Fixed, shown for traceability.",
   publicBudget:
     'Limits how many runs anonymous visitors may start per time window, per visitor and overall. "Budget" counts starts, not money. Off: visitors may start whenever the demo is free; configuration limits still apply.',
   budgetWindow:

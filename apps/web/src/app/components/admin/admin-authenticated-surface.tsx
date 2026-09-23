@@ -663,6 +663,7 @@ export function AdminRuntimePolicyController({
       />
       <ConfirmationDialog
         confirmLabel="Save public policy"
+        tone="default"
         description="This shared public policy governs future public starts; already accepted runs are unaffected."
         error={saveError ? <AdminNoticeView notice={saveError} /> : null}
         onCancel={() => {
@@ -1198,6 +1199,8 @@ export function AdminPresetController({
       <ConfirmationDialog
         confirmDisabled={controlsBlocked || Boolean(acceptedRun) || estimate.blocksStart}
         confirmLabel="Start run"
+        tone="default"
+        wide
         description="Start with this effective configuration and claim the one shared demo runtime. The accepted values become a frozen per-run snapshot."
         error={
           <>
@@ -1215,11 +1218,12 @@ export function AdminPresetController({
         title="Start this run?"
       >
         {startConfirmation?.config ? (
-          <EffectiveRunPreview config={startConfirmation.config} />
+          <EffectiveRunPreview config={startConfirmation.config} defaultOpen />
         ) : null}
       </ConfirmationDialog>
       <ConfirmationDialog
         confirmLabel="Archive preset"
+        tone="default"
         description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.${isDirty ? " Your unsaved edits will be discarded." : ""}`}
         error={archiveError ? <AdminNoticeView notice={archiveError} /> : null}
         onCancel={() => setArchiveOpen(false)}
@@ -1577,6 +1581,7 @@ export function AdminErpDiagnosticsController({
       />
       <ConfirmationDialog
         confirmLabel={confirmation?.kind === "reset" ? "Reset ERP controls" : "Apply ERP controls"}
+        tone="default"
         description={`${runState === "active" ? "This does not change the active run — frozen in the accepted run snapshot; affects fallback and future non-snapshot calls. " : runState === "inactive" ? "There is no active run; these values govern fallback and future non-snapshot calls. " : "Current run state is unavailable — a currently active run keeps its frozen snapshot; these values govern fallback and future non-snapshot calls. "}They have global/fallback scope and reset when Mock ERP restarts.`}
         error={confirmationError ? <AdminNoticeView notice={confirmationError} /> : null}
         onCancel={() => {

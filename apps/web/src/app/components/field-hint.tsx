@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 export function FieldHint({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
+  const [shiftLeft, setShiftLeft] = useState(0);
   const root = useRef<HTMLSpanElement>(null);
+  const tooltip = useRef<HTMLSpanElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const id = useId();
 
@@ -15,6 +17,19 @@ export function FieldHint({ label, text }: { label: string; text: string }) {
     },
     [],
   );
+
+  // Keep the tooltip inside its modal dialog (or the viewport) instead of overflowing to the right.
+  useLayoutEffect(() => {
+    if (!open || !tooltip.current) {
+      setShiftLeft(0);
+      return;
+    }
+    const boundaryRight =
+      root.current?.closest("dialog")?.getBoundingClientRect().right ??
+      document.documentElement.clientWidth;
+    const overflow = tooltip.current.getBoundingClientRect().right - (boundaryRight - 16);
+    setShiftLeft(Math.max(0, overflow));
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +101,9 @@ export function FieldHint({ label, text }: { label: string; text: string }) {
         <span
           className="absolute left-0 top-full z-50 mt-1.5 w-72 max-w-[calc(100vw-2rem)] rounded-lg bg-reservoir px-3 py-2.5 text-left text-[0.8125rem] font-normal normal-case leading-5 tracking-normal text-white shadow-[0_12px_32px_-8px_rgb(13_27_42/0.45)] [font-stretch:100%]"
           id={id}
+          ref={tooltip}
           role="tooltip"
+          style={shiftLeft ? { left: -shiftLeft } : undefined}
           onMouseEnter={cancelClose}
           onMouseLeave={closeSoon}
         >
