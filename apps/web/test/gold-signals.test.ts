@@ -2,7 +2,13 @@ import { runSignalBucketCount } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { GoldSignals, scale } from "../src/app/components/gold-signals.js";
+import {
+  deriveGoldSignalCharts,
+  GoldSignals,
+  PublicSignalChart,
+  signalCsv,
+} from "../src/app/components/gold-signals.js";
+import { axisTicks, scale, valueAt } from "../src/app/components/signal-chart-math.js";
 
 describe("Gold Signals", () => {
   it("marks a single arrival sample and retains its text equivalent", () => {
@@ -28,7 +34,8 @@ describe("Gold Signals", () => {
 
     expect(markup).toContain('<circle class="fill-accent"');
     expect(markup).toContain('aria-label="Request arrival timeline"');
-    expect(markup).toContain("<li>0s: 10</li>");
+    expect(markup).toContain('<p class="sr-only">Arrivals: 10 attempts/s at 0s.</p>');
+    expect(markup).not.toContain("Text samples");
   });
 
   it("uses one aligned axis and terminal evidence instead of a low-volume live tail", () => {
@@ -65,8 +72,8 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(markup.match(/role="img"/g)).toHaveLength(4);
-    expect(markup.match(/viewBox="0 0 640 96"/g)).toHaveLength(4);
+    expect(markup.match(/role="img"/g)).toHaveLength(3);
+    expect(markup.match(/viewBox="0 0 640 96"/g)).toHaveLength(3);
     expect(markup).toContain(
       'class="m-0 mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2" data-signal-headlines=""',
     );
@@ -88,13 +95,18 @@ describe("Gold Signals", () => {
     expect(markup).toContain(
       "Shared axis: 0s first checkout attempt · 120s final timeline boundary",
     );
-    expect(markup).toContain("<title>first checkout attempt</title>");
-    expect(markup).toContain("<title>final timeline boundary</title>");
-    expect(markup).toContain('x1="0"');
+    // Interior events are numbered in time order; the axis ends are named by the legend above.
+    expect(markup).toContain("Last checkout attempt · 2s");
+    expect(markup).toContain("Stock depleted · 5s");
+    expect(markup).toContain("Backlog drained · 11s");
+    expect(markup.indexOf("Last checkout attempt")).toBeLessThan(markup.indexOf("Stock depleted"));
+    expect(markup).not.toContain("Inventory timeline");
+    expect(markup).toContain('id="watch-signal-inventory"');
+    expect(markup).toContain("depleted in 5 s");
     expect(markup).toContain("stroke-danger");
+    expect(markup).toContain("Settled");
     for (const name of [
       "Request arrival timeline",
-      "Inventory timeline",
       "Processing backlog timeline",
       "Confirmation timeline",
     ]) {
@@ -214,8 +226,7 @@ describe("Gold Signals", () => {
     );
 
     expect(markup).toContain("3/Not yet available confirmed · 2 pending · p95 300 ms");
-    expect(markup.match(/role="img"/g)).toHaveLength(1);
-    expect(markup).not.toContain('aria-label="Confirmation timeline"');
+    expect(markup).not.toContain('role="img"');
   });
 
   it.each([
@@ -283,8 +294,9 @@ describe("Gold Signals", () => {
 
     expect(markup).toContain("Peak 10 attempts/s");
     expect(markup.match(/role="img"/g)).toHaveLength(1);
-    expect(markup).toContain("<li>0s: 10</li>");
-    expect(markup).toContain("<li>2s: 6</li>");
+    expect(markup).toContain(
+      "Arrivals: starts at 10 attempts/s at 0s, peaks at 10 attempts/s at 0s, ends at 6 attempts/s at 2s.",
+    );
     expect(markup).toContain(
       "Shared axis: 0s first checkout attempt · 2s last recorded arrival window",
     );
@@ -364,7 +376,7 @@ describe("Gold Signals", () => {
     expect(markup).toContain(
       '<dt class="text-xs font-bold text-muted">Request arrival</dt><dd class="m-0 mt-1 font-semibold text-ink">Not recorded for this run</dd>',
     );
-    expect(markup.match(/role="img"/g)).toHaveLength(3);
+    expect(markup.match(/role="img"/g)).toHaveLength(2);
   });
 
   it("reports load-generator absence as final once a draining run has ended its traffic", () => {
@@ -460,7 +472,7 @@ describe("Gold Signals", () => {
     expect(markup).toContain(
       "Checkout attempts started by the load generator in 1-second windows.",
     );
-    expect(markup).toContain("<li>0s: 12</li>");
+    expect(markup).toContain("Arrivals: starts at 12 attempts/s at 0s");
     expect(markup).not.toContain("120s:");
     expect(markup).not.toContain("0s first checkout attempt");
     expect(markup).not.toContain("Reloading restarts");
@@ -513,14 +525,13 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(markup.match(/role="img"/g)).toHaveLength(3);
+    expect(markup.match(/role="img"/g)).toHaveLength(2);
     expect(markup).toContain('aria-label="Confirmation timeline"');
-    expect(markup).toContain("<li>2s: 2</li>");
+    expect(markup).toContain("ends at 2 orders at 2s.");
     expect(markup).toContain("Request arrival</h3><p");
     expect(markup).toContain("Not yet available");
     expect(markup).toContain("5 of 10 left · 0 oversold");
     expect(markup).toContain("2 waiting · peak 2");
-    expect(markup).toContain("<li>0s: 7</li>");
     expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
     expect(markup).not.toContain("60s:");
     expect(markup).not.toContain("Latest/retained peak 0");
@@ -530,6 +541,78 @@ describe("Gold Signals", () => {
     expect(scale(0, 120, 640)).toBe(0);
     expect(scale(60, 120, 640)).toBe(320);
     expect(scale(200, 120, 640)).toBe(640);
+  });
+
+  it("offers the admin a CSV of every retained series, including the uncharted inventory", () => {
+    const input = {
+      acceptedReservations: 10,
+      arrivalSummary: null,
+      liveSamples: [],
+      oversoldUnits: 0,
+      runStatus: "completed" as const,
+      terminalSummary: timelineFixture(),
+    };
+    const csv = signalCsv(deriveGoldSignalCharts(input).charts);
+
+    expect(
+      renderToStaticMarkup(
+        createElement(GoldSignals, { ...input, csvFileName: "run-1-signals.csv" }),
+      ),
+    ).toContain("Download CSV");
+    expect(renderToStaticMarkup(createElement(GoldSignals, input))).not.toContain("Download CSV");
+    expect(csv.split("\n")[0]).toBe("signal,elapsed_seconds,value");
+    expect(csv).toContain("remaining_stock,1,8");
+    expect(csv).toContain("processing_backlog,3,3");
+    expect(csv).toContain("settled_orders,10,10");
+  });
+
+  it("shows the public report one orders chart with waiting and confirmed series", () => {
+    const markup = renderToStaticMarkup(
+      createElement(PublicSignalChart, {
+        acceptedReservations: 10,
+        arrivalSummary: null,
+        liveSamples: [],
+        oversoldUnits: 0,
+        runStatus: "completed",
+        terminalSummary: timelineFixture(),
+      }),
+    );
+    const absent = renderToStaticMarkup(
+      createElement(PublicSignalChart, {
+        acceptedReservations: 0,
+        arrivalSummary: null,
+        liveSamples: [],
+        oversoldUnits: 0,
+        runStatus: "completed",
+        terminalSummary: null,
+      }),
+    );
+
+    expect(markup.match(/role="img"/g)).toHaveLength(1);
+    expect(markup).toContain("Waiting");
+    expect(markup).toContain("Confirmed");
+    expect(markup).toContain("Backlog drained · 11s");
+    expect(markup).not.toContain("Request arrival");
+    expect(absent).toContain("The order timeline was not recorded for this run.");
+    expect(absent).not.toContain('role="img"');
+  });
+
+  it("reads no cursor value once a series has stopped", () => {
+    const arrival = [
+      { elapsedSeconds: 0, value: 10 },
+      { elapsedSeconds: 1, value: 12 },
+      { elapsedSeconds: 2, value: 4 },
+    ];
+
+    expect(valueAt(arrival, 1.2)).toBe(12);
+    expect(valueAt(arrival, 2.9)).toBe(4);
+    expect(valueAt(arrival, 20)).toBeNull();
+  });
+
+  it("labels the time axis with round steps", () => {
+    expect(axisTicks(33.98)).toEqual([0, 10, 20, 30]);
+    expect(axisTicks(2)).toEqual([0, 0.5, 1, 1.5, 2]);
+    expect(axisTicks(0)).toEqual([0]);
   });
 });
 

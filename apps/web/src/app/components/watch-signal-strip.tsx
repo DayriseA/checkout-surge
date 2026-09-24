@@ -44,7 +44,6 @@ export function WatchSignalStrip({
           <SignalSparkline
             ariaLabel={`${title} sparkline`}
             area={charts[chart].area}
-            markers={[]}
             points={charts[chart].points}
             secondary={charts[chart].secondary}
             xMax={charts[chart].xMax}

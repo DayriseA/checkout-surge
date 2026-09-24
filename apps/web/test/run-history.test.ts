@@ -618,9 +618,7 @@ describe("run history", () => {
     expect(
       container.querySelector<HTMLDetailsElement>("#report-advanced-measurements details")?.open,
     ).toBe(false);
-    expect(
-      screen.getByText(/Final timeline evidence was not recorded/).closest("[hidden]"),
-    ).toBeNull();
+    expect(screen.getByText(/order timeline was not recorded/).closest("[hidden]")).toBeNull();
     expect(screen.getByText("Final stock and orders").closest("[hidden]")).toBeNull();
   });
 

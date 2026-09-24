@@ -31,7 +31,7 @@ import {
   primaryButtonClassName,
 } from "./control-styles";
 import { FieldHint } from "./field-hint";
-import { GoldSignals } from "./gold-signals";
+import { GoldSignals, PublicSignalChart } from "./gold-signals";
 import { PublicRunConclusion, PublicRunConclusionProof, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
 import { ScrollRegion } from "./scroll-region";
@@ -320,6 +320,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       <GoldSignals
         acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
         arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
+        csvFileName={`run-${run.runId}-signals.csv`}
         failedOrders={summary.businessOutcomeSummary.failedOrders}
         oversoldUnits={oversoldUnitsFromTerminalInventory(summary)}
         runStatus={run.status}
@@ -1029,7 +1030,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
 
       <section className="grid gap-3" id="report-advanced-signals">
         <h2 className="type-title m-0 text-base leading-tight text-ink">Signals</h2>
-        <GoldSignals
+        <PublicSignalChart
           acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
           failedOrders={summary.businessOutcomeSummary.failedOrders}

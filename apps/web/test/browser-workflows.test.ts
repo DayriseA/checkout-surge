@@ -2116,7 +2116,7 @@ describe("watch browser recovery", () => {
     expect(markup).toContain(
       "Shared axis: 0s first checkout attempt · 0.6s final timeline boundary",
     );
-    expect(markup).toContain("<li>0s: 1</li>");
+    expect(markup).toContain("Arrivals: 1 attempts/s at 0s.");
     expect(markup).not.toContain("60.6s final timeline boundary");
   });
 

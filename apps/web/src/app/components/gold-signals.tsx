@@ -13,6 +13,20 @@ import {
   type SignalHeadlines,
   selectConfirmationLiveSamples,
 } from "../lib/presentation/signal-headlines";
+import { FieldHint } from "./field-hint";
+import {
+  type ChartMarker,
+  type ChartSeries,
+  SignalChart,
+  SignalCursorProvider,
+} from "./signal-chart";
+import {
+  type ChartPoint,
+  formatSeconds as formatAxisSeconds,
+  formatNumber,
+  scale,
+} from "./signal-chart-math";
+import { SignalCsvDownload } from "./signal-csv-download";
 
 export type SignalPoint = {
   elapsedSeconds: number;
@@ -219,8 +233,9 @@ export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts
   };
 }
 
-export function GoldSignals(input: GoldSignalInput) {
-  const { axis, charts, hasEvidence, headlines, markers } = deriveGoldSignalCharts(input);
+export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFileName?: string }) {
+  const derived = deriveGoldSignalCharts(input);
+  const { axis, charts, hasEvidence, headlines } = derived;
   const terminalRun = input.runStatus === "completed" || input.runStatus === "failed";
   if (!hasEvidence) {
     return (
@@ -233,126 +248,165 @@ export function GoldSignals(input: GoldSignalInput) {
       </section>
     );
   }
+  const markers = numberedMarkers(derived.markers);
+  const confirmationSeries: ChartSeries[] = [
+    { label: "Confirmed", points: charts.confirmation.points, tone: "accent" },
+  ];
+  if (charts.confirmation.secondary) {
+    confirmationSeries.push({
+      label: "Settled",
+      points: settledPoints(charts.confirmation.points),
+      tone: "danger",
+    });
+  }
   return (
     <section className="col-span-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-      <div className="mb-4">
-        <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
-        <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
-          Arrival → reservation → backlog → confirmation
-        </h2>
-        <p className="m-0 mt-1 text-xs leading-5 text-muted">
-          {input.terminalSummary
-            ? charts.arrival.available
-              ? `All panels cover the ${recordedRunDescriptor(input.runStatus)} from its first checkout attempt to its final timeline boundary.`
-              : `The timeline panels cover the ${recordedRunDescriptor(input.runStatus)} through its final timeline boundary; request-arrival evidence was not recorded.`
-            : terminalRun
-              ? "Final timeline evidence was not recorded; the run evidence that was recorded is shown where available."
-              : "Live panels show the available run updates."}
-        </p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
+          <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
+            Arrival → reservation → backlog → confirmation
+          </h2>
+          <p className="m-0 mt-1 text-xs leading-5 text-muted">
+            {input.terminalSummary
+              ? charts.arrival.available
+                ? `All panels cover the ${recordedRunDescriptor(input.runStatus)} from its first checkout attempt to its final timeline boundary.`
+                : `The timeline panels cover the ${recordedRunDescriptor(input.runStatus)} through its final timeline boundary; request-arrival evidence was not recorded.`
+              : terminalRun
+                ? "Final timeline evidence was not recorded; the run evidence that was recorded is shown where available."
+                : "Live panels show the available run updates."}
+          </p>
+        </div>
+        {csvFileName ? <SignalCsvDownload csv={signalCsv(charts)} fileName={csvFileName} /> : null}
       </div>
       <SignalHeadlineGrid headlines={headlines} />
-      <div className="grid gap-4">
-        <SignalPanel
-          available={charts.arrival.available}
-          ariaLabel="Request arrival timeline"
-          caption={`Checkout attempts started by the load generator in ${
-            input.arrivalSummary && hasObservedRequestArrivals(input.arrivalSummary)
-              ? formatWindowSecondsAdjective(input.arrivalSummary.peakArrivalWindowSeconds)
-              : formatWindowSecondsAdjective(liveTrafficMetricWindowSeconds)
-          } windows.`}
-          headline={headlines.arrival.detail}
-          id="watch-signal-arrival"
-          markers={markers}
-          points={charts.arrival.points}
-          title="Request arrival"
-          xMax={charts.arrival.xMax}
-        />
-        <SignalPanel
-          available={charts.inventory.available}
-          ariaLabel="Inventory timeline"
-          area
-          caption="Stock remaining after immediate reservations; oversold units exceed starting stock."
-          headline={headlines.inventory.detail}
-          id="watch-signal-inventory"
-          markers={markers}
-          points={charts.inventory.points}
-          title="Inventory remaining"
-          xMax={charts.inventory.xMax}
-        />
-        <SignalPanel
-          available={charts.backlog.available}
-          ariaLabel="Processing backlog timeline"
-          area
-          caption={`Current and final backlog counts are reserved orders awaiting their first processing start. Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are shown separately (${formatNumber(
-            input.retryingOrderCount ?? 0,
-          )}) because retries can return to processing without re-entering this backlog.`}
-          headline={headlines.backlog.detail}
-          id="watch-signal-backlog"
-          markers={markers}
-          points={charts.backlog.points}
-          title="Processing backlog"
-          xMax={charts.backlog.xMax}
-        />
-        <SignalPanel
-          available={charts.confirmation.available}
-          ariaLabel="Confirmation timeline"
-          caption="Cumulative confirmed orders. Reservation-to-confirmation time is elapsed from reservation secured to final confirmation."
-          headline={headlines.confirmation.detail}
-          id="watch-signal-confirmation"
-          markers={markers}
-          points={charts.confirmation.points}
-          secondary={charts.confirmation.secondary}
-          title="Reservation-to-confirmation"
-          xMax={charts.confirmation.xMax}
-        />
-      </div>
-      <p className="m-0 mt-4 text-xs text-muted">
-        {`Shared axis: 0s ${axis.startLabel} · ${formatAxisSeconds(charts.arrival.xMax)} ${axis.endLabel}`}
-      </p>
+      <SignalCursorProvider>
+        <div className="grid gap-4">
+          <SignalPanel
+            available={charts.arrival.available}
+            ariaLabel="Request arrival timeline"
+            caption={`Checkout attempts started by the load generator in ${
+              input.arrivalSummary && hasObservedRequestArrivals(input.arrivalSummary)
+                ? formatWindowSecondsAdjective(input.arrivalSummary.peakArrivalWindowSeconds)
+                : formatWindowSecondsAdjective(liveTrafficMetricWindowSeconds)
+            } windows.`}
+            headline={headlines.arrival.detail}
+            id="watch-signal-arrival"
+            markers={markers}
+            series={[{ label: "Arrivals", points: charts.arrival.points, tone: "accent" }]}
+            title="Request arrival"
+            unit="attempts/s"
+            xMax={charts.arrival.xMax}
+          />
+          <SignalPanel
+            available={charts.backlog.available}
+            ariaLabel="Processing backlog timeline"
+            caption="Reserved orders waiting for their first processing start."
+            headline={headlines.backlog.detail}
+            hint={`Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are counted separately (${formatNumber(
+              input.retryingOrderCount ?? 0,
+            )}) because retries can return to processing without re-entering this backlog.`}
+            id="watch-signal-backlog"
+            markers={markers}
+            series={[
+              { area: true, label: "Backlog", points: charts.backlog.points, tone: "accent" },
+            ]}
+            title="Processing backlog"
+            unit="orders"
+            xMax={charts.backlog.xMax}
+          />
+          <SignalPanel
+            available={charts.confirmation.available}
+            ariaLabel="Confirmation timeline"
+            caption={
+              charts.confirmation.secondary
+                ? "Cumulative confirmed orders; settled adds failed orders."
+                : "Cumulative confirmed orders."
+            }
+            headline={headlines.confirmation.detail}
+            hint="Reservation-to-confirmation time is elapsed from reservation secured to final confirmation."
+            id="watch-signal-confirmation"
+            markers={markers}
+            series={confirmationSeries}
+            title="Reservation-to-confirmation"
+            unit="orders"
+            xMax={charts.confirmation.xMax}
+          />
+        </div>
+      </SignalCursorProvider>
+      <SignalAxisLegend axis={axis} markers={derived.markers} xMax={charts.arrival.xMax} />
+    </section>
+  );
+}
+
+/**
+ * The public report's single timeline: orders waiting to be processed against orders confirmed,
+ * on one shared scale, so the drain and the convergence read as one story.
+ */
+export function PublicSignalChart(input: GoldSignalInput) {
+  const { axis, charts, markers } = deriveGoldSignalCharts(input);
+  const series: ChartSeries[] = [
+    ...(charts.backlog.available
+      ? [{ area: true, label: "Waiting", points: charts.backlog.points, tone: "accent" as const }]
+      : []),
+    ...(charts.confirmation.available
+      ? [{ label: "Confirmed", points: charts.confirmation.points, tone: "ok" as const }]
+      : []),
+  ];
+  return (
+    <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+      <h3 className="type-title m-0 text-base leading-tight text-ink">Orders over time</h3>
+      {series.length === 0 ? (
+        <p className="m-0 mt-2 text-sm text-muted">
+          The order timeline was not recorded for this run.
+        </p>
+      ) : (
+        <>
+          <p className="m-0 mb-3 mt-1 text-xs leading-5 text-muted">
+            Reserved orders waiting to be processed, and orders confirmed so far.
+          </p>
+          <SignalCursorProvider>
+            <SignalChart
+              ariaLabel="Orders over time"
+              markers={numberedMarkers(markers)}
+              series={series}
+              unit="orders"
+              xMax={charts.backlog.xMax}
+            />
+          </SignalCursorProvider>
+          <SignalAxisLegend axis={axis} markers={markers} xMax={charts.backlog.xMax} />
+        </>
+      )}
     </section>
   );
 }
 
 function SignalPanel({
-  available = true,
+  available,
   ariaLabel,
-  area = false,
   caption,
   headline,
+  hint,
   id,
   markers,
-  points,
-  secondary = false,
+  series,
   title,
+  unit,
   xMax,
 }: {
-  available?: boolean;
+  available: boolean;
   ariaLabel: string;
-  area?: boolean;
   caption: string;
   headline: string | null;
+  hint?: string;
   /** Stable focus target for the signal strip's contextual links. */
-  id?: string;
-  markers: EventMarker[];
-  points: SignalPoint[];
-  secondary?: boolean;
+  id: string;
+  markers: ChartMarker[];
+  series: ChartSeries[];
   title: string;
+  unit: string;
   xMax: number;
 }) {
-  if (!available) {
-    return (
-      <article
-        className="grid grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)] gap-4 border-t border-border pt-3 max-[700px]:grid-cols-1"
-        id={id}
-        tabIndex={-1}
-      >
-        <div>
-          <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-          <p className="m-0 mt-1 text-xs leading-5 text-muted">{caption}</p>
-        </div>
-      </article>
-    );
-  }
   return (
     <article
       className="grid grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)] gap-4 border-t border-border pt-3 max-[700px]:grid-cols-1"
@@ -360,54 +414,98 @@ function SignalPanel({
       tabIndex={-1}
     >
       <div>
-        <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
-        {headline ? (
+        <h3 className="m-0 flex items-center gap-1.5 text-sm font-bold text-ink">
+          {title}
+          {hint ? <FieldHint label={title} text={hint} /> : null}
+        </h3>
+        {available && headline ? (
           <p className="m-0 mt-1 text-xs font-semibold text-muted-strong">{headline}</p>
         ) : null}
         <p className="m-0 mt-1 text-xs leading-5 text-muted">{caption}</p>
       </div>
-      <div>
-        <SignalSparkline
+      {available ? (
+        <SignalChart
           ariaLabel={ariaLabel}
-          area={area}
           markers={markers}
-          points={points}
-          secondary={secondary}
+          series={series}
+          unit={unit}
           xMax={xMax}
         />
-        <details className="mt-2 text-xs text-muted">
-          <summary className="disclosure font-semibold">Text samples</summary>
-          {points.length === 0 ? (
-            <p>No samples retained.</p>
-          ) : (
-            <ol className="m-0 mt-2 grid max-h-40 gap-1 overflow-auto pl-5">
-              {points.map((point) => (
-                <li key={point.elapsedSeconds}>
-                  {formatAxisSeconds(point.elapsedSeconds)}: {formatNumber(point.value)}
-                  {secondary && point.secondaryValue !== undefined
-                    ? ` confirmed, ${formatNumber(point.secondaryValue)} settled`
-                    : ""}
-                </li>
-              ))}
-            </ol>
-          )}
-        </details>
-      </div>
+      ) : null}
     </article>
   );
+}
+
+/** Names what the axis ends are and which event each numbered marker line stands for. */
+function SignalAxisLegend({
+  axis,
+  markers,
+  xMax,
+}: {
+  axis: SignalAxis;
+  markers: EventMarker[];
+  xMax: number;
+}) {
+  return (
+    <div className="mt-4 grid gap-1 text-xs text-muted">
+      {markers.length > 0 ? (
+        <ol className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0">
+          {markers.map((marker, index) => (
+            <li className="flex items-center gap-1.5" key={marker.label}>
+              <span className="grid size-4 place-items-center rounded-full bg-muted text-[10px] font-bold leading-none text-white">
+                {index + 1}
+              </span>
+              {`${marker.label} · ${formatAxisSeconds(marker.elapsedSeconds)}`}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      <p className="m-0">
+        {`Shared axis: 0s ${axis.startLabel} · ${formatAxisSeconds(xMax)} ${axis.endLabel}`}
+      </p>
+    </div>
+  );
+}
+
+function numberedMarkers(markers: EventMarker[]): ChartMarker[] {
+  return markers.map((marker, index) => ({
+    elapsedSeconds: marker.elapsedSeconds,
+    number: index + 1,
+  }));
+}
+
+function settledPoints(points: SignalPoint[]): ChartPoint[] {
+  return points.flatMap((point) =>
+    point.secondaryValue === undefined
+      ? []
+      : [{ elapsedSeconds: point.elapsedSeconds, value: point.secondaryValue }],
+  );
+}
+
+/** Long-format CSV of every retained series, including the inventory drain the panels omit. */
+export function signalCsv(charts: Record<GoldSignalKey, GoldSignalChart>): string {
+  const series: Array<[string, ChartPoint[]]> = [
+    ["arrival_attempts_per_second", charts.arrival.points],
+    ["remaining_stock", charts.inventory.points],
+    ["processing_backlog", charts.backlog.points],
+    ["confirmed_orders", charts.confirmation.points],
+    ["settled_orders", settledPoints(charts.confirmation.points)],
+  ];
+  const rows = series.flatMap(([signal, points]) =>
+    points.map((point) => `${signal},${point.elapsedSeconds},${point.value}`),
+  );
+  return ["signal,elapsed_seconds,value", ...rows].join("\n");
 }
 
 export function SignalSparkline({
   ariaLabel,
   area,
-  markers,
   points,
   secondary,
   xMax,
 }: {
   ariaLabel: string;
   area: boolean;
-  markers: EventMarker[];
   points: SignalPoint[];
   secondary: boolean;
   xMax: number;
@@ -441,18 +539,6 @@ export function SignalSparkline({
       role="img"
       viewBox={`0 0 ${width} ${height}`}
     >
-      {markers.map((marker) => (
-        <line
-          className="stroke-border"
-          key={`${marker.label}-${marker.elapsedSeconds}`}
-          x1={scale(marker.elapsedSeconds, xMax, width)}
-          x2={scale(marker.elapsedSeconds, xMax, width)}
-          y1={0}
-          y2={height}
-        >
-          <title>{marker.label}</title>
-        </line>
-      ))}
       {area && areaPath ? <path className="fill-accent/20" d={areaPath} /> : null}
       {line ? (
         <polyline
@@ -478,10 +564,6 @@ export function SignalSparkline({
       ) : null}
     </svg>
   );
-}
-
-export function scale(value: number, maximum: number, range: number): number {
-  return Math.max(0, Math.min(range, (value / Math.max(1, maximum)) * range));
 }
 
 /** Contracts decide what counts as an observation; this only narrows the unobserved case away. */
@@ -538,21 +620,22 @@ function recordedRunDescriptor(status: DemoRunStatus | null): string {
   return "recorded run window";
 }
 
+/** Interior events only: the axis ends are already named by the shared-axis legend. */
 function terminalEventMarkers(
   summary: RunSignalTimelineSummary,
   arrival: RequestArrivalSummary | null,
 ): EventMarker[] {
-  const markers: EventMarker[] = [{ elapsedSeconds: 0, label: "first checkout attempt" }];
+  const markers: EventMarker[] = [];
   if (summary.inventoryDrain.timeToDepletionSeconds !== null) {
     markers.push({
       elapsedSeconds: summary.inventoryDrain.timeToDepletionSeconds,
-      label: "stock depleted",
+      label: "Stock depleted",
     });
   }
   if (arrival) {
     markers.push({
       elapsedSeconds: arrival.dispatchDurationSeconds,
-      label: "last checkout attempt",
+      label: "Last checkout attempt",
     });
   }
   if (summary.queueBacklog.backlogDrainedAt) {
@@ -561,21 +644,28 @@ function terminalEventMarkers(
         summary.window.anchoredAt,
         summary.queueBacklog.backlogDrainedAt,
       ),
-      label: "backlog drained",
+      label: "Backlog drained",
     });
   }
-  markers.push({
-    elapsedSeconds: elapsedSeconds(summary.window.anchoredAt, summary.window.endedAt),
-    label: "final timeline boundary",
-  });
-  return markers;
+  return markers.sort((left, right) => left.elapsedSeconds - right.elapsedSeconds);
 }
 
-function Headline({ label, value }: { label: string; value: string }) {
+function Headline({
+  detail,
+  id,
+  label,
+  value,
+}: {
+  detail?: string | null;
+  id?: string;
+  label: string;
+  value: string;
+}) {
   return (
-    <div>
+    <div id={id} tabIndex={id ? -1 : undefined}>
       <dt className="text-xs font-bold text-muted">{label}</dt>
       <dd className="m-0 mt-1 font-semibold text-ink">{value}</dd>
+      {detail ? <dd className="m-0 mt-0.5 text-xs text-muted-strong">{detail}</dd> : null}
     </div>
   );
 }
@@ -587,7 +677,14 @@ function SignalHeadlineGrid({ headlines }: { headlines: SignalHeadlines }) {
       data-signal-headlines=""
     >
       <Headline label="Request arrival" value={headlines.arrival.value} />
-      <Headline label="Inventory" value={headlines.inventory.value} />
+      {/* Inventory has no chart panel (it drains in a sliver of the axis), so its detail and the
+          signal strip's focus target live here. */}
+      <Headline
+        detail={headlines.inventory.detail}
+        id="watch-signal-inventory"
+        label="Inventory"
+        value={headlines.inventory.value}
+      />
       <Headline label="Processing backlog" value={headlines.backlog.value} />
       <Headline label="Confirmation" value={headlines.confirmation.value} />
     </dl>
@@ -596,21 +693,4 @@ function SignalHeadlineGrid({ headlines }: { headlines: SignalHeadlines }) {
 
 function elapsedSeconds(startedAt: string, endedAt: string): number {
   return Math.max(0, (Date.parse(endedAt) - Date.parse(startedAt)) / 1_000);
-}
-
-/**
- * Chart-axis coordinates, not named measurements. They keep one fixed unit so tick labels and
- * sample rows stay directly comparable down a column; that is the technical-details reason this
- * surface does not use the tiered duration policy.
- */
-function formatAxisSeconds(value: number): string {
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}s`;
-}
-
-/**
- * Signal magnitudes can be fractional (rates, sampled backlog values), so they keep two decimals
- * rather than the whole-count formatter. Grouping still follows the shared `en-US` policy.
- */
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
 }
