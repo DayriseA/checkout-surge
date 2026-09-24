@@ -463,27 +463,12 @@ function runHistoryDetailFixture() {
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
     },
-    orders: {
-      totalCount: 1,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-history-detail",
-          quantity: 1,
-          status: "confirmed",
-          queuedAt: "2026-06-20T00:00:02.000Z",
-          processingAt: "2026-06-20T00:00:03.000Z",
-          confirmedAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
+    erpAttemptSummary: {
+      totalCount: 0,
+      byStatus: { succeeded: 0, failed: 0, timedOut: 0 },
+      averageLatencyMs: null,
+      p95LatencyMs: null,
     },
-    erpAttempts: { totalCount: 0, limit: 20, truncated: false, records: [] },
-    notifications: { totalCount: 0, limit: 20, truncated: false, records: [] },
-    eventTimeline: { totalCount: 0, limit: 20, truncated: false, records: [] },
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };

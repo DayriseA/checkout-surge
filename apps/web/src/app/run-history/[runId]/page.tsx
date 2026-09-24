@@ -1,7 +1,4 @@
-import {
-  adminRunHistoryDetailHttpQuerySchema,
-  runHistoryDetailParamsSchema,
-} from "@checkout-surge/contracts";
+import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -30,33 +27,16 @@ interface RunHistoryDetailPageProps {
   params?: Promise<{
     runId?: string;
   }>;
-  searchParams?: Promise<{
-    filterKind?: string;
-    filterValue?: string;
-    limit?: string;
-    cursor?: string;
-  }>;
 }
 
-export default async function RunHistoryDetailPage({
-  params,
-  searchParams,
-}: RunHistoryDetailPageProps) {
+export default async function RunHistoryDetailPage({ params }: RunHistoryDetailPageProps) {
   const resolvedParams = await params;
   const runId = resolvedParams?.runId ?? "";
   const parsedParams = runHistoryDetailParamsSchema.safeParse({ runId });
   if (!parsedParams.success) notFound();
 
   const isAdmin = await hasValidAdminPageSession();
-  const parsedAdminQuery = isAdmin
-    ? adminRunHistoryDetailHttpQuerySchema.safeParse((await searchParams) ?? {})
-    : null;
-  const invalidAdminQuery = parsedAdminQuery?.success === false;
-  const adminQuery = parsedAdminQuery?.success ? parsedAdminQuery.data : { limit: 20 };
-  const adminDetail =
-    isAdmin && adminQuery
-      ? await getAdminRunHistoryDetail(parsedParams.data.runId, adminQuery)
-      : null;
+  const adminDetail = isAdmin ? await getAdminRunHistoryDetail(parsedParams.data.runId) : null;
   const publicDetail = !isAdmin ? await getRunHistoryDetail(parsedParams.data.runId) : null;
   const selectedDetail = adminDetail ?? publicDetail;
   if (
@@ -116,14 +96,6 @@ export default async function RunHistoryDetailPage({
         showSelectionToolbar={false}
         visibleRunIds={[adminDetail.data.summary.runId]}
       >
-        {invalidAdminQuery ? (
-          <p
-            className="m-0 rounded-lg border border-warning bg-surface p-4 text-sm font-semibold text-warning"
-            role="status"
-          >
-            Invalid search parameters. Showing the unfiltered run detail.
-          </p>
-        ) : null}
         <AdminRunHistoryDetail
           actions={
             <RunHistoryRowControls

@@ -23,7 +23,6 @@ import {
   PublicRunHistoryDetail,
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
-import { buildRunHistoryTrace } from "../src/app/lib/presentation/run-history-trace.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 
@@ -827,9 +826,7 @@ describe("run history", () => {
         params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
       }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
-      limit: 20,
-    });
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
   });
 
@@ -887,16 +884,14 @@ describe("run history", () => {
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
-      limit: 20,
-    });
+    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555");
     expect(getRunHistoryDetail).not.toHaveBeenCalled();
     expect(markup).toContain("Technical details");
     expect(markup).toContain("admin-history-correlation");
     expect(markup).toContain("protected admin-reader diagnostic");
   });
 
-  it("renders bounded row-level diagnostics for an available admin detail", async () => {
+  it("renders the aggregate admin report without row collections or identifier search", async () => {
     hasValidAdminPageSession.mockResolvedValue(true);
     getAdminRunHistoryDetail.mockResolvedValue({
       status: "available",
@@ -908,115 +903,19 @@ describe("run history", () => {
     });
     const markup = renderToStaticMarkup(page);
 
-    expect(markup).toContain("Order outcomes");
-    expect(markup).toContain("ord_history_1");
-    expect(markup).toContain("corr-history-detail");
-    expect(markup).toContain("ERP attempts");
-    expect(markup).toContain("Event timeline");
-    expect(markup).toContain("worker");
-    expect(markup).toContain("1 total");
     expect(markup).toContain("Exception summary");
-    expect(markup).toContain("<table");
-    expect(markup).toContain("Technical detail");
-    expect(markup).toContain('<caption class="sr-only">Order outcomes</caption>');
-    expect(markup).toContain('<caption class="sr-only">ERP attempts</caption>');
-    expect(markup).toContain('<caption class="sr-only">simulated emails recorded</caption>');
-    expect(markup).toContain('<caption class="sr-only">Event timeline</caption>');
-    expect(markup).toContain('scope="row"');
-    const document = new DOMParser().parseFromString(markup, "text/html");
-
-    for (const accessibleName of [
-      "Order outcomes",
-      "ERP attempts",
-      "simulated emails recorded",
-      "Event timeline",
-    ]) {
-      const region = document.querySelector(`[role="region"][aria-label="${accessibleName}"]`);
-
-      expect(region).not.toBeNull();
-      expect([...(region?.classList ?? [])]).toEqual(
-        expect.arrayContaining(["w-full", "min-w-0", "max-w-full", "overflow-x-auto"]),
-      );
-      expect([...(region?.parentElement?.classList ?? [])]).toEqual(
-        expect.arrayContaining(["min-w-0", "max-w-full"]),
-      );
-      expect([...(region?.closest("section.rounded-2xl")?.classList ?? [])]).toEqual(
-        expect.arrayContaining(["min-w-0", "max-w-full"]),
-      );
-    }
-    expect(markup).toContain("Scrolls sideways.");
-    expect(markup).toContain('scope="col"');
-    expect(markup).toContain('aria-label="Technical detail for order ord_history_1"');
-    expect(markup).toContain(
-      'aria-label="Technical detail for ERP attempt 99999999-9999-4999-8999-999999999992"',
-    );
-    expect(markup).toContain(
-      'aria-label="Technical detail for notification 99999999-9999-4999-8999-999999999993"',
-    );
-    expect(markup).toContain(
-      'aria-label="Technical detail for event 99999999-9999-4999-8999-999999999994"',
-    );
     expect(markup).toContain("Terminal inventory");
     expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
-    expect(markup).toContain("Pending persistence");
     expect(markup).toContain("Simulated ERP call average");
-    expect(markup).toContain("<code>orders:process</code>");
-    expect(markup).toContain("<code>orders-process</code>");
-    expect(markup).toContain("<code>accepted_responses_vs_unique_reservations</code>");
-    expect(markup).not.toContain("expected population difference");
-    expect(markup).not.toContain("Failure none");
-    expect(markup).not.toContain("Error none");
-    expect(markup).toContain("0 warnings · complete");
-    expect(markup).toMatch(/<h1[^>]*>Preview 1k<\/h1>/);
-    expect(markup.match(/<h1\b/g)).toHaveLength(1);
-    // Static markup verifies the responsive stacking contract, not browser geometry.
-    expect(markup).toContain("min-[900px]:sticky min-[900px]:top-14 min-[900px]:z-[5]");
-    expect(markup).not.toContain('aria-label="Select run 55555555-5555-4555-8555-555555555555"');
-    expect(markup).toContain(
-      'aria-label="Delete run Preview 1k (55555555-5555-4555-8555-555555555555)"',
-    );
-  });
-
-  it("sends the run-scoped search through the protected API reader", async () => {
-    hasValidAdminPageSession.mockResolvedValue(true);
-    getAdminRunHistoryDetail.mockResolvedValue({
-      status: "available",
-      data: adminDetailFixture(),
-    });
-
-    await RunHistoryDetailPage({
-      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
-      searchParams: Promise.resolve({
-        filterKind: "publicOrderId",
-        filterValue: "ord_history_1",
-        limit: "10",
-      }),
-    });
-
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
-      filter: { kind: "publicOrderId", value: "ord_history_1" },
-      limit: 10,
-    });
-    expect(getRunHistoryDetail).not.toHaveBeenCalled();
-  });
-
-  it("falls back to unfiltered detail and discloses invalid search parameters", async () => {
-    hasValidAdminPageSession.mockResolvedValue(true);
-    getAdminRunHistoryDetail.mockResolvedValue({
-      status: "available",
-      data: adminDetailFixture(),
-    });
-
-    const page = await RunHistoryDetailPage({
-      params: Promise.resolve({ runId: "55555555-5555-4555-8555-555555555555" }),
-      searchParams: Promise.resolve({ cursor: "bad" }),
-    });
-    const markup = renderToStaticMarkup(page);
-
-    expect(getAdminRunHistoryDetail).toHaveBeenCalledWith("55555555-5555-4555-8555-555555555555", {
-      limit: 20,
-    });
-    expect(markup).toContain("Invalid search parameters. Showing the unfiltered run detail.");
+    expect(markup).not.toContain("Search this run");
+    expect(markup).not.toContain("Order outcomes");
+    expect(markup).not.toContain("ERP attempts");
+    expect(markup).not.toContain("Event timeline");
+    expect(markup).not.toContain("Chronological trace");
+    expect(markup).not.toContain("ord_history_1");
+    expect(markup).not.toContain("corr-history-detail");
+    expect(markup).not.toContain("Technical detail");
+    expect(markup).not.toContain("<table");
   });
 
   it("renders exception classification and delivery tones without understating severity", () => {
@@ -1070,251 +969,6 @@ describe("run history", () => {
       expect(markup).toContain("bg-warning-soft text-warning");
       expect(markup).not.toContain(`✓ Delivery ${status}`);
     }
-  });
-
-  it("presents instrumentation and collection limits without escalating the exception panel", () => {
-    const detail = adminDetailFixture();
-    detail.orders.totalCount = 240;
-    detail.orders.matchedCount = 240;
-    detail.orders.truncated = true;
-    detail.exceptionSummary.truncatedCollections = 1;
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-    const document = new DOMParser().parseFromString(markup, "text/html");
-    const exceptionSummary = document.querySelector('[aria-label="Exception summary"]');
-
-    expect(exceptionSummary?.classList).toContain("border-border");
-    expect(exceptionSummary?.classList).toContain("bg-surface");
-    expect(exceptionSummary?.classList).not.toContain("border-warning");
-    expect(exceptionSummary?.textContent).toContain("Clean run · no exceptions require attention.");
-    expect(exceptionSummary?.textContent).toContain("Instrumentation limitations: 1");
-    expect(exceptionSummary?.textContent).toContain("Display-limited collections: 1");
-    expect(markup).toContain("240 total · 0 warnings · showing newest 1 of 240");
-  });
-
-  it("labels a failed attempt with retries remaining without failure or evidence-loss styling", () => {
-    const detail = adminDetailFixture();
-    const successfulAttempt = detail.erpAttempts.records[0];
-    if (!successfulAttempt) throw new Error("Expected an ERP attempt fixture.");
-    detail.exceptionSummary.generatorWarnings = 0;
-    detail.erpAttempts.totalCount = 2;
-    detail.erpAttempts.matchedCount = 2;
-    detail.erpAttempts.records = [
-      {
-        ...successfulAttempt,
-        attemptId: "99999999-9999-4999-8999-999999999990",
-        attemptNumber: 1,
-        status: "failed",
-        terminal: false,
-        httpStatus: 503,
-        errorCode: "erp_unavailable",
-      },
-      { ...successfulAttempt, attemptNumber: 2 },
-    ];
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-    const document = new DOMParser().parseFromString(markup, "text/html");
-    const retryStatus = [...document.querySelectorAll("span")].find((element) =>
-      element.textContent?.includes("failed · retry scheduled"),
-    );
-
-    expect(retryStatus).toBeDefined();
-    expect(retryStatus?.classList).not.toContain("text-danger");
-    expect(markup).not.toContain("missing terminal evidence");
-    expect(markup).not.toContain("Missing terminal evidence");
-    expect(markup).toContain("2 total · 0 warnings · complete view");
-  });
-
-  it("surfaces failed and pending order evidence alongside neutral display limits", () => {
-    const detail = adminDetailFixture();
-    detail.orders = {
-      totalCount: 25,
-      matchedCount: 25,
-      warningCount: 1,
-      limit: 20,
-      truncated: true,
-      records: [
-        {
-          orderId: "99999999-9999-4999-8999-999999999995",
-          publicOrderId: "ord_failed",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-failed",
-          quantity: 1,
-          status: "failed",
-          queuedAt: "2026-06-20T00:00:02.000Z",
-          failedAt: "2026-06-20T00:00:06.000Z",
-          failureCode: "erp_rejected",
-        },
-        {
-          orderId: "99999999-9999-4999-8999-999999999996",
-          publicOrderId: "ord_pending",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-pending",
-          quantity: 1,
-          status: "queued",
-          queuedAt: "2026-06-20T00:00:09.000Z",
-        },
-      ],
-    };
-    detail.exceptionSummary.failedOrders = 1;
-    detail.exceptionSummary.pendingWork = 1;
-    detail.exceptionSummary.truncatedCollections = 1;
-    const terminalAttempt = detail.erpAttempts.records[0];
-    if (!terminalAttempt) throw new Error("Expected an ERP attempt fixture.");
-    terminalAttempt.status = "failed";
-    terminalAttempt.terminal = true;
-    terminalAttempt.errorCode = "erp_rejected";
-    detail.erpAttempts.warningCount = 1;
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-    const document = new DOMParser().parseFromString(markup, "text/html");
-    const terminalFailure = [...document.querySelectorAll("span")].find((element) =>
-      element.textContent?.includes("failed · erp_rejected"),
-    );
-
-    expect(markup).toContain("ord_failed");
-    expect(markup).toContain("<code>erp_rejected</code>");
-    expect(markup).toContain("2026-06-20 00:00:06 UTC");
-    expect(markup).toContain("ord_pending");
-    expect(markup).toContain("Missing terminal evidence");
-    expect(terminalFailure?.classList).toContain("text-danger");
-    expect(markup).toContain("25 total · 1 warnings · showing newest 2 of 25");
-  });
-
-  it("renders API-filtered results as a deterministic chronological trace", () => {
-    const detail = adminDetailFixture();
-    detail.query = {
-      filter: { kind: "correlationId", value: "corr-history-detail" },
-      limit: 20,
-    };
-    const timestamp = "2026-06-20T00:00:07.000Z";
-    const order = detail.orders.records[0];
-    const attempt = detail.erpAttempts.records[0];
-    const notification = detail.notifications.records[0];
-    const event = detail.eventTimeline.records[0];
-    if (!order || !attempt || !notification || !event) throw new Error("Expected trace fixtures.");
-    order.confirmedAt = timestamp;
-    attempt.finishedAt = timestamp;
-    notification.recordedAt = timestamp;
-    event.occurredAt = timestamp;
-    detail.eventTimeline.records.push({
-      ...event,
-      eventId: "99999999-9999-4999-8999-999999999990",
-    });
-    detail.eventTimeline.matchedCount = 2;
-    const earlierTimestamp = "2026-06-20T00:00:06.000Z";
-    notification.recordedAt = earlierTimestamp;
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-    const trace = buildRunHistoryTrace(detail);
-
-    expect(markup).toContain(
-      "5 record matches across all collections for correlationId “corr-history-detail”.",
-    );
-    expect(markup).toContain("Chronological trace");
-    expect(trace.map((entry) => entry.id)).toEqual([
-      notification.notificationId,
-      order.orderId,
-      attempt.attemptId,
-      "99999999-9999-4999-8999-999999999990",
-      event.eventId,
-    ]);
-    expect(markup).toContain("<code>2026-06-20T00:00:07.000Z</code>");
-    expect(markup).toContain("<code>2026-06-20T00:00:06.000Z</code>");
-  });
-
-  it("renders an explicit no-match state for an API filter", () => {
-    const detail = adminDetailFixture();
-    detail.query = {
-      filter: { kind: "publicOrderId", value: "ord_missing" },
-      limit: 20,
-    };
-    detail.orders.matchedCount = 0;
-    detail.orders.records = [];
-    detail.erpAttempts.matchedCount = 0;
-    detail.erpAttempts.records = [];
-    detail.notifications.matchedCount = 0;
-    detail.notifications.records = [];
-    detail.eventTimeline.matchedCount = 0;
-    detail.eventTimeline.records = [];
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-
-    expect(markup).toContain("No records matched publicOrderId “ord_missing” in this run.");
-    expect(markup).toContain("No records matched this search in order outcomes.");
-    expect(markup).toContain("No records matched this search in ERP attempts.");
-    expect(markup).toContain("No records matched this search in simulated notifications.");
-    expect(markup).toContain("No records matched this search in the event timeline.");
-    expect(markup).not.toContain("Chronological trace");
-  });
-
-  it("discloses truncation for filtered results", () => {
-    const detail = adminDetailFixture();
-    detail.query = {
-      filter: { kind: "orderId", value: "99999999-9999-4999-8999-999999999991" },
-      limit: 1,
-    };
-    detail.orders.totalCount = 2;
-    detail.orders.matchedCount = 2;
-    detail.orders.limit = 1;
-    detail.orders.truncated = true;
-    detail.orders.nextCursor = "c1";
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-
-    expect(markup).toContain("Some matching collections are display-limited on this page.");
-    expect(markup).toContain("2 matches of 2 total");
-    expect(markup).toContain("showing newest 1 of 2");
-  });
-
-  it("labels an empty cursor page as display-limited filtered evidence", () => {
-    const detail = adminDetailFixture();
-    detail.query = {
-      filter: { kind: "publicOrderId", value: "ord_history_1" },
-      limit: 1,
-      cursor: "c100",
-    };
-    for (const collection of [
-      detail.orders,
-      detail.erpAttempts,
-      detail.notifications,
-      detail.eventTimeline,
-    ]) {
-      collection.records = [];
-      collection.limit = 1;
-      collection.truncated = true;
-    }
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-
-    expect(markup).toContain("Some matching collections are display-limited on this page.");
-    expect(markup).toContain("1 matches of 1 total");
-    expect(markup).toContain("showing 0 of 1 on this page");
-    expect(markup).toContain("No matching records are included on this page in order outcomes.");
-  });
-
-  it("labels an unfiltered cursor page without claiming newest or search results", () => {
-    const detail = adminDetailFixture();
-    detail.query = { limit: 20, cursor: "c100" };
-    for (const collection of [
-      detail.orders,
-      detail.erpAttempts,
-      detail.notifications,
-      detail.eventTimeline,
-    ]) {
-      collection.records = [];
-      collection.truncated = true;
-    }
-
-    const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
-
-    expect(markup).toContain("Showing up to 20 records per collection for this page.");
-    expect(markup).toContain(
-      "No records are included on this page in order outcomes; the page may be beyond the recorded set.",
-    );
-    expect(markup).toContain("showing 0 of 1 on this page");
-    expect(markup).not.toContain("Showing the newest");
-    expect(markup).not.toContain("No records matched this search");
   });
 
   it("includes the public failure explanation and recovery action for admins", () => {
@@ -1573,7 +1227,6 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
   if (!inventory) throw new Error("Expected terminal inventory fixture.");
 
   return {
-    query: { limit: 20 },
     failureDiagnostic: null,
     overallDurationMs: 10_000,
     summary: {
@@ -1596,7 +1249,6 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
       pendingWork: 0,
       partialDelivery: 0,
       generatorWarnings: 1,
-      truncatedCollections: 0,
     },
     run: {
       runId: detail.run.runId,
@@ -1614,84 +1266,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     },
     httpTimingBreakdownSummary: detail.httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: null,
-    orders: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-history-detail",
-          quantity: 1,
-          status: "confirmed",
-          queuedAt: "2026-06-20T00:00:02.000Z",
-          processingAt: "2026-06-20T00:00:03.000Z",
-          confirmedAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
-    },
-    erpAttempts: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          attemptId: "99999999-9999-4999-8999-999999999992",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          correlationId: "corr-history-detail",
-          attemptNumber: 1,
-          status: "succeeded",
-          terminal: true,
-          httpStatus: 200,
-          latencyMs: 42,
-          startedAt: "2026-06-20T00:00:04.000Z",
-          finishedAt: "2026-06-20T00:00:05.000Z",
-        },
-      ],
-    },
     erpAttemptSummary: detail.erpAttempts,
-    notifications: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          notificationId: "99999999-9999-4999-8999-999999999993",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          correlationId: "corr-history-detail",
-          recordedAt: "2026-06-20T00:00:08.000Z",
-        },
-      ],
-    },
-    eventTimeline: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          eventId: "99999999-9999-4999-8999-999999999994",
-          eventName: "order.confirmed",
-          source: "worker",
-          saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          correlationId: "corr-history-detail",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          occurredAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
-    },
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
   };

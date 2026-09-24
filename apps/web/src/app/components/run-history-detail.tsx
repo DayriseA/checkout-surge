@@ -5,7 +5,6 @@ import type {
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { adminFieldHints } from "../lib/presentation/field-hints";
 import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
 import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
@@ -18,23 +17,16 @@ import {
   trafficModeLabel,
 } from "../lib/presentation/public-vocabulary";
 import { runFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
-import { buildRunHistoryTrace } from "../lib/presentation/run-history-trace";
 import { deriveTerminalSummaryPresentation } from "../lib/presentation/run-presentation-state";
 import {
   evidenceFromRunHistoryDetail,
   oversoldUnitsFromTerminalInventory,
 } from "../lib/presentation/run-result-presentation";
 import { ConfigGroup, FieldRow } from "./config-presentation";
-import {
-  inputClassName,
-  neutralLinkButtonClassName,
-  primaryButtonClassName,
-} from "./control-styles";
-import { FieldHint } from "./field-hint";
+import { neutralLinkButtonClassName } from "./control-styles";
 import { GoldSignals, PublicSignalChart } from "./gold-signals";
 import { PublicRunConclusion, PublicRunConclusionProof, RunConclusion } from "./run-conclusion";
 import { RunDiagnostics } from "./run-diagnostics";
-import { ScrollRegion } from "./scroll-region";
 import { StatusPill } from "./status-pill";
 import {
   deriveTransportObservation,
@@ -70,9 +62,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   const failure = summary.failureCategory
     ? publicFailureExplanation(summary.failureCategory)
     : null;
-  const trace = detail.query.filter ? buildRunHistoryTrace(detail) : [];
-  const filtered = detail.query.filter !== undefined;
-  const cursorPaged = detail.query.cursor !== undefined;
 
   return (
     <div className="grid grid-cols-1 gap-4">
@@ -331,402 +320,6 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         summary={detail.loadRunDiagnosticsSummary}
         warningCount={detail.exceptionSummary.generatorWarnings}
       />
-
-      <div className="grid gap-3">
-        <RunHistoryFilter detail={detail} />
-
-        {detail.query.filter && trace.length > 0 ? (
-          <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-            <h2 className="type-title m-0 text-base leading-tight text-ink">Chronological trace</h2>
-            <p className="m-0 mt-1 text-sm text-muted">
-              Related records are ordered by timestamp, source type, then identifier.
-            </p>
-            <ScrollRegion accessibleName="Chronological trace">
-              <DenseTable
-                accessibleName="Chronological trace"
-                headers={["Time", "Source", "Order", "Activity", "Details"]}
-                rows={trace.map((entry) => ({
-                  id: `${entry.source}-${entry.id}`,
-                  identity: `${entry.source} ${entry.id}`,
-                  cells: [
-                    formatDate(entry.timestamp),
-                    entry.source,
-                    entry.publicOrderId ?? "Run-level",
-                    entry.activity,
-                  ],
-                  details: entry.details.map(
-                    ([label, value]) => [label, codeValue(value)] as [string, ReactNode],
-                  ),
-                }))}
-              />
-            </ScrollRegion>
-          </section>
-        ) : null}
-
-        <CollectionPanel
-          defaultOpen
-          emptyLabel={collectionEmptyLabel(
-            filtered,
-            cursorPaged,
-            detail.orders.matchedCount,
-            "order outcomes",
-            "No order outcomes were recorded for this run.",
-          )}
-          headers={["Public order", "Status", "Quantity", "Terminal time", "Details"]}
-          records={detail.orders.records.map((order) => ({
-            id: order.orderId,
-            identity: `order ${order.publicOrderId}`,
-            cells: [
-              order.publicOrderId,
-              <span className={order.status === "failed" ? "text-danger" : ""} key="status">
-                {order.status}
-                {order.failureCode ? (
-                  <>
-                    {" "}
-                    · <code>{order.failureCode}</code>
-                  </>
-                ) : null}
-              </span>,
-              formatNumber(order.quantity),
-              order.confirmedAt || order.failedAt ? (
-                formatDate(order.confirmedAt ?? order.failedAt)
-              ) : (
-                <span className="text-warning" key="terminal">
-                  Missing terminal evidence
-                </span>
-              ),
-            ],
-            details: [
-              ["Internal order", codeValue(order.orderId)],
-              ["Correlation", codeValue(order.correlationId)],
-              ["Queued", formatDate(order.queuedAt)],
-              ...(order.processingAt
-                ? [["Processing", formatDate(order.processingAt)] as [string, ReactNode]]
-                : []),
-            ],
-          }))}
-          cursorPaged={cursorPaged}
-          title="Order outcomes"
-          filtered={filtered}
-          matchedCount={detail.orders.matchedCount}
-          totalCount={detail.orders.totalCount}
-          truncated={detail.orders.truncated}
-          warningCount={detail.orders.warningCount}
-        />
-        <CollectionPanel
-          emptyLabel={collectionEmptyLabel(
-            filtered,
-            cursorPaged,
-            detail.erpAttempts.matchedCount,
-            "ERP attempts",
-            "No ERP attempts were recorded.",
-          )}
-          headers={["Order / attempt", "Status", "Latency", "Finished", "Details"]}
-          records={detail.erpAttempts.records.map((attempt) => ({
-            id: attempt.attemptId,
-            identity: `ERP attempt ${attempt.attemptId}`,
-            cells: [
-              `${attempt.publicOrderId} / ${attempt.attemptNumber}`,
-              <span
-                className={attempt.terminal && attempt.status !== "succeeded" ? "text-danger" : ""}
-                key="status"
-              >
-                {attempt.status}
-                {!attempt.terminal ? " · retry scheduled" : ""}
-                {attempt.errorCode ? (
-                  <>
-                    {" "}
-                    · <code>{attempt.errorCode}</code>
-                  </>
-                ) : null}
-              </span>,
-              formatDurationMs(attempt.latencyMs) ?? "not recorded",
-              formatDate(attempt.finishedAt),
-            ],
-            details: [
-              ["Attempt", codeValue(attempt.attemptId)],
-              ["Internal order", codeValue(attempt.orderId)],
-              ["Correlation", codeValue(attempt.correlationId)],
-              ["Started", formatDate(attempt.startedAt)],
-              ...(attempt.httpStatus
-                ? [["HTTP", String(attempt.httpStatus)] as [string, ReactNode]]
-                : []),
-            ],
-          }))}
-          cursorPaged={cursorPaged}
-          title="ERP attempts"
-          filtered={detail.query.filter !== undefined}
-          matchedCount={detail.erpAttempts.matchedCount}
-          totalCount={detail.erpAttempts.totalCount}
-          truncated={detail.erpAttempts.truncated}
-          warningCount={detail.erpAttempts.warningCount}
-        />
-        <CollectionPanel
-          emptyLabel={collectionEmptyLabel(
-            filtered,
-            cursorPaged,
-            detail.notifications.matchedCount,
-            "simulated notifications",
-            "No simulated notifications were recorded.",
-          )}
-          headers={["Public order", "Recorded", "Details"]}
-          records={detail.notifications.records.map((notification) => ({
-            id: notification.notificationId,
-            identity: `notification ${notification.notificationId}`,
-            cells: [notification.publicOrderId, formatDate(notification.recordedAt)],
-            details: [
-              ["Notification", codeValue(notification.notificationId)],
-              ["Internal order", codeValue(notification.orderId)],
-              ["Correlation", codeValue(notification.correlationId)],
-            ],
-          }))}
-          cursorPaged={cursorPaged}
-          title={publicVocabulary.notifications}
-          filtered={detail.query.filter !== undefined}
-          matchedCount={detail.notifications.matchedCount}
-          totalCount={detail.notifications.totalCount}
-          truncated={detail.notifications.truncated}
-          warningCount={detail.notifications.warningCount}
-        />
-        <CollectionPanel
-          emptyLabel={collectionEmptyLabel(
-            filtered,
-            cursorPaged,
-            detail.eventTimeline.matchedCount,
-            "the event timeline",
-            "No event timeline entries were recorded.",
-          )}
-          headers={["Event", "Order", "Occurred", "Details"]}
-          records={detail.eventTimeline.records.map((event) => ({
-            id: event.eventId,
-            identity: `event ${event.eventId}`,
-            cells: [
-              event.eventName,
-              event.publicOrderId ?? "No order",
-              formatDate(event.occurredAt),
-            ],
-            details: [
-              ["Event", codeValue(event.eventId)],
-              ["Source", event.source],
-              ["Correlation", codeValue(event.correlationId)],
-            ],
-          }))}
-          cursorPaged={cursorPaged}
-          title="Event timeline"
-          filtered={detail.query.filter !== undefined}
-          matchedCount={detail.eventTimeline.matchedCount}
-          totalCount={detail.eventTimeline.totalCount}
-          truncated={detail.eventTimeline.truncated}
-          warningCount={detail.eventTimeline.warningCount}
-        />
-      </div>
-    </div>
-  );
-}
-
-function RunHistoryFilter({ detail }: { detail: AdminRunHistoryDetailResponse }) {
-  const filter = detail.query.filter;
-  const collections = [
-    detail.orders,
-    detail.erpAttempts,
-    detail.notifications,
-    detail.eventTimeline,
-  ];
-  const matchedCount = collections.reduce(
-    (total, collection) => total + collection.matchedCount,
-    0,
-  );
-  const truncated = collections.some((collection) => collection.truncated);
-
-  return (
-    <section
-      aria-label="Search this run"
-      className="rounded-2xl border border-border bg-surface-muted px-5 py-4 max-[560px]:px-4"
-    >
-      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Search this run</h2>
-        <p className="m-0 text-sm text-muted">
-          Search the protected run dataset, including records outside the recent-record view.
-        </p>
-      </div>
-      <form className="mt-3 flex flex-wrap items-start gap-3" method="get">
-        <div className="grid gap-1 text-sm font-semibold text-ink">
-          <div className="flex min-h-6 items-center gap-1.5">
-            <label htmlFor="history-filter-kind">Identifier type</label>
-            <FieldHint label="Identifier type" text={adminFieldHints.identifierType} />
-          </div>
-          <select
-            className={inputClassName}
-            defaultValue={filter?.kind ?? "publicOrderId"}
-            id="history-filter-kind"
-            name="filterKind"
-          >
-            <option value="orderId">Internal order ID</option>
-            <option value="publicOrderId">Public order ID</option>
-            <option value="correlationId">Correlation ID</option>
-          </select>
-        </div>
-        <div className="grid min-w-[18rem] flex-1 gap-1 text-sm font-semibold text-ink">
-          <div className="flex min-h-6 items-center gap-1.5">
-            <label htmlFor="history-filter-value">Identifier</label>
-            <FieldHint label="Identifier" text={adminFieldHints.identifier} />
-          </div>
-          <input
-            className={inputClassName}
-            defaultValue={filter?.value ?? ""}
-            id="history-filter-value"
-            name="filterValue"
-            placeholder="Enter an exact identifier"
-            required
-            type="search"
-          />
-          <span className="text-xs font-normal text-muted">Enter an exact identifier.</span>
-        </div>
-        <button className={`${primaryButtonClassName} min-[561px]:mt-7`} type="submit">
-          Search
-        </button>
-        {filter ? (
-          <a
-            className={`${neutralLinkButtonClassName} min-[561px]:mt-7`}
-            href={`/run-history/${encodeURIComponent(detail.summary.runId)}`}
-          >
-            Clear
-          </a>
-        ) : null}
-      </form>
-      {filter ? (
-        <p
-          className={`m-0 mt-2 text-sm font-semibold ${matchedCount === 0 ? "text-warning" : "text-muted-strong"}`}
-          role="status"
-        >
-          {matchedCount === 0
-            ? `No records matched ${filter.kind} “${filter.value}” in this run.`
-            : `${formatNumber(matchedCount)} record matches across all collections for ${filter.kind} “${filter.value}”.`}
-          {truncated ? " Some matching collections are display-limited on this page." : ""}
-        </p>
-      ) : (
-        <p className="m-0 mt-2 text-xs text-muted">
-          {detail.query.cursor
-            ? `Showing up to ${formatNumber(detail.query.limit)} records per collection for this page.`
-            : `Showing the newest ${formatNumber(detail.query.limit)} records per collection.`}
-        </p>
-      )}
-    </section>
-  );
-}
-
-function CollectionPanel({
-  cursorPaged,
-  defaultOpen = false,
-  emptyLabel,
-  headers,
-  records,
-  title,
-  filtered,
-  matchedCount,
-  totalCount,
-  truncated,
-  warningCount,
-}: {
-  cursorPaged: boolean;
-  defaultOpen?: boolean;
-  emptyLabel: string;
-  headers: string[];
-  records: Array<{
-    id: string;
-    identity: string;
-    cells: ReactNode[];
-    details: Array<[string, ReactNode]>;
-  }>;
-  title: string;
-  filtered: boolean;
-  matchedCount: number;
-  totalCount: number;
-  truncated: boolean;
-  warningCount: number;
-}) {
-  // Secondary collections start collapsed to keep the report scannable; a search opens them all.
-  return (
-    <section className="min-w-0 max-w-full rounded-2xl border border-border bg-surface">
-      <details className="group/collection" open={defaultOpen || filtered}>
-        <summary className="disclosure w-full! rounded-2xl px-5 py-3.5 max-[560px]:px-4">
-          <CollectionHeader
-            cursorPaged={cursorPaged}
-            filtered={filtered}
-            matchedCount={matchedCount}
-            shownCount={records.length}
-            title={title}
-            totalCount={totalCount}
-            truncated={truncated}
-            warningCount={warningCount}
-          />
-        </summary>
-        <div className="border-t border-border px-5 pb-4 max-[560px]:px-4">
-          <ScrollRegion accessibleName={title}>
-            {records.length > 0 ? (
-              <DenseTable accessibleName={title} headers={headers} rows={records} />
-            ) : (
-              <EmptyCollection label={emptyLabel} />
-            )}
-          </ScrollRegion>
-        </div>
-      </details>
-    </section>
-  );
-}
-
-function collectionEmptyLabel(
-  filtered: boolean,
-  cursorPaged: boolean,
-  matchedCount: number,
-  collection: string,
-  defaultLabel: string,
-) {
-  if (!filtered && !cursorPaged) return defaultLabel;
-  if (!filtered) {
-    return `No records are included on this page in ${collection}; the page may be beyond the recorded set.`;
-  }
-  return matchedCount === 0
-    ? `No records matched this search in ${collection}.`
-    : `No matching records are included on this page in ${collection}.`;
-}
-
-function CollectionHeader({
-  cursorPaged,
-  filtered,
-  matchedCount,
-  shownCount,
-  title,
-  totalCount,
-  truncated,
-  warningCount,
-}: {
-  cursorPaged: boolean;
-  filtered: boolean;
-  matchedCount: number;
-  shownCount: number;
-  title: string;
-  totalCount: number;
-  truncated: boolean;
-  warningCount: number;
-}) {
-  const displayedTotal = filtered ? matchedCount : totalCount;
-  return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-      <h2 className="type-title m-0 text-base leading-tight text-ink">{title}</h2>
-      <p
-        className={`m-0 text-xs font-semibold ${warningCount > 0 ? "text-warning" : "text-muted"}`}
-      >
-        {filtered
-          ? `${formatNumber(matchedCount)} matches of ${formatNumber(totalCount)} total`
-          : `${formatNumber(totalCount)} total`}{" "}
-        · {formatNumber(warningCount)} warnings
-        {truncated
-          ? cursorPaged
-            ? ` · showing ${formatNumber(shownCount)} of ${formatNumber(displayedTotal)} on this page`
-            : ` · showing newest ${formatNumber(shownCount)} of ${formatNumber(displayedTotal)}`
-          : " · complete view"}
-      </p>
     </div>
   );
 }
@@ -749,80 +342,6 @@ function FactList({
   );
 }
 
-function DenseTable({
-  accessibleName,
-  headers,
-  rows,
-}: {
-  accessibleName: string;
-  headers: string[];
-  rows: Array<{
-    id: string;
-    identity: string;
-    cells: ReactNode[];
-    details: Array<[string, ReactNode]>;
-  }>;
-}) {
-  return (
-    <table className="w-full min-w-[42rem] border-collapse text-left text-[0.8125rem]">
-      <caption className="sr-only">{accessibleName}</caption>
-      <thead>
-        <tr className="border-b border-border text-xs text-muted">
-          {headers.map((header) => (
-            <th className="px-2 py-2 font-medium" key={header} scope="col">
-              {header}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((row) => (
-          <tr
-            className="border-b border-border last:border-b-0 hover:bg-surface-muted"
-            key={row.id}
-          >
-            {row.cells.map((cell, index) =>
-              index === 0 ? (
-                <th
-                  className="whitespace-nowrap px-2 py-1.5 align-top font-mono text-xs font-medium text-ink"
-                  key={headers[index]}
-                  scope="row"
-                >
-                  {cell}
-                </th>
-              ) : (
-                <td className="px-2 py-1.5 align-top text-muted-strong" key={headers[index]}>
-                  {cell}
-                </td>
-              ),
-            )}
-            <td className="px-2 py-1.5 align-top">
-              <details>
-                <summary
-                  aria-label={`Technical detail for ${row.identity}`}
-                  className="disclosure font-semibold text-muted-strong"
-                >
-                  Technical detail
-                </summary>
-                <dl className="mb-1 mt-2 grid gap-1">
-                  {row.details.map(([label, value]) => (
-                    <div key={label}>
-                      <dt className="text-xs text-muted">{label}</dt>
-                      <dd className="m-0 [overflow-wrap:anywhere] text-xs text-muted-strong">
-                        {value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </details>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
 function ExceptionSummary({
   outcome,
   summary,
@@ -837,10 +356,7 @@ function ExceptionSummary({
     ["delivery exceptions", summary.partialDelivery],
   ] as const;
   const exceptions = exceptionEntries.filter(([, count]) => count > 0);
-  const limitationEntries = [
-    ["Instrumentation limitations", summary.generatorWarnings],
-    ["Display-limited collections", summary.truncatedCollections],
-  ] as const;
+  const limitationEntries = [["Instrumentation limitations", summary.generatorWarnings]] as const;
   const limitations = limitationEntries.filter(([, count]) => count > 0);
   const classification =
     summary.maximumClassification === "expected_population_difference"
@@ -892,10 +408,6 @@ function ExceptionSummary({
       ) : null}
     </section>
   );
-}
-
-function EmptyCollection({ label }: { label: string }) {
-  return <p className="m-0 text-sm font-semibold text-muted">{label}</p>;
 }
 
 function trafficConfigFacts(

@@ -1,11 +1,8 @@
 import {
   type AdminDeleteRunHistoryRequest,
   type AdminDeleteRunHistoryResponse,
-  type AdminRunHistoryDetailFilter,
-  type AdminRunHistoryDetailQuery,
   type AdminRunHistoryDetailResponse,
   adminDeleteRunHistoryResponseSchema,
-  adminRunHistoryCursorSchema,
   adminRunHistoryDetailResponseSchema,
   countUnavailableLoadRunDiagnosticProbes,
   deriveLoadExecutionPlan,
@@ -22,20 +19,12 @@ import {
   publicRunHistoryDetailResponseSchema,
   publicRunHistoryRunSchema,
   publicRunHistorySummarySchema,
-  type RunHistoryErpAttempt,
-  type RunHistoryEventTimelineEntry,
   type RunHistoryListItem,
   type RunHistoryListQuery,
   type RunHistoryListResponse,
-  type RunHistoryNotification,
-  type RunHistoryOrderOutcome,
   type RunHistorySummary,
-  runHistoryErpAttemptSchema,
-  runHistoryEventTimelineEntrySchema,
   runHistoryListItemSchema,
   runHistoryListResponseSchema,
-  runHistoryNotificationSchema,
-  runHistoryOrderOutcomeSchema,
   runHistorySummarySchema,
   runSignalTimelineSummarySchema,
   serverReservationTimingSummarySchema,
@@ -47,12 +36,9 @@ import {
   demoRunSummaries,
   demoRuns,
   erpAttempts,
-  orderEvents,
-  orders,
   readCumulativeErpOutcomeCounts,
-  simulatedNotifications,
 } from "@checkout-surge/db";
-import { type AnyColumn, and, count, desc, eq, inArray, type SQL, sql } from "drizzle-orm";
+import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
@@ -67,34 +53,10 @@ import {
   parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
 
-const detailRecordLimit = 20;
-
-function filterCondition(
-  filter: AdminRunHistoryDetailFilter | undefined,
-  columns: Record<AdminRunHistoryDetailFilter["kind"], AnyColumn>,
-): SQL {
-  return filter ? eq(columns[filter.kind], filter.value) : sql`true`;
-}
-
-export function nextCursor(matchedCount: number, offset: number, returnedCount: number) {
-  const nextOffset = offset + returnedCount;
-  const cursor = `c${nextOffset}`;
-  return matchedCount > nextOffset && adminRunHistoryCursorSchema.safeParse(cursor).success
-    ? { nextCursor: cursor }
-    : {};
-}
-
-function recordsOmitted(matchedCount: number, returnedCount: number) {
-  return matchedCount > returnedCount;
-}
-
 export interface RunHistoryController {
   list(input: RunHistoryListQuery): Promise<RunHistoryListResponse>;
   detail(runId: string): Promise<PublicRunHistoryDetailResponse | null>;
-  adminDetail(
-    runId: string,
-    query?: AdminRunHistoryDetailQuery,
-  ): Promise<AdminRunHistoryDetailResponse | null>;
+  adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null>;
   delete(
     input: AdminDeleteRunHistoryRequest,
     correlationId: string,
@@ -139,26 +101,9 @@ export class RunHistoryService implements RunHistoryController {
   async detail(runId: string): Promise<PublicRunHistoryDetailResponse | null> {
     const source = await this.readDetailSource(runId);
     if (!source) return null;
-
-    const [attemptCounts, cumulativeOutcomeCounts] = await Promise.all([
-      this.options.db
-        .select({
-          totalCount: sql<number>`count(*)::int`,
-          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
-          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
-          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
-          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
-          p95LatencyMs: sql<
-            number | null
-          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
-        })
-        .from(erpAttempts)
-        .where(eq(erpAttempts.runId, runId)),
-      readCumulativeErpOutcomeCounts(this.options.db, { runId }),
-    ]);
-    const attempt = attemptCounts[0];
     const summary = toPublicRunHistorySummary(source.summaryRow);
     const run = toPublicRunHistoryRun(source.runRow);
+    const erpAttempts = await this.readErpAttemptSummary(runId);
     return publicRunHistoryDetailResponseSchema.parse({
       failureDiagnostic: deriveRunFailureDiagnostic(
         source.runRow.failureReason
@@ -181,213 +126,21 @@ export class RunHistoryService implements RunHistoryController {
         `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
         "httpTimingBreakdownSummary",
       ),
-      erpAttempts: {
-        totalCount: attempt?.totalCount ?? 0,
-        historyCoverage: "retained_history",
-        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
-        cumulativeOutcomeCounts,
-        byStatus: {
-          succeeded: attempt?.succeeded ?? 0,
-          failed: attempt?.failed ?? 0,
-          timedOut: attempt?.timedOut ?? 0,
-        },
-        averageLatencyMs: attempt?.averageLatencyMs ?? null,
-        p95LatencyMs: attempt?.p95LatencyMs ?? null,
-      },
+      erpAttempts,
       runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
     });
   }
 
-  async adminDetail(
-    runId: string,
-    query: AdminRunHistoryDetailQuery = { limit: detailRecordLimit },
-  ): Promise<AdminRunHistoryDetailResponse | null> {
+  async adminDetail(runId: string): Promise<AdminRunHistoryDetailResponse | null> {
     const source = await this.readDetailSource(runId);
     if (!source) return null;
-    const offset = query.cursor ? Number(query.cursor.slice(1)) : 0;
-    const orderFilter = filterCondition(query.filter, {
-      orderId: orders.id,
-      publicOrderId: orders.publicOrderId,
-      correlationId: orders.correlationId,
-    });
-    const erpAttemptFilter = filterCondition(query.filter, {
-      orderId: erpAttempts.orderId,
-      publicOrderId: orders.publicOrderId,
-      correlationId: erpAttempts.correlationId,
-    });
-    const notificationFilter = filterCondition(query.filter, {
-      orderId: simulatedNotifications.orderId,
-      publicOrderId: orders.publicOrderId,
-      correlationId: simulatedNotifications.correlationId,
-    });
-    const eventFilter = filterCondition(query.filter, {
-      orderId: orderEvents.orderId,
-      publicOrderId: orders.publicOrderId,
-      correlationId: orderEvents.correlationId,
-    });
-    let erpAttemptCountQuery = this.options.db
-      .select({
-        totalCount: count(),
-        matchedCount: sql<number>`(count(*) filter (where ${erpAttemptFilter}))::int`,
-        warningCount: sql<number>`(count(*) filter (where ${erpAttemptFilter} and ${erpAttempts.terminal} and ${erpAttempts.status} in ('failed', 'timed_out')))::int`,
-        succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
-        failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
-        timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
-        averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
-        p95LatencyMs: sql<
-          number | null
-        >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
-      })
-      .from(erpAttempts)
-      .$dynamic();
-    if (query.filter?.kind === "publicOrderId") {
-      erpAttemptCountQuery = erpAttemptCountQuery.innerJoin(
-        orders,
-        eq(erpAttempts.orderId, orders.id),
-      );
-    }
-    const erpAttemptCounts = erpAttemptCountQuery.where(eq(erpAttempts.runId, runId));
-
-    let notificationCountQuery = this.options.db
-      .select({
-        totalCount: count(),
-        matchedCount: sql<number>`(count(*) filter (where ${notificationFilter}))::int`,
-      })
-      .from(simulatedNotifications)
-      .$dynamic();
-    if (query.filter?.kind === "publicOrderId") {
-      notificationCountQuery = notificationCountQuery.innerJoin(
-        orders,
-        eq(simulatedNotifications.orderId, orders.id),
-      );
-    }
-    const notificationCounts = notificationCountQuery.where(
-      eq(simulatedNotifications.runId, runId),
-    );
-
-    let eventCountQuery = this.options.db
-      .select({
-        totalCount: count(),
-        matchedCount: sql<number>`(count(*) filter (where ${eventFilter}))::int`,
-      })
-      .from(orderEvents)
-      .$dynamic();
-    if (query.filter?.kind === "publicOrderId") {
-      eventCountQuery = eventCountQuery.leftJoin(orders, eq(orderEvents.orderId, orders.id));
-    }
-    const eventCounts = eventCountQuery.where(eq(orderEvents.runId, runId));
-
-    const [
-      orderRows,
-      orderTotalRows,
-      erpAttemptRows,
-      erpAttemptTotalRows,
-      notificationRows,
-      notificationTotalRows,
-      eventRows,
-      eventTotalRows,
-      cumulativeOutcomeCounts,
-    ] = await Promise.all([
-      this.options.db
-        .select()
-        .from(orders)
-        .where(and(eq(orders.runId, runId), orderFilter))
-        .orderBy(desc(orders.queuedAt), desc(orders.createdAt), desc(orders.id))
-        .limit(query.limit)
-        .offset(offset),
-      this.options.db
-        .select({
-          totalCount: count(),
-          matchedCount: sql<number>`(count(*) filter (where ${orderFilter}))::int`,
-          warningCount: sql<number>`(count(*) filter (where ${orderFilter} and ${orders.status} = 'failed'))::int`,
-        })
-        .from(orders)
-        .where(eq(orders.runId, runId)),
-      this.options.db
-        .select({
-          attemptId: erpAttempts.id,
-          orderId: erpAttempts.orderId,
-          publicOrderId: orders.publicOrderId,
-          correlationId: erpAttempts.correlationId,
-          attemptNumber: erpAttempts.attemptNumber,
-          status: erpAttempts.status,
-          terminal: erpAttempts.terminal,
-          httpStatus: erpAttempts.httpStatus,
-          errorCode: erpAttempts.errorCode,
-          latencyMs: erpAttempts.latencyMs,
-          startedAt: erpAttempts.startedAt,
-          finishedAt: erpAttempts.finishedAt,
-          createdAt: erpAttempts.createdAt,
-        })
-        .from(erpAttempts)
-        .innerJoin(orders, eq(erpAttempts.orderId, orders.id))
-        .where(and(eq(erpAttempts.runId, runId), erpAttemptFilter))
-        .orderBy(desc(erpAttempts.finishedAt), desc(erpAttempts.createdAt), desc(erpAttempts.id))
-        .limit(query.limit)
-        .offset(offset),
-      erpAttemptCounts,
-      this.options.db
-        .select({
-          notificationId: simulatedNotifications.id,
-          orderId: simulatedNotifications.orderId,
-          publicOrderId: orders.publicOrderId,
-          correlationId: simulatedNotifications.correlationId,
-          recordedAt: simulatedNotifications.recordedAt,
-          createdAt: simulatedNotifications.createdAt,
-        })
-        .from(simulatedNotifications)
-        .innerJoin(orders, eq(simulatedNotifications.orderId, orders.id))
-        .where(and(eq(simulatedNotifications.runId, runId), notificationFilter))
-        .orderBy(
-          desc(simulatedNotifications.recordedAt),
-          desc(simulatedNotifications.createdAt),
-          desc(simulatedNotifications.id),
-        )
-        .limit(query.limit)
-        .offset(offset),
-      notificationCounts,
-      this.options.db
-        .select({
-          eventId: orderEvents.id,
-          eventName: orderEvents.eventName,
-          source: orderEvents.source,
-          saleOfferId: orderEvents.saleOfferId,
-          correlationId: orderEvents.correlationId,
-          orderId: orderEvents.orderId,
-          publicOrderId: orders.publicOrderId,
-          occurredAt: orderEvents.occurredAt,
-          createdAt: orderEvents.createdAt,
-        })
-        .from(orderEvents)
-        .leftJoin(orders, eq(orderEvents.orderId, orders.id))
-        .where(and(eq(orderEvents.runId, runId), eventFilter))
-        .orderBy(desc(orderEvents.occurredAt), desc(orderEvents.createdAt), desc(orderEvents.id))
-        .limit(query.limit)
-        .offset(offset),
-      eventCounts,
-      readCumulativeErpOutcomeCounts(this.options.db, { runId }),
-    ]);
-
-    const orderTotalCount = orderTotalRows[0]?.totalCount ?? 0;
-    const erpAttemptTotalCount = erpAttemptTotalRows[0]?.totalCount ?? 0;
-    const notificationTotalCount = notificationTotalRows[0]?.totalCount ?? 0;
-    const eventTotalCount = eventTotalRows[0]?.totalCount ?? 0;
-    const orderMatchedCount = orderTotalRows[0]?.matchedCount ?? 0;
-    const erpAttemptMatchedCount = erpAttemptTotalRows[0]?.matchedCount ?? 0;
-    const notificationMatchedCount = notificationTotalRows[0]?.matchedCount ?? 0;
-    const eventMatchedCount = eventTotalRows[0]?.matchedCount ?? 0;
     const summary = toRunHistorySummary(source.summaryRow);
     const diagnostics = parseRunHistoryDiagnostics(
       source.summaryRow.loadRunDiagnosticsSummary,
       `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
     );
-    const truncatedCollections = [
-      recordsOmitted(orderMatchedCount, orderRows.length),
-      recordsOmitted(erpAttemptMatchedCount, erpAttemptRows.length),
-      recordsOmitted(notificationMatchedCount, notificationRows.length),
-      recordsOmitted(eventMatchedCount, eventRows.length),
-    ].filter(Boolean).length;
+    const erpAttemptSummary = await this.readErpAttemptSummary(runId);
 
     return adminRunHistoryDetailResponseSchema.parse({
       failureDiagnostic: deriveRunFailureDiagnostic(
@@ -396,11 +149,10 @@ export class RunHistoryService implements RunHistoryController {
           : null,
         diagnostics,
       ),
-      query,
       summary,
       run: toDemoRunSnapshot(source.runRow),
       overallDurationMs: deriveOverallDurationMs(summary.startedAt, summary.endedAt),
-      exceptionSummary: toRunHistoryExceptionSummary(summary, diagnostics, truncatedCollections),
+      exceptionSummary: toRunHistoryExceptionSummary(summary, diagnostics),
       ...(source.runRow.failureReason
         ? {
             internalFailureReason: internalRunFailureReasonSchema.parse(
@@ -415,62 +167,44 @@ export class RunHistoryService implements RunHistoryController {
         "httpTimingBreakdownSummary",
       ),
       loadRunDiagnosticsSummary: diagnostics,
-      orders: {
-        records: orderRows.map(toRunHistoryOrderOutcome),
-        totalCount: orderTotalCount,
-        matchedCount: orderMatchedCount,
-        warningCount: orderTotalRows[0]?.warningCount ?? 0,
-        limit: query.limit,
-        truncated: recordsOmitted(orderMatchedCount, orderRows.length),
-        ...nextCursor(orderMatchedCount, offset, orderRows.length),
-      },
-      erpAttempts: {
-        records: erpAttemptRows.map(toRunHistoryErpAttempt),
-        totalCount: erpAttemptTotalCount,
-        historyCoverage: "retained_history",
-        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
-        matchedCount: erpAttemptMatchedCount,
-        warningCount: erpAttemptTotalRows[0]?.warningCount ?? 0,
-        limit: query.limit,
-        truncated: recordsOmitted(erpAttemptMatchedCount, erpAttemptRows.length),
-        ...nextCursor(erpAttemptMatchedCount, offset, erpAttemptRows.length),
-      },
-      erpAttemptSummary: {
-        totalCount: erpAttemptTotalCount,
-        historyCoverage: "retained_history",
-        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
-        cumulativeOutcomeCounts,
-        byStatus: {
-          succeeded: erpAttemptTotalRows[0]?.succeeded ?? 0,
-          failed: erpAttemptTotalRows[0]?.failed ?? 0,
-          timedOut: erpAttemptTotalRows[0]?.timedOut ?? 0,
-        },
-        averageLatencyMs: erpAttemptTotalRows[0]?.averageLatencyMs ?? null,
-        p95LatencyMs: erpAttemptTotalRows[0]?.p95LatencyMs ?? null,
-      },
-      notifications: {
-        records: notificationRows.map(toRunHistoryNotification),
-        totalCount: notificationTotalCount,
-        matchedCount: notificationMatchedCount,
-        warningCount: 0,
-        limit: query.limit,
-        truncated: recordsOmitted(notificationMatchedCount, notificationRows.length),
-        ...nextCursor(notificationMatchedCount, offset, notificationRows.length),
-      },
-      eventTimeline: {
-        records: eventRows.map(toRunHistoryEventTimelineEntry),
-        totalCount: eventTotalCount,
-        matchedCount: eventMatchedCount,
-        attemptHistoryCoverage: "retained_history",
-        attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
-        warningCount: 0,
-        limit: query.limit,
-        truncated: recordsOmitted(eventMatchedCount, eventRows.length),
-        ...nextCursor(eventMatchedCount, offset, eventRows.length),
-      },
+      erpAttemptSummary,
       runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
     });
+  }
+
+  /** One shared aggregate read feeding `erpAttempts` (public) and `erpAttemptSummary` (admin). */
+  private async readErpAttemptSummary(runId: string) {
+    const [counts, cumulativeOutcomeCounts] = await Promise.all([
+      this.options.db
+        .select({
+          totalCount: sql<number>`count(*)::int`,
+          succeeded: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'succeeded'))::int`,
+          failed: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'failed'))::int`,
+          timedOut: sql<number>`(count(*) filter (where ${erpAttempts.status} = 'timed_out'))::int`,
+          averageLatencyMs: sql<number | null>`avg(${erpAttempts.latencyMs})::double precision`,
+          p95LatencyMs: sql<
+            number | null
+          >`percentile_cont(0.95) within group (order by ${erpAttempts.latencyMs})::double precision`,
+        })
+        .from(erpAttempts)
+        .where(eq(erpAttempts.runId, runId)),
+      readCumulativeErpOutcomeCounts(this.options.db, { runId }),
+    ]);
+    const attempt = counts[0];
+    return {
+      totalCount: attempt?.totalCount ?? 0,
+      historyCoverage: "retained_history" as const,
+      attemptRetentionLimitPerOrder: erpAttemptHistoryRetentionLimit,
+      cumulativeOutcomeCounts,
+      byStatus: {
+        succeeded: attempt?.succeeded ?? 0,
+        failed: attempt?.failed ?? 0,
+        timedOut: attempt?.timedOut ?? 0,
+      },
+      averageLatencyMs: attempt?.averageLatencyMs ?? null,
+      p95LatencyMs: attempt?.p95LatencyMs ?? null,
+    };
   }
 
   private async readDetailSource(runId: string) {
@@ -515,7 +249,6 @@ export class RunHistoryService implements RunHistoryController {
 function toRunHistoryExceptionSummary(
   summary: RunHistorySummary,
   diagnostics: LoadRunDiagnosticsSummary | null,
-  truncatedCollections: number,
 ) {
   const result = deriveRunResult({
     runStatus: summary.status,
@@ -558,7 +291,6 @@ function toRunHistoryExceptionSummary(
       summary.businessOutcomeSummary.pendingPersistenceCount,
     partialDelivery: summary.trafficDeliverySummary.trafficDeliveryStatus === "complete" ? 0 : 1,
     generatorWarnings: generatorWarningCount(diagnostics),
-    truncatedCollections,
   };
 }
 
@@ -820,88 +552,4 @@ function parseRunSignalTimelineSummary(row: typeof demoRunSummaries.$inferSelect
 function toRunSignalTimelineHeadlineOrNull(row: typeof demoRunSummaries.$inferSelect) {
   const summary = parseRunSignalTimelineSummary(row);
   return summary ? toRunSignalTimelineHeadline(summary) : null;
-}
-
-function toRunHistoryOrderOutcome(row: typeof orders.$inferSelect): RunHistoryOrderOutcome {
-  return runHistoryOrderOutcomeSchema.parse({
-    orderId: row.id,
-    publicOrderId: row.publicOrderId,
-    saleOfferId: row.saleOfferId,
-    correlationId: row.correlationId,
-    quantity: row.quantity,
-    status: row.status,
-    ...(row.failureCode ? { failureCode: row.failureCode } : {}),
-    queuedAt: row.queuedAt.toISOString(),
-    ...(row.processingAt ? { processingAt: row.processingAt.toISOString() } : {}),
-    ...(row.confirmedAt ? { confirmedAt: row.confirmedAt.toISOString() } : {}),
-    ...(row.failedAt ? { failedAt: row.failedAt.toISOString() } : {}),
-  });
-}
-
-function toRunHistoryErpAttempt(row: {
-  attemptId: string;
-  orderId: string;
-  publicOrderId: string;
-  correlationId: string;
-  attemptNumber: number;
-  status: (typeof erpAttempts.$inferSelect)["status"];
-  terminal: boolean;
-  httpStatus: number | null;
-  errorCode: string | null;
-  latencyMs: number;
-  startedAt: Date;
-  finishedAt: Date;
-}): RunHistoryErpAttempt {
-  return runHistoryErpAttemptSchema.parse({
-    attemptId: row.attemptId,
-    orderId: row.orderId,
-    publicOrderId: row.publicOrderId,
-    correlationId: row.correlationId,
-    attemptNumber: row.attemptNumber,
-    status: row.status,
-    terminal: row.terminal,
-    ...(row.httpStatus ? { httpStatus: row.httpStatus } : {}),
-    ...(row.errorCode ? { errorCode: row.errorCode } : {}),
-    latencyMs: row.latencyMs,
-    startedAt: row.startedAt.toISOString(),
-    finishedAt: row.finishedAt.toISOString(),
-  });
-}
-
-function toRunHistoryNotification(row: {
-  notificationId: string;
-  orderId: string;
-  publicOrderId: string;
-  correlationId: string;
-  recordedAt: Date;
-}): RunHistoryNotification {
-  return runHistoryNotificationSchema.parse({
-    notificationId: row.notificationId,
-    orderId: row.orderId,
-    publicOrderId: row.publicOrderId,
-    correlationId: row.correlationId,
-    recordedAt: row.recordedAt.toISOString(),
-  });
-}
-
-function toRunHistoryEventTimelineEntry(row: {
-  eventId: string;
-  eventName: (typeof orderEvents.$inferSelect)["eventName"];
-  source: string;
-  saleOfferId: string;
-  correlationId: string;
-  orderId: string | null;
-  publicOrderId: string | null;
-  occurredAt: Date;
-}): RunHistoryEventTimelineEntry {
-  return runHistoryEventTimelineEntrySchema.parse({
-    eventId: row.eventId,
-    eventName: row.eventName,
-    source: row.source,
-    saleOfferId: row.saleOfferId,
-    correlationId: row.correlationId,
-    ...(row.orderId ? { orderId: row.orderId } : {}),
-    ...(row.publicOrderId ? { publicOrderId: row.publicOrderId } : {}),
-    occurredAt: row.occurredAt.toISOString(),
-  });
 }

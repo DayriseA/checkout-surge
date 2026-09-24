@@ -191,7 +191,7 @@ API and worker business mutation handlers mark the dashboard dirty only after fr
 
 The cutover is canonical-only: publishers and consumers deploy together, existing browser tabs must reload, and active k6 processes must be restarted. Legacy wire shapes and singular k6 counters are not normalized, avoiding duplicate aggregate/delta application and counter double counting.
 
-The worker does not publish individual order status or consistency-lag messages. Aggregate run outcomes and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read or protected Run History.
+The worker does not publish individual order status or consistency-lag messages. Aggregate run outcomes and aggregate consistency-lag views come from the complete projection, while focused order investigation uses the durable status read.
 
 ### Dashboard queue and ERP scope inventory
 
@@ -286,7 +286,7 @@ The canonical order lifecycle is:
 
 Retrying remains a derived processing condition rather than a first-class order state. Retry counts, retry delays, and ERP-attempt history can be represented separately without changing the canonical lifecycle vocabulary.
 
-ERP attempt and `erp.attempt.*` event diagnostics retain 32 ordinary rows per order. Canonical success, permanent rejection, and the attempt referenced by the control record's current `unresolvedErpCallId` are exceptions to pruning. Run-history attempt rows, status totals, and attempt-event timelines carry `retained_history` coverage and the per-order limit; cumulative outcome counters are actual-call totals and exclude status lookups, local result reuse, and admission deferrals. Those counters cover orders processed since durable call accounting was introduced; legacy orders without a durable control record/counters contribute zero and are not backfilled.
+ERP attempt and `erp.attempt.*` event diagnostics retain 32 ordinary rows per order. Canonical success, permanent rejection, and the attempt referenced by the control record's current `unresolvedErpCallId` are exceptions to pruning. Internal attempt diagnostics and the focused order-status read use retained events; the Run History ERP attempt summary carries `retained_history` coverage and the per-order limit. Cumulative outcome counters are actual-call totals and exclude status lookups, local result reuse, and admission deferrals. Those counters cover orders processed since durable call accounting was introduced; legacy orders without a durable control record/counters contribute zero and are not backfilled.
 
 The implemented order workflows permit `queued -> processing | failed` and `processing -> confirmed | failed`; `confirmed` and `failed` are terminal. Producers select the explicit event name that describes the transition rather than deriving it through a generic status-to-event helper.
 

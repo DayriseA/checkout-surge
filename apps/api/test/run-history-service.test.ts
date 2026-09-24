@@ -20,8 +20,8 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq, inArray } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { nextCursor, RunHistoryService } from "../src/services/run-history-service.js";
+import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { RunHistoryService } from "../src/services/run-history-service.js";
 
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -94,11 +94,6 @@ describe("run history service", () => {
     expect(JSON.stringify(publicDetail)).not.toContain(warning);
     expect(adminDetail?.loadRunDiagnosticsSummary?.stderrLines).toEqual([warning]);
     expect((await service.detail(ids.olderRun))?.failureDiagnostic).toBeNull();
-  });
-
-  it("does not emit a cursor beyond the accepted request ceiling", () => {
-    expect(nextCursor(1_000_100, 999_999, 100)).toEqual({});
-    expect(nextCursor(1_000_001, 999_999, 1)).toEqual({ nextCursor: "c1000000" });
   });
 
   it("returns empty public history with stable pagination metadata", async () => {
@@ -407,7 +402,6 @@ describe("run history service", () => {
       pendingWork: 0,
       partialDelivery: 0,
       generatorWarnings: 0,
-      truncatedCollections: 0,
     });
 
     await updateSummary({
@@ -620,7 +614,7 @@ describe("run history service", () => {
     );
   });
 
-  it("returns aggregate public detail and row-oriented admin detail", async () => {
+  it("returns aggregate public detail and aggregate admin detail", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);
     await seedHistory(db);
@@ -656,11 +650,7 @@ describe("run history service", () => {
       },
     ]);
 
-    const selectSpy = vi.spyOn(db, "select");
-
     const detail = await service.detail(ids.newerRun);
-
-    expect(selectSpy).toHaveBeenCalledTimes(4);
 
     expect(detail).toMatchObject({
       summary: {
@@ -687,7 +677,7 @@ describe("run history service", () => {
     });
     expect(detail).not.toHaveProperty("orders");
     expect(detail).not.toHaveProperty("notifications");
-    expect(detail).not.toHaveProperty("events");
+    expect(detail).not.toHaveProperty("eventTimeline");
     expect(detail?.erpAttempts.averageLatencyMs).toBeCloseTo(50.666_666, 5);
     expect(detail?.erpAttempts.p95LatencyMs).toBeCloseTo(94.2, 3);
 
@@ -726,32 +716,12 @@ describe("run history service", () => {
     expect(adminDetail?.summary.trafficDeliverySummary.notes).toContain(
       "private-delivery-diagnostic-marker",
     );
-    expect(adminDetail?.orders.records[0]).toMatchObject({
-      orderId: ids.order,
-      publicOrderId: "ord_history_1",
-    });
-    expect(adminDetail?.orders).toMatchObject({ totalCount: 1, limit: 20, truncated: false });
-    expect(adminDetail?.erpAttempts.records[0]).toMatchObject({
-      attemptId: ids.erpAttempt,
-      status: "failed",
-      terminal: false,
-      httpStatus: 503,
-    });
-    expect(adminDetail?.erpAttempts.warningCount).toBe(1);
     expect(adminDetail?.erpAttemptSummary).toMatchObject({
       totalCount: 3,
       byStatus: { succeeded: 0, failed: 2, timedOut: 1 },
     });
     expect(adminDetail?.erpAttemptSummary.averageLatencyMs).toBeCloseTo(50.666_666, 5);
     expect(adminDetail?.erpAttemptSummary.p95LatencyMs).toBeCloseTo(94.2, 3);
-    expect(adminDetail?.eventTimeline.records.map((event) => event.eventName)).toEqual([
-      "order.confirmed",
-      "order.queued",
-    ]);
-    expect(adminDetail?.eventTimeline).toMatchObject({
-      attemptHistoryCoverage: "retained_history",
-      attemptRetentionLimitPerOrder: 32,
-    });
 
     const {
       generatorCapacity: _generatorCapacity,
@@ -789,155 +759,6 @@ describe("run history service", () => {
     await expect(service.adminDetail(ids.newerRun)).resolves.toMatchObject({
       loadRunDiagnosticsSummary: null,
     });
-  });
-
-  it("caps protected admin rows at 20 with accurate truncation metadata", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    await seedAdminOrders(db, 21);
-    await db
-      .update(orders)
-      .set({
-        status: "failed",
-        confirmedAt: null,
-        failedAt: new Date("2026-06-20T00:00:01.000Z"),
-        failureCode: "erp_failed",
-      })
-      .where(eq(orders.publicOrderId, "ord_admin_history_1"));
-
-    const detail = await service.adminDetail(ids.newerRun);
-
-    expect(detail?.orders).toMatchObject({
-      totalCount: 21,
-      warningCount: 1,
-      limit: 20,
-      truncated: true,
-    });
-    expect(detail?.orders.records).toHaveLength(20);
-    expect(detail?.orders.records).not.toContainEqual(
-      expect.objectContaining({ publicOrderId: "ord_admin_history_1" }),
-    );
-    expect(detail?.exceptionSummary.truncatedCollections).toBe(1);
-
-    const expandedDetail = await service.adminDetail(ids.newerRun, { limit: 100 });
-    expect(expandedDetail?.orders.records).toHaveLength(21);
-    expect(expandedDetail?.orders.truncated).toBe(false);
-    expect(expandedDetail?.exceptionSummary.truncatedCollections).toBe(0);
-  });
-
-  it("filters before the protected record limit", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    await seedAdminOrders(db, 21);
-
-    const detail = await service.adminDetail(ids.newerRun, {
-      filter: { kind: "publicOrderId", value: "ord_admin_history_1" },
-      limit: 20,
-    });
-
-    expect(detail?.orders).toMatchObject({
-      totalCount: 21,
-      matchedCount: 1,
-      truncated: false,
-      records: [{ publicOrderId: "ord_admin_history_1" }],
-    });
-  });
-
-  it("filters linked protected collections by correlation", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    await seedRunDetailRecords(db);
-
-    const detail = await service.adminDetail(ids.newerRun, {
-      filter: { kind: "correlationId", value: "corr-history-detail" },
-      limit: 20,
-    });
-
-    expect(detail?.orders).toMatchObject({ matchedCount: 1 });
-    expect(detail?.erpAttempts).toMatchObject({ matchedCount: 1 });
-    expect(detail?.notifications).toMatchObject({ matchedCount: 1 });
-    expect(detail?.eventTimeline).toMatchObject({ matchedCount: 2 });
-    expect(detail?.notifications.records[0]?.correlationId).toBe("corr-history-detail");
-  });
-
-  it("applies per-collection limits and cursors independently", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    await seedRunDetailRecords(db);
-
-    const detail = await service.adminDetail(ids.newerRun, {
-      filter: { kind: "correlationId", value: "corr-history-detail" },
-      limit: 1,
-    });
-
-    expect(detail?.orders).toMatchObject({ matchedCount: 1, truncated: false });
-    expect(detail?.orders.nextCursor).toBeUndefined();
-    expect(detail?.erpAttempts).toMatchObject({ matchedCount: 1, truncated: false });
-    expect(detail?.erpAttempts.nextCursor).toBeUndefined();
-    expect(detail?.notifications).toMatchObject({ matchedCount: 1, truncated: false });
-    expect(detail?.notifications.nextCursor).toBeUndefined();
-    expect(detail?.eventTimeline).toMatchObject({
-      matchedCount: 2,
-      truncated: true,
-      nextCursor: "c1",
-    });
-    expect(detail?.exceptionSummary.truncatedCollections).toBe(1);
-  });
-
-  it("returns explicit empty matches for a protected filter", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-
-    const detail = await service.adminDetail(ids.newerRun, {
-      filter: { kind: "correlationId", value: "corr-not-in-this-run" },
-      limit: 20,
-    });
-
-    for (const collection of [
-      detail?.orders,
-      detail?.erpAttempts,
-      detail?.notifications,
-      detail?.eventTimeline,
-    ]) {
-      expect(collection).toMatchObject({ matchedCount: 0, records: [], truncated: false });
-    }
-  });
-
-  it("orders protected records deterministically and applies the opaque cursor", async () => {
-    const db = requireConnection(connection).db;
-    const service = createService(connection);
-    await seedHistory(db);
-    await seedAdminOrders(db, 2);
-    await db
-      .update(orders)
-      .set({
-        queuedAt: new Date("2026-06-20T00:00:02.000Z"),
-        processingAt: new Date("2026-06-20T00:00:02.000Z"),
-        confirmedAt: new Date("2026-06-20T00:00:02.000Z"),
-        createdAt: new Date("2026-06-20T00:00:02.000Z"),
-      })
-      .where(eq(orders.runId, ids.newerRun));
-
-    const exact = await service.adminDetail(ids.newerRun, { limit: 2 });
-    const first = await service.adminDetail(ids.newerRun, { limit: 1 });
-    const second = await service.adminDetail(ids.newerRun, { limit: 1, cursor: "c1" });
-    const empty = await service.adminDetail(ids.newerRun, { limit: 1, cursor: "c2" });
-
-    expect(exact?.orders).toMatchObject({ matchedCount: 2, truncated: false });
-    expect(exact?.orders.nextCursor).toBeUndefined();
-    expect(first?.orders.records[0]?.orderId).toBe("20000000-0000-4000-8000-000000000002");
-    expect(first?.orders).toMatchObject({ nextCursor: "c1", truncated: true });
-    expect(second?.orders.records[0]?.orderId).toBe("20000000-0000-4000-8000-000000000001");
-    expect(second?.orders).toMatchObject({ matchedCount: 2, truncated: true });
-    expect(second?.orders.nextCursor).toBeUndefined();
-    expect(empty?.orders).toMatchObject({ matchedCount: 2, records: [], truncated: true });
-    expect(empty?.orders.nextCursor).toBeUndefined();
-    expect(empty?.exceptionSummary.truncatedCollections).toBe(1);
   });
 
   it("returns explicit zero buckets and null ERP latency for empty live sets", async () => {
@@ -1208,44 +1029,6 @@ async function seedRunDetailRecords(
       createdAt: new Date("2026-06-20T00:00:07.000Z"),
     },
   ]);
-}
-
-async function seedAdminOrders(
-  db: ReturnType<typeof createDatabaseConnection>["db"],
-  count: number,
-): Promise<void> {
-  const indexes = Array.from({ length: count }, (_, index) => index + 1);
-  await db.insert(reservations).values(
-    indexes.map((index) => ({
-      id: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      saleOfferId: ids.saleOffer,
-      correlationId: `corr-admin-history-${index}`,
-      runId: ids.newerRun,
-      quantity: 1,
-      reservationToken: `admin-history-token-${index}`,
-      expiresAt: new Date("2026-06-20T00:15:02.000Z"),
-      securedAt: new Date("2026-06-20T00:00:02.000Z"),
-      createdAt: new Date("2026-06-20T00:00:02.000Z"),
-      updatedAt: new Date("2026-06-20T00:00:02.000Z"),
-    })),
-  );
-  await db.insert(orders).values(
-    indexes.map((index) => ({
-      id: `20000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      publicOrderId: `ord_admin_history_${index}`,
-      saleOfferId: ids.saleOffer,
-      reservationId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
-      correlationId: `corr-admin-history-${index}`,
-      runId: ids.newerRun,
-      quantity: 1,
-      status: "confirmed" as const,
-      queuedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
-      processingAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
-      confirmedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
-      createdAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
-      updatedAt: new Date(`2026-06-20T00:00:${String(index).padStart(2, "0")}.000Z`),
-    })),
-  );
 }
 
 function runFixture(input: {

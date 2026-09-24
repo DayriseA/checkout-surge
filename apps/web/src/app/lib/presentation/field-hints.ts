@@ -83,10 +83,6 @@ export const adminFieldHints = {
     "Absolute ceilings set by the server's environment configuration to protect the host. Not editable here. Every preset and public limit must stay below them.",
   adminPassphrase:
     "The admin passphrase provided by the project owner. It unlocks the operator controls.",
-  identifierType:
-    "The kind of identifier you copied: an internal database order ID, the public order ID returned by checkout, or a correlation ID used to trace one request.",
-  identifier:
-    "Finds records of this run matching the identifier exactly, including records outside the recent view.",
 } as const;
 
 export const adminDraftFieldHints: Record<string, string> = {

@@ -704,7 +704,6 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
 
   return {
     failureDiagnostic: null,
-    query: { limit: 20 },
     summary,
     overallDurationMs: 10_000,
     exceptionSummary: {
@@ -714,7 +713,6 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
       pendingWork: 0,
       partialDelivery: 0,
       generatorWarnings: 1,
-      truncatedCollections: 0,
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: null,
@@ -726,88 +724,11 @@ function adminRunHistoryDetailResponseFixture(): AdminRunHistoryDetailResponse {
       trafficEndedAt: "2026-06-20T00:00:10.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
     }),
-    orders: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          saleOfferId: fixtureIds.saleOffer,
-          correlationId: fixtureCorrelationId,
-          quantity: 1,
-          status: "confirmed",
-          queuedAt: "2026-06-20T00:00:02.000Z",
-          processingAt: "2026-06-20T00:00:03.000Z",
-          confirmedAt: "2026-06-20T00:00:06.000Z",
-        },
-      ],
-    },
-    erpAttempts: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          attemptId: "99999999-9999-4999-8999-999999999992",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          correlationId: fixtureCorrelationId,
-          attemptNumber: 1,
-          status: "succeeded",
-          terminal: true,
-          httpStatus: 200,
-          latencyMs: 42,
-          startedAt: "2026-06-20T00:00:04.000Z",
-          finishedAt: "2026-06-20T00:00:05.000Z",
-        },
-      ],
-    },
     erpAttemptSummary: {
       totalCount: 1,
       byStatus: { succeeded: 1, failed: 0, timedOut: 0 },
       averageLatencyMs: 42,
       p95LatencyMs: 42,
-    },
-    notifications: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          notificationId: "99999999-9999-4999-8999-999999999993",
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          correlationId: fixtureCorrelationId,
-          recordedAt: "2026-06-20T00:00:07.000Z",
-        },
-      ],
-    },
-    eventTimeline: {
-      totalCount: 1,
-      matchedCount: 1,
-      warningCount: 0,
-      limit: 20,
-      truncated: false,
-      records: [
-        {
-          eventId: "99999999-9999-4999-8999-999999999994",
-          eventName: "order.confirmed",
-          source: "worker",
-          saleOfferId: fixtureIds.saleOffer,
-          correlationId: fixtureCorrelationId,
-          orderId: "99999999-9999-4999-8999-999999999991",
-          publicOrderId: "ord_history_1",
-          occurredAt: "2026-06-20T00:00:06.000Z",
-        },
-      ],
     },
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
@@ -836,8 +757,8 @@ function runHistoryControllerFixture(): RunHistoryController {
     }),
     detail: async (runId) =>
       runId === fixtureIds.run ? publicRunHistoryDetailResponseFixture() : null,
-    adminDetail: async (runId, query = { limit: 20 }) =>
-      runId === fixtureIds.run ? { ...adminRunHistoryDetailResponseFixture(), query } : null,
+    adminDetail: async (runId) =>
+      runId === fixtureIds.run ? adminRunHistoryDetailResponseFixture() : null,
     delete: async (_input, correlationId) => ({
       deletedSummaryCount: 1,
       deletedAt: "2026-06-20T00:00:10.000Z",
@@ -1807,7 +1728,7 @@ describe("API gateway routes", () => {
     });
     const unauthorized = await adminServer.inject({
       method: "GET",
-      url: `${adminRunHistoryDetailPath(fixtureIds.run)}?filterKind=correlationId&filterValue=${fixtureCorrelationId}`,
+      url: adminRunHistoryDetailPath(fixtureIds.run),
     });
     expect(unauthorized.statusCode).toBe(401);
     expect(unauthorized.headers["cache-control"]).toBe("no-store");
@@ -1817,19 +1738,10 @@ describe("API gateway routes", () => {
       url: `${adminRunHistoryDetailPath(fixtureIds.run)}?filterKind=correlationId&filterValue=${fixtureCorrelationId}&limit=10`,
       headers: { [controlServiceTokenHeaderName]: "test-control-token" },
     });
-    const adminPayload = adminRunHistoryDetailResponseSchema.parse(authorized.json());
+    adminRunHistoryDetailResponseSchema.parse(authorized.json());
     expect(authorized.statusCode).toBe(200);
     expect(authorized.headers["cache-control"]).toBe("no-store");
-    expect(adminPayload.orders.records[0]?.orderId).toBe("99999999-9999-4999-8999-999999999991");
-    expect(adminPayload.orders.records[0]?.correlationId).toBe(fixtureCorrelationId);
-    expect(adminPayload.query).toEqual({
-      filter: { kind: "correlationId", value: fixtureCorrelationId },
-      limit: 10,
-    });
-    expect(adminDetail).toHaveBeenCalledWith(fixtureIds.run, {
-      filter: { kind: "correlationId", value: fixtureCorrelationId },
-      limit: 10,
-    });
+    expect(adminDetail).toHaveBeenCalledWith(fixtureIds.run);
     const adminMissing = await adminServer.inject({
       method: "GET",
       url: adminRunHistoryDetailPath("ffffffff-ffff-4fff-8fff-ffffffffffff"),

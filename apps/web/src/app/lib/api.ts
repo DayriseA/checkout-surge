@@ -1,5 +1,4 @@
 import {
-  type AdminRunHistoryDetailQuery,
   type AdminRunHistoryDetailResponse,
   adminRunHistoryDetailPath,
   adminRunHistoryDetailResponseSchema,
@@ -141,16 +140,9 @@ export async function getRunHistoryDetail(
 
 export async function getAdminRunHistoryDetail(
   runId: string,
-  query: AdminRunHistoryDetailQuery = { limit: 20 },
 ): Promise<CompletedBackendRead<AdminRunHistoryDetailResponse>> {
-  const search = new URLSearchParams({ limit: String(query.limit) });
-  if (query.filter) {
-    search.set("filterKind", query.filter.kind);
-    search.set("filterValue", query.filter.value);
-  }
-  if (query.cursor) search.set("cursor", query.cursor);
   return readJson(
-    `${apiBaseUrl()}${adminRunHistoryDetailPath(runId)}?${search.toString()}`,
+    `${apiBaseUrl()}${adminRunHistoryDetailPath(runId)}`,
     adminRunHistoryDetailResponseSchema,
     { [controlServiceTokenHeaderName]: webServerConfig().controlServiceToken },
   );

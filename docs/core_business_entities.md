@@ -30,7 +30,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Traffic delivery quality | Classify request delivery inside `trafficDeliverySummary.trafficDeliveryStatus` as `complete`, `warning`, `degraded`, or `failed` | Keeps traffic fidelity visible without adding terminal demo-run statuses beyond `completed` and `failed`. |
 | Quantity semantics | Keep `quantity` in the model, but default the limited-inventory flow to one unit per checkout | The demo is single-item focused, but the schema should not require a breaking change to support quantity later. |
 | UI status strategy | Keep canonical persistence states minimal and display the buy outcome or canonical order status directly | This avoids parallel customer/simulated status vocabularies while still supporting clear operator feedback. |
-| Realtime order presentation | No separate per-order feed, recent-activity panel, or public order rows; the complete revisioned projection retains aggregate consistency lag and run outcomes | Per-order live activity does not justify a second update protocol. Focused durable diagnostics use `GET /orders/:publicOrderId/status` or protected Run History. |
+| Realtime order presentation | No separate per-order feed, recent-activity panel, or public order rows; the complete revisioned projection retains aggregate consistency lag and run outcomes | Per-order live activity does not justify a second update protocol. Focused durable diagnostics use `GET /orders/:publicOrderId/status`. |
 
 ---
 
@@ -283,7 +283,7 @@ Notes:
 
 - `erpCallId` is unique for actual POST results. The legacy `(orderId, deliveryId, attemptNumber)` identity remains only for records without a durable call identity, including lookup-adopted canonical results.
 - A nullable unique successful `idempotencyKey` forms the worker-local stable success boundary.
-- `terminal` records a definitive business result at observation time: canonical success or a code declared in the shared permanent-rejection vocabulary. Capacity, recognized unavailability, timeout uncertainty, malformed protocol, identity contradiction, and unknown codes remain nonterminal regardless of the queue delivery count. The marker is mirrored into the attempt event payload and exposed only in protected admin run-history rows; anonymous detail exposes closed status counts and nullable aggregate latency metrics.
+- `terminal` records a definitive business result at observation time: canonical success or a code declared in the shared permanent-rejection vocabulary. Capacity, recognized unavailability, timeout uncertainty, malformed protocol, identity contradiction, and unknown codes remain nonterminal regardless of the queue delivery count. The marker is mirrored into the attempt event payload for internal diagnostics; Run History exposes aggregate attempt status counts and nullable aggregate latency metrics.
 - Attempt event diagnostics distinguish dispatched confirmations from status lookups and capture the replay response header separately from canonical JSON. Local, lookup-adopted, and replayed successes do not provide controller health or latency-learning evidence.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
 - PostgreSQL requires `finishedAt >= startedAt` and uses a composite foreign key to bind `orderId` and `correlationId` to the referenced order. The worker validates the complete delivered order identity, including nullable `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
@@ -357,7 +357,7 @@ Expected event names include:
 
 Notes:
 
-- Run-scoped order events include `runId` so protected admin Run History can read a bounded event timeline directly by run, including events that are not reachable through an already-persisted order or reservation row. Anonymous detail exposes neither event rows nor event totals.
+- Run-scoped order events include `runId` so run-scoped maintenance can delete events directly by run. Anonymous and admin detail expose neither event rows nor event totals.
 - `payload` should remain structured JSON, not free-form log text.
 - `OrderEvent` is a business history mechanism, not a replacement for service logs.
 - API and worker persistence services construct linked event attribution from the freshly inserted or locked durable order/reservation rather than accepting those fields from an independent writer. PostgreSQL binds every non-null run/sale pair to `DemoRunSaleContext` and retains ordinary order/reservation foreign keys.
@@ -582,7 +582,7 @@ Notes:
 
 `DemoRunSummary` is the immutable historical artifact exposed through Run History.
 
-The public history API does not serialize this storage artifact directly. Its list projection is a compact comparison record, while its detail projection is an aggregate-only semantic superset with the accepted run configuration, canonical derived result, reconciliation proof, signal timelines, delivery evidence, lifecycle, and sanitized final inventory. Protected admin detail retains the richer diagnostic and bounded-row representation.
+The public history API does not serialize this storage artifact directly. Its list projection is a compact comparison record, while its detail projection is an aggregate-only semantic superset with the accepted run configuration, canonical derived result, reconciliation proof, signal timelines, delivery evidence, lifecycle, and sanitized final inventory. Protected admin detail retains the richer protected diagnostics but no row collections and no identifier search.
 
 Primary responsibilities:
 
@@ -757,7 +757,7 @@ The UI projection layer may combine:
 
 The canonical persistence model remains small: reservation row existence means secured, while order status is `queued`, `processing`, `confirmed`, or `failed`.
 
-The live operator dashboard should expose these states as aggregate run outcomes. Protected Run History may retain bounded drill-down records, and `GET /orders/:publicOrderId/status` remains the focused durable diagnostic for a known order.
+The live operator dashboard should expose these states as aggregate run outcomes, and `GET /orders/:publicOrderId/status` remains the focused durable diagnostic for a known order.
 
 ### Purchase Outcome and Order Status
 

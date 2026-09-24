@@ -13,10 +13,7 @@ import { estimatedDemoOccupancyCeilingSeconds, estimatePreviewSchema } from "./e
 import { terminalInventorySnapshotSchema } from "./inventory.js";
 import {
   demoRunStatusSchema,
-  erpAttemptStatusSchema,
   operatorModeSchema,
-  orderEventNameSchema,
-  orderStatusSchema,
   trafficExecutionStatusSchema,
 } from "./lifecycle.js";
 import {
@@ -351,134 +348,6 @@ export const runHistoryDetailParamsSchema = z
   })
   .strict();
 
-export const adminRunHistoryDetailFilterSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("orderId"), value: uuidSchema }).strict(),
-  z.object({ kind: z.literal("publicOrderId"), value: z.string().trim().min(1) }).strict(),
-  z.object({ kind: z.literal("correlationId"), value: correlationIdSchema }).strict(),
-]);
-export type AdminRunHistoryDetailFilter = z.infer<typeof adminRunHistoryDetailFilterSchema>;
-
-export const adminRunHistoryCursorSchema = z
-  .string()
-  .regex(/^c[1-9]\d{0,6}$/)
-  .refine((cursor) => {
-    const offset = Number(cursor.slice(1));
-    return Number.isSafeInteger(offset) && offset <= 1_000_000;
-  });
-
-export const adminRunHistoryDetailQuerySchema = z
-  .object({
-    filter: adminRunHistoryDetailFilterSchema.optional(),
-    limit: z.coerce.number().int().positive().max(100).default(20),
-    cursor: adminRunHistoryCursorSchema.optional(),
-  })
-  .strict();
-export type AdminRunHistoryDetailQuery = z.infer<typeof adminRunHistoryDetailQuerySchema>;
-
-export const adminRunHistoryDetailHttpQuerySchema = z
-  .object({
-    filterKind: z.enum(["orderId", "publicOrderId", "correlationId"]).optional(),
-    filterValue: z.string().trim().min(1).optional(),
-    limit: z.coerce.number().int().positive().max(100).default(20),
-    cursor: adminRunHistoryCursorSchema.optional(),
-  })
-  .strict()
-  .superRefine((query, context) => {
-    if ((query.filterKind === undefined) !== (query.filterValue === undefined)) {
-      context.addIssue({
-        code: "custom",
-        path: [query.filterKind === undefined ? "filterKind" : "filterValue"],
-        message: "Filter kind and value must be provided together.",
-      });
-    }
-  })
-  .transform(({ cursor, filterKind, filterValue, limit }, context) => {
-    const query = adminRunHistoryDetailQuerySchema.safeParse({
-      limit,
-      ...(cursor ? { cursor } : {}),
-      ...(filterKind && filterValue ? { filter: { kind: filterKind, value: filterValue } } : {}),
-    });
-    if (!query.success) {
-      context.addIssue({
-        code: "custom",
-        message: "Invalid protected run history query.",
-      });
-      return z.NEVER;
-    }
-    return query.data;
-  });
-
-export const runHistoryOrderOutcomeSchema = z
-  .object({
-    orderId: uuidSchema,
-    publicOrderId: z.string().trim().min(1),
-    saleOfferId: uuidSchema,
-    correlationId: correlationIdSchema,
-    quantity: positiveIntegerSchema,
-    status: orderStatusSchema,
-    failureCode: z.string().trim().min(1).optional(),
-    queuedAt: isoTimestampSchema,
-    processingAt: isoTimestampSchema.optional(),
-    confirmedAt: isoTimestampSchema.optional(),
-    failedAt: isoTimestampSchema.optional(),
-  })
-  .strict();
-export type RunHistoryOrderOutcome = z.infer<typeof runHistoryOrderOutcomeSchema>;
-
-export const runHistoryErpAttemptSchema = z
-  .object({
-    attemptId: uuidSchema,
-    orderId: uuidSchema,
-    publicOrderId: z.string().trim().min(1),
-    correlationId: correlationIdSchema,
-    attemptNumber: positiveIntegerSchema,
-    status: erpAttemptStatusSchema,
-    terminal: z.boolean(),
-    httpStatus: z.number().int().min(100).max(599).optional(),
-    errorCode: z.string().trim().min(1).optional(),
-    latencyMs: nonnegativeIntegerSchema,
-    startedAt: isoTimestampSchema,
-    finishedAt: isoTimestampSchema,
-  })
-  .strict();
-export type RunHistoryErpAttempt = z.infer<typeof runHistoryErpAttemptSchema>;
-
-export const runHistoryNotificationSchema = z
-  .object({
-    notificationId: uuidSchema,
-    orderId: uuidSchema,
-    publicOrderId: z.string().trim().min(1),
-    correlationId: correlationIdSchema,
-    recordedAt: isoTimestampSchema,
-  })
-  .strict();
-export type RunHistoryNotification = z.infer<typeof runHistoryNotificationSchema>;
-
-export const runHistoryEventTimelineEntrySchema = z
-  .object({
-    eventId: uuidSchema,
-    eventName: orderEventNameSchema,
-    source: z.string().trim().min(1),
-    saleOfferId: uuidSchema,
-    correlationId: correlationIdSchema,
-    orderId: uuidSchema.optional(),
-    publicOrderId: z.string().trim().min(1).optional(),
-    occurredAt: isoTimestampSchema,
-  })
-  .strict();
-export type RunHistoryEventTimelineEntry = z.infer<typeof runHistoryEventTimelineEntrySchema>;
-
-const runHistoryCollectionMetadataSchema = z
-  .object({
-    totalCount: nonnegativeIntegerSchema,
-    matchedCount: nonnegativeIntegerSchema,
-    warningCount: nonnegativeIntegerSchema,
-    limit: positiveIntegerSchema,
-    truncated: z.boolean(),
-    nextCursor: adminRunHistoryCursorSchema.optional(),
-  })
-  .strict();
-
 export const runHistoryExceptionSummarySchema = z
   .object({
     maximumClassification: runResultClassificationSchema.nullable(),
@@ -487,7 +356,6 @@ export const runHistoryExceptionSummarySchema = z
     pendingWork: nonnegativeIntegerSchema,
     partialDelivery: nonnegativeIntegerSchema,
     generatorWarnings: nonnegativeIntegerSchema,
-    truncatedCollections: nonnegativeIntegerSchema,
   })
   .strict();
 
@@ -513,7 +381,6 @@ export const runHistoryErpAttemptSummarySchema = z
 
 export const adminRunHistoryDetailResponseSchema = z
   .object({
-    query: adminRunHistoryDetailQuerySchema,
     summary: runHistorySummarySchema,
     run: demoRunSnapshotSchema,
     overallDurationMs: nonnegativeNumberSchema.nullable(),
@@ -522,31 +389,7 @@ export const adminRunHistoryDetailResponseSchema = z
     failureDiagnostic: runFailureDiagnosticSchema.nullable(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
-    orders: runHistoryCollectionMetadataSchema
-      .extend({
-        records: z.array(runHistoryOrderOutcomeSchema),
-      })
-      .strict(),
-    erpAttempts: runHistoryCollectionMetadataSchema
-      .extend({
-        historyCoverage: z.literal("retained_history").optional(),
-        attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
-        records: z.array(runHistoryErpAttemptSchema),
-      })
-      .strict(),
     erpAttemptSummary: runHistoryErpAttemptSummarySchema,
-    notifications: runHistoryCollectionMetadataSchema
-      .extend({
-        records: z.array(runHistoryNotificationSchema),
-      })
-      .strict(),
-    eventTimeline: runHistoryCollectionMetadataSchema
-      .extend({
-        attemptHistoryCoverage: z.literal("retained_history").optional(),
-        attemptRetentionLimitPerOrder: z.literal(erpAttemptHistoryRetentionLimit).optional(),
-        records: z.array(runHistoryEventTimelineEntrySchema),
-      })
-      .strict(),
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,
   })

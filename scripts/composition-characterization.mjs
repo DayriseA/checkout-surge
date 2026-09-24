@@ -140,15 +140,17 @@ async function characterizeSoldOutIdempotencyAndRecovery() {
 
   const detail = await adminRunDetail(runId);
   assert(
-    detail.orders?.totalCount === 1,
+    detail.summary?.businessOutcomeSummary?.acceptedReservations === 1,
     "history detail did not preserve the single idempotent order",
   );
-  assert(detail.erpAttempts?.totalCount === 1, "history detail did not preserve the ERP attempt");
   assert(
-    detail.notifications?.totalCount === 1,
+    detail.erpAttemptSummary?.totalCount === 1,
+    "history detail did not preserve the ERP attempt",
+  );
+  assert(
+    detail.summary?.businessOutcomeSummary?.notificationsRecorded === 1,
     "history detail did not preserve the notification",
   );
-  assert(detail.eventTimeline?.totalCount >= 5, "history detail timeline is incomplete");
 
   const recoveredThroughWeb = await jsonRequest(`${dashboardBaseUrl}/api/dashboard/recovery`);
   assert(
@@ -235,15 +237,17 @@ async function characterizeRepresentativeSurge() {
     "surge terminal inventory does not match accepted reservations",
   );
   assert(
-    detail.orders?.totalCount === summary.httpSummary.acceptedResponses,
+    detail.summary?.businessOutcomeSummary?.acceptedReservations ===
+      summary.httpSummary.acceptedResponses,
     "surge history order total does not match accepted reservations",
   );
   assert(
-    detail.erpAttempts?.totalCount === summary.httpSummary.acceptedResponses,
+    detail.erpAttemptSummary?.totalCount === summary.httpSummary.acceptedResponses,
     "surge history ERP total does not match accepted reservations",
   );
   assert(
-    detail.notifications?.totalCount === summary.httpSummary.acceptedResponses,
+    detail.summary?.businessOutcomeSummary?.notificationsRecorded ===
+      summary.httpSummary.acceptedResponses,
     "surge history notification total does not match accepted reservations",
   );
   if (summary.trafficDeliverySummary.droppedIterations === 0) {
