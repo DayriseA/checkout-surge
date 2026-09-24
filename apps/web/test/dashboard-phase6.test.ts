@@ -774,8 +774,8 @@ describe("Phase 6 projection dashboard", () => {
         case "idle":
           return ["watch-advanced-connection"];
         case "active":
-          // Live mode: the board leads, and the collapsed run context holds scenario and connection.
-          return ["watch-advanced-signals", "watch-advanced-scenario", "watch-advanced-connection"];
+          // Live mode: the board lives in the run card; technical details hold the run context.
+          return ["watch-advanced-scenario", "watch-advanced-connection"];
         case "completed":
           return [
             "watch-advanced-scenario",

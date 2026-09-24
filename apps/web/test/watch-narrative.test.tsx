@@ -317,10 +317,12 @@ describe("watch narrative", () => {
       expect(identity).toBeGreaterThan(-1);
       expect(strip).toBeGreaterThan(identity);
       if (status === "active" || status === "draining") {
-        // Live mode: the board leads the technical groups, and the collapsed run context holds
+        // Live mode: the board follows the strip inside the run card, and technical details hold
         // only the scenario and connection groups.
-        expect(signals).toBeGreaterThan(strip);
-        expect(scenario).toBeGreaterThan(signals);
+        const board = output.indexOf('id="watch-signal-arrival"');
+        expect(board).toBeGreaterThan(strip);
+        expect(signals).toBe(-1);
+        expect(scenario).toBeGreaterThan(board);
         expect(connection).toBeGreaterThan(scenario);
         expect(processing).toBe(-1);
         expect(consistency).toBe(-1);

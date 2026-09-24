@@ -2686,8 +2686,8 @@ describe("watch composition", () => {
     expectVisible(container, "The surge is under way");
   });
 
-  it("opens technical details focused on a signal's full chart from its sparkline", async () => {
-    const { container } = render(
+  it("switches a live run to its pipeline view focused on a signal's column from its sparkline", async () => {
+    render(
       watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(activeProjectionFixture()),
@@ -2699,11 +2699,37 @@ describe("watch composition", () => {
     if (!arrivalsTile) throw new Error("Expected the arrivals sparkline link.");
     fireEvent.click(arrivalsTile);
 
-    expect(
-      screen.getByText("Technical details", { selector: "summary" }).closest("details")?.open,
-    ).toBe(true);
+    expect(screen.getByRole("button", { name: /^Pipeline/ }).getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     await waitFor(() => expect(document.activeElement?.id).toBe("watch-signal-arrival"));
-    expect(container.querySelector("#watch-signal-arrival")?.hasAttribute("hidden")).toBe(false);
+  });
+
+  it("hides one live view at a time only on a compact screen", () => {
+    const { container } = render(
+      watchSurface(
+        createElement(OperatorDashboard, {
+          initialRecovery: available(activeProjectionFixture()),
+        }),
+      ),
+    );
+    const overview = container.querySelector("[data-watch-signals]")?.parentElement;
+    const pipeline = container
+      .querySelector("#watch-signal-arrival")
+      ?.parentElement?.closest("section")?.parentElement;
+    const compactHidden = (element: Element | null | undefined) =>
+      element?.classList.contains("compact-watch:hidden");
+
+    expect(compactHidden(overview)).toBe(false);
+    expect(compactHidden(pipeline)).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Pipeline/ }));
+
+    expect(compactHidden(overview)).toBe(true);
+    expect(compactHidden(pipeline)).toBe(false);
+    expect(screen.getByRole("button", { name: /^Overview/ }).getAttribute("aria-pressed")).toBe(
+      "false",
+    );
   });
 
   it("keeps the stream, samples, and report retries intact across repeated details toggles", async () => {
@@ -2917,13 +2943,17 @@ describe("watch composition", () => {
     expect(screen.queryByText("Last-known-good data")).toBeNull();
   });
 
-  it("targets the Signals group from a sparkline when no chart evidence exists yet", async () => {
+  it("targets the Signals group from a sparkline when a finished run has no chart evidence", async () => {
     const { container } = render(
       watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(
             dashboardRecoveryFixture({
-              currentRun: demoRunFixture({ status: "starting", runId: sharedRunId }),
+              currentRun: demoRunFixture({
+                status: "completed",
+                trafficStatus: "succeeded",
+                runId: sharedRunId,
+              }),
             }),
           ),
         }),

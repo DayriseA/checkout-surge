@@ -15,19 +15,19 @@ const fallbackTargetId = "watch-advanced-signals";
 /**
  * The compact Watch signal strip: the same four timelines the full charts plot, reduced
  * to sparklines with each headline value as caption and a text equivalent. Every tile is a
- * contextual button that opens technical details and focuses that signal's full chart.
- * When no chart evidence exists at all the full charts render their shared empty state, so the
- * tiles target the focusable Signals group instead of a chart that is not on the page. Missing
+ * contextual button that reveals and focuses that signal's detailed section. When those sections
+ * are not rendered (a finished run without chart evidence shows the full charts' shared empty
+ * state), the tiles target the focusable Signals group instead. Missing
  * evidence renders the lifecycle-aware absence caption, never a flat zero line.
  */
 export function WatchSignalStrip({
   charts,
-  hasEvidence,
+  chartTargetsRendered,
   headlines,
   onReveal,
 }: {
   charts: Record<GoldSignalKey, GoldSignalChart>;
-  hasEvidence: boolean;
+  chartTargetsRendered: boolean;
   headlines: SignalHeadlines;
   onReveal: (targetId: string) => void;
 }) {
@@ -37,7 +37,7 @@ export function WatchSignalStrip({
         <button
           className="block cursor-pointer rounded-xl border border-border bg-surface px-3 py-2.5 text-left transition-colors hover:border-accent [&_svg]:h-14"
           key={chart}
-          onClick={() => onReveal(hasEvidence ? targetId : fallbackTargetId)}
+          onClick={() => onReveal(chartTargetsRendered ? targetId : fallbackTargetId)}
           type="button"
         >
           <span className="block text-xs font-medium text-muted">{title}</span>

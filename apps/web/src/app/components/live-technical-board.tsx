@@ -173,7 +173,7 @@ const rowTermClassName = "mb-0.5 text-xs font-medium text-muted";
 const rowValueClassName = "m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink";
 
 /**
- * The compact live board inside Watch's "Technical details" while a run is starting, active, or
+ * The compact live board inside Watch's run card while a run is starting, active, or
  * draining: one freshness line and status pill, an attempt-based progress bar, the four pipeline
  * columns, and the changed-since-last-projection markers. Report-mode panels stay in
  * `TechnicalGroups`; this component only reads projections and never talks to the transport.
@@ -352,7 +352,7 @@ export function LiveTechnicalBoard({
   ];
   const [attemptsDispatched, plannedAttempts] = values.dispatched;
   return (
-    <section className="col-span-12 min-w-0 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
+    <section className="min-w-0 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <FreshnessLine freshness={freshness} />
         <StatusPill status={deriveFreshnessPresentationState(freshness)} />

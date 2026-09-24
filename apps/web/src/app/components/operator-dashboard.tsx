@@ -2,7 +2,6 @@
 
 import {
   type DashboardProjection,
-  type DemoRunSnapshot,
   deriveOversoldUnits,
   type RunHistoryListItem,
 } from "@checkout-surge/contracts";
@@ -122,11 +121,7 @@ export function OperatorDashboard({
   const technicalDetailsRef = useRef<HTMLDetailsElement>(null);
   const revealTechnicalDetails = useCallback((targetId: string) => {
     if (technicalDetailsRef.current) technicalDetailsRef.current.open = true;
-    requestAnimationFrame(() => {
-      const target = document.getElementById(targetId);
-      target?.focus({ preventScroll: true });
-      target?.scrollIntoView({ block: "start", behavior: "instant" });
-    });
+    focusSection(targetId, "start");
   }, []);
   useEffect(() => {
     const interval = setInterval(() => setNow(new Date()), 2_000);
@@ -222,6 +217,15 @@ type RunWatchComposition = Extract<
   { phase: "starting" | "active" | "draining" | "completed" | "failed" }
 >;
 
+/** Focuses a section after the next paint, once a view switch or disclosure has revealed it. */
+function focusSection(targetId: string, block: ScrollLogicalPosition) {
+  requestAnimationFrame(() => {
+    const target = document.getElementById(targetId);
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block, behavior: "instant" });
+  });
+}
+
 const phaseStepNames = ["Preparing", "Buyers arriving", "Confirming orders", "Result"] as const;
 
 const phaseSteps: Record<RunWatchComposition["phase"], number> = {
@@ -303,9 +307,19 @@ export function WatchNarrative({
   }
 }
 
+type LiveView = "overview" | "pipeline";
+
+const liveViews: Array<{ description: string; label: string; view: LiveView }> = [
+  { description: "counts and trends", label: "Overview", view: "overview" },
+  { description: "every stage, live", label: "Pipeline", view: "pipeline" },
+];
+
 /**
  * The five-band compact Watch layout for every run phase: identity line, verdict line, counts row,
- * signal strip, caveat and actions. Technical proof and panels render outside this card.
+ * signal strip, caveat and actions. While a run is live the card also carries the live pipeline
+ * board; on a screen too short or narrow for both, a toggle shows the overview or the board.
+ * Both views stay mounted so hiding one keeps its state. Technical proof and panels render
+ * outside this card.
  */
 function RunCard({
   accepted,
@@ -354,6 +368,11 @@ function RunCard({
   };
   const reportState = terminal ? terminalReportState(accepted, composition.run.runId) : null;
   const stripCharts = deriveGoldSignalCharts(goldSignalInput(composition));
+  const [liveView, setLiveView] = useState<LiveView>("overview");
+  const revealLiveSignal = (targetId: string) => {
+    setLiveView("pipeline");
+    focusSection(targetId, "nearest");
+  };
   return (
     <section
       aria-label={terminal ? "Run conclusion" : undefined}
@@ -381,13 +400,28 @@ function RunCard({
         ) : null}
       </div>
       <GracePeriodNotice now={now} run={composition.run} />
-      <CountsRow {...counts} liveOutcome={terminal ? undefined : outcome} />
-      <WatchSignalStrip
-        charts={stripCharts.charts}
-        hasEvidence={stripCharts.hasEvidence}
-        headlines={stripCharts.headlines}
-        onReveal={onRevealTechnicalDetails}
-      />
+      {terminal ? null : <LiveViewTabs onChange={setLiveView} value={liveView} />}
+      <div
+        className={`grid gap-4 ${!terminal && liveView === "pipeline" ? "compact-watch:hidden" : ""}`}
+      >
+        <CountsRow {...counts} liveOutcome={terminal ? undefined : outcome} />
+        <WatchSignalStrip
+          charts={stripCharts.charts}
+          // The live board renders every signal column even before any chart evidence exists.
+          chartTargetsRendered={!terminal || stripCharts.hasEvidence}
+          headlines={stripCharts.headlines}
+          onReveal={terminal ? onRevealTechnicalDetails : revealLiveSignal}
+        />
+      </div>
+      {terminal ? null : (
+        <div className={liveView === "overview" ? "compact-watch:hidden" : undefined}>
+          <LiveTechnicalBoard
+            freshness={composition.freshness}
+            projection={projection}
+            run={composition.run}
+          />
+        </div>
+      )}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 min-[900px]:flex-nowrap">
         <div className="grid min-w-0 flex-1 gap-2 [&>p]:mt-0">
           {summary && summary.caveats.length > 0 ? (
@@ -418,6 +452,49 @@ function RunCard({
         </div>
       </div>
     </section>
+  );
+}
+
+/**
+ * The tab bar over the live card's two views, shown only when the screen cannot fit both. The
+ * current tab carries the navigation's signal bar; the other tab keeps a filled, clickable look
+ * and a signal dot so a first-time visitor notices there is a second view to open.
+ */
+function LiveViewTabs({
+  onChange,
+  value,
+}: {
+  onChange: (view: LiveView) => void;
+  value: LiveView;
+}) {
+  return (
+    <fieldset className="m-0 hidden min-w-0 gap-1.5 border-0 border-b border-border p-0 compact-watch:flex">
+      <legend className="sr-only">Live view</legend>
+      {liveViews.map(({ description, label, view }) => (
+        <button
+          aria-pressed={value === view}
+          className={`-mb-px flex cursor-pointer items-center gap-2 rounded-t-lg border-b-[3px] px-4 py-2 text-sm font-semibold transition-colors ${
+            value === view
+              ? "border-signal bg-signal-soft text-ink"
+              : "border-transparent bg-surface-muted text-muted-strong hover:bg-accent-soft hover:text-ink"
+          }`}
+          key={view}
+          onClick={() => onChange(view)}
+          type="button"
+        >
+          {value === view ? null : (
+            <span
+              aria-hidden="true"
+              className="size-2 rounded-full bg-signal motion-safe:animate-pulse"
+            />
+          )}
+          {label}
+          <span className="text-xs font-normal text-muted-strong max-[560px]:hidden">
+            {description}
+          </span>
+        </button>
+      ))}
+    </fieldset>
   );
 }
 
@@ -964,27 +1041,8 @@ function TechnicalGroups({
         {runComposition && projection && run ? (
           livePhase ? (
             <>
-              <div className="col-span-12" id="watch-advanced-signals" tabIndex={-1}>
-                <div className="grid grid-cols-12 gap-4">
-                  <LiveTechnicalBoard
-                    freshness={composition.freshness}
-                    projection={projection}
-                    run={run}
-                  />
-                </div>
-              </div>
-              <details className="col-span-12 rounded-2xl border border-border bg-surface px-5 py-3.5">
-                <summary className="disclosure font-semibold text-ink">
-                  Run context
-                  <span className="ml-2 text-sm font-normal text-muted">
-                    {runContextSummary(run)}
-                  </span>
-                </summary>
-                <div className="mt-3 grid grid-cols-12 gap-4">
-                  {scenarioGroup}
-                  {connectionGroup}
-                </div>
-              </details>
+              {scenarioGroup}
+              {connectionGroup}
               <p className="col-span-12 m-0 text-sm leading-6 text-muted">
                 Full measurements, charts, and reconciliation proof appear here when the run
                 finishes.
@@ -1053,11 +1111,4 @@ function TechnicalGroups({
       </div>
     </details>
   );
-}
-
-/** The one-line muted recap inside the live mode's collapsed "Run context" summary. */
-function runContextSummary(run: DemoRunSnapshot): string {
-  const facts = deriveRunConfigFacts(run.configSnapshot);
-  const workers = formatCount(run.configSnapshot.backpressureConfig.orderProcessConcurrency) ?? "—";
-  return `${facts.demandValue} attempts · ERP ${facts.erpDelay}, ${facts.erpCapacity} · ${workers} workers · run ${run.runId.slice(0, 8)}…`;
 }
