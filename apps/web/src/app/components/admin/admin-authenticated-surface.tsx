@@ -23,6 +23,7 @@ import {
   erpChaosStatusSchema,
   estimateAdmissionRejectionDetailsSchema,
   type HealthResponse,
+  type HealthStatus,
   type PublicRuntimePolicy,
   type PublicRuntimePolicyMutable,
   type StartDemoRunRequest,
@@ -175,7 +176,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
           </a>
         ))}
       </nav>
-      <div className="grid min-w-0 items-start gap-4 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-2">
         <RealtimeRecoveryNotice
           className="lg:col-span-2"
           realtimeStatus={realtimeStatus}
@@ -327,6 +328,30 @@ function AdminDiagnosticsLinks() {
   );
 }
 
+const readinessCheckToneClassNames: Record<HealthStatus, string> = {
+  degraded: "bg-warning-soft text-warning",
+  ok: "bg-ok-soft text-ok",
+  unavailable: "bg-danger-soft text-danger",
+};
+
+const readinessCheckMarkers: Record<HealthStatus, string> = {
+  degraded: "!",
+  ok: "✓",
+  unavailable: "×",
+};
+
+function ReadinessCheckStatusBadge({ status }: { status: HealthStatus }) {
+  return (
+    <span
+      aria-label={status}
+      className={`inline-flex min-h-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold ${readinessCheckToneClassNames[status]}`}
+      role="img"
+    >
+      <span aria-hidden="true">{readinessCheckMarkers[status]}</span>
+    </span>
+  );
+}
+
 function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
   const readiness =
     read.status === "available" && read.data.status !== "ok"
@@ -359,18 +384,18 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
         <ErrorNotice context="admin-read" read={read} />
       ) : null}
       {checks.length > 0 ? (
-        <details className="mt-3 rounded-xl border border-border px-4 py-3 text-sm text-muted-strong">
+        <details
+          className="mt-3 rounded-xl border border-border px-4 py-3 text-sm text-muted-strong"
+          open
+        >
           <summary className="disclosure font-semibold text-ink">Readiness probe details</summary>
-          <dl className="mb-0 mt-2 grid gap-1">
+          <dl className="mb-0 mt-2 grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1">
             {checks.map((check) => (
-              <div
-                className="grid grid-cols-[minmax(8rem,auto)_minmax(0,1fr)] gap-3"
-                key={check.name}
-              >
+              <div className="contents" key={check.name}>
                 <dt className="font-medium text-ink">{check.name}</dt>
-                <dd className="m-0 [overflow-wrap:anywhere]">
-                  {check.status}
-                  {check.message ? ` — ${check.message}` : ""}
+                <dd className="m-0 flex flex-wrap items-center gap-2 [overflow-wrap:anywhere]">
+                  <ReadinessCheckStatusBadge status={check.status} />
+                  {check.message ? <span>— {check.message}</span> : null}
                 </dd>
               </div>
             ))}
@@ -1373,31 +1398,33 @@ export function AdminMaintenancePanel({
   }
 
   return (
-    <section className={panelClassName} id="maintenance">
-      <div className="mb-4">
-        <p className={eyebrowClassName}>Maintenance</p>
-        <h2 className={panelTitleClassName}>
-          Recovery and cleanup{" "}
-          <FieldHint label="Recovery and cleanup" text={adminFieldHints.recovery} />
-        </h2>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button
-          className={buttonClassName}
-          disabled={isPending}
-          onClick={() => openIntent("reset")}
-          type="button"
-        >
-          {incomplete ? "Retry Reset" : "Reset demo"}
-        </button>
-        <button
-          className={buttonClassName}
-          disabled={isPending}
-          onClick={() => openIntent("cleanup")}
-          type="button"
-        >
-          Cleanup runs
-        </button>
+    <section className={`${panelClassName} lg:col-span-2`} id="maintenance">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div>
+          <p className={eyebrowClassName}>Maintenance</p>
+          <h2 className={panelTitleClassName}>
+            Recovery and cleanup{" "}
+            <FieldHint label="Recovery and cleanup" text={adminFieldHints.recovery} />
+          </h2>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className={buttonClassName}
+            disabled={isPending}
+            onClick={() => openIntent("reset")}
+            type="button"
+          >
+            {incomplete ? "Retry Reset" : "Reset demo"}
+          </button>
+          <button
+            className={buttonClassName}
+            disabled={isPending}
+            onClick={() => openIntent("cleanup")}
+            type="button"
+          >
+            Cleanup runs
+          </button>
+        </div>
       </div>
       {incomplete ? (
         <p

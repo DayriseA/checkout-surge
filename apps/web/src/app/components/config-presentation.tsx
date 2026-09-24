@@ -19,7 +19,9 @@ export function ConfigGroup({
         {hint ? <FieldHint label={title} text={hint} /> : null}
       </h3>
       {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
-      <dl className="m-0 mt-2 grid max-w-[30rem] gap-1.5">{children}</dl>
+      <dl className="m-0 mt-2 grid max-w-[30rem] grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+        {children}
+      </dl>
     </section>
   );
 }
@@ -34,12 +36,12 @@ export function FieldRow({
   hint?: string;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+    <div className="contents">
       <dt className="flex items-center gap-2 text-sm text-muted">
         {label}
         {hint ? <FieldHint label={label} text={hint} /> : null}
       </dt>
-      <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-ink">
+      <dd className="m-0 min-w-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
         {value}
       </dd>
     </div>

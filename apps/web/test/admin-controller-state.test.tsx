@@ -345,7 +345,7 @@ describe("admin feature controllers", () => {
     expect(dialog.textContent).not.toContain("There is no active run");
   });
 
-  it("renders protected readiness probes in a collapsed operator block", () => {
+  it("renders protected readiness probes in an expanded operator block", () => {
     render(
       <AdminAuthenticatedSurface
         {...surfaceProps(null)}
@@ -370,6 +370,8 @@ describe("admin feature controllers", () => {
     );
 
     expect(screen.getByText("Readiness probe details")).toBeTruthy();
+    expect(screen.getByText("Readiness probe details").closest("details")?.open).toBe(true);
+    expect(screen.getByRole("img", { name: "unavailable" })).toBeTruthy();
     expect(screen.getByText("database_reachable")).toBeTruthy();
     expect(screen.getByText(/PostgreSQL readiness check failed/)).toBeTruthy();
   });

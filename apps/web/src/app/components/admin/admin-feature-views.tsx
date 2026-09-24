@@ -127,65 +127,72 @@ export function AdminRuntimePolicyView({
                   prefix="runtime-policy"
                 />
               ) : null}
-              <div className={fieldGridClassName}>
-                <Checkbox
-                  label="Enforce public budget"
-                  hint={adminFieldHints.publicBudget}
-                  checked={draft.isPublicRunBudgetEnforced}
-                  onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
-                />
-                <DraftInput
-                  label="Budget window seconds"
-                  draft={draft}
-                  field="budgetWindowSeconds"
-                  onUpdate={onUpdateDraft}
-                  onBlur={onBlurField}
-                  error={fieldErrors.budgetWindowSeconds}
-                  prefix="runtime-policy"
-                />
-                <DraftInput
-                  label="Per-visitor starts"
-                  draft={draft}
-                  field="perVisitorMaxStarts"
-                  onUpdate={onUpdateDraft}
-                  onBlur={onBlurField}
-                  error={fieldErrors.perVisitorMaxStarts}
-                  prefix="runtime-policy"
-                />
-                <DraftInput
-                  label="Global starts"
-                  draft={draft}
-                  field="globalMaxStarts"
-                  onUpdate={onUpdateDraft}
-                  onBlur={onBlurField}
-                  error={fieldErrors.globalMaxStarts}
-                  prefix="runtime-policy"
-                />
+              <div className="grid gap-3">
+                <p className={subheadingClassName}>Public budget</p>
+                <div className={fieldGridClassName}>
+                  <Checkbox
+                    label="Enforce public budget"
+                    hint={adminFieldHints.publicBudget}
+                    checked={draft.isPublicRunBudgetEnforced}
+                    onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
+                  />
+                  <DraftInput
+                    label="Budget window seconds"
+                    draft={draft}
+                    field="budgetWindowSeconds"
+                    onUpdate={onUpdateDraft}
+                    onBlur={onBlurField}
+                    error={fieldErrors.budgetWindowSeconds}
+                    prefix="runtime-policy"
+                  />
+                  <DraftInput
+                    label="Per-visitor starts"
+                    draft={draft}
+                    field="perVisitorMaxStarts"
+                    onUpdate={onUpdateDraft}
+                    onBlur={onBlurField}
+                    error={fieldErrors.perVisitorMaxStarts}
+                    prefix="runtime-policy"
+                  />
+                  <DraftInput
+                    label="Global starts"
+                    draft={draft}
+                    field="globalMaxStarts"
+                    onUpdate={onUpdateDraft}
+                    onBlur={onBlurField}
+                    error={fieldErrors.globalMaxStarts}
+                    prefix="runtime-policy"
+                  />
+                </div>
               </div>
               <div className="grid gap-3">
                 <p className={subheadingClassName}>
                   Public custom defaults{" "}
                   <FieldHint label="Public custom defaults" text={adminFieldHints.publicDefaults} />
                 </p>
-                <TrafficEditor
-                  disabled={isPending}
-                  draft={draft}
-                  errors={fieldErrors}
-                  hardCaps={policy.deploymentHardCaps}
-                  onBlur={onBlurField}
-                  onUpdateDraft={onUpdateDraft}
-                  prefix="runtime-policy"
-                />
-                <RunConfigFields
-                  disabled={isPending}
-                  erpErrorRateMax={Number(draft.maxErpErrorRate)}
-                  draft={draft}
-                  errors={fieldErrors}
-                  includeForcedOutage={false}
-                  onBlur={onBlurField}
-                  onUpdateDraft={onUpdateDraft}
-                  prefix="runtime-policy"
-                />
+                <div className="border-y border-border">
+                  <ConfigFieldset legend="Traffic">
+                    <TrafficEditor
+                      disabled={isPending}
+                      draft={draft}
+                      errors={fieldErrors}
+                      hardCaps={policy.deploymentHardCaps}
+                      onBlur={onBlurField}
+                      onUpdateDraft={onUpdateDraft}
+                      prefix="runtime-policy"
+                    />
+                  </ConfigFieldset>
+                  <RunConfigFields
+                    disabled={isPending}
+                    erpErrorRateMax={Number(draft.maxErpErrorRate)}
+                    draft={draft}
+                    errors={fieldErrors}
+                    includeForcedOutage={false}
+                    onBlur={onBlurField}
+                    onUpdateDraft={onUpdateDraft}
+                    prefix="runtime-policy"
+                  />
+                </div>
               </div>
               <div className="grid gap-3">
                 <p className={subheadingClassName}>
@@ -206,7 +213,10 @@ export function AdminRuntimePolicyView({
                       step={step}
                     />
                   ))}
+                </div>
+                <div className="flex flex-wrap gap-x-8">
                   <Checkbox
+                    alignWithInputs={false}
                     label="Allow buyer spike"
                     hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowBuyerSpike"
@@ -215,6 +225,7 @@ export function AdminRuntimePolicyView({
                     onChange={(value) => onUpdateDraft({ allowBuyerSpike: value })}
                   />
                   <Checkbox
+                    alignWithInputs={false}
                     label="Allow constant arrival"
                     hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowConstantArrivalRate"
@@ -639,76 +650,80 @@ export function AdminPresetView({
                   </p>
                 ) : null}
               </div>
-              <div>
-                <button
-                  aria-describedby={actionPendingReason ? copyPendingReasonId : undefined}
-                  className={buttonClassName}
-                  disabled={isPending}
-                  onClick={onCopyToCustom}
-                  type="button"
-                >
-                  Copy saved values to custom scenario
-                </button>
-                <FieldHint
-                  label="Copy saved values to custom scenario"
-                  text={adminFieldHints.copyToCustom}
-                />
-                {actionPendingReason ? (
-                  <p className={reasonClassName} id={copyPendingReasonId}>
-                    {actionPendingReason}
-                  </p>
-                ) : null}
-              </div>
-              <div>
-                <button
-                  aria-describedby={archiveReason ? archiveReasonId : undefined}
-                  className={buttonClassName}
-                  disabled={isPending || !selectedPreset.canArchive}
-                  onClick={onArchive}
-                  type="button"
-                >
-                  Archive preset
-                </button>
-                {archiveReason ? (
-                  <p className={reasonClassName} id={archiveReasonId}>
-                    {archiveReason}
-                  </p>
-                ) : null}
-              </div>
             </div>
-            <form
-              className="grid grid-cols-[minmax(10rem,22rem)_auto] items-start gap-2 max-[560px]:grid-cols-1"
-              onSubmit={(event) => {
-                event.preventDefault();
-                const targetSlug = String(
-                  new FormData(event.currentTarget).get("duplicate-target-slug") ?? "",
-                );
-                onDuplicate(targetSlug);
-              }}
-            >
-              <LabeledTextInput
-                disabled={isPending}
-                help="Letters are lowercased and separators become hyphens, e.g. recruiter-demo."
-                hint={adminFieldHints.duplicateSlug}
-                label="Duplicate slug"
-                name="duplicate-target-slug"
-                onChange={onDuplicateTargetSlugChange}
-                value={duplicateTargetSlug}
-              />
-              <button
-                aria-describedby={duplicateReason ? duplicateReasonId : undefined}
-                className={`${buttonClassName} min-[561px]:mt-7`}
-                disabled={isPending || selectedPreset.slug === "public-custom"}
-                type="submit"
+            <div className="grid gap-4 border-t border-border pt-4">
+              <div className="flex flex-wrap items-start gap-2">
+                <div>
+                  <button
+                    aria-describedby={actionPendingReason ? copyPendingReasonId : undefined}
+                    className={buttonClassName}
+                    disabled={isPending}
+                    onClick={onCopyToCustom}
+                    type="button"
+                  >
+                    Copy saved values to custom scenario
+                  </button>{" "}
+                  <FieldHint
+                    label="Copy saved values to custom scenario"
+                    text={adminFieldHints.copyToCustom}
+                  />
+                  {actionPendingReason ? (
+                    <p className={reasonClassName} id={copyPendingReasonId}>
+                      {actionPendingReason}
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <button
+                    aria-describedby={archiveReason ? archiveReasonId : undefined}
+                    className={buttonClassName}
+                    disabled={isPending || !selectedPreset.canArchive}
+                    onClick={onArchive}
+                    type="button"
+                  >
+                    Archive preset
+                  </button>
+                  {archiveReason ? (
+                    <p className={reasonClassName} id={archiveReasonId}>
+                      {archiveReason}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <form
+                className="grid grid-cols-[minmax(10rem,22rem)_max-content] items-start gap-2 max-[560px]:grid-cols-1"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const targetSlug = String(
+                    new FormData(event.currentTarget).get("duplicate-target-slug") ?? "",
+                  );
+                  onDuplicate(targetSlug);
+                }}
               >
-                Duplicate saved preset
-              </button>
-              {duplicateReason ? (
-                <p className="col-span-full m-0 text-xs text-muted" id={duplicateReasonId}>
-                  {duplicateReason}
-                </p>
-              ) : null}
-            </form>
+                <LabeledTextInput
+                  disabled={isPending}
+                  help="Letters are lowercased and separators become hyphens, e.g. recruiter-demo."
+                  hint={adminFieldHints.duplicateSlug}
+                  label="Duplicate slug"
+                  name="duplicate-target-slug"
+                  onChange={onDuplicateTargetSlugChange}
+                  value={duplicateTargetSlug}
+                />
+                <button
+                  aria-describedby={duplicateReason ? duplicateReasonId : undefined}
+                  className={`${buttonClassName} min-[561px]:mt-7`}
+                  disabled={isPending || selectedPreset.slug === "public-custom"}
+                  type="submit"
+                >
+                  Duplicate saved preset
+                </button>
+                {duplicateReason ? (
+                  <p className="col-span-full m-0 text-xs text-muted" id={duplicateReasonId}>
+                    {duplicateReason}
+                  </p>
+                ) : null}
+              </form>
+            </div>
           </div>
         ) : presetsRead.status === "available" ? (
           <p className="m-0 text-muted">No admin presets are available.</p>
@@ -1150,7 +1165,7 @@ export function AdminErpDiagnosticsView({
   const caps = current?.effectiveSafetyCaps;
   const latestRead = latestErpChaosRead ?? erpChaos;
   return (
-    <section className={panelClassName} id="erp-fault-injection">
+    <section className={`${panelClassName} lg:col-span-2`} id="erp-fault-injection">
       <PanelHeading
         eyebrow="Global fallback scope"
         title="ERP fault injection (global fallback)"
@@ -1166,11 +1181,11 @@ export function AdminErpDiagnosticsView({
           />
         }
       />
-      <p className="m-0 mb-4 text-sm leading-6 text-muted">
+      <p className="m-0 mb-4 max-w-[72ch] text-sm leading-6 text-muted">
         Runs use the ERP settings frozen when they start. These controls change fallback behaviour
         for calls that carry no run settings; they do not change an accepted run.
       </p>
-      <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-3 rounded-xl bg-surface-muted px-4 pb-3 max-[560px]:grid-cols-1">
+      <div className="mb-4 grid grid-cols-2 gap-x-6 gap-y-3 max-[560px]:grid-cols-1">
         <ConfigGroup
           title="Accepted run snapshot (per-run)"
           hint="The ERP settings frozen into the active run. These are what the running run's orders actually use."
@@ -1444,6 +1459,7 @@ function intrinsicInputBounds(field: string): {
 }
 
 function Checkbox({
+  alignWithInputs = true,
   checked,
   disabled,
   error,
@@ -1452,6 +1468,7 @@ function Checkbox({
   hint,
   onChange,
 }: {
+  alignWithInputs?: boolean;
   checked: boolean;
   disabled?: boolean | undefined;
   error?: DraftFieldError | undefined;
@@ -1460,9 +1477,10 @@ function Checkbox({
   hint?: string | undefined;
   onChange: (value: boolean) => void;
 }) {
+  // Beside inputs, skip the label row so the box centres on the neighbouring input.
   return (
-    <div className="grid content-start gap-1 min-[561px]:pt-6">
-      <div className="flex min-h-10 items-center gap-2 text-sm font-semibold text-ink">
+    <div className={`grid content-start gap-1 ${alignWithInputs ? "min-[561px]:pt-7" : ""}`}>
+      <div className="flex min-h-11 items-center gap-2 text-sm font-semibold text-ink">
         <label className="flex items-center gap-2">
           <input
             aria-describedby={error && id ? `${id}-error` : undefined}
@@ -1506,7 +1524,7 @@ function PanelHeading({
           {hint ? <FieldHint label={title} text={hint} /> : null}
         </h2>
       </div>
-      {status}
+      <div className="shrink-0 whitespace-nowrap">{status}</div>
     </div>
   );
 }
