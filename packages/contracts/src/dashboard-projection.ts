@@ -20,7 +20,6 @@ import { transportAttemptCountsSchema } from "./traffic-transport-counts.js";
 export const dashboardEventsPath = "/dashboard/events" as const;
 export const dashboardRecoveryPath = "/dashboard/recovery" as const;
 export const dashboardProjectionSchemaName = "checkout-surge.dashboard-projection" as const;
-export const dashboardProjectionSchemaVersion = 5 as const;
 /** Slowest expected cadence while dashboard work remains in flight. */
 export const dashboardLiveUpdateExpectedIntervalMs = 2_000;
 
@@ -84,7 +83,6 @@ export const dashboardRecoveryQuerySchema = z
 export const dashboardProjectionSchema = z
   .object({
     schema: z.literal(dashboardProjectionSchemaName),
-    version: z.literal(dashboardProjectionSchemaVersion),
     correlationId: correlationIdSchema,
     scopeId: z.string().trim().min(1),
     scope: dashboardProjectionScopeSchema.nullable(),

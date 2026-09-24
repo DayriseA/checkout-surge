@@ -848,7 +848,6 @@ test("cleanup failure is reported alongside the primary stage failure", () => {
 function activeProjection() {
   return {
     schema: "checkout-surge.dashboard-projection",
-    version: 5,
     correlationId,
     scopeId: `run/${runId}/sale-offer/${saleOfferId}`,
     revision: 1,

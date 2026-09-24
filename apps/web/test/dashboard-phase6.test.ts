@@ -6,7 +6,6 @@ import {
   type DashboardProjection,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
 import { createElement } from "react";
@@ -943,7 +942,6 @@ function projectionFixture(): DashboardProjection {
   const saleOfferId = "33333333-3333-4333-8333-333333333333";
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId({ runId, saleOfferId }),

@@ -8,7 +8,6 @@ import {
   adminPublicRuntimePolicyPath,
   controlServiceTokenHeaderName,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   errorPayloadSchema,
@@ -1007,7 +1006,6 @@ function erpChaosStatusPayload() {
 function dashboardRecoveryPayload(correlationId = "corr-recovery") {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId,

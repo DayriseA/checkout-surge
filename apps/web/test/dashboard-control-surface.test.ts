@@ -4,7 +4,6 @@ import {
   type DashboardProjection,
   type DemoPresetContract,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   type ErpChaosStatus,
@@ -592,7 +591,6 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
   const scope = recoveryScope(currentRun);
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),

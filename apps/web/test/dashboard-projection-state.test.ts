@@ -1,7 +1,6 @@
 import {
   type DashboardProjection,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   emptyRequestArrivalSummary,
 } from "@checkout-surge/contracts";
@@ -531,7 +530,6 @@ function receive(
 function idleProjection(overrides: Partial<DashboardProjection> = {}): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: "idle",

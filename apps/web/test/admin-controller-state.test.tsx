@@ -6,7 +6,6 @@ import {
   type AdminPublicRuntimePolicyResponse,
   type DashboardProjection,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   type ErpChaosStatus,
   type ErrorPayloadCode,
@@ -3414,7 +3413,6 @@ function recoveryFixture(currentRun: DashboardProjection["currentRun"]): Dashboa
   const scope = recoveryScope(currentRun);
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),

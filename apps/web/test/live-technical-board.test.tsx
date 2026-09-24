@@ -4,7 +4,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
@@ -341,7 +340,6 @@ function startingProjection(): DashboardProjection {
 function activeProjection(): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId({ runId, saleOfferId }),

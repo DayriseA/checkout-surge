@@ -1,10 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  type DashboardProjection,
-  dashboardProjectionSchemaVersion,
-  demoRunSnapshotSchema,
-} from "@checkout-surge/contracts";
+import { type DashboardProjection, demoRunSnapshotSchema } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -451,7 +447,6 @@ function projectionRevisions(chunks: string[]): number[] {
 function projection(revision: number): DashboardProjection {
   return {
     schema: "checkout-surge.dashboard-projection",
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: `projection-${revision}`,

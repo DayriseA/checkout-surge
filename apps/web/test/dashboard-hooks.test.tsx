@@ -5,7 +5,6 @@ import {
   dashboardEventsPath,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   errorPayloadSchema,
 } from "@checkout-surge/contracts";
@@ -926,7 +925,6 @@ describe("useDashboardRecovery", () => {
 function projectionFixture(overrides: Partial<DashboardProjection> = {}): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: "idle",

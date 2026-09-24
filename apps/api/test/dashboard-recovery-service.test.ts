@@ -3,7 +3,6 @@ import {
   type DashboardProjectionScope,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   destructiveResetReasonValues,
@@ -430,7 +429,6 @@ describe("DashboardProjectionService", () => {
 
     expect(recovery).toMatchObject({
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId: "corr-no-run",

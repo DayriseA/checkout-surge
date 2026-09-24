@@ -2,7 +2,6 @@ import {
   type DashboardProjection,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   deriveRunResult,
@@ -673,7 +672,6 @@ function dashboardFixture(evidence: RunResultEvidence): DashboardProjection {
   const scope = { runId, saleOfferId };
   return dashboardProjectionSchema.parse({
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: "corr-presentation",

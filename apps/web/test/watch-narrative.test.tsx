@@ -2,7 +2,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   type RunHistoryListItem,
 } from "@checkout-surge/contracts";
@@ -568,7 +567,6 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
   const scope = currentRun ? { runId: currentRun.runId, saleOfferId } : null;
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: "corr-watch",

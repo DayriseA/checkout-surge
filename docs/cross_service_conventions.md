@@ -121,7 +121,7 @@ These are not exemptions: they define no local precision rule and go through the
 Checkout-Surge uses one complete revisioned browser projection.
 
 - API and worker code publish validated dashboard projection-dirty signals to Redis Pub/Sub.
-- The API gateway owns the browser-facing SSE stream at `/dashboard/events` and assembles complete `checkout-surge.dashboard-projection` version 5 frames. The version tracks the projection wire shape from this point forward; version 1 covered several earlier shapes across A03, A04, and A06.
+- The API gateway owns the browser-facing SSE stream at `/dashboard/events` and assembles complete `checkout-surge.dashboard-projection` frames.
 - Dashboard clients receive complete projections over same-origin `EventSource`; no delta or per-order event schema is part of the browser protocol.
 - Dashboard observability remains public for the demo; admin access gates only privileged controls.
 - Live projections are ephemeral operator feedback, not the durable system of record.

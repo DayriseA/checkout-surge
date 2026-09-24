@@ -2,7 +2,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   deriveRunResult,
   type RunResultEvidence,
@@ -316,7 +315,6 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
   const scope = currentRun ? { runId, saleOfferId } : null;
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: "corr-presentation",

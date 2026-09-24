@@ -5,7 +5,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   estimatorBottleneckValues,
   estimatorUnestimableReasonValues,
@@ -479,7 +478,6 @@ function recovery(currentRun: DashboardProjection["currentRun"] = null): Dashboa
     : null;
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: "recovery",

@@ -32,7 +32,6 @@ import {
   dashboardProjectionDirtySignalSchema,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   dashboardProjectionScopeSchema,
   dashboardRecoveryQuerySchema,
@@ -1855,7 +1854,6 @@ describe("buy and dashboard contracts", () => {
     };
     const recovery = dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,
@@ -1948,7 +1946,6 @@ describe("buy and dashboard contracts", () => {
         }).success,
       ).toBe(false);
     }
-    expect(dashboardProjectionSchema.safeParse({ ...recovery, version: 1 }).success).toBe(false);
     expect(dashboardProjectionSchema.safeParse(omit(recovery, "correlationId")).success).toBe(
       false,
     );
@@ -1974,7 +1971,6 @@ describe("buy and dashboard contracts", () => {
   it("requires projection identity and revision metadata", () => {
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,
@@ -2013,14 +2009,11 @@ describe("buy and dashboard contracts", () => {
     expect(dashboardProjectionSchema.safeParse(omit(idleProjection, "resetRecovery")).success).toBe(
       false,
     );
-    expect(dashboardProjectionSchema.safeParse({ ...idleProjection, version: 3 }).success).toBe(
-      false,
-    );
 
     expect(
       dashboardProjectionSchema.parse(omit(idleProjection, "httpSummary")).httpSummary,
     ).toBeNull();
-    for (const metadata of ["schema", "version", "scopeId", "revision"] as const) {
+    for (const metadata of ["schema", "scopeId", "revision"] as const) {
       const missingMetadata = omit(idleProjection, metadata);
       expect(dashboardProjectionSchema.safeParse(missingMetadata).success).toBe(false);
     }
@@ -2064,7 +2057,6 @@ describe("buy and dashboard contracts", () => {
     });
     const idleProjection = {
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,
@@ -2144,7 +2136,6 @@ describe("buy and dashboard contracts", () => {
     };
     const baseRecovery = {
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,
@@ -2191,7 +2182,6 @@ describe("buy and dashboard contracts", () => {
   it("rejects noncanonical projection identity and scope metadata", () => {
     const parsed = dashboardProjectionSchema.safeParse({
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,

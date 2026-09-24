@@ -6,7 +6,6 @@ import {
   type DemoRunSnapshot,
   dashboardProjectionSchema,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   isDestructiveResetReason,
   type MetricSample,
@@ -416,7 +415,6 @@ export class DashboardProjectionService {
     const revision = await settleWithAbort(dependencies.revisionAllocator.allocate(scope), signal);
     return dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
-      version: dashboardProjectionSchemaVersion,
       correlationId,
       scopeId: dashboardProjectionScopeId(scope),
       revision,

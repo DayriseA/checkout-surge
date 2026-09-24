@@ -2,7 +2,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
@@ -206,7 +205,6 @@ function projection(currentRun: DemoRunSnapshot | null): DashboardProjection {
   const scope = currentRun ? { runId: currentRun.runId, saleOfferId } : null;
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId: "corr-watch",

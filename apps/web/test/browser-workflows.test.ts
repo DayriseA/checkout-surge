@@ -5,7 +5,6 @@ import {
   type DemoPresetContract,
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
   deriveRunResult,
@@ -3214,7 +3213,6 @@ function dashboardRecoveryFixture(
   const scope = recoveryScope(currentRun);
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: dashboardProjectionScopeId(scope),

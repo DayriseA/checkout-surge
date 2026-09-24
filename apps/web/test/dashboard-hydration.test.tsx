@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  type DashboardProjection,
-  dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
-} from "@checkout-surge/contracts";
+import { type DashboardProjection, dashboardProjectionSchemaName } from "@checkout-surge/contracts";
 import { act } from "@testing-library/react";
 import { createElement } from "react";
 import { hydrateRoot } from "react-dom/client";
@@ -104,7 +100,6 @@ describe("dashboard hydration", () => {
 function dashboardRecoveryFixture(): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: "idle",

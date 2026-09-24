@@ -25,7 +25,6 @@ import {
   type DemoRunSnapshot,
   dashboardEventsPath,
   dashboardProjectionSchema,
-  dashboardProjectionSchemaVersion,
   dashboardProjectionScopeId,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
@@ -1268,7 +1267,6 @@ describe("API gateway routes", () => {
     });
     const projection = dashboardProjectionSchema.parse({
       schema: "checkout-surge.dashboard-projection",
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId: "corr-dashboard-failed",
@@ -1387,7 +1385,6 @@ describe("API gateway routes", () => {
     const failedScope = { runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer };
     const projection: DashboardProjection = {
       schema: "checkout-surge.dashboard-projection",
-      version: dashboardProjectionSchemaVersion,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId: "corr-dashboard-event",

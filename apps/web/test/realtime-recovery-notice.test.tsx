@@ -4,7 +4,6 @@ import {
   type DashboardProjection,
   dashboardEventsPath,
   dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
 } from "@checkout-surge/contracts";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
@@ -177,7 +176,6 @@ function available<T>(data: T): BackendRead<T> {
 function recoveryFixture(): DashboardProjection {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     scopeId: "idle",

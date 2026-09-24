@@ -1,7 +1,4 @@
-import {
-  dashboardProjectionSchemaName,
-  dashboardProjectionSchemaVersion,
-} from "@checkout-surge/contracts";
+import { dashboardProjectionSchemaName } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
@@ -121,7 +118,6 @@ function input(signal: AbortSignal, sourceKey = "source") {
 function recoveryFixture() {
   return {
     schema: dashboardProjectionSchemaName,
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready" as const,
     correlationId: "workflow-correlation",

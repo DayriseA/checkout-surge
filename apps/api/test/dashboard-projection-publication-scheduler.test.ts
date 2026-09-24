@@ -1,7 +1,6 @@
-import {
-  type DashboardProjection,
-  type DashboardProjectionDirtySignal,
-  dashboardProjectionSchemaVersion,
+import type {
+  DashboardProjection,
+  DashboardProjectionDirtySignal,
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -275,7 +274,6 @@ function exactSignal(
 function projection(correlationId: string, scopedRunId?: string): DashboardProjection {
   return {
     schema: "checkout-surge.dashboard-projection",
-    version: dashboardProjectionSchemaVersion,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
     correlationId,
