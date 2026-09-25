@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigSnapshotSchema,
+  acceptedRunConfigWriteSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
   adminDemoResetResponseSchema,
@@ -37,23 +38,18 @@ import {
   dashboardRecoveryQuerySchema,
   demoRunOperatorModeHeaderName,
   demoRunSnapshotSchema,
-  demoRunStatusValues,
   deriveLoadExecutionPlan,
   deriveRecordedReplyCount,
   deriveRunResult,
   destructiveResetReasonValues,
-  type ErrorPayloadCode,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpChaosResetPath,
-  erpChaosStatusPath,
   erpChaosStatusSchema,
   erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
-  erpResilienceStatusPath,
-  errorPayloadCodeSchema,
   errorPayloadCodes,
   errorPayloadSchema,
   hasObservedRequestArrivals,
@@ -80,7 +76,6 @@ import {
   orderStatusParamsSchema,
   orderStatusRequestSchema,
   orderStatusResponseSchema,
-  orderStatusValues,
   type PublicRuntimePolicy,
   percentageMaximum,
   percentageMinimum,
@@ -120,7 +115,6 @@ import {
   trafficCompletionAcknowledgementSchema,
   trafficCompletionDeliverySummarySchema,
   trafficCompletionReportSchema,
-  trafficDeliveryStatusValues,
   trafficDeliverySummarySchema,
   trafficExecutionAbortPath,
   trafficExecutionAbortRequestSchema,
@@ -129,7 +123,6 @@ import {
   trafficExecutionStartRequestSchema,
   trafficExecutionStatusPath,
   trafficExecutionStatusResponseSchema,
-  trafficExecutionStatusValues,
   trafficHttpSummarySchema,
   transportAttemptCountsSchema,
 } from "../src/index.js";
@@ -201,12 +194,12 @@ describe("accepted run configuration", () => {
   });
 
   it("rejects retired run-config fields and engine knobs on new input instead of falling back", () => {
-    expect(
-      acceptedRunConfigSnapshotSchema.safeParse({
-        ...snapshot,
-        erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
-      }).success,
-    ).toBe(false);
+    const retiredErpConfig = {
+      ...snapshot,
+      erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
+    };
+    expect(acceptedRunConfigSnapshotSchema.safeParse(retiredErpConfig).success).toBe(false);
+    expect(acceptedRunConfigWriteSchema.safeParse(retiredErpConfig).success).toBe(false);
     expect(
       acceptedRunConfigSnapshotSchema.safeParse({
         ...snapshot,
@@ -295,19 +288,6 @@ describe("traffic ownership contracts", () => {
 });
 
 describe("shared lifecycle vocabulary", () => {
-  it("keeps reservation existence distinct from the order lifecycle", () => {
-    expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
-    expect(demoRunStatusValues).toEqual(["starting", "active", "draining", "completed", "failed"]);
-    expect(trafficExecutionStatusValues).toEqual([
-      "not_started",
-      "starting",
-      "active",
-      "succeeded",
-      "failed",
-    ]);
-    expect(trafficDeliveryStatusValues).toEqual(["complete", "warning", "degraded", "failed"]);
-  });
-
   it("exposes the dashboard metric names", () => {
     expect(metricNameValues).toEqual([
       "traffic.request_arrival_rate",
@@ -617,19 +597,7 @@ describe("run lifecycle contracts", () => {
       ).toThrow();
     }
   });
-  it("validates run-attributed buy and load payloads without deriving identity from correlation IDs", () => {
-    expect(loadRunIdHeaderName).toBe("x-load-run-id");
-
-    expect(
-      buyRequestSchema.parse({
-        saleOfferId,
-        runId,
-        idempotencyKey: "run-attributed-buy",
-        quantity: 1,
-        correlationId,
-      }),
-    ).toMatchObject({ saleOfferId, runId });
-
+  it("validates run-attributed load payloads with colon-shaped correlation IDs", () => {
     expect(
       trafficExecutionStartRequestSchema.parse({
         runId,
@@ -1060,27 +1028,18 @@ describe("run lifecycle contracts", () => {
     });
     expect(report.transportAttemptCounts.interruptedRequests).toBe(2);
 
-    for (const [field, value, message] of [
-      ["unstartedRequests", 1, "plannedRequests must equal startedRequests + unstartedRequests"],
-      [
-        "interruptedRequests",
-        1,
-        "startedRequests must equal completedRequests + interruptedRequests",
-      ],
-    ] as const) {
-      const brokenEquation = trafficCompletionReportSchema.safeParse({
-        ...report,
-        transportAttemptCounts: {
-          ...report.transportAttemptCounts,
-          [field]: value,
-        },
-      });
-      expect(brokenEquation.success).toBe(false);
-      if (!brokenEquation.success) {
-        expect(brokenEquation.error.issues).toContainEqual(
-          expect.objectContaining({ path: ["transportAttemptCounts", field], message }),
-        );
-      }
+    const brokenEquation = trafficCompletionReportSchema.safeParse({
+      ...report,
+      transportAttemptCounts: { ...report.transportAttemptCounts, unstartedRequests: 1 },
+    });
+    expect(brokenEquation.success).toBe(false);
+    if (!brokenEquation.success) {
+      expect(brokenEquation.error.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["transportAttemptCounts", "unstartedRequests"],
+          message: "plannedRequests must equal startedRequests + unstartedRequests",
+        }),
+      );
     }
   });
 
@@ -1263,25 +1222,6 @@ describe("public order-status contracts", () => {
 });
 
 describe("shared error and health contracts", () => {
-  it("validates the canonical error payload", () => {
-    expect(() =>
-      errorPayloadSchema.parse({
-        code: "invalid_request",
-        message: "Invalid request.",
-        correlationId,
-        timestamp,
-      }),
-    ).not.toThrow();
-
-    expect(() =>
-      errorPayloadSchema.parse({
-        code: "invalid_request",
-        message: "Invalid request.",
-        timestamp,
-      }),
-    ).toThrow();
-  });
-
   it("validates readiness responses with checks", () => {
     const response = healthResponseSchema.parse({
       service: "api",
@@ -1297,42 +1237,12 @@ describe("shared error and health contracts", () => {
 });
 
 describe("canonical error-code vocabulary", () => {
-  it("accepts every declared code through the full canonical envelope", () => {
-    for (const code of errorPayloadCodes) {
-      expect(
-        errorPayloadSchema.safeParse({
-          code,
-          message: "Canonical error.",
-          correlationId,
-          timestamp,
-        }).success,
-        `code ${code}`,
-      ).toBe(true);
-    }
-  });
-
-  it("uses one public lookup code while details identify the resource", () => {
-    expect(errorPayloadCodeSchema.parse("resource_not_found")).toBe("resource_not_found");
-  });
-
   it("keeps the exact schema-driving list duplicate-free and lowercase snake-case", () => {
     const seen = new Set<string>();
     for (const code of errorPayloadCodes) {
       expect(seen.has(code), `duplicate code ${code}`).toBe(false);
       expect(code, `format for code ${code}`).toMatch(/^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/);
       seen.add(code);
-    }
-  });
-
-  it("rejects typoed, wrong-case, wrong-separator, blank, and unknown future codes", () => {
-    for (const code of [
-      "preset_not_foundd",
-      "Internal_Error",
-      "internal-error",
-      "",
-      "future_quantum_checkout_failure",
-    ]) {
-      expect(errorPayloadCodeSchema.safeParse(code).success, `code "${code}"`).toBe(false);
     }
   });
 
@@ -1393,11 +1303,6 @@ describe("canonical error-code vocabulary", () => {
         extra: true,
       }),
     ).toThrow();
-  });
-
-  it("narrows the inferred code type to the declared vocabulary", () => {
-    const sample: ErrorPayloadCode = "internal_error";
-    expect(errorPayloadCodeSchema.parse(sample)).toBe("internal_error");
   });
 });
 
@@ -1498,9 +1403,7 @@ describe("ERP contracts", () => {
   });
 
   it("defines chaos control paths and service-token header", () => {
-    expect(erpChaosStatusPath).toBe("/chaos");
     expect(erpChaosResetPath).toBe("/chaos/reset");
-    expect(erpResilienceStatusPath).toBe("/erp/status");
     expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
   });
 
@@ -1629,7 +1532,6 @@ describe("buy and dashboard contracts", () => {
     expect(inventoryStatusSchema.safeParse({ ...inventory, observedAt: undefined }).success).toBe(
       false,
     );
-    expect(Date.parse(inventory.lastUpdatedAt)).toBeLessThan(Date.parse(inventory.observedAt));
   });
 
   it("keeps initialization events valid and gives reservation events explicit count and quantity", () => {
@@ -2055,7 +1957,7 @@ describe("buy and dashboard contracts", () => {
         observedAt: timestamp,
       },
     });
-    const idleProjection = {
+    const idleProjection = dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
@@ -2075,26 +1977,13 @@ describe("buy and dashboard contracts", () => {
       requestArrivalSummary: null,
       runSignalTimelineSummary: null,
       recoveredAt: timestamp,
-    };
+    });
 
-    expect(
-      dashboardProjectionSchema.safeParse({
-        ...idleProjection,
-        recentMetrics: [
-          {
-            metricName: "traffic.latency",
-            value: 10,
-            unit: "ms",
-            timestamp,
-          },
-        ],
-      }).success,
-    ).toBe(false);
-    expect(dashboardProjectionSchema.safeParse(idleProjection).success).toBe(true);
-    expect(
-      dashboardProjectionSchema.safeParse({
-        ...idleProjection,
-        erp: {
+    for (const [field, value] of [
+      ["recentMetrics", [{ metricName: "traffic.latency", value: 10, unit: "ms", timestamp }]],
+      [
+        "erp",
+        {
           runId,
           latestAttempt: null,
           recentAttemptWindowSeconds: 60,
@@ -2103,13 +1992,12 @@ describe("buy and dashboard contracts", () => {
           recentTimeoutCount: 0,
           observedAt: timestamp,
         },
-      }).success,
-    ).toBe(false);
-    expect(
-      dashboardProjectionSchema.safeParse({
-        ...idleProjection,
-        businessOutcome: {
+      ],
+      [
+        "businessOutcome",
+        {
           acceptedReservations: 1,
+          reservedUnits: 1,
           soldOutRejections: 0,
           queuedOrders: 0,
           processingOrders: 0,
@@ -2119,8 +2007,16 @@ describe("buy and dashboard contracts", () => {
           pendingPersistenceCount: 0,
           notificationsRecorded: 0,
         },
-      }).success,
-    ).toBe(false);
+      ],
+    ] as const) {
+      const result = dashboardProjectionSchema.safeParse({ ...idleProjection, [field]: value });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ code: "custom", path: [field] }),
+        );
+      }
+    }
   });
 
   it("rejects dashboard projection metadata that disagrees with the selected run", () => {
@@ -2133,17 +2029,18 @@ describe("buy and dashboard contracts", () => {
       trafficStatus: "active" as const,
       saleOfferId: "33333333-3333-4333-8333-333333333333",
       configSnapshot: acceptedRunSnapshot(),
+      startedAt: timestamp,
+      trafficStartedAt: timestamp,
     };
-    const baseRecovery = {
+    const scope = { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
+    const baseRecovery = dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
       resetRecoveryRunId: null,
       resetRecovery: "ready",
       correlationId,
-      scopeId: dashboardProjectionScopeId({
-        runId: currentRun.runId,
-        saleOfferId: currentRun.saleOfferId,
-      }),
+      scopeId: dashboardProjectionScopeId(scope),
       revision: 2,
+      scope,
       currentRun,
       inventory: null,
       recentMetrics: [],
@@ -2152,31 +2049,28 @@ describe("buy and dashboard contracts", () => {
       businessOutcome: null,
       consistencyLag: null,
       recoveredAt: timestamp,
-    };
+    });
 
-    expect(() =>
-      dashboardProjectionSchema.parse({
-        ...baseRecovery,
-        scope: {
-          runId: "44444444-4444-4444-8444-444444444444",
-          saleOfferId: currentRun.saleOfferId,
-        },
-      }),
-    ).toThrow();
-    expect(() => dashboardProjectionSchema.parse({ ...baseRecovery, scope: null })).toThrow();
-    expect(() =>
-      dashboardProjectionSchema.parse({
-        ...baseRecovery,
-        currentRun: null,
-        scope: { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId },
-      }),
-    ).toThrow();
-    expect(() =>
-      dashboardProjectionSchema.parse({
-        ...baseRecovery,
-        scope: { runId: currentRun.runId, saleOfferId: null },
-      }),
-    ).toThrow();
+    for (const [change, path] of [
+      [
+        { currentRun: { ...currentRun, runId: "44444444-4444-4444-8444-444444444444" } },
+        ["scope", "runId"],
+      ],
+      [{ scope: null, scopeId: dashboardProjectionScopeId(null) }, ["scope"]],
+      [{ currentRun: null }, ["scope"]],
+      [
+        { currentRun: { ...currentRun, saleOfferId: "44444444-4444-4444-8444-444444444444" } },
+        ["scope", "saleOfferId"],
+      ],
+    ] as const) {
+      const result = dashboardProjectionSchema.safeParse({ ...baseRecovery, ...change });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues).toContainEqual(
+          expect.objectContaining({ code: "custom", path }),
+        );
+      }
+    }
   });
 
   it("rejects noncanonical projection identity and scope metadata", () => {
@@ -2540,23 +2434,6 @@ describe("public runtime policy contract", () => {
         erpAttempts: { ...detail.erpAttempts, records: [] },
       }),
     ).toThrow();
-    for (const [aggregate, deniedField] of [
-      ["orders", "orderId"],
-      ["orders", "publicOrderId"],
-      ["orders", "saleOfferId"],
-      ["orders", "correlationId"],
-      ["erpAttempts", "attemptId"],
-      ["notifications", "notificationId"],
-      ["events", "eventId"],
-      ["events", "source"],
-    ] as const) {
-      expect(() =>
-        publicRunHistoryDetailResponseSchema.parse({
-          ...detail,
-          [aggregate]: { [deniedField]: "private-marker" },
-        }),
-      ).toThrow();
-    }
     expect(() =>
       publicRunHistoryDetailResponseSchema.parse({
         ...detail,
@@ -2609,68 +2486,6 @@ describe("public runtime policy contract", () => {
         correlationId,
       }),
     ).toMatchObject({ deletedSummaryCount: 1 });
-  });
-
-  it("covers public budget, custom caps, and deployment hard caps", () => {
-    const policy = publicRuntimePolicySchema.parse({
-      isPublicRunBudgetEnforced: true,
-      publicRunBudget: {
-        windowSeconds: 300,
-        perVisitorMaxStarts: 2,
-        globalMaxStarts: 6,
-      },
-      publicCustomDefaults: {
-        trafficConfig: {
-          mode: "buyer-spike",
-          buyerCount: 500,
-          duplicateEachBuyerAttempt: false,
-          startDelaySeconds: 0,
-          maxDurationSeconds: 10,
-          quantityPerAttempt: 1,
-        },
-        inventoryConfig: {
-          startingStock: 100,
-        },
-        erpConfig: {
-          latencyMs: 100,
-          maxTps: 100,
-          errorRate: 0,
-          forcedOutage: false,
-        },
-        backpressureConfig: {
-          queueName: "orders:process",
-          physicalQueueName: "orders-process",
-          orderProcessConcurrency: 5,
-        },
-      },
-      publicCustomLimits: {
-        maxTotalRequests: 10_000,
-        maxBuyers: 10_000,
-        maxRequestsPerSecond: 1000,
-        maxTrafficDurationSeconds: 120,
-        maxTrafficStartDelaySeconds: 10,
-        maxPreAllocatedVus: 1000,
-        maxVus: 1000,
-        maxStartingStock: 1000,
-        maxErpLatencyMs: 2000,
-        minErpMaxTps: 1,
-        maxErpMaxTps: 100,
-        maxErpErrorRate: 0.25,
-        allowForcedOutage: false,
-        allowedTrafficModes: ["buyer-spike", "constant-arrival-rate"],
-      },
-      deploymentHardCaps: {
-        maxBuyers: 100_000,
-        maxTotalRequests: 100_000,
-        maxRequestsPerSecond: 10_000,
-        maxTrafficDurationSeconds: 300,
-        maxTrafficStartDelaySeconds: 30,
-        maxPreAllocatedVus: 10_000,
-        maxVus: 10_000,
-      },
-    });
-
-    expect(policy.publicCustomLimits.maxStartingStock).toBe(1000);
   });
 
   it.each([

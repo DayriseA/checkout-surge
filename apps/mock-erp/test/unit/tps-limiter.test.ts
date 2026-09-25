@@ -1,4 +1,4 @@
-import type { ErpConfirmationRequest } from "@checkout-surge/contracts";
+import { type ErpConfirmationRequest, erpDispatchRateLimit } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
 import {
   ChaosConfirmationDecisionProvider,
@@ -26,6 +26,29 @@ const request: ErpConfirmationRequest = {
 };
 
 describe("SlidingWindowTpsLimiter", () => {
+  it("includes late arrivals from the leading native window in the sliding-second bound", () => {
+    const { max, duration } = erpDispatchRateLimit(250);
+    const arrivals = [0, ...Array<number>(max - 1).fill(duration - 1)];
+    for (let start = duration; start <= 1_012; start += duration) {
+      arrivals.push(...Array<number>(max).fill(start));
+    }
+    let now = 0;
+    const limiter = new SlidingWindowTpsLimiter({ nowMs: () => now });
+    let windowStart = 0;
+    let nativeCount = 0;
+    for (const at of arrivals) {
+      if (at - windowStart >= duration) {
+        windowStart = at;
+        nativeCount = 0;
+      }
+      expect(++nativeCount).toBeLessThanOrEqual(max);
+      now = at;
+      expect(limiter.acquire("run", 250)).toBe(true);
+    }
+    const slidingCount = arrivals.filter((at) => now - at < 1_000).length;
+    expect(slidingCount).toBe(234);
+  });
+
   it("allows exactly the cap and does not retain rejected attempts", () => {
     let nowMs = 0;
     const limiter = new SlidingWindowTpsLimiter({ nowMs: () => nowMs });

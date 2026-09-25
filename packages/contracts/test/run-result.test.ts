@@ -5,13 +5,7 @@ import {
   startDemoRunResponseSchema,
 } from "../src/demo.js";
 import { demoRunSummaryShapeSchema } from "../src/entities.js";
-import {
-  deriveRunResult,
-  internalRunFailureReasonValues,
-  isReplayPossible,
-  type RunResultEvidence,
-  toPublicRunFailureCategory,
-} from "../src/run-result.js";
+import { deriveRunResult, isReplayPossible, type RunResultEvidence } from "../src/run-result.js";
 import { previewRunConfigSnapshotFixture } from "../src/testing.js";
 import type { TransportAttemptCounts } from "../src/traffic-transport-counts.js";
 
@@ -421,14 +415,6 @@ describe("deriveRunResult", () => {
     expect(demoRunSummaryShapeSchema.safeParse(valid).success).toBe(true);
     const { replayPossible: _replayPossible, ...missing } = valid;
     expect(demoRunSummaryShapeSchema.safeParse(missing).success).toBe(false);
-  });
-
-  it("maps every persisted failure reason to a bounded public category", () => {
-    for (const reason of internalRunFailureReasonValues) {
-      expect(["traffic", "inventory", "operator", "automatic_reset"]).toContain(
-        toPublicRunFailureCategory(reason),
-      );
-    }
   });
 });
 

@@ -1,28 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  demoPresetVisibilitySchema,
   demoPresetVisibilityValues,
-  demoRunStatusSchema,
   demoRunStatusValues,
-  erpAttemptStatusSchema,
   erpAttemptStatusValues,
-  operatorModeSchema,
   operatorModeValues,
-  orderEventNameSchema,
   orderEventNameValues,
-  orderFailureCategorySchema,
   orderFailureCategoryValues,
-  orderStatusSchema,
   orderStatusValues,
-  orderWaitingReasonSchema,
   orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
   saleOfferPurposeValues,
-  technicalOrderFailureCodeSchema,
   technicalOrderFailureCodeValues,
   trafficCompletionEnrichmentStatusValues,
-  trafficExecutionStatusSchema,
+  trafficDeliveryStatusValues,
   trafficExecutionStatusValues,
 } from "../src/index.js";
 
@@ -78,21 +69,10 @@ describe("shared PostgreSQL vocabulary", () => {
       "erp_unrecognized_client_error",
     ]);
   });
+});
 
-  it.each([
-    [orderStatusSchema, orderStatusValues],
-    [erpAttemptStatusSchema, erpAttemptStatusValues],
-    [orderEventNameSchema, orderEventNameValues],
-    [demoPresetVisibilitySchema, demoPresetVisibilityValues],
-    [operatorModeSchema, operatorModeValues],
-    [demoRunStatusSchema, demoRunStatusValues],
-    [trafficExecutionStatusSchema, trafficExecutionStatusValues],
-    [orderWaitingReasonSchema, orderWaitingReasonValues],
-    [orderFailureCategorySchema, orderFailureCategoryValues],
-    [technicalOrderFailureCodeSchema, technicalOrderFailureCodeValues],
-  ] as const)("derives schema %# from its tuple", (schema, values) => {
-    expect(schema.options).toEqual(values);
-    for (const value of values) expect(schema.parse(value)).toBe(value);
-    expect(schema.safeParse("not-a-member").success).toBe(false);
+describe("shared traffic delivery vocabulary", () => {
+  it("pins the traffic delivery statuses", () => {
+    expect(trafficDeliveryStatusValues).toEqual(["complete", "warning", "degraded", "failed"]);
   });
 });

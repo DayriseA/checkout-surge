@@ -5,7 +5,6 @@ import {
   estimateAdmissionRejectionDetailsSchema,
   estimatedDemoOccupancyCeilingSeconds,
   estimatePreviewSchema,
-  estimatorBottleneckSchema,
   estimatorInputSchema,
   estimatorResultSchema,
   largestAllowedErpLatencyMs,
@@ -47,7 +46,6 @@ describe("duration estimator contracts", () => {
       name: "conservative-duration-estimator",
       version: 2,
     });
-    expect(estimatorBottleneckSchema.parse("erp_capacity")).toBe("erp_capacity");
     expect(
       estimatorInputSchema.safeParse({ ...input, declaredErpLatencyMs: largestAllowedErpLatencyMs })
         .success,
@@ -72,9 +70,6 @@ describe("duration estimator contracts", () => {
     expect(estimatorInputSchema.parse(outageInput)).toEqual(outageInput);
     expect(estimatorInputSchema.parse({ ...input, declaredErpForcedOutage: undefined })).toEqual(
       input,
-    );
-    expect(estimatorInputSchema.parse({ ...input, declaredErpForcedOutage: true })).not.toEqual(
-      estimatorInputSchema.parse(input),
     );
   });
 

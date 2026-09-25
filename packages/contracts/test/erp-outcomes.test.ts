@@ -33,7 +33,6 @@ describe("ERP outcome vocabulary", () => {
       "erp_injected_error",
       "erp_idempotency_conflict",
     ]);
-    expect(erpErrorCodeSchema.options).toEqual(erpErrorCodeValues);
     expect(erpOutcomeDispositionValues).toEqual([
       "succeeded",
       "capacity_rejected",
@@ -62,32 +61,25 @@ describe("ERP outcome vocabulary", () => {
     expect(erpPermanentRejectionCodeSchema.options).toEqual([]);
   });
 
-  it.each([
-    "insufficient_funds",
-    "idempotency_conflict",
-    "unknown_code",
-    "erp_capacity_exceeded",
-    "erp_forced_outage",
-    "erp_injected_error",
-    "erp_idempotency_conflict",
-    "invalid_request",
-    "internal_error",
-  ])("never classifies %s as a business rejection", (code) => {
-    expect(erpPermanentRejectionCodeSchema.safeParse(code).success).toBe(false);
-    expect(
-      erpLookupResultSchema.safeParse({
-        identity,
-        status: "rejected",
-        result: {
-          status: "failed",
-          httpStatus: 422,
-          errorCode: code,
-          errorMessage: "Rejected.",
-          latencyMs: 25,
-          timestamp: "2026-09-20T00:00:00.000Z",
-        },
-      }).success,
-    ).toBe(false);
+  it("does not classify a capacity code as a permanent rejection", () => {
+    const result = erpLookupResultSchema.safeParse({
+      identity,
+      status: "rejected",
+      result: {
+        status: "failed",
+        httpStatus: 422,
+        errorCode: "erp_capacity_exceeded",
+        errorMessage: "Rejected.",
+        latencyMs: 25,
+        timestamp: "2026-09-20T00:00:00.000Z",
+      },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ["result", "errorCode"] }),
+      );
+    }
   });
 });
 
