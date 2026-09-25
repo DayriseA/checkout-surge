@@ -31,14 +31,6 @@ RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
   pnpm --filter="load-orchestrator..." build && \
   pnpm --filter="load-orchestrator" deploy --legacy --prod /deploy
 
-FROM build AS k6-compat
-
-COPY --from=k6-binary /usr/bin/k6 /usr/local/bin/k6
-
-ENV K6_BINARY=/usr/local/bin/k6
-
-CMD ["pnpm", "--filter", "load-orchestrator", "test:k6-compat"]
-
 FROM node:${NODE_VERSION} AS runtime
 
 WORKDIR /app

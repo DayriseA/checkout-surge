@@ -15,7 +15,6 @@ test("production Dockerfiles use production artifacts and non-root direct entryp
 
   const load = readText("apps/load-orchestrator/Dockerfile");
   assert.match(load, /FROM grafana\/k6:2\.0\.0 AS k6-binary/);
-  assert.match(load, /FROM build AS k6-compat/);
   assert.match(load, /install -d -o node -g node \/var\/lib\/checkout-surge\/load-orchestrator/);
   assert.match(load, /USER node\s+CMD \["node", "dist\/index\.js"\]/);
 

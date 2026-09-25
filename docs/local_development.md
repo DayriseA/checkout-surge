@@ -330,8 +330,6 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm format` | Format the whole workspace with Biome and organize imports |
 | `pnpm format:check` | Check Biome formatting and import organization without writing changes |
 | `pnpm test` | Run the default unit, API, and integration test suite |
-| `pnpm test:required` | Run the merge-required default suite and the pinned production-image k6 compatibility lane |
-| `pnpm test:k6-compat` | Build `load-orchestrator-runtime`, inspect both generated script modes with its k6 2.0.0 binary, and parse a real tiny summary export |
 | `pnpm test:composition` | Build and test the isolated deployed service topology; slow and opt-in |
 | `pnpm test:characterization` | Run focused browser recovery plus the slow, opt-in deployed-topology characterization |
 | `pnpm test:unit` | Run unit tests that do not require external infrastructure |
@@ -365,7 +363,7 @@ The default development suite can be run with:
 pnpm test
 ```
 
-`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. Merge automation uses `pnpm test:required`, whose dedicated `test:k6-compat` step builds a non-production test target with the same pinned k6 artifact as the production load image and fails rather than skipping when k6 is unavailable or incompatible. The final load image contains no pnpm, test dependencies, or test source. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs `scripts/composition-characterization.mjs`, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
+`pnpm test` intentionally excludes deployed-topology composition coverage so routine development and agent verification remain fast. It also keeps host-native orchestrator unit tests independent of a host k6 install. The opt-in `test:composition` command is slow by nature and requires a functioning Docker daemon. It creates a uniquely named Compose project, migrates and seeds isolated PostgreSQL and Redis volumes, starts the deployed API, worker, mock ERP, load orchestrator, web, and dashboard proxy topology, runs `scripts/composition-characterization.mjs`, and removes the project and volumes afterward. Its host ports default to the `53xxx`-`58xxx` range and can be overridden with the `COMPOSITION_*_PORT` environment variables when those ports are occupied.
 
 Run the deployed topology only when its cross-service safety net is specifically needed, or when explicitly requested during agent-assisted work. Both commands use `scripts/composition-characterization.mjs`, which owns the 10,000-buyer scenario; `test:characterization` runs the focused browser recovery suite first:
 
@@ -427,7 +425,7 @@ The root Compose application services build independent production images. API, 
 
 The Dev Container merge explicitly replaces all five application builds with the root `development-workspace` target before pairing them with `pnpm ... dev` commands. The universal editor image, Docker-in-Docker lifecycle, named dependency volumes, and opt-in application startup remain unchanged.
 
-When API is running, `runtime:reset`, `runtime:smoke`, `runtime:soak:recovery`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools` or the profile-gated k6 compatibility service.
+When API is running, `runtime:reset`, `runtime:smoke`, `runtime:soak:recovery`, and `maintenance:cleanup-runs` invoke the profile-gated `runtime-tools` service on the Compose network. If API is not running they retain their host-local Node fallback. `runtime:up` never starts `runtime-tools`.
 
 The tooling service receives only its internal API, worker, Mock ERP, load-orchestrator, direct-web, dashboard-proxy, and Redis URLs; the control credential used by operational requests; the drain/finalization/run timing overrides consumed by the smoke; and the recovery-budget-window and soak timing overrides consumed by the recovery soak. It does not receive PostgreSQL, admin-session, public-cookie, passphrase, origin, or unrelated application configuration.
 

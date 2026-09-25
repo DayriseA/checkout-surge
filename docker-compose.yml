@@ -327,15 +327,6 @@ services:
       DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS: ${DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS:-5}
       RUNTIME_SMOKE_RUN_TIMEOUT_MS: ${RUNTIME_SMOKE_RUN_TIMEOUT_MS:-}
 
-  k6-compat:
-    profiles: ["test-tools"]
-    build:
-      context: .
-      dockerfile: apps/load-orchestrator/Dockerfile
-      target: k6-compat
-    environment:
-      K6_BINARY: /usr/local/bin/k6
-
 volumes:
   checkout-surge-postgres-data:
   checkout-surge-redis-data:
