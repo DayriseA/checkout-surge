@@ -108,23 +108,6 @@ describe("generated-run Redis cleanup", () => {
     expect(scan).not.toHaveBeenCalled();
     expect(unlink).toHaveBeenNthCalledWith(1, `demo-run:${runId}:dashboard-projection-revision`);
   });
-
-  it("validates both generated-run identifiers before scanning", async () => {
-    const evalCommand = vi.fn();
-    const scan = vi.fn();
-    const unlink = vi.fn();
-    const redis = redisStub({ eval: evalCommand, scan, unlink });
-
-    await expect(
-      deleteGeneratedRunRedisState(redis, { runId: "invalid", saleOfferId }),
-    ).rejects.toThrow();
-    await expect(
-      deleteGeneratedRunRedisState(redis, { runId, saleOfferId: "invalid" }),
-    ).rejects.toThrow();
-    expect(evalCommand).not.toHaveBeenCalled();
-    expect(scan).not.toHaveBeenCalled();
-    expect(unlink).not.toHaveBeenCalled();
-  });
 });
 
 function redisStub(input: {

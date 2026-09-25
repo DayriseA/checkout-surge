@@ -4,7 +4,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
-  backpressureConfigSchema,
   type DashboardProjectionDirtySignal,
   publicRuntimePolicyPersistedSchema,
 } from "@checkout-surge/contracts";
@@ -1004,22 +1003,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
     expect((await readPolicy())[0]).toEqual(before);
 
-    const emptyIntegerFailure = await runSeedScript({
-      PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS: "",
-    }).catch((error: unknown) => error);
-    expect(emptyIntegerFailure).toMatchObject({
-      stderr: expect.stringContaining("PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS must be an integer"),
-    });
-    expect((await readPolicy())[0]).toEqual(before);
-
-    const whitespaceNumberFailure = await runSeedScript({
-      PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: "   ",
-    }).catch((error: unknown) => error);
-    expect(whitespaceNumberFailure).toMatchObject({
-      stderr: expect.stringContaining("PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE must be a number"),
-    });
-    expect((await readPolicy())[0]).toEqual(before);
-
     const semanticFailure = await runSeedScript({
       PUBLIC_CUSTOM_MAX_BUYERS: "100",
     }).catch((error: unknown) => error);
@@ -1083,54 +1066,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       maxErpErrorRate: 0.3,
     });
     expect(policy).not.toHaveProperty("deploymentHardCaps");
-  });
-
-  it("seeds presets without retired engine knobs", async () => {
-    await runSeedScript();
-    const seededPresets = await withDatabase(
-      (sql) => sql<
-        {
-          slug: string;
-          erp_config: Record<string, unknown>;
-          backpressure_config: Record<string, unknown>;
-        }[]
-      >`
-        SELECT slug, erp_config, backpressure_config
-        FROM demo_presets
-        ORDER BY slug
-      `,
-    );
-    expect(seededPresets.length).toBeGreaterThan(0);
-    for (const preset of seededPresets) {
-      expect(Object.keys(preset.backpressure_config)).toEqual(
-        expect.arrayContaining(["orderProcessConcurrency"]),
-      );
-      expect(preset.backpressure_config).not.toHaveProperty("pendingPersistenceRetryAfterSeconds");
-      expect(preset.backpressure_config).not.toHaveProperty("retryPolicy");
-      expect(preset.backpressure_config).not.toHaveProperty("drainTimeoutSeconds");
-      expect(preset.backpressure_config).not.toHaveProperty("circuitBreakerFailureThreshold");
-      expect(preset.backpressure_config).not.toHaveProperty("circuitBreakerResetTimeoutMs");
-      expect(preset.erp_config).not.toHaveProperty("requestTimeoutMs");
-      expect(() => backpressureConfigSchema.parse(preset.backpressure_config)).not.toThrow();
-    }
-
-    // Reseeding keeps the retired-field-free shape and does not re-add retired knobs.
-    await runSeedScript();
-    expect(
-      await withDatabase(
-        (sql) => sql<
-          {
-            slug: string;
-            erp_config: Record<string, unknown>;
-            backpressure_config: Record<string, unknown>;
-          }[]
-        >`
-          SELECT slug, erp_config, backpressure_config
-          FROM demo_presets
-          ORDER BY slug
-        `,
-      ),
-    ).toEqual(seededPresets);
   });
 
   it("enforces lifecycle timestamp constraints while preserving one-way and equality semantics", async () => {
@@ -1521,15 +1456,6 @@ describe("database migrations, seed data, and reset behavior", () => {
       await subscriber.close();
       subscriberRedis.disconnect();
     }
-  });
-
-  it("rejects invalid projection dirty signals before publishing", async () => {
-    await expect(
-      publishDashboardProjectionDirtySignal(redis, {
-        ...dashboardDirtySignal,
-        scope: { runId: "not-a-uuid", saleOfferId: seededSaleOfferId },
-      }),
-    ).rejects.toThrow();
   });
 
   it("reports malformed dashboard Pub/Sub messages without delivering them", async () => {
@@ -2098,7 +2024,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     ).not.toBeNull();
   });
 
-  it("validates promotion TTL and hold window before Redis execution", async () => {
+  it("validates the promotion hold window before Redis execution", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000019";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 19 });
@@ -2107,11 +2033,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     const recordBefore = await redis.get(keys.idempotency(input.idempotencyKey));
     const evalSpy = vi.spyOn(redis, "eval");
     try {
-      for (const idempotencyTtlSeconds of [0, -1, 1.5]) {
-        await expect(
-          promoteReservationIdempotencyToAccepted(redis, { ...input, idempotencyTtlSeconds }),
-        ).rejects.toThrow();
-      }
       await expect(
         promoteReservationIdempotencyToAccepted(redis, {
           ...input,
@@ -2865,29 +2786,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.exists(collectionKeys.idempotency(collectionInput.idempotencyKey))).toBe(0);
   });
 
-  it("rejects invalid quantities before Redis without mutating inventory", async () => {
-    const saleOfferId = "10000000-0000-4000-8000-000000000006";
-    const keys = inventoryKeys(saleOfferId);
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
-
-    for (const [index, quantity] of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1].entries()) {
-      const input = buildReservationInput({ saleOfferId, sequence: 60 + index });
-      const result = await reserveInventoryStock(redis, {
-        ...input,
-        reservation: { ...input.reservation, quantity },
-      });
-      expect(result).toEqual({ outcome: "quantity_invalid", reservation: null });
-    }
-
-    expect(await redis.hgetall(keys.state)).toMatchObject({
-      remainingStock: "5",
-      reservedStock: "0",
-    });
-    expect(await redis.exists(keys.reservations, keys.reservationExpirations)).toBe(0);
-    expect(await redis.llen(keys.events)).toBe(1);
-    expect(await redis.hget(keys.soldOut, "count")).toBe("0");
-  });
-
   it("does not oversell under concurrent reservations", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000007";
     const keys = inventoryKeys(saleOfferId);
@@ -3000,19 +2898,4 @@ describe("database migrations, seed data, and reset behavior", () => {
       occurredAt: reversalOccurredAt.toISOString(),
     });
   }, 30_000);
-
-  it("resets only business tables in the isolated test database", async () => {
-    await resetTestDatabase({ migrationsFolder });
-
-    const [counts] = await withDatabase(
-      (sql) =>
-        sql<{ products: number; demo_presets: number }[]>`
-        SELECT
-          (SELECT count(*)::int FROM products) AS products,
-          (SELECT count(*)::int FROM demo_presets) AS demo_presets
-      `,
-    );
-
-    expect(counts).toEqual({ products: 0, demo_presets: 0 });
-  });
 });

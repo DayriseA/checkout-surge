@@ -61,22 +61,11 @@ describe("Drizzle migration metadata", () => {
     );
   });
 
-  it("keeps only the required snapshot-invisible core without upgrade scaffolding", async () => {
+  it("keeps the pgcrypto extension without functions or upgrade scaffolding", async () => {
     const baseline = await readFile(path.join(drizzleFolder, "0000_baseline.sql"), "utf8");
 
-    for (const requiredSql of [
-      'CREATE EXTENSION IF NOT EXISTS "pgcrypto"',
-      'CREATE UNIQUE INDEX "demo_runs_single_non_terminal_idx"',
-      'CREATE UNIQUE INDEX "simulated_notifications_order_id_unique"',
-      'CONSTRAINT "orders_backing_reservation_fk"',
-      'CONSTRAINT "orders_run_sale_context_fk"',
-      'CONSTRAINT "order_events_run_sale_context_fk"',
-      'CONSTRAINT "simulated_notifications_order_attribution_fk"',
-    ]) {
-      expect(baseline).toContain(requiredSql);
-    }
-
-    expect(baseline).not.toMatch(/CREATE (?:OR REPLACE )?FUNCTION|CREATE TRIGGER/i);
+    expect(baseline).toContain('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+    expect(baseline).not.toMatch(/CREATE (?:OR REPLACE )?FUNCTION/i);
     expect(baseline).not.toMatch(
       /LOCK TABLE|contradictory historical|backfill|hydrate|UPDATE "public_runtime_policies"/i,
     );

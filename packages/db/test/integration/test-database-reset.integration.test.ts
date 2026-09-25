@@ -136,10 +136,11 @@ describe("deterministic test database reset", () => {
       const pendingReset = reset().then(() => {
         completed = true;
       });
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitForWaitingAdvisoryLock(blocker.sql, lockKey);
       expect(completed).toBe(false);
       await blocker.sql`SELECT pg_advisory_unlock(hashtextextended(${lockKey}, 0))`;
       await pendingReset;
+      expect(completed).toBe(true);
     } finally {
       await blocker.close();
     }
@@ -159,6 +160,31 @@ async function withDatabase<T>(
   } finally {
     await connection.close();
   }
+}
+
+async function waitForWaitingAdvisoryLock(
+  sql: ReturnType<typeof createDatabaseConnection>["sql"],
+  lockKey: string,
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+
+  while (Date.now() < deadline) {
+    const [lock] = await sql<{ waiting: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND NOT granted
+          AND ((classid::bigint << 32) | objid::bigint) = hashtextextended(${lockKey}, 0)
+      ) AS waiting
+    `;
+    if (lock?.waiting) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error("Timed out waiting for the reset to block on its advisory lock.");
 }
 
 async function readMigrationCount(folder: string): Promise<number> {

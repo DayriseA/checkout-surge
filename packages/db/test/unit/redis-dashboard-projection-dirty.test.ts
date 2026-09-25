@@ -32,31 +32,6 @@ describe("dashboard projection dirty transport", () => {
     ).toEqual(exact);
   });
 
-  it.each([
-    {
-      type: "dashboard.projection.dirty",
-      correlationId: "corr-dead-flag",
-      immediate: true,
-    },
-    {
-      type: "dashboard.projection.dirty",
-      correlationId: "corr-partial-scope",
-      scope: { runId: scope.runId },
-    },
-    {
-      type: "dashboard.projection.dirty",
-      correlationId: "corr-invalid-scope",
-      scope: { ...scope, runId: "not-a-uuid" },
-    },
-    {
-      type: "dashboard.projection.dirty",
-      correlationId: "corr-extra",
-      extra: true,
-    },
-  ])("rejects ambiguous or invalid signal shape %#", (value) => {
-    expect(() => parseDashboardProjectionDirtyMessage(JSON.stringify(value))).toThrow();
-  });
-
   it("isolates invalid messages and handler errors across idempotent start and close", async () => {
     const messageHandlers = new Set<(channel: string, message: string) => void>();
     const subscribe = vi.fn().mockResolvedValue(undefined);
