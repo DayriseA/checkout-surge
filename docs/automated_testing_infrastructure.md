@@ -53,7 +53,7 @@ The checked-in commands support Linux host-native development, local Dev Contain
 
 - Focused browser-workflow tests exercise recovery behavior with controlled backend boundaries.
 - `pnpm test:composition` starts an isolated deployed API, worker, mock ERP, load orchestrator, web app, dashboard proxy, PostgreSQL, and Redis topology through `scripts/composition-characterization.mjs`. That implementation owns wiring, SSE reconnect, sold-out and duplicate behavior, worker/ERP/notification handoffs, finalization/history, and the representative 10,000-buyer scenario.
-- `pnpm test:characterization` runs the focused browser workflow followed by the same `scripts/composition-characterization.mjs` deployed topology.
+- `pnpm test:characterization` runs the same `scripts/composition-characterization.mjs` deployed topology. The focused browser workflow runs in the web unit lane.
 - Composition state uses a unique Compose project and disposable volumes and is removed by default. `COMPOSITION_KEEP_RUNTIME=true` retains a failed runtime for inspection.
 - The composition and characterization suites are intentionally excluded from `pnpm test` because they are slow and require a functioning Docker daemon. Repository agents must not run those two suites unless explicitly requested. Host-native unit tests remain independent of a host k6 installation.
 - k6 characterization complements correctness tests; it does not replace focused boundary coverage.
@@ -71,14 +71,14 @@ The repository provides these root scripts:
 - `pnpm test:integration` runs only tests that require PostgreSQL and/or Redis test services.
 - `pnpm test:api` runs only API/service-boundary tests.
 - `pnpm test:watch` runs the fast unit test loop for active development.
-- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB and worker integration owners through package-local Turbo scripts. Mock ERP behavior is covered at its process-local service boundary and has no database integration lane. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running it and always stop them with `pnpm test:infra:down` afterward.
+- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB, worker, and Mock ERP integration owners through package-local Turbo scripts. Mock ERP has a PostgreSQL confirmation-ledger integration lane, also run by `pnpm test`. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running coverage and always stop them with `pnpm test:infra:down` afterward.
 - `pnpm test:coverage:unit` is the explicitly fast, infrastructure-free unit-only coverage command.
 - `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
 - `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.
 - `pnpm test:infra:reset` deletes and recreates only the dedicated test PostgreSQL/Redis services and volumes, then waits for readiness.
 - `pnpm test:db:migrate` destructively rebuilds only the approved `@checkout-surge/db` package-isolated test database from the reviewed baseline, creating it on demand. It is a focused verification aid; tests provision and rebuild their package-isolated databases automatically.
 - `pnpm test:composition` runs the slow isolated deployed-topology and 10,000-buyer characterization through `scripts/composition-characterization.mjs`.
-- `pnpm test:characterization` runs focused browser recovery coverage and then the same `scripts/composition-characterization.mjs` implementation.
+- `pnpm test:characterization` runs the same `scripts/composition-characterization.mjs` implementation.
 
 Package and app-level scripts should use the same names where applicable so Turbo can orchestrate them predictably.
 
@@ -86,7 +86,7 @@ Tier membership lives in package manifests. Root unit, API, integration, watch, 
 
 The repository does not maintain a separate test that parses package manifests and asserts the command graph as text. The commands themselves, package-local Vitest configurations, root type-check, and focused script tests are the authoritative evidence; this avoids turning test-runner wiring into a second mechanically synchronized product.
 
-The suite also does not parse every admin route or Caddy configuration as source text. Admin proxy behavior is exercised through the route tests, and exact SSE routing is exercised by the deployed runtime workflows. `scripts/runtime-image-contract.test.mjs` retains only the smallest static packaging evidence that is not cheaply observable in those workflows: non-root direct entrypoints, deployable artifact allowlists, standalone/migration packaging, and build-context secret exclusions.
+The suite does not parse every admin route as source text. Admin proxy behavior is exercised through the route tests, and exact SSE routing is exercised by the deployed runtime workflows. `scripts/runtime-image-contract.test.mjs` checks non-root direct entrypoints, deployable artifact allowlists, standalone web tracing, build-context secret exclusions, and Caddy/Compose fragments for the Codespaces origin rewrite. The fragment checks do not prove the combined proxy behavior.
 
 Coverage uses V8 and the shared policy in `vitest.coverage.config.ts`. Every lane explicitly includes all production `src/**/*.ts` and `src/**/*.tsx` files and excludes only source declaration files, so unexecuted production modules count against the initial 10% statements, branches, functions, and lines floor and named high-risk paths remain visible. The floors are evaluated independently for each package/tier lane, not against a globally merged repository report. Every lane writes text output and `coverage-summary.json` to its unique `coverage/<owner>-<tier>` directory, including reports from failed test runs where Vitest permits. A future CI caller should provision and clean up test infrastructure around the same root command and retain those directories; this repository does not currently claim a hosted CI coverage gate.
 
@@ -255,4 +255,4 @@ The repository's testing foundation provides:
 - deterministic DB and Redis reset rules,
 - Dev Container and Codespaces port/config support,
 - service app factories and dependency injection for clean integration tests,
-- opt-in browser and deployed-topology characterization without slowing the default suite.
+- browser workflow tests in the default web unit lane, and opt-in deployed-topology characterization without slowing the default suite.

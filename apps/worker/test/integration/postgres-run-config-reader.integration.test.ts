@@ -10,7 +10,7 @@ import {
   saleOffers,
   terminalDemoRunTransitionLockKey,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PostgresGeneratedRunPublicationFence } from "../../src/persistence/postgres-generated-run-publication-fence.js";
@@ -22,20 +22,16 @@ import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-pro
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.resolve(packageRoot, "../../packages/db/drizzle");
-const databaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = requireTestDatabaseUrl();
 const presetId = "57575757-1000-4000-8000-000000000001";
 const runId = "57575757-1000-4000-8000-000000000002";
 const productId = "57575757-1000-4000-8000-000000000003";
 const saleOfferId = "57575757-1000-4000-8000-000000000004";
 
-describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
+describe("PostgresRunConfigReader", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
 
   beforeEach(async () => {
-    if (!databaseUrl) {
-      throw new Error("TEST_DATABASE_URL is required for run-config reader integration tests.");
-    }
-
     await connection?.close();
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     connection = createDatabaseConnection(databaseUrl, { max: 1 });
@@ -151,7 +147,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
   });
 
   it("holds the shared publication lock through queue add before terminal cleanup can proceed", async () => {
-    if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required.");
     const terminalConnection = createDatabaseConnection(databaseUrl, { max: 1 });
     const events: string[] = [];
     let enterAdd: () => void = () => undefined;
@@ -209,7 +204,6 @@ describe.skipIf(!databaseUrl)("PostgresRunConfigReader", () => {
   });
 
   it("refuses queue add when a concurrent terminal transition wins the publication lock", async () => {
-    if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required.");
     const terminalConnection = createDatabaseConnection(databaseUrl, { max: 1 });
     let reportTerminalLocked: () => void = () => undefined;
     let releaseTerminal: () => void = () => undefined;

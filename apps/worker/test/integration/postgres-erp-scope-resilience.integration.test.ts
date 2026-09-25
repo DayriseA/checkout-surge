@@ -1,18 +1,13 @@
 import { createDatabaseConnection, erpScopeResilienceState } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import { PostgresErpScopeResiliencePersistence } from "../../src/persistence/postgres-erp-scope-resilience-persistence.js";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const run = databaseUrl ? describe : describe.skip;
-const requireDatabaseUrl = () => {
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for integration tests.");
-  return databaseUrl;
-};
+const databaseUrl = requireTestDatabaseUrl();
 
-run("PostgreSQL ERP scope resilience state", () => {
+describe("PostgreSQL ERP scope resilience state", () => {
   const connection = databaseUrl ? createDatabaseConnection(databaseUrl, { max: 2 }) : null;
   const requireConnection = () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
@@ -22,7 +17,7 @@ run("PostgreSQL ERP scope resilience state", () => {
 
   beforeEach(async () => {
     await resetTestDatabase({
-      databaseUrl: requireDatabaseUrl(),
+      databaseUrl,
       migrationsFolder: "../../packages/db/drizzle",
     });
     persistence = new PostgresErpScopeResiliencePersistence(requireConnection().db);

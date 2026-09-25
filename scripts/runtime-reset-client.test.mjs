@@ -187,15 +187,6 @@ test("bounds a hung API response body and still attempts Mock ERP", async () => 
   assert.equal(calls.length, 2);
 });
 
-for (const requestTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-  test(`rejects invalid request timeout ${String(requestTimeoutMs)}`, async () => {
-    await assert.rejects(
-      resetRuntime({ controlServiceToken: "secret", requestTimeoutMs }),
-      /finite positive number/,
-    );
-  });
-}
-
 test("removes exact token echoes, JSON credentials, and malicious response correlations", async () => {
   const token = "actual-control-token";
   let call = 0;

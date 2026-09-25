@@ -22,7 +22,7 @@
     "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/env-utils.test.mjs scripts/maintenance-cleanup-runs.test.mjs scripts/run-in-compose.test.mjs scripts/runtime-image-contract.test.mjs scripts/runtime-recovery-soak.test.mjs scripts/runtime-smoke.test.mjs scripts/runtime-acceptance.test.mjs scripts/runtime-reset-client.test.mjs",
     "test:integration": "turbo run test:integration",
     "test:api": "turbo run test:api",
-    "test:characterization": "pnpm build:shared && pnpm --filter web exec node ../../scripts/run-with-test-env.mjs vitest run --config vitest.config.ts test/browser-workflows.test.ts && node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",
+    "test:characterization": "pnpm build:shared && node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",
     "test:composition": "node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",
     "test:watch": "turbo run test:unit:watch",
     "test:coverage": "turbo run test:coverage:unit test:coverage:api test:coverage:integration --continue=always --concurrency=50%",

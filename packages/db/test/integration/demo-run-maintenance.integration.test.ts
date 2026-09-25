@@ -14,10 +14,9 @@ import {
   orderRecoveryJobs,
   simulatedNotifications,
 } from "../../src/index.js";
-import { resetTestDatabase } from "../../src/testing.js";
+import { requireTestDatabaseUrl, resetTestDatabase } from "../../src/testing.js";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const run = databaseUrl ? describe : describe.skip;
+const databaseUrl = requireTestDatabaseUrl();
 const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
 const ids = {
@@ -97,7 +96,7 @@ async function seedGeneratedRunWithTerminalOrder(sql: TestSql): Promise<void> {
   `;
 }
 
-run("generated-run durable maintenance with processing-control data", () => {
+describe("generated-run durable maintenance with processing-control data", () => {
   let connection: ReturnType<typeof createDatabaseConnection> | null = null;
   const requireConnection = () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
@@ -106,7 +105,7 @@ run("generated-run durable maintenance with processing-control data", () => {
 
   beforeAll(async () => {
     await resetTestDatabase({ migrationsFolder });
-    connection = createDatabaseConnection(databaseUrl ?? "", { max: 2 });
+    connection = createDatabaseConnection(databaseUrl, { max: 2 });
   });
   beforeEach(async () => {
     await resetTestDatabase({ migrationsFolder });

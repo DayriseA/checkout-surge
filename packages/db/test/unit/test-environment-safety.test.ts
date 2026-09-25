@@ -18,14 +18,7 @@ afterEach(() => {
 describe("destructive database helper safety", () => {
   it.each([
     "checkout_surge_test",
-    "checkout_surge_test_api",
-    "checkout_surge_test_worker",
     "checkout_surge_test_db",
-    "checkout_surge_test_web",
-    "checkout_surge_test_load_orchestrator",
-    "checkout_surge_test_contracts",
-    "checkout_surge_test_logger",
-    "checkout_surge_test_mock_erp",
   ])("accepts approved database %s", (databaseName) => {
     process.env.ALLOW_TEST_DEFAULT_PORTS = "";
     expect(() =>

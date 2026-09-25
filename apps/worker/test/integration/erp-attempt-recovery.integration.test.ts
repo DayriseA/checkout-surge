@@ -15,7 +15,7 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
@@ -36,12 +36,7 @@ import {
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const run = databaseUrl ? describe : describe.skip;
-const requireDatabaseUrl = () => {
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for integration tests.");
-  return databaseUrl;
-};
+const databaseUrl = requireTestDatabaseUrl();
 const ids = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   offer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
@@ -59,7 +54,7 @@ const job: OrderProcessJob = {
   processingGeneration: 0,
 };
 
-run("PostgreSQL ERP attempt recovery", () => {
+describe("PostgreSQL ERP attempt recovery", () => {
   const connection = databaseUrl ? createDatabaseConnection(databaseUrl, { max: 4 }) : null;
   const requireConnection = () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
@@ -75,7 +70,7 @@ run("PostgreSQL ERP attempt recovery", () => {
 
   beforeEach(async () => {
     await resetTestDatabase({
-      databaseUrl: requireDatabaseUrl(),
+      databaseUrl,
       migrationsFolder: "../../packages/db/drizzle",
     });
     await requireConnection().db.insert(products).values({

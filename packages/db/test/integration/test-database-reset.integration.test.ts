@@ -5,13 +5,13 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabaseConnection } from "../../src/client.js";
 import { runDatabaseMigrations } from "../../src/migrations.js";
-import { resetTestDatabase } from "../../src/testing.js";
+import { requireTestDatabaseUrl, resetTestDatabase } from "../../src/testing.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
-const databaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = requireTestDatabaseUrl();
 
-describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
+describe("deterministic test database reset", () => {
   beforeAll(async () => {
     await reset();
   });
@@ -28,7 +28,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     try {
       const expectedMigrationCount = await readMigrationCount(temporaryMigrations);
       await resetTestDatabase({
-        databaseUrl: requireDatabaseUrl(),
+        databaseUrl,
         migrationsFolder: temporaryMigrations,
       });
       await withDatabase(async (sql) => {
@@ -36,7 +36,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
       });
 
       await resetTestDatabase({
-        databaseUrl: requireDatabaseUrl(),
+        databaseUrl,
         migrationsFolder: temporaryMigrations,
       });
 
@@ -92,7 +92,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
 
     await expect(
       runDatabaseMigrations({
-        databaseUrl: requireDatabaseUrl(),
+        databaseUrl,
         expectedDatabaseName: "checkout_surge_test_logger",
         migrationsFolder,
       }),
@@ -112,7 +112,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
     try {
       await expect(
         resetTestDatabase({
-          databaseUrl: requireDatabaseUrl(),
+          databaseUrl,
           migrationsFolder: temporaryMigrations,
         }),
       ).rejects.toThrow();
@@ -124,7 +124,7 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
   });
 
   it("serializes rebuilds with the administration-database advisory lock", async () => {
-    const administrationUrl = new URL(requireDatabaseUrl());
+    const administrationUrl = new URL(databaseUrl);
     const databaseName = administrationUrl.pathname.slice(1);
     administrationUrl.pathname = "/postgres";
     const blocker = createDatabaseConnection(administrationUrl.toString(), { max: 1 });
@@ -147,13 +147,13 @@ describe.skipIf(!databaseUrl)("deterministic test database reset", () => {
 });
 
 async function reset(): Promise<void> {
-  await resetTestDatabase({ databaseUrl: requireDatabaseUrl(), migrationsFolder });
+  await resetTestDatabase({ databaseUrl, migrationsFolder });
 }
 
 async function withDatabase<T>(
   action: (sql: ReturnType<typeof createDatabaseConnection>["sql"]) => Promise<T>,
 ): Promise<T> {
-  const connection = createDatabaseConnection(requireDatabaseUrl(), { max: 1 });
+  const connection = createDatabaseConnection(databaseUrl, { max: 1 });
   try {
     return await action(connection.sql);
   } finally {
@@ -186,11 +186,4 @@ async function createTemporaryMigrations(sql: string): Promise<string> {
   await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   await writeFile(path.join(folder, "9999_test_reset_probe.sql"), sql);
   return folder;
-}
-
-function requireDatabaseUrl(): string {
-  if (!databaseUrl) {
-    throw new Error("TEST_DATABASE_URL is required for reset integration tests.");
-  }
-  return databaseUrl;
 }

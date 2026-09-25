@@ -23,20 +23,16 @@ import {
   saleOffers,
   simulatedNotifications,
 } from "../../src/schema.js";
-import { resetTestDatabase } from "../../src/testing.js";
+import { requireTestDatabaseUrl, resetTestDatabase } from "../../src/testing.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
-const databaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = requireTestDatabaseUrl();
 
-describe.skipIf(!databaseUrl)("business outcome dashboard projection", () => {
+describe("business outcome dashboard projection", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
 
   beforeAll(async () => {
-    if (!databaseUrl) {
-      throw new Error("TEST_DATABASE_URL is required for business outcome dashboard tests.");
-    }
-
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     connection = createDatabaseConnection(databaseUrl, { max: 1 });
   });

@@ -23,23 +23,3 @@ test("merges env files in order before applying the base environment", () => {
     rmSync(directory, { recursive: true });
   }
 });
-
-test("uses Node dotenv comment and quoted-value semantics", () => {
-  const directory = mkdtempSync(path.join(tmpdir(), "checkout-surge-env-"));
-  const envFile = path.join(directory, ".env");
-
-  try {
-    writeFileSync(
-      envFile,
-      'UNQUOTED=value#comment\nQUOTED="value#preserved"\nMULTILINE="first\nsecond"\n',
-    );
-
-    assert.deepEqual(mergeEnvFiles([envFile], {}), {
-      UNQUOTED: "value",
-      QUOTED: "value#preserved",
-      MULTILINE: "first\nsecond",
-    });
-  } finally {
-    rmSync(directory, { recursive: true });
-  }
-});

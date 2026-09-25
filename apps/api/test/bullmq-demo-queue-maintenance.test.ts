@@ -19,7 +19,9 @@ import {
 const runId = "55555555-5555-4555-8555-555555555554";
 const secondRunId = "55555555-5555-4555-8555-555555555553";
 const otherRunId = "55555555-5555-4555-8555-555555555555";
-const connection = { url: process.env.TEST_REDIS_URL ?? "redis://localhost:6380" };
+const redisUrl = process.env.TEST_REDIS_URL;
+if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
+const connection = { url: redisUrl };
 const resources: Array<{ close(): Promise<void> }> = [];
 
 afterEach(async () => {

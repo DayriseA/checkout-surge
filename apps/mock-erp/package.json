@@ -15,7 +15,8 @@
     "test:unit": "vitest run --config vitest.unit.config.ts",
     "test:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts",
     "test:unit:watch": "vitest --watch --config vitest.unit.config.ts",
-    "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage"
+    "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage",
+    "test:coverage:integration": "node ../../scripts/run-with-test-env.mjs vitest run --config vitest.integration.config.ts --coverage"
   },
   "dependencies": {
     "@checkout-surge/contracts": "workspace:*",

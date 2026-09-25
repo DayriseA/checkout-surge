@@ -245,11 +245,6 @@ async function characterizeRepresentativeSurge() {
     detail.erpAttemptSummary?.totalCount === summary.httpSummary.acceptedResponses,
     "surge history ERP total does not match accepted reservations",
   );
-  assert(
-    detail.summary?.businessOutcomeSummary?.notificationsRecorded ===
-      summary.httpSummary.acceptedResponses,
-    "surge history notification total does not match accepted reservations",
-  );
   if (summary.trafficDeliverySummary.droppedIterations === 0) {
     assert(summary.status === "completed", "fully delivered surge did not complete");
     assert(

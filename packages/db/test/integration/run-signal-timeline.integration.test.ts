@@ -15,11 +15,11 @@ import {
   reservations,
   saleOffers,
 } from "../../src/schema.js";
-import { resetTestDatabase } from "../../src/testing.js";
+import { requireTestDatabaseUrl, resetTestDatabase } from "../../src/testing.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
-const databaseUrl = process.env.TEST_DATABASE_URL;
+const databaseUrl = requireTestDatabaseUrl();
 const anchoredAt = new Date("2026-07-20T12:00:00.000Z");
 const capturedAt = new Date("2026-07-20T12:03:00.000Z");
 const ids = {
@@ -29,11 +29,10 @@ const ids = {
   run: "a3000000-0000-4000-8000-000000000004",
 } as const;
 
-describe.skipIf(!databaseUrl)("durable run signal timeline", () => {
+describe("durable run signal timeline", () => {
   let connection: ReturnType<typeof createDatabaseConnection>;
 
   beforeAll(async () => {
-    if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required.");
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     connection = createDatabaseConnection(databaseUrl, { max: 1 });
     await seedRun(connection.db);

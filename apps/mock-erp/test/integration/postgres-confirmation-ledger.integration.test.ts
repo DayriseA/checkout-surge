@@ -11,7 +11,7 @@ import {
   erpReplayedResponseHeaderName,
 } from "@checkout-surge/contracts";
 import { createDatabaseConnection } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ConfirmationIdempotencyConflictError,
@@ -19,8 +19,7 @@ import {
 } from "../../src/application/confirmation-service.js";
 import { PostgresConfirmationLedger } from "../../src/persistence/postgres-confirmation-ledger.js";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const run = databaseUrl ? describe : describe.skip;
+const databaseUrl = requireTestDatabaseUrl();
 const migrationsFolder = fileURLToPath(new URL("../../../../packages/db/drizzle", import.meta.url));
 const mockErpRoot = fileURLToPath(new URL("../..", import.meta.url));
 const mockErpEntryPoint = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
@@ -35,11 +34,11 @@ const request: ErpConfirmationRequest = {
   quantity: 1,
 };
 
-run("PostgreSQL confirmation ledger", () => {
+describe("PostgreSQL confirmation ledger", () => {
   const connections: Array<ReturnType<typeof createDatabaseConnection>> = [];
   const runtimes: MockErpProcess[] = [];
   const connect = () => {
-    const connection = createDatabaseConnection(databaseUrl ?? "", { max: 2 });
+    const connection = createDatabaseConnection(databaseUrl, { max: 2 });
     connections.push(connection);
     return connection;
   };

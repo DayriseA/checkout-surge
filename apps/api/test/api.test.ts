@@ -3498,7 +3498,9 @@ describe("API buy persistence", () => {
     connection = null;
     await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
-    redis ??= createRedisClient(process.env.TEST_REDIS_URL ?? "redis://localhost:6380", {
+    const redisUrl = process.env.TEST_REDIS_URL;
+    if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
+    redis ??= createRedisClient(redisUrl, {
       maxRetriesPerRequest: 3,
     });
     await redis.flushdb();
@@ -3763,7 +3765,8 @@ describe("API buy persistence", () => {
       throw new Error("Test infrastructure was not initialized.");
     }
 
-    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const redisUrl = process.env.TEST_REDIS_URL;
+    if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
     const publisher = createBullMqOrderProcessJobPublisher({
       url: redisUrl,
       maxRetriesPerRequest: 3,
@@ -3851,7 +3854,8 @@ describe("API buy persistence", () => {
       throw new Error("Test Redis was not initialized.");
     }
 
-    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const redisUrl = process.env.TEST_REDIS_URL;
+    if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
     const connectionOptions = { url: redisUrl, maxRetriesPerRequest: 3 } as const;
     const queue = new Queue<OrderProcessJob, void, typeof orderProcessJobName>(
       orderProcessBullMqQueueName,
@@ -3976,7 +3980,8 @@ describe("API buy persistence", () => {
       throw new Error("Test infrastructure was not initialized.");
     }
 
-    const redisUrl = process.env.TEST_REDIS_URL ?? "redis://localhost:6380";
+    const redisUrl = process.env.TEST_REDIS_URL;
+    if (!redisUrl) throw new Error("TEST_REDIS_URL is required for API tests.");
     const publisher = createBullMqOrderProcessJobPublisher({
       url: redisUrl,
       maxRetriesPerRequest: 3,

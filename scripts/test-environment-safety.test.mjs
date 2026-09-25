@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import ts from "typescript";
 import { assertSafePostgresUrl, assertSafeTestEnvironment } from "./test-environment-safety.mjs";
 
 const safeEnvironment = {
@@ -10,22 +12,45 @@ const safeEnvironment = {
 };
 
 describe("test command environment safety", () => {
-  it("accepts the base and repository package-isolated database names", () => {
-    for (const databaseName of [
-      "checkout_surge_test",
-      "checkout_surge_test_api",
-      "checkout_surge_test_worker",
-      "checkout_surge_test_db",
-      "checkout_surge_test_web",
-      "checkout_surge_test_load_orchestrator",
-      "checkout_surge_test_contracts",
-      "checkout_surge_test_logger",
-      "checkout_surge_test_mock_erp",
-    ]) {
+  it("accepts the base and a package-isolated database name", () => {
+    for (const databaseName of ["checkout_surge_test", "checkout_surge_test_api"]) {
       assert.doesNotThrow(() =>
         assertSafePostgresUrl(`postgresql://localhost:56432/${databaseName}`),
       );
     }
+  });
+
+  it("keeps script and database validators in agreement", async () => {
+    const source = readFileSync(
+      new URL("../packages/db/src/test-environment-safety.ts", import.meta.url),
+      "utf8",
+    );
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.ESNext },
+    });
+    const { validateDedicatedTestDatabaseUrl } = await import(
+      `data:text/javascript,${encodeURIComponent(compiled.outputText)}`
+    );
+    const targets = [
+      "postgresql://localhost:56432/checkout_surge_test",
+      "postgresql://localhost:56432/checkout_surge_test_api",
+      "postgresql://localhost:56432/checkout_surge_test_mock_erp",
+      "postgresql://localhost:56432/checkout_surge_test_backup",
+      "postgresql://localhost:56432/checkout_surge_test%2Fother",
+      "not a URL",
+    ];
+    const accepts = (validate, value) => {
+      try {
+        validate(value);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    assert.deepEqual(
+      targets.map((target) => accepts(assertSafePostgresUrl, target)),
+      targets.map((target) => accepts(validateDedicatedTestDatabaseUrl, target)),
+    );
   });
 
   it("rejects malformed, empty, lookalike, and path-trick database targets", () => {

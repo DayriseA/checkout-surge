@@ -19,7 +19,7 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,12 +34,7 @@ import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-er
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 
-const databaseUrl = process.env.TEST_DATABASE_URL;
-const run = databaseUrl ? describe : describe.skip;
-const requireDatabaseUrl = () => {
-  if (!databaseUrl) throw new Error("TEST_DATABASE_URL is required for integration tests.");
-  return databaseUrl;
-};
+const databaseUrl = requireTestDatabaseUrl();
 
 const baseTime = new Date("2026-06-22T00:00:00.000Z");
 let sequence = 0;
@@ -52,7 +47,7 @@ interface SeededOrder {
   job: OrderProcessJob;
 }
 
-run("PostgreSQL durable processing control and dispatch intent", () => {
+describe("PostgreSQL durable processing control and dispatch intent", () => {
   const connection = databaseUrl ? createDatabaseConnection(databaseUrl, { max: 4 }) : null;
   const requireConnection = () => {
     if (!connection) throw new Error("TEST_DATABASE_URL is required for integration tests.");
@@ -67,7 +62,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
     now = new Date(baseTime);
     sequence += 1;
     await resetTestDatabase({
-      databaseUrl: requireDatabaseUrl(),
+      databaseUrl,
       migrationsFolder: "../../packages/db/drizzle",
     });
     const db = requireConnection().db;
@@ -314,7 +309,7 @@ run("PostgreSQL durable processing control and dispatch intent", () => {
       dispatchedAt: now,
       expectedProcessingGeneration: 0,
     });
-    const writer = createDatabaseConnection(requireDatabaseUrl(), { max: 1 });
+    const writer = createDatabaseConnection(databaseUrl, { max: 1 });
     let result: Promise<PromiseSettledResult<boolean>[]> | undefined;
     try {
       const [backend] = await writer.sql`SELECT pg_backend_pid() AS pid`;

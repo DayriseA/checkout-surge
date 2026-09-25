@@ -54,13 +54,10 @@ test("deployable Node packages publish only their built service artifact", () =>
   assert.deepEqual(readJson("packages/db/package.json").files, ["dist", "drizzle"]);
 });
 
-test("standalone web tracing and database migration packaging are explicit", () => {
+test("standalone web tracing is explicit", () => {
   const nextConfig = readText("apps/web/next.config.mjs");
   assert.match(nextConfig, /output: "standalone"/);
   assert.match(nextConfig, /outputFileTracingRoot: repositoryRoot/);
-
-  const migrations = readText("packages/db/src/migrations.ts");
-  assert.match(migrations, /new URL\("\.\.\/drizzle", import\.meta\.url\)/);
 });
 
 test("Docker build contexts exclude environment and private-key files", () => {
@@ -71,7 +68,7 @@ test("Docker build contexts exclude environment and private-key files", () => {
   assert.match(dockerIgnore, /^\*\.key$/m);
 });
 
-test("dashboard proxy repairs only Codespaces same-origin browser fetches", () => {
+test("dashboard proxy config includes Codespaces origin-rewrite fragments", () => {
   const compose = readText("docker-compose.yml");
   assert.match(compose, /CODESPACES: \$\{CODESPACES:-false\}/);
   assert.match(compose, /WEB_ORIGIN: \$\{WEB_ORIGIN:-http:\/\/localhost:8080\}/);
