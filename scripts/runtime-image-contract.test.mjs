@@ -30,6 +30,19 @@ test("production Dockerfiles use production artifacts and non-root direct entryp
   );
 });
 
+test("runtime tooling image carries only operational scripts and the built contracts package", () => {
+  const tooling = readText("Dockerfile");
+  assert.match(tooling, /FROM node:22-bookworm-slim AS runtime-tools/);
+  assert.match(
+    tooling,
+    /pnpm --filter="@checkout-surge\/contracts" deploy --legacy --prod \/deploy/,
+  );
+  assert.match(
+    tooling,
+    /COPY --from=runtime-tools-build --chown=node:node \/deploy\/ \.\/packages\/contracts\/\s+COPY --chown=node:node scripts\/ \.\/scripts\/\s+USER node/,
+  );
+});
+
 test("deployable Node packages publish only their built service artifact", () => {
   for (const manifestPath of [
     "apps/api/package.json",

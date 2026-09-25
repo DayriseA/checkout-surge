@@ -7,7 +7,7 @@ ENV PATH="${PNPM_HOME}:${PATH}"
 
 RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
 
-FROM node-base AS development-workspace
+FROM node-base AS workspace-install
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.json tsconfig.base.json tsconfig.test.json ./
 COPY biome.json ./
@@ -26,11 +26,26 @@ RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
 COPY . .
 
 RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
-  pnpm install --frozen-lockfile --offline --store-dir=/pnpm/store && pnpm build
+  pnpm install --frozen-lockfile --offline --store-dir=/pnpm/store
 
-FROM development-workspace AS runtime-tools
+FROM workspace-install AS development-workspace
+
+RUN pnpm build
+
+FROM workspace-install AS runtime-tools-build
+
+RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
+  pnpm --filter="@checkout-surge/contracts" build && \
+  pnpm --filter="@checkout-surge/contracts" deploy --legacy --prod /deploy
+
+FROM node:22-bookworm-slim AS runtime-tools
+
+WORKDIR /workspace
 
 ENV NODE_ENV=production
+
+COPY --from=runtime-tools-build --chown=node:node /deploy/ ./packages/contracts/
+COPY --chown=node:node scripts/ ./scripts/
 
 USER node
 
