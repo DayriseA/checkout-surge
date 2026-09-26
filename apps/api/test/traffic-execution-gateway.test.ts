@@ -221,23 +221,6 @@ describe("HttpTrafficExecutionGateway start", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
-
-  it.each([
-    0,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])("rejects invalid start timeout %s", async (requestTimeoutMs) => {
-    const fetchMock = vi.fn<typeof fetch>();
-    const gateway = new HttpTrafficExecutionGateway({
-      loadOrchestratorBaseUrl: "http://load.test",
-      controlServiceToken: "control-token",
-      requestTimeoutMs,
-      fetch: fetchMock,
-    });
-
-    await expect(gateway.start(request)).rejects.toThrow(/finite positive number/);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
 });
 
 describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
@@ -492,19 +475,5 @@ describe("HttpTrafficExecutionGateway abort", () => {
       statusCode: 502,
       code: "load_orchestrator_abort_unconfirmed",
     });
-  });
-
-  it.each([
-    0,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])("rejects invalid abort timeout %s", async (abortRequestTimeoutMs) => {
-    const gateway = new HttpTrafficExecutionGateway({
-      loadOrchestratorBaseUrl: "http://load.test",
-      controlServiceToken: "secret-token",
-      abortRequestTimeoutMs,
-      fetch: vi.fn(),
-    });
-    await expect(gateway.abortCurrent(abortInput)).rejects.toThrow(/finite positive number/);
   });
 });

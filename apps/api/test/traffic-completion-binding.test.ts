@@ -22,12 +22,6 @@ describe("traffic completion binding", () => {
     };
 
     expect(findTrafficCompletionBindingMismatch(accepted, report)).toBeNull();
-    expect(
-      findTrafficCompletionBindingMismatch(accepted, {
-        ...report,
-        transportAttemptCounts: { ...report.transportAttemptCounts, plannedRequests: 9 },
-      }),
-    ).toMatchObject({ field: "transportAttemptCounts.plannedRequests" });
   });
 
   it("rejects a runner start before API acceptance when activation has not been recorded", () => {

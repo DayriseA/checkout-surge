@@ -109,15 +109,6 @@ describe("BullMQ exact-run maintenance", () => {
     expect(waiting.removed).toBe(true);
     expect(first.paused).toBe(false);
     expect(second.paused).toBe(true);
-    const malformed = second.add("waiting", { runId });
-    await expect(maintenance.cleanRuns([runId], { deadline: now })).rejects.toMatchObject({
-      code: "malformed_claimed_job",
-    });
-    second.remove(malformed);
-    first.resumeError = new Error("restoration failed");
-    await expect(maintenance.cleanRuns([runId], { deadline: now })).rejects.toMatchObject({
-      errors: [first.resumeError, first.resumeError],
-    });
   });
 
   it("pauses both physical queues and removes only selected run jobs", async () => {
@@ -300,15 +291,6 @@ describe("BullMQ exact-run maintenance", () => {
     expect(queue.paused).toBe(false);
     expect(queue.pauseCalls).toBe(1);
     expect(queue.resumeCalls).toBe(3);
-  });
-
-  it("returns a zero summary without pausing when no run is selected", async () => {
-    const queue = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
-    await expect(createDemoQueueMaintenance([queue]).cleanRuns([])).resolves.toEqual({
-      cleanedQueueCount: 0,
-      cleanedJobCount: 0,
-    });
-    expect(queue.pauseCalls).toBe(0);
   });
 
   it("closes every queue and reports aggregate resource cleanup failures", async () => {

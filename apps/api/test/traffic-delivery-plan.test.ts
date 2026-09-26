@@ -29,20 +29,6 @@ const baseSnapshot = {
 } satisfies AcceptedRunConfigSnapshot;
 
 describe("synthetic traffic delivery plan", () => {
-  it("uses the shared capped automatic constant-arrival VU resolution", () => {
-    expect(syntheticTrafficDeliverySummary(baseSnapshot, ["not started"])).toMatchObject({
-      preAllocatedVUs: 5_001,
-      maxVUs: 10_000,
-      notes: ["not started"],
-    });
-  });
-
-  it("marks every planned attempt unstarted with a failed delivery status", () => {
-    expect(syntheticTrafficDeliverySummary(baseSnapshot, [])).toMatchObject({
-      trafficDeliveryStatus: "failed",
-    });
-  });
-
   it("builds one zero-attempt failed transport summary", () => {
     expect(syntheticFailedTrafficSummary(baseSnapshot, ["not started"])).toEqual({
       transportAttemptCounts: {

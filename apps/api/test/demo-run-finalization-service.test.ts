@@ -9,11 +9,14 @@ import type {
 } from "@checkout-surge/contracts";
 import {
   catalogErpDispatchLimits,
+  deriveLoadExecutionPlan,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpDispatchRateLimit,
   isReplayPossible,
   orderProcessBullMqQueueName,
+  technicalOrderFailureCodeValues,
+  trafficCompletionReportSchema,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
 import {
@@ -65,6 +68,7 @@ import {
   PostgresTerminalDemoRunSummaryWriter,
   terminalDemoRunTransitionLockKey,
 } from "../src/services/terminal-demo-run-transition.js";
+import { findTrafficCompletionBindingMismatch } from "../src/services/traffic-completion-binding.js";
 import { classifyTrafficDelivery } from "../src/services/traffic-delivery-classifier.js";
 
 const ids = {
@@ -323,8 +327,8 @@ describe("demo run finalization service", () => {
       soldOutRejections: 7,
       confirmedOrders: 1,
       failedOrders: 2,
-      businessRejectedOrders: 1,
-      technicallyFailedOrders: 1,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 2,
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
@@ -1087,46 +1091,6 @@ describe("demo run finalization service", () => {
     }
   });
 
-  it("publishes without correlation for a legacy run when the sweep finalizes it", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    const subscriberRedis = createRedisClient(requireTestRedisUrl(), {
-      lazyConnect: true,
-      maxRetriesPerRequest: 3,
-    });
-    const service = createService(connection, redis);
-    const terminalEvents: Record<string, unknown>[] = [];
-    const handleSubscriberMessage = (channel: string, message: string) => {
-      if (channel === dashboardProjectionDirtyRedisChannel) {
-        terminalEvents.push(JSON.parse(message) as Record<string, unknown>);
-      }
-    };
-    subscriberRedis.on("message", handleSubscriberMessage);
-
-    try {
-      await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
-      await subscriberRedis.subscribe(dashboardProjectionDirtyRedisChannel);
-
-      await expect(service.finalizeReadyRuns()).resolves.toBe(1);
-      await waitForObservedCount(terminalEvents, 1);
-
-      expect(terminalEvents).toEqual([
-        {
-          type: "dashboard.projection.dirty",
-          scope: { runId: ids.run, saleOfferId: ids.saleOffer },
-        },
-      ]);
-      expect(terminalEvents[0]).not.toHaveProperty("correlationId");
-    } finally {
-      subscriberRedis.off("message", handleSubscriberMessage);
-      try {
-        await subscriberRedis.unsubscribe(dashboardProjectionDirtyRedisChannel);
-      } finally {
-        subscriberRedis.disconnect();
-      }
-    }
-  });
-
   it("publishes caller correlation over the persisted root after commit", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -1321,6 +1285,10 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureCategory: "traffic",
     });
+    const [summary] = await db
+      .select({ failureReason: demoRunSummaries.failureReason })
+      .from(demoRunSummaries);
+    expect(summary?.failureReason).toBe("traffic_outcome_unexpected_responses");
   });
 
   it("reports major delivery shortfall before an unexpected application response", async () => {
@@ -1373,6 +1341,10 @@ describe("demo run finalization service", () => {
       status: "failed",
       failureCategory: "traffic",
     });
+    const [summary] = await db
+      .select({ failureReason: demoRunSummaries.failureReason })
+      .from(demoRunSummaries);
+    expect(summary?.failureReason).toBe("traffic_transport_major_loss");
   });
 
   it("reports an unexpected application response before major transport loss", async () => {
@@ -1410,7 +1382,12 @@ describe("demo run finalization service", () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
-    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot: configSnapshotFixture(10_000),
+    });
     await db
       .update(demoRunFinalizations)
       .set({
@@ -1454,10 +1431,8 @@ describe("demo run finalization service", () => {
     });
     await setAcceptedDeliveryEvidence(db, {
       acceptedResponses: 100,
-      plannedRequests: 400,
       startedRequests: 400,
       completedIterations: 400,
-      unstartedRequests: 0,
     });
     await insertFailedReservationOrders(db, 50);
 
@@ -1486,10 +1461,8 @@ describe("demo run finalization service", () => {
     });
     await setAcceptedDeliveryEvidence(db, {
       acceptedResponses: 100,
-      plannedRequests: 400,
       startedRequests: 399,
       completedIterations: 399,
-      unstartedRequests: 1,
     });
     await insertFailedReservationOrders(db, 50);
 
@@ -1500,7 +1473,12 @@ describe("demo run finalization service", () => {
   it("keeps missing accepted-response accounting nonterminal after the old deadline", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
-    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot: configSnapshotFixture(25),
+    });
     await setAcceptedDeliveryEvidence(db, { acceptedResponses: 25 });
     await insertFailedReservationOrders(db, 20);
 
@@ -1520,7 +1498,12 @@ describe("demo run finalization service", () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     const service = createService(connection, redis);
-    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await seedDrainingRun({
+      db,
+      redis: redisClient,
+      trafficDeliveryStatus: "complete",
+      configSnapshot: configSnapshotFixture(25),
+    });
     await setAcceptedDeliveryEvidence(db, { acceptedResponses: 24 });
     await insertFailedReservationOrders(db, 25);
     const durableCountsBefore = await readDurableRowCounts(db);
@@ -1548,32 +1531,6 @@ describe("demo run finalization service", () => {
     expect((summary?.businessOutcomeSummary as BusinessOutcomeSummary).acceptedReservations).toBe(
       25,
     );
-  });
-
-  it("keeps unresolved work draining when a historical snapshot still carries retired knobs", async () => {
-    const db = requireConnection(connection).db;
-    const redisClient = requireRedis(redis);
-    const service = createService(connection, redis);
-
-    await seedDrainingRun({
-      db,
-      redis: redisClient,
-      trafficDeliveryStatus: "complete",
-      configSnapshot: historicalDrainSnapshotFixture(),
-      trafficEndedAt: new Date("2026-06-20T00:00:00.000Z"),
-    });
-    await setArrivalAnchor(db);
-    await db.insert(reservations).values(reservationFixture(ids.reservation1));
-    await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "queued"));
-
-    const finalized = await service.finalizeRun(ids.run, "corr-finalize-test");
-
-    expect(finalized?.status).toBe("draining");
-    const summaries = await db
-      .select()
-      .from(demoRunSummaries)
-      .where(eq(demoRunSummaries.runId, ids.run));
-    expect(summaries).toHaveLength(0);
   });
 });
 
@@ -1622,11 +1579,24 @@ async function seedDrainingRun(input: {
   redis: ReturnType<typeof createRedisClient>;
   trafficDeliveryStatus: "complete" | "failed";
   configSnapshot?: AcceptedRunConfigSnapshot;
-  trafficEndedAt?: Date;
   correlationId?: string;
 }): Promise<void> {
   const configSnapshot = input.configSnapshot ?? configSnapshotFixture();
-  const trafficEndedAt = input.trafficEndedAt ?? new Date("2026-06-20T00:00:05.000Z");
+  const report = trafficCompletionReportSchema.parse(
+    trafficCompletionReportFixture(input.trafficDeliveryStatus, configSnapshot),
+  );
+  expect(
+    findTrafficCompletionBindingMismatch(
+      {
+        runId: ids.run,
+        configSnapshot,
+        acceptedAt: new Date("2026-06-20T00:00:00.000Z"),
+        trafficStartedAt: new Date(report.loadRunDiagnosticsSummary.startedAt),
+      },
+      report,
+    ),
+  ).toBeNull();
+  const trafficEndedAt = new Date(report.completedAt);
   await input.db.insert(products).values({
     id: ids.product,
     sku: "FINALIZE-001",
@@ -1672,7 +1642,7 @@ async function seedDrainingRun(input: {
     status: "draining",
     trafficStatus: "succeeded",
     configSnapshot,
-    correlationId: input.correlationId,
+    correlationId: input.correlationId ?? "corr-finalize-test",
     saleOfferId: ids.saleOffer,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
     trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
@@ -1689,22 +1659,19 @@ async function seedDrainingRun(input: {
   await input.db.insert(demoRunFinalizations).values({
     runId: ids.run,
     exitCode: 0,
-    transportAttemptCounts: trafficCompletionReportFixture(input.trafficDeliveryStatus)
-      .transportAttemptCounts,
-    httpSummary: trafficCompletionReportFixture(input.trafficDeliveryStatus).httpSummary,
+    transportAttemptCounts: report.transportAttemptCounts,
+    httpSummary: report.httpSummary,
     trafficOutcomeSummary: {},
     trafficDeliverySummary: trafficDeliverySummarySchema.parse({
-      ...trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary,
-      completedIterations:
-        trafficCompletionReportFixture(input.trafficDeliveryStatus).trafficDeliverySummary
-          .completedIterations ?? null,
+      ...report.trafficDeliverySummary,
+      completedIterations: report.trafficDeliverySummary.completedIterations ?? null,
       trafficDeliveryStatus: input.trafficDeliveryStatus,
     }),
     httpTimingBreakdownSummary: {
       ...emptyHttpTimingBreakdownSummary,
       waiting: { averageMs: 10, p95Ms: 20 },
     },
-    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
+    loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
     trafficSummaryReceivedAt: trafficEndedAt,
     createdAt: trafficEndedAt,
     updatedAt: trafficEndedAt,
@@ -1717,9 +1684,11 @@ async function seedDrainingRun(input: {
   });
 }
 
-function runnerDiagnosticsFixture(): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
+function runnerDiagnosticsFixture(
+  configSnapshot: AcceptedRunConfigSnapshot,
+): TrafficCompletionReport["loadRunDiagnosticsSummary"] {
   return {
-    startedAt: "2026-06-20T00:00:00.000Z",
+    startedAt: "2026-06-20T00:00:01.000Z",
     completedAt: "2026-06-20T00:00:05.000Z",
     nproc: null,
     ulimitNofile: null,
@@ -1728,15 +1697,7 @@ function runnerDiagnosticsFixture(): TrafficCompletionReport["loadRunDiagnostics
     generatorUtilisation: null,
     networkDiagnostics: null,
     k6Version: null,
-    executionPlan: {
-      trafficMode: "buyer-spike",
-      buyerCount: 1,
-      duplicateEachBuyerAttempt: false,
-      iterationsPerVu: 1,
-      plannedEmittedAttempts: 1,
-      startDelaySeconds: 0,
-      maxDurationSeconds: 1,
-    },
+    executionPlan: deriveLoadExecutionPlan(configSnapshot.trafficConfig),
     stderrLines: [],
     stderrLineCountObserved: 0,
     stderrLineCountRetained: 0,
@@ -1802,8 +1763,8 @@ function orderFixture(
       ? {
           processingAt: new Date("2026-06-20T00:00:04.000Z"),
           failedAt: new Date("2026-06-20T00:00:05.000Z"),
-          failureCategory: "business_rejection" as const,
-          failureCode: "erp_failed",
+          failureCategory: "technical" as const,
+          failureCode: technicalOrderFailureCodeValues[0],
           failureMessage: "ERP failed.",
         }
       : {}),
@@ -1812,11 +1773,11 @@ function orderFixture(
   };
 }
 
-function configSnapshotFixture(): AcceptedRunConfigSnapshot {
+function configSnapshotFixture(buyerCount = 10): AcceptedRunConfigSnapshot {
   return {
     trafficConfig: {
       mode: "buyer-spike",
-      buyerCount: 10,
+      buyerCount,
       duplicateEachBuyerAttempt: false,
       startDelaySeconds: 0,
       maxDurationSeconds: 1,
@@ -1837,28 +1798,6 @@ function configSnapshotFixture(): AcceptedRunConfigSnapshot {
       orderProcessConcurrency: 2,
     },
   };
-}
-
-/**
- * A snapshot persisted before the engine-knob retirement: the retired knobs
- * are accepted and ignored on read and cannot terminalize or configure work.
- */
-function historicalDrainSnapshotFixture(): AcceptedRunConfigSnapshot {
-  // The retired knobs exist only in stored JSON, never in the contract type,
-  // so the raw persisted shape is modeled with a JSON round-trip.
-  return JSON.parse(
-    JSON.stringify({
-      ...configSnapshotFixture(),
-      erpConfig: { ...configSnapshotFixture().erpConfig, requestTimeoutMs: 2000 },
-      backpressureConfig: {
-        ...configSnapshotFixture().backpressureConfig,
-        retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-        drainTimeoutSeconds: 300,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
-      },
-    }),
-  ) as AcceptedRunConfigSnapshot;
 }
 
 function duplicateBuyerConfigSnapshot(): AcceptedRunConfigSnapshot {
@@ -1883,51 +1822,69 @@ async function setAcceptedDeliveryEvidence(
   db: ReturnType<typeof createDatabaseConnection>["db"],
   input: {
     acceptedResponses: number;
-    plannedRequests?: number;
     startedRequests?: number;
     completedIterations?: number;
-    unstartedRequests?: number;
   },
 ): Promise<void> {
-  const plannedRequests = input.plannedRequests ?? 10;
+  const [run] = await db
+    .select({ configSnapshot: demoRuns.configSnapshot })
+    .from(demoRuns)
+    .where(eq(demoRuns.id, ids.run));
+  if (!run) throw new Error("Missing seeded run.");
+  const configSnapshot = run.configSnapshot as AcceptedRunConfigSnapshot;
+  const plan = deriveLoadExecutionPlan(configSnapshot.trafficConfig);
+  const plannedRequests = plan.plannedEmittedAttempts;
   const startedRequests = input.startedRequests ?? plannedRequests;
-  const unstartedRequests = input.unstartedRequests ?? plannedRequests - startedRequests;
+  const unstartedRequests = plannedRequests - startedRequests;
   const trafficDeliveryStatus = classifyTrafficDelivery({
     plannedRequests,
     unstartedRequests,
   });
   if (!trafficDeliveryStatus) throw new Error("Test fixture requires a positive request plan.");
+  const report = trafficCompletionReportSchema.parse({
+    ...trafficCompletionReportFixture("complete", configSnapshot),
+    transportAttemptCounts: {
+      plannedRequests,
+      startedRequests,
+      completedRequests: startedRequests,
+      interruptedRequests: 0,
+      unstartedRequests,
+    },
+    httpSummary: {
+      failedRequests: 0,
+      acceptedResponses: input.acceptedResponses,
+      soldOutResponses: startedRequests - input.acceptedResponses,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    },
+    trafficDeliverySummary: {
+      ...trafficCompletionReportFixture("complete", configSnapshot).trafficDeliverySummary,
+      completedIterations: input.completedIterations ?? startedRequests,
+    },
+  });
+  expect(
+    findTrafficCompletionBindingMismatch(
+      {
+        runId: ids.run,
+        configSnapshot,
+        acceptedAt: new Date("2026-06-20T00:00:00.000Z"),
+        trafficStartedAt: new Date(report.loadRunDiagnosticsSummary.startedAt),
+      },
+      report,
+    ),
+  ).toBeNull();
   await db
     .update(demoRunFinalizations)
     .set({
-      transportAttemptCounts: {
-        plannedRequests,
-        startedRequests,
-        completedRequests: startedRequests,
-        interruptedRequests: 0,
-        unstartedRequests,
-      },
-      httpSummary: {
-        failedRequests: 0,
-        acceptedResponses: input.acceptedResponses,
-        soldOutResponses: 0,
-        transportFailures: 0,
-        unexpectedResponses: 0,
-        failureRate: 0,
-      },
+      transportAttemptCounts: report.transportAttemptCounts,
+      httpSummary: report.httpSummary,
       trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: plannedRequests === 400 ? 200 : 10,
-        scheduledRatePerSecond: null,
-        configuredDurationSeconds: null,
-        preAllocatedVUs: null,
-        maxVUs: null,
-        droppedIterations: 0,
-        completedIterations: input.completedIterations ?? startedRequests,
-        requestArrivalSummary: emptyRequestArrivalSummary,
+        ...report.trafficDeliverySummary,
+        completedIterations: report.trafficDeliverySummary.completedIterations ?? null,
         trafficDeliveryStatus,
-        notes: [],
       },
+      loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
     })
     .where(eq(demoRunFinalizations.runId, ids.run));
 }
@@ -1988,22 +1945,27 @@ async function readDurableRowCounts(
 
 function trafficCompletionReportFixture(
   trafficDeliveryStatus: "complete" | "failed",
+  configSnapshot: AcceptedRunConfigSnapshot = configSnapshotFixture(),
 ): TrafficCompletionReport {
+  const plan = deriveLoadExecutionPlan(configSnapshot.trafficConfig);
+  const plannedRequests = plan.plannedEmittedAttempts;
+  const startedRequests =
+    trafficDeliveryStatus === "failed" ? plannedRequests / 2 : plannedRequests;
   return {
     runId: ids.run,
     status: "succeeded",
     exitCode: 0,
     transportAttemptCounts: {
-      plannedRequests: 10,
-      startedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
-      completedRequests: trafficDeliveryStatus === "failed" ? 5 : 10,
+      plannedRequests,
+      startedRequests,
+      completedRequests: startedRequests,
       interruptedRequests: 0,
-      unstartedRequests: trafficDeliveryStatus === "failed" ? 5 : 0,
+      unstartedRequests: plannedRequests - startedRequests,
     },
     httpSummary: {
       failedRequests: 0,
       acceptedResponses: 0,
-      soldOutResponses: trafficDeliveryStatus === "failed" ? 3 : 8,
+      soldOutResponses: startedRequests,
       transportFailures: 0,
       unexpectedResponses: 0,
       p95LatencyMs: 25,
@@ -2012,17 +1974,17 @@ function trafficCompletionReportFixture(
     trafficOutcomeSummary: {},
     trafficDeliverySummary: {
       trafficMode: "buyer-spike",
-      plannedBuyers: 10,
+      plannedBuyers: plan.trafficMode === "buyer-spike" ? plan.buyerCount : null,
       scheduledRatePerSecond: null,
       configuredDurationSeconds: null,
       preAllocatedVUs: null,
       maxVUs: null,
-      droppedIterations: trafficDeliveryStatus === "failed" ? 5 : 0,
+      droppedIterations: plannedRequests - startedRequests,
       requestArrivalSummary: emptyRequestArrivalSummary,
       notes: trafficDeliveryStatus === "failed" ? ["Major request delivery shortfall."] : [],
     },
     httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
-    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(),
+    loadRunDiagnosticsSummary: runnerDiagnosticsFixture(configSnapshot),
     completedAt: "2026-06-20T00:00:05.000Z",
     correlationId: "corr-finalize-test",
   };

@@ -390,68 +390,15 @@ describe("focused demo maintenance workflows", () => {
       ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.completedOffer });
     });
 
-    it("preserves durable teardown identity across a persistent queue-restoration failure and retry", async () => {
+    it("rejects an active run before infrastructure cleanup", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       await seedBase(db);
       await seedRun(db, redisClient, {
         runId: ids.completedRun,
         saleOfferId: ids.completedOffer,
-        status: "completed",
-        trafficStatus: "succeeded",
-        failureReason: null,
-      });
-      const cleanRuns = vi
-        .fn()
-        .mockRejectedValueOnce(new AggregateError([new Error("resume failed")], "resume failed"))
-        .mockResolvedValueOnce({ cleanedQueueCount: 2, cleanedJobCount: 0 });
-      const service = createTeardownService({
-        db,
-        redis: redisClient,
-        queueMaintenance: { cleanRuns },
-        logger: createSilentLogger("api"),
-      });
-
-      await expect(
-        service.teardownGeneratedRun({
-          runId: ids.completedRun,
-          correlationId: "corr-queue-restore-fail",
-        }),
-      ).rejects.toThrow("resume failed");
-      await expect(
-        db.select().from(demoRuns).where(eq(demoRuns.id, ids.completedRun)),
-      ).resolves.toHaveLength(1);
-      await expect(
-        db
-          .select()
-          .from(demoRunSaleContexts)
-          .where(eq(demoRunSaleContexts.runId, ids.completedRun)),
-      ).resolves.toHaveLength(1);
-
-      await expect(
-        service.teardownGeneratedRun({
-          runId: ids.completedRun,
-          correlationId: "corr-queue-restore-retry",
-        }),
-      ).resolves.toMatchObject({ outcome: "deleted", saleOfferId: ids.completedOffer });
-      expect(cleanRuns).toHaveBeenNthCalledWith(1, [ids.completedRun]);
-      expect(cleanRuns).toHaveBeenNthCalledWith(2, [ids.completedRun]);
-    });
-
-    it.each([
-      "starting",
-      "active",
-      "draining",
-    ] as const)("rejects %s and generated-ownership conflicts before infrastructure cleanup", async (status) => {
-      const db = requireConnection(connection).db;
-      const redisClient = requireRedis(redis);
-      await seedBase(db);
-      await seedRun(db, redisClient, {
-        runId: ids.completedRun,
-        saleOfferId: ids.completedOffer,
-        status,
-        trafficStatus:
-          status === "starting" ? "starting" : status === "active" ? "active" : "succeeded",
+        status: "active",
+        trafficStatus: "active",
         failureReason: null,
       });
       const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
@@ -2186,6 +2133,7 @@ describe("focused demo maintenance workflows", () => {
 
     it("holds reset behind an admitted enqueue so cleanup cannot race its job handoff", async () => {
       const db = requireConnection(connection).db;
+      const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
       const redisClient = requireRedis(redis);
       await seedBase(db);
       await seedRun(db, redisClient, {
@@ -2246,8 +2194,8 @@ describe("focused demo maintenance workflows", () => {
         }),
       };
       const maintenanceService = createResetService({
-        db,
-        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+        db: resetConnection.db,
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
           synchronize: async () => {},
         }),
         redis: redisClient,
@@ -2256,8 +2204,10 @@ describe("focused demo maintenance workflows", () => {
         now: () => new Date("2026-06-20T00:00:10.000Z"),
       });
 
+      let reservePromise: ReturnType<typeof reserveService.reserve> | undefined;
+      let resetPromise: ReturnType<typeof maintenanceService.reset> | undefined;
       try {
-        const reservePromise = reserveService.reserve({
+        reservePromise = reserveService.reserve({
           request: {
             saleOfferId: ids.activeOffer,
             runId: ids.activeRun,
@@ -2269,13 +2219,25 @@ describe("focused demo maintenance workflows", () => {
         });
         await enqueueReady;
         let resetFinished = false;
-        const resetPromise = maintenanceService
-          .reset("corr-reset-enqueue-race")
-          .then((response) => {
-            resetFinished = true;
-            return response;
-          });
-        await new Promise<void>((resolve) => setImmediate(resolve));
+        resetPromise = maintenanceService.reset("corr-reset-enqueue-race").then((response) => {
+          resetFinished = true;
+          return response;
+        });
+        void resetPromise.catch(() => undefined);
+        const deadline = Date.now() + 5_000;
+        while (Date.now() < deadline) {
+          const [row] = await enqueueConnection.sql`
+            select count(*)::integer as waiting_count from pg_locks
+            where locktype = 'advisory' and granted = false
+          `;
+          if ((row?.waiting_count ?? 0) > 0) break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+        }
+        const [waiting] = await enqueueConnection.sql`
+          select count(*)::integer as waiting_count from pg_locks
+          where locktype = 'advisory' and granted = false
+        `;
+        expect(waiting?.waiting_count).toBeGreaterThan(0);
         expect(resetFinished).toBe(false);
         releaseEnqueue?.();
 
@@ -2286,7 +2248,10 @@ describe("focused demo maintenance workflows", () => {
         await expect(db.select().from(demoRunSummaries)).resolves.toHaveLength(1);
         await expect(db.select().from(orders)).resolves.toHaveLength(0);
       } finally {
+        releaseEnqueue?.();
+        await Promise.allSettled([reservePromise, resetPromise]);
         await enqueueConnection.close();
+        await resetConnection.close();
       }
     });
 

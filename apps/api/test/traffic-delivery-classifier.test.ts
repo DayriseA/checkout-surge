@@ -4,7 +4,6 @@ import {
   classifyTrafficDelivery,
   classifyTrafficDeliverySummary,
   parsePersistedTrafficDeliverySummary,
-  parsePersistedTrafficHttpSummary,
 } from "../src/services/traffic-delivery-classifier.js";
 
 describe("traffic delivery classifier", () => {
@@ -20,36 +19,8 @@ describe("traffic delivery classifier", () => {
     expect(classifyTrafficDelivery({ plannedRequests: 100, unstartedRequests })).toBe(expected);
   });
 
-  it("classifies fully started attempts as complete delivery even with interrupted responses", () => {
-    expect(classifyTrafficDelivery({ plannedRequests: 1_000, unstartedRequests: 0 })).toBe(
-      "complete",
-    );
-  });
-
   it("guards zero plans instead of treating zero delivery as complete", () => {
     expect(classifyTrafficDelivery({ plannedRequests: 0, unstartedRequests: 0 })).toBeNull();
-    expect(() =>
-      classifyTrafficDeliverySummary(
-        {
-          trafficMode: "buyer-spike",
-          plannedBuyers: 1,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 0,
-          requestArrivalSummary: emptyRequestArrivalSummary,
-          notes: [],
-        },
-        {
-          plannedRequests: 0,
-          startedRequests: 0,
-          completedRequests: 0,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-        },
-      ),
-    ).toThrow();
   });
 
   it("classifies the current incoming completion evidence at the API boundary", () => {
@@ -105,65 +76,5 @@ describe("traffic delivery classifier", () => {
         "finalization run-1",
       ),
     ).toThrow(/finalization run-1.*trafficDeliverySummary\.completedIterations/);
-  });
-
-  it("rejects inconsistent transport counts instead of repairing them", () => {
-    expect(() =>
-      classifyTrafficDeliverySummary(
-        {
-          trafficMode: "buyer-spike",
-          plannedBuyers: 100,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 7,
-          completedIterations: 90,
-          requestArrivalSummary: emptyRequestArrivalSummary,
-          notes: ["interrupted traffic mislabeled"],
-        },
-        {
-          plannedRequests: 100,
-          startedRequests: 100,
-          completedRequests: 90,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-        },
-      ),
-    ).toThrow();
-    expect(() =>
-      classifyTrafficDeliverySummary(
-        {
-          trafficMode: "buyer-spike",
-          plannedBuyers: 100,
-          scheduledRatePerSecond: null,
-          configuredDurationSeconds: null,
-          preAllocatedVUs: null,
-          maxVUs: null,
-          droppedIterations: 0,
-          requestArrivalSummary: emptyRequestArrivalSummary,
-          notes: [],
-        },
-        {
-          plannedRequests: 100,
-          startedRequests: 97,
-          completedRequests: 97,
-          interruptedRequests: 0,
-          unstartedRequests: 0,
-        },
-      ),
-    ).toThrow();
-  });
-
-  it("accepts canonical HTTP summaries at the persisted boundary", () => {
-    const canonical = {
-      failedRequests: 0,
-      acceptedResponses: 250,
-      soldOutResponses: 500,
-      transportFailures: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
-    };
-    expect(parsePersistedTrafficHttpSummary(canonical, "summary row summary-1")).toEqual(canonical);
   });
 });

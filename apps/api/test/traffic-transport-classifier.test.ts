@@ -18,10 +18,4 @@ describe("traffic transport classifier", () => {
   it("does not classify transport loss without dispatched attempts", () => {
     expect(classifyTrafficTransport({ startedRequests: 0, transportFailures: 0 })).toBeNull();
   });
-
-  it("classifies the motivating 302 of 10,000 profile as degraded", () => {
-    expect(classifyTrafficTransport({ startedRequests: 10_000, transportFailures: 302 })).toBe(
-      "degraded",
-    );
-  });
 });

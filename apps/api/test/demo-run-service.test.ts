@@ -940,6 +940,22 @@ describe("demo-run lifecycle start gating", () => {
   });
 
   it("accepts exactly one of two concurrent starts", async () => {
+    const firstConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const secondConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    let releaseLock: (() => void) | undefined;
+    const lockRelease = new Promise<void>((resolve) => {
+      releaseLock = resolve;
+    });
+    let lockAcquired: (() => void) | undefined;
+    const lockReady = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+    const lockPromise = lockConnection.sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`;
+      lockAcquired?.();
+      await lockRelease;
+    });
     const trafficStart = vi.fn(async (request) => ({
       runId: request.runId,
       status: "active" as const,
@@ -947,36 +963,62 @@ describe("demo-run lifecycle start gating", () => {
       correlationId: request.correlationId,
     }));
     const services = [
-      createStartService(requireConnection(connection), requireRedis(redis), {
+      createStartService(firstConnection, requireRedis(redis), {
         trafficExecutionGateway: { start: trafficStart },
       }),
-      createStartService(requireConnection(connection), requireRedis(redis), {
+      createStartService(secondConnection, requireRedis(redis), {
         trafficExecutionGateway: { start: trafficStart },
       }),
     ];
-
-    const results = await Promise.allSettled(
-      services.map((service, index) =>
+    let startsSettled: Promise<unknown> | undefined;
+    try {
+      await lockReady;
+      const starts = services.map((service, index) =>
         service.startRun(
           { presetSlug: "preview-1k", operatorMode: "admin" },
           `corr-concurrent-${index}`,
         ),
-      ),
-    );
-    const accepted = results.filter((result) => result.status === "fulfilled");
-    const rejected = results.filter((result) => result.status === "rejected");
+      );
+      const resultsPromise = Promise.allSettled(starts);
+      startsSettled = resultsPromise;
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const [row] = await requireConnection(connection).sql`
+          select count(*)::integer as waiting_count from pg_locks
+          where locktype = 'advisory' and granted = false
+        `;
+        if ((row?.waiting_count ?? 0) >= 2) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      }
+      const [waiting] = await requireConnection(connection).sql`
+        select count(*)::integer as waiting_count from pg_locks
+        where locktype = 'advisory' and granted = false
+      `;
+      expect(waiting?.waiting_count).toBeGreaterThanOrEqual(2);
+      releaseLock?.();
+      const results = await resultsPromise;
+      const accepted = results.filter((result) => result.status === "fulfilled");
+      const rejected = results.filter((result) => result.status === "rejected");
 
-    expect(accepted).toHaveLength(1);
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]).toMatchObject({
-      reason: { code: "run_conflict" },
-    });
-    expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
-    expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(1);
-    expect(await requireConnection(connection).db.select().from(demoRunSaleContexts)).toHaveLength(
-      1,
-    );
-    expect(trafficStart).toHaveBeenCalledTimes(1);
+      expect(accepted).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0]).toMatchObject({
+        reason: { code: "run_conflict" },
+      });
+      expect(await requireConnection(connection).db.select().from(demoRuns)).toHaveLength(1);
+      expect(await requireConnection(connection).db.select().from(saleOffers)).toHaveLength(1);
+      expect(
+        await requireConnection(connection).db.select().from(demoRunSaleContexts),
+      ).toHaveLength(1);
+      expect(trafficStart).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseLock?.();
+      await lockPromise;
+      await startsSettled;
+      await firstConnection.close();
+      await secondConnection.close();
+      await lockConnection.close();
+    }
   });
 
   it("maps a direct-writer claim race and rolls back all losing start side effects", async () => {
