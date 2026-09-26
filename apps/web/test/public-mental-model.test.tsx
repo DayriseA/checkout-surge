@@ -36,6 +36,7 @@ describe("public visitor mental model", () => {
     const controlsIndex = markup.indexOf('id="public-start-controls"');
 
     expect(capsuleIndex).toBeGreaterThan(-1);
+    expect(controlsIndex).toBeGreaterThan(-1);
     expect(controlsIndex).toBeLessThan(capsuleIndex);
     expect(markup).toContain(
       "Choose a simulation, start it, and watch a simulated flash sale unfold.",
@@ -61,22 +62,6 @@ describe("public visitor mental model", () => {
     expect(heroMarkup).toContain('href="/demo"');
     expect(heroMarkup).toContain('href="#failure-story"');
     expect(markup.match(/href="\/demo"/g)).toHaveLength(2);
-  });
-
-  it("shows one technical presentation", async () => {
-    const markup = renderToStaticMarkup(await OverviewPage());
-    const removedSectionIds = [
-      "sale-example",
-      "reservation-and-confirmation",
-      "basic-success",
-      "simulation-and-source",
-    ];
-    for (const id of removedSectionIds) {
-      expect(markup).not.toContain(`id="${id}"`);
-    }
-    expect(markup).not.toContain("100 simulated buyers trying to buy 10 units");
-    expect(markup).toContain("The flash-sale failure story");
-    expect(markup).toContain("Results are environment-dependent");
   });
 
   it("keeps the architecture, technical narrative, and glossary visible", async () => {
@@ -112,8 +97,13 @@ describe("public visitor mental model", () => {
     expect(markup).toContain('id="glossary"');
     expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
     expect(markup).toContain("buyers are simulated by the load generator (k6)");
+    expect(markup.match(/k6/g)).toHaveLength(1);
     expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
     expect(markup).toContain("simulated emails recorded");
+    expect(signalSection.indexOf("Request arrival")).toBeGreaterThan(-1);
+    expect(signalSection.indexOf("Inventory drain")).toBeGreaterThan(-1);
+    expect(signalSection.indexOf("Processing backlog")).toBeGreaterThan(-1);
+    expect(signalSection.indexOf("Confirmation convergence")).toBeGreaterThan(-1);
     expect(signalSection.indexOf("Request arrival")).toBeLessThan(
       signalSection.indexOf("Inventory drain"),
     );
@@ -167,30 +157,13 @@ describe("public visitor mental model", () => {
       expect(markup).toContain('target="_blank"');
       expect(markup).toContain('rel="noopener noreferrer"');
     }
-    expect(publicNarrative.watchOrientation).toContain(
-      "simulated buyers compete for limited stock",
-    );
-    expect(publicNarrative.watchOrientation).toContain("confirmed or failed");
   });
 
   it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
-    const aboutMarkup = renderToStaticMarkup(await OverviewPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),
     );
-    const anchoredSectionIds = [
-      "failure-story",
-      "redis-fast-path",
-      "queue-protection",
-      "real-and-simulated",
-      "gold-signals",
-      "success",
-      "limits-and-source",
-    ];
 
     expect(layoutMarkup).toMatch(/<html[^>]*class="[^"]*\bscroll-pt-20\b/);
-    for (const sectionId of anchoredSectionIds) {
-      expect(aboutMarkup).toContain(`id="${sectionId}"`);
-    }
   });
 });

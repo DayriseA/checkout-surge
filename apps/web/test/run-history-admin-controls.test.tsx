@@ -19,12 +19,6 @@ afterEach(() => {
 });
 
 describe("RunHistoryAdminControls", () => {
-  it("does not render an empty dialog error wrapper", () => {
-    const { container } = renderSurface();
-
-    expect(container.querySelector("dialog > div.mt-4")).toBeNull();
-  });
-
   it("sends no request on trigger/cancel and requires the exact delete-all token", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();

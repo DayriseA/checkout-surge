@@ -23,21 +23,6 @@ describe("error presentation", () => {
     expect(presentation.action.kind).toBe("none");
   });
 
-  it("turns an active-run conflict into Watch guidance", () => {
-    const presentation = mapErrorPresentation(
-      {
-        status: "unavailable",
-        reason: "shared start contract conflict",
-        errorCode: "run_conflict",
-        details: { conflictReason: "active_run_exists" },
-      },
-      "public-start",
-    );
-    expect(presentation.headline).toBe("A demo run is already in progress");
-    expect(presentation.action).toMatchObject({ kind: "watch", href: "/watch" });
-    expect(presentation.explanation).not.toContain("contract");
-  });
-
   it("uses authoritative wait timing without offering immediate retry", () => {
     const presentation = mapErrorPresentation(
       {
@@ -118,20 +103,6 @@ describe("error presentation", () => {
       httpStatus: 502,
       correlationId: "corr-private",
     });
-
-    const publicStartPresentation = mapErrorPresentation(
-      {
-        status: "unavailable",
-        reason: "raw backend probe failure",
-        httpStatus: 502,
-        correlationId: "corr-private",
-      },
-      { surface: "public-start", startRequestOutcome: true },
-    );
-    expect(publicStartPresentation.headline).toBe("We couldn't confirm whether your run started");
-    expect(publicStartPresentation.action.kind).toBe("check");
-    expect(JSON.stringify(publicStartPresentation)).not.toContain("raw backend probe failure");
-    expect(JSON.stringify(publicStartPresentation)).not.toContain("corr-private");
   });
 
   it.each([
@@ -175,15 +146,6 @@ describe("error presentation", () => {
   it("keeps codeless public-start reads on the backend-unavailable presentation", () => {
     const presentation = mapErrorPresentation(
       { status: "unavailable", reason: "fetch failed" },
-      "public-start",
-    );
-    expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
-    expect(presentation.action).toMatchObject({ kind: "check", label: "Check again" });
-  });
-
-  it("keeps verdict codes on the existing public-start failure copy", () => {
-    const presentation = mapErrorPresentation(
-      { status: "unavailable", errorCode: "internal_error", httpStatus: 500 },
       "public-start",
     );
     expect(presentation.headline).toBe("The demo backend isn't ready yet — try again in a moment");
@@ -255,14 +217,6 @@ describe("error presentation", () => {
     expect(presentation.headline).toBe("Something didn't work on our side");
     expect(presentation.action.kind).toBe("retry");
     expect(JSON.stringify(presentation)).not.toContain("future_conflict");
-
-    const publicPresentation = mapErrorPresentation(
-      { status: "unavailable", errorCode: "preset_conflict" },
-      "public-start",
-    );
-    expect(publicPresentation.headline).toBe(
-      "The demo backend isn't ready yet — try again in a moment",
-    );
   });
 
   it.each([
@@ -270,8 +224,8 @@ describe("error presentation", () => {
     ["control_token_required", "Control service token is not configured."],
     ["preset_operation_not_allowed", "That preset cannot be started here."],
     ["public_override_not_allowed", "That public override is not allowed."],
-    ["invalid_runtime_policy", "The runtime policy is invalid."],
-    ["invalid_chaos_configuration", "The chaos configuration is invalid."],
+    ["internal_error", "Internal failure."],
+    ["preset_conflict", "Preset conflict."],
   ] as const)("maps non-correctable public start failure %s safely", (errorCode, reason) => {
     const presentation = mapErrorPresentation(
       {

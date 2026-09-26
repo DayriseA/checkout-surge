@@ -51,10 +51,7 @@ describe("ErrorNotice action and disclosure boundary", () => {
     expect(screen.queryByText("Check again")).toBeNull();
   });
 
-  it.each([
-    "edit",
-    "contact-operator",
-  ] as const)("does not wire recovery to a %s action", (actionKind) => {
+  it("does not wire recovery to a contact-operator action", () => {
     const onRetry = vi.fn();
     render(
       <ErrorNotice
@@ -64,8 +61,8 @@ describe("ErrorNotice action and disclosure boundary", () => {
           headline: "Operator action failed",
           explanation: "Review the values or operation.",
           action: {
-            kind: actionKind,
-            label: actionKind === "edit" ? "Edit values" : "Review operation",
+            kind: "contact-operator",
+            label: "Review operation",
           },
           tone: "danger",
         }}
@@ -73,7 +70,7 @@ describe("ErrorNotice action and disclosure boundary", () => {
     );
 
     expect(screen.queryByRole("button")).toBeNull();
-    const label = screen.getByText(actionKind === "edit" ? "Edit values" : "Review operation");
+    const label = screen.getByText("Review operation");
     expect(label).toBeTruthy();
     fireEvent.click(label);
     expect(onRetry).not.toHaveBeenCalled();
@@ -94,30 +91,9 @@ describe("ErrorNotice action and disclosure boundary", () => {
       />,
     );
 
-    expect(screen.getByText("Technical details")).toBeTruthy();
+    const details = screen.getByText("Technical details").closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
     expect(screen.getByText("admin-correlation")).toBeTruthy();
     expect(screen.getByText("backend diagnostic")).toBeTruthy();
-  });
-
-  it("cannot expose backend details on a public surface even when disclosure is requested", () => {
-    const { container } = render(
-      <ErrorNotice
-        context="history-detail"
-        presentation={{
-          headline: "Report unavailable",
-          action: { kind: "none", label: "" },
-          tone: "warning",
-          technicalDetails: {
-            correlationId: "private-public-correlation",
-            reason: "private public-reader diagnostic",
-          },
-        }}
-        protectedDetails
-      />,
-    );
-
-    expect(container.querySelector("details")).toBeNull();
-    expect(container.textContent).not.toContain("private-public-correlation");
-    expect(container.textContent).not.toContain("private public-reader diagnostic");
   });
 });

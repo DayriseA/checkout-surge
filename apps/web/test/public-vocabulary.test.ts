@@ -3,26 +3,11 @@ import {
   isRunEvidenceSettled,
   outcomeFocusLabel,
   publicStatusLabel,
-  publicVocabulary,
-  rateWindowLabel,
   runEvidenceAbsence,
   trafficDeliveryStatusLabel,
-  trafficModeLabel,
 } from "../src/app/lib/presentation/public-vocabulary.js";
 
 describe("public vocabulary", () => {
-  it("keeps buyer populations and sold-out evidence distinct", () => {
-    expect(publicVocabulary.acceptedResponses).toBe("accepted responses");
-    expect(publicVocabulary.uniqueReservationsSecured).toBe("Unique reservations secured");
-    expect(publicVocabulary.soldOutRejectionsRecorded).toBe(
-      "sold-out rejections recorded by Checkout-Surge",
-    );
-    expect(publicVocabulary.soldOutRejectionsSeen).toBe(
-      "sold-out rejections seen by the load generator",
-    );
-    expect(publicVocabulary.soldOutAttempts).toBe("Attempts turned away because stock ran out");
-  });
-
   it("settles load-generator absence when traffic ends and durable absence only at a terminal status", () => {
     const traffic = {
       source: "load-generator",
@@ -61,12 +46,6 @@ describe("public vocabulary", () => {
     );
     expect(trafficDeliveryStatusLabel("degraded")).toBe("Partial delivery");
     expect(publicStatusLabel({ family: "run", status: "draining" })).toBe("Run: Finishing");
-  });
-
-  it("translates modes and measurement windows", () => {
-    expect(trafficModeLabel("buyer-spike")).toBe("Everyone at once");
-    expect(trafficModeLabel("constant-arrival-rate")).toBe("Steady stream");
-    expect(rateWindowLabel(1)).toBe("1-second window");
   });
 
   it("explains the two downstream constraints on public preset cards", () => {

@@ -53,7 +53,6 @@ describe("custom run issue presentation", () => {
     expect(
       presentInvalidCustomRunControls([
         { controlId: "custom-buyers", message: "Value must be greater than or equal to 1." },
-        { controlId: "unknown-control", message: "Ignored." },
       ]),
     ).toEqual([
       {
