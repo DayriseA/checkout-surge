@@ -1122,9 +1122,11 @@ describe("focused demo maintenance workflows", () => {
         },
       });
       const allSignals = releaseBarrier();
+      const scopedSignals = releaseBarrier();
       const subscriberRedis = redisClient.duplicate();
       const onDirty = vi.fn((signal) => {
         scheduler.markDirty(signal);
+        if (onDirty.mock.calls.length === 2) scopedSignals.resolve();
         if (onDirty.mock.calls.length === 3) allSignals.resolve();
       });
       const subscriber = createRedisDashboardProjectionDirtySubscriber(subscriberRedis, {
@@ -1142,6 +1144,16 @@ describe("focused demo maintenance workflows", () => {
           queueMaintenance: noOpGeneratedRunQueueMaintenance(),
           dashboardLiveStateReset: metrics,
           now,
+          ...(delivery === "immediate"
+            ? {
+                // At least one immediate scoped reset frame is published before the purge.
+                purgeResetRunDurable: async (...args) => {
+                  await boundedResetBarrier(scopedSignals.promise);
+                  await scheduler.flush();
+                  await purgeResetRunDurable(...args);
+                },
+              }
+            : {}),
         });
         await expect(service.reset("corr-reset-stream")).resolves.toMatchObject({
           failedRunCount: 1,
@@ -1165,7 +1177,23 @@ describe("focused demo maintenance workflows", () => {
         const terminal = frames.at(-1);
         if (!terminal) throw new Error("Reset projection was not published");
         expect(observer.acceptedProjection).toEqual(terminal);
-        expect(observer.retainedTerminalRun).toBeNull();
+        if (delivery === "immediate") {
+          // Watch keeps the reset run's discarded recap across the idle frame by design.
+          expect(observer.retainedTerminalRun).toMatchObject({
+            runId: ids.activeRun,
+            terminalRecap: {
+              resetRecovery: "incomplete",
+              currentRun: {
+                runId: ids.activeRun,
+                status: "failed",
+                failureCategory: "operator",
+                dataDiscarded: true,
+              },
+            },
+          });
+        } else {
+          expect(observer.retainedTerminalRun).toBeNull();
+        }
         expect(terminal.resetRecovery).toBe("ready");
         expect(terminal.resetRecoveryRunId).toBe(ids.activeRun);
         expect(idleObserver.acceptedProjection).toEqual(terminal);
