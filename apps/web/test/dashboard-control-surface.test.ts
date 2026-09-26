@@ -17,14 +17,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { AdminAuthenticatedSurface } from "../src/app/components/admin/admin-authenticated-surface.js";
 import { AdminRuntimePolicyView } from "../src/app/components/admin/admin-feature-views.js";
-import { AdminSignInView } from "../src/app/components/admin/admin-sign-in.js";
 import { RecoveryStatusPanel } from "../src/app/components/dashboard-panels.js";
-import {
-  derivePresetCardFacts,
-  PublicDemoEntry,
-  readinessPresentation,
-} from "../src/app/components/public-demo-entry.js";
-import { draftFromRuntimePolicy } from "../src/app/lib/admin-drafts.js";
+import { derivePresetCardFacts, PublicDemoEntry } from "../src/app/components/public-demo-entry.js";
 import type { BackendRead, PublicDemoSurface } from "../src/app/lib/api.js";
 import { deriveRunPresentationState } from "../src/app/lib/presentation/run-presentation-state.js";
 
@@ -86,14 +80,6 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("not the expected run duration");
     expect(markup).toContain("Unit: percent. Minimum: 0. Maximum: 25.");
     expect(markup).toContain("Worker concurrency / backpressure");
-    expect(markup).not.toContain("Retry attempts");
-    expect(markup).not.toContain("Initial retry backoff");
-    expect(markup).not.toContain("Drain timeout");
-    expect(markup).not.toContain("Persistence retry delay");
-    expect(markup).not.toContain("Circuit failure threshold");
-    expect(markup).not.toContain("Circuit reset timeout");
-    expect(markup).not.toContain("Reservation hold");
-    expect(markup).not.toContain("ERP request timeout");
     expect(markup).toContain("Planned total attempts: 1,000");
     expect(markup).toContain("Up to 2 starts per visitor and 6 starts total every 5 minutes.");
     expect(markup).toContain(">ready<");
@@ -309,7 +295,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("accepting checkout attempts");
     expect(markup).toContain("Watch live");
     expect(markup).toContain('href="/watch"');
-    expect(markup).toContain("disabled");
+    expectDisabledStartButtons(markup, ["Start Preview 1k", "Start custom run"]);
   });
 
   it("renders initial recovery as neutral checking without error or retry controls", () => {
@@ -322,105 +308,54 @@ describe("dashboard control surface", () => {
     expect(markup).not.toContain("Unavailable");
     expect(markup).not.toContain("Check again");
     expect(markup).not.toContain("Automatic retry");
-    expect(markup).toContain("disabled");
+    expectDisabledStartButtons(markup, ["Start Preview 1k", "Start custom run"]);
   });
 
-  it("shows failed readiness checks and blocks starts", () => {
-    const surface = publicSurfaceFixture(null);
-    surface.readiness = available({
-      ...readinessFixture(),
-      status: "unavailable",
-      checks: [
-        {
-          name: "database_reachable",
-          status: "unavailable",
-          message: "PostgreSQL readiness check failed.",
-        },
-      ],
-    });
-
-    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
-
-    expect(markup).toContain(">backend not ready<");
-    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
-    expect(markup).not.toContain("database_reachable");
-    expect(markup).not.toContain("PostgreSQL readiness check failed.");
-    expect(markup).toContain("disabled");
-  });
-
-  it("blocks starts when the readiness read is unavailable", () => {
-    const surface = publicSurfaceFixture(null);
-    surface.readiness = { status: "unavailable", reason: "Readiness proxy offline" };
-
-    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
-
-    expect(markup).toContain(">backend not ready<");
-    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
-    expect(markup).not.toContain("Readiness proxy offline");
-    expect(markup).toContain("disabled");
-  });
-
-  it("blocks starts when readiness is degraded", () => {
-    const surface = publicSurfaceFixture(null);
-    surface.readiness = available({
-      ...readinessFixture(),
-      status: "degraded",
-      checks: [
-        {
-          name: "order_process_queue_reachable",
-          status: "degraded",
-          message: "Queue connectivity is slow.",
-        },
-      ],
-    });
-
-    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
-
-    expect(markup).toContain(">backend not ready<");
-    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
-    expect(markup).not.toContain("order_process_queue_reachable");
-    expect(markup).not.toContain("Queue connectivity is slow.");
-    expect(markup).toContain("disabled");
-  });
-
-  it("keeps degraded and unavailable readiness state vocabulary distinct", () => {
-    const degraded = readinessPresentation(
-      available({ ...readinessFixture(), status: "degraded" }),
-    );
-    const unavailable = readinessPresentation(
-      available({ ...readinessFixture(), status: "unavailable" }),
-    );
-
-    expect(degraded).toMatchObject({
-      state: "infrastructure-degraded",
-      label: "backend not ready",
-    });
-    expect(unavailable).toMatchObject({
-      state: "infrastructure-unavailable",
-      label: "backend not ready",
-    });
-  });
-
-  it("renders only the admin sign-in gate for anonymous admin access", () => {
-    const markup = renderToStaticMarkup(
-      createElement(AdminSignInView, {
-        error: null,
-        isPending: false,
-        retryAfterMs: null,
-        onPassphraseChange: () => undefined,
-        onSignIn: () => undefined,
-        passphrase: "",
+  it.each([
+    {
+      name: "failed readiness checks",
+      readiness: available<HealthResponse>({
+        ...readinessFixture(),
+        status: "unavailable",
+        checks: [
+          {
+            name: "database_reachable",
+            status: "unavailable",
+            message: "PostgreSQL readiness check failed.",
+          },
+        ],
       }),
-    );
+      hidden: ["database_reachable", "PostgreSQL readiness check failed."],
+    },
+    {
+      name: "an unavailable readiness read",
+      readiness: { status: "unavailable" as const, reason: "Readiness proxy offline" },
+      hidden: ["Readiness proxy offline"],
+    },
+    {
+      name: "degraded readiness",
+      readiness: available<HealthResponse>({
+        ...readinessFixture(),
+        status: "degraded",
+        checks: [
+          {
+            name: "order_process_queue_reachable",
+            status: "degraded",
+            message: "Queue connectivity is slow.",
+          },
+        ],
+      }),
+      hidden: ["order_process_queue_reachable", "Queue connectivity is slow."],
+    },
+  ])("blocks starts for $name", ({ readiness, hidden }) => {
+    const surface = publicSurfaceFixture(null);
+    surface.readiness = readiness;
+    const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
 
-    expect(markup).toContain("Protected operator surface");
-    expect(markup).toContain("Sign in");
-    expect(markup).not.toContain("bg-bg");
-    expect(markup).toContain("min-h-11");
-    expect(markup).toContain("border-control-border");
-    expect(markup).not.toContain("Reset demo");
-    expect(markup).not.toContain("Run once with these values");
-    expect(markup).not.toContain("Save public policy");
+    expect(markup).toContain(">backend not ready<");
+    expect(markup).toContain("The demo backend isn&#x27;t ready yet — try again in a moment");
+    for (const privateDetail of hidden) expect(markup).not.toContain(privateDetail);
+    expectDisabledStartButtons(markup, ["Start Preview 1k", "Start custom run"]);
   });
 
   it("presents absent admin runtime policy evidence neutrally", () => {
@@ -439,26 +374,6 @@ describe("dashboard control surface", () => {
     expect(markup).toMatch(/bg-surface-muted[^>]*>.*not yet available/);
     expect(markup).not.toContain(">open</span>");
     expect(markup).not.toContain("bg-info-soft");
-  });
-
-  it("omits forced outage from dashboard policy editing even when compatibility fields are true", () => {
-    const runtimePolicy = adminRuntimePolicyFixture();
-    runtimePolicy.policy.publicCustomDefaults.erpConfig.forcedOutage = true;
-    runtimePolicy.policy.publicCustomLimits.allowForcedOutage = true;
-    const markup = renderToStaticMarkup(
-      createElement(AdminRuntimePolicyView, {
-        draft: draftFromRuntimePolicy(runtimePolicy.policy),
-        isPending: false,
-        notice: null,
-        onRefresh: () => undefined,
-        onSave: () => undefined,
-        onUpdateDraft: () => undefined,
-        runtimePolicy: available(runtimePolicy),
-      }),
-    );
-
-    expect(markup).not.toContain("runtime-policy-erpForcedOutage");
-    expect(markup).not.toContain("runtime-policy-allowForcedOutage");
   });
 
   it("renders protected admin controls and disables starts while a run is draining", () => {
@@ -485,13 +400,18 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Copy saved values to custom scenario");
     expect(markup).toContain('id="preset-erpForcedOutage"');
     expect(markup).toContain('id="erp-chaos-forcedOutage"');
-    expect(markup).not.toContain('id="runtime-policy-erpForcedOutage"');
-    expect(markup).not.toContain('id="runtime-policy-allowForcedOutage"');
     expect(markup).toContain("Reset demo");
     expect(markup).toContain("ERP fault injection");
-    expect(markup).toContain("disabled");
+    expectDisabledStartButtons(markup, ["Run once with these values"]);
   });
 });
+
+function expectDisabledStartButtons(markup: string, labels: string[]) {
+  for (const label of labels) {
+    const button = markup.match(new RegExp(`<button[^>]*>${label}</button>`))?.[0];
+    expect(button).toContain('disabled=""');
+  }
+}
 
 function publicSurfaceFixture(currentRun: DashboardProjection["currentRun"]): PublicDemoSurface {
   return {

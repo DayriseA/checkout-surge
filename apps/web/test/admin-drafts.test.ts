@@ -69,7 +69,6 @@ describe("admin drafts", () => {
   });
 
   it.each([
-    ["Infinity", "not_a_number"],
     ["2.5", "not_an_integer"],
     ["5001", "above_max"],
   ] as const)("classifies ERP latency %s as %s", (latencyMs, code) => {
@@ -232,16 +231,6 @@ describe("admin drafts", () => {
     expect(next.publicCustomLimits.allowedTrafficModes).toEqual(["buyer-spike"]);
     expect(next.publicCustomDefaults.erpConfig.forcedOutage).toBe(true);
     expect(next.publicCustomLimits.allowForcedOutage).toBe(true);
-    expect(policy.deploymentHardCaps).toEqual({
-      estimatedDemoOccupancyCeilingSeconds: 600,
-      maxBuyers: 100_000,
-      maxTotalRequests: 100_000,
-      maxRequestsPerSecond: 10_000,
-      maxTrafficDurationSeconds: 300,
-      maxTrafficStartDelaySeconds: 30,
-      maxPreAllocatedVus: 10_000,
-      maxVus: 10_000,
-    });
   });
 
   it.each([

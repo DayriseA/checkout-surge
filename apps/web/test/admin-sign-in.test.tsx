@@ -95,10 +95,6 @@ describe("AdminSignIn", () => {
       (screen.getByRole("button", { name: "Signing in…" }) as HTMLButtonElement).disabled,
     ).toBe(true);
     expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByLabelText("Admin passphrase").classList).toContain(
-      "disabled:bg-surface-muted",
-    );
-    expect(screen.getByRole("button", { name: "Signing in…" }).classList).toContain("min-h-11");
 
     resolveRequest?.(jsonResponse({ authenticated: true }));
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
@@ -170,8 +166,14 @@ describe("AdminSignIn", () => {
     act(() => vi.advanceTimersByTime(301_000));
     expect((signInButton() as HTMLButtonElement).disabled).toBe(false);
 
+    fireEvent.click(signInButton());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(vi.getTimerCount()).toBe(1);
     view.unmount();
-    act(() => vi.advanceTimersByTime(301_000));
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 

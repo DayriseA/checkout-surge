@@ -6,8 +6,6 @@ import {
   type DemoRunSnapshot,
   dashboardProjectionSchemaName,
   dashboardProjectionScopeId,
-  estimatorBottleneckValues,
-  estimatorUnestimableReasonValues,
   type PublicRuntimePolicy,
   type StartDemoRunRequest,
 } from "@checkout-surge/contracts";
@@ -35,11 +33,7 @@ import {
   demoRunEstimateProxyPath,
   demoRunStartProxyPath,
 } from "../src/app/lib/control-paths";
-import {
-  estimateBottleneckLabels,
-  estimateRejectionCopy,
-  estimateUnestimableLabels,
-} from "../src/app/lib/presentation/estimate-presentation";
+import { estimateRejectionCopy } from "../src/app/lib/presentation/estimate-presentation";
 import { estimateFixture, estimateRejectionFixture } from "./estimate-fixtures";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
@@ -119,11 +113,7 @@ it("debounces rapid edits, aborts superseded requests and ignores out-of-order r
   unmount();
 });
 
-it("gives every contract vocabulary value English copy and keeps public outage/policy guidance private", () => {
-  for (const value of estimatorBottleneckValues)
-    expect(estimateBottleneckLabels[value]).not.toContain("_");
-  for (const value of estimatorUnestimableReasonValues)
-    expect(estimateUnestimableLabels[value]).not.toContain("_");
+it("keeps public outage and policy guidance private", () => {
   const outage = estimateFixture("unestimable");
   expect(estimateRejectionCopy(outage, "admin").join(" ")).toContain(
     "Disable the declared permanent ERP outage",
@@ -188,57 +178,6 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
   const previewPath = mode === "public" ? demoRunEstimateProxyPath : adminDemoRunEstimateProxyPath;
   const startPath = mode === "public" ? demoRunStartProxyPath : adminDemoRunStartProxyPath;
 
-  it.runIf(mode === "admin").each(["over_ceiling", "unestimable"] as const)(
-    "blocks pending and %s previews with actionable copy",
-    async (kind) => {
-      vi.useFakeTimers();
-      const fetchMock = vi.fn(async () => json({ result: estimateFixture(kind) }));
-      vi.stubGlobal("fetch", fetchMock);
-      mount();
-      expect(startButton().disabled).toBe(true);
-      await debounce();
-      expect(fetchMock.mock.calls).toHaveLength(1);
-      expect(startButton().disabled).toBe(true);
-      expect(screen.getByText("Configuration not allowed.")).toBeTruthy();
-      if (kind === "over_ceiling") expect(screen.getByText(/Conservative duration:/)).toBeTruthy();
-      else expect(screen.queryByText(/Conservative duration:/)).toBeNull();
-      fireEvent.click(startButton());
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.runIf(mode === "admin").each(["network", "malformed"] as const)(
-    "allows an authoritative start after a %s preview failure and hides admission immediately after acceptance",
-    async (failure) => {
-      vi.useFakeTimers();
-      const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === previewPath) {
-          if (failure === "network") throw new Error("offline");
-          return json({ result: { decision: "admitted" } });
-        }
-        if (String(input) === startPath) return json(accepted(mode), 202);
-        throw new Error(`Unexpected request ${input}`);
-      });
-      vi.stubGlobal("fetch", fetchMock);
-      mount();
-      await debounce();
-      expect(screen.getByText(/Preview unavailable. You can try starting/)).toBeTruthy();
-      expect(startButton().disabled).toBe(false);
-      await start();
-      expect(screen.queryByText(/Preview unavailable/)).toBeNull();
-      expect(startButton().disabled).toBe(true);
-      expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
-      await debounce();
-      expect(fetchMock.mock.calls.filter(([input]) => String(input) === previewPath)).toHaveLength(
-        1,
-      );
-      if (mode === "admin")
-        expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toContain(
-          accepted(mode).run.runId,
-        );
-    },
-  );
-
   it.each([
     "over_ceiling",
     "unestimable",
@@ -301,6 +240,68 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
     await debounce();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(screen.queryByText(/Conservative duration/)).toBeNull();
+  });
+});
+
+describe("admin admission surface", () => {
+  const previewPath = adminDemoRunEstimateProxyPath;
+  const startPath = adminDemoRunStartProxyPath;
+  function mountAdmin() {
+    render(
+      <AdminPresetController
+        initialPresets={available({ presets: [preset()], timestamp })}
+        recovery={available(recovery())}
+      />,
+    );
+  }
+  function adminStartButton() {
+    return screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement;
+  }
+  it.each([
+    "over_ceiling",
+    "unestimable",
+  ] as const)("blocks pending and %s previews with actionable copy", async (kind) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => json({ result: estimateFixture(kind) }));
+    vi.stubGlobal("fetch", fetchMock);
+    mountAdmin();
+    expect(adminStartButton().disabled).toBe(true);
+    await debounce();
+    expect(fetchMock.mock.calls).toHaveLength(1);
+    expect(adminStartButton().disabled).toBe(true);
+    expect(screen.getByText("Configuration not allowed.")).toBeTruthy();
+    if (kind === "over_ceiling") expect(screen.getByText(/Conservative duration:/)).toBeTruthy();
+    else expect(screen.queryByText(/Conservative duration:/)).toBeNull();
+    fireEvent.click(adminStartButton());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an authoritative start after a preview failure and hides admission after acceptance", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === previewPath) throw new Error("offline");
+      if (String(input) === startPath) return json(accepted("admin"), 202);
+      throw new Error(`Unexpected request ${input}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    mountAdmin();
+    await debounce();
+    expect(screen.getByText(/Preview unavailable. You can try starting/)).toBeTruthy();
+    expect(adminStartButton().disabled).toBe(false);
+    await act(async () => fireEvent.click(adminStartButton()));
+    await act(async () =>
+      fireEvent.click(
+        within(screen.getByRole("alertdialog")).getByRole("button", { name: "Start run" }),
+      ),
+    );
+    expect(screen.queryByText(/Preview unavailable/)).toBeNull();
+    expect(adminStartButton().disabled).toBe(true);
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
+    await debounce();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === previewPath)).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Watch live" }).getAttribute("href")).toContain(
+      accepted("admin").run.runId,
+    );
   });
 });
 

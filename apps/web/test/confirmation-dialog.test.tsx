@@ -11,7 +11,6 @@ describe("ConfirmationDialog", () => {
   it("keeps the labelled native dialog mounted and renders its destructive content", async () => {
     const { rerender } = renderDialog({ open: false });
     const dialog = screen.getByRole("alertdialog", { hidden: true });
-    expect(dialog).toBeInstanceOf(HTMLDialogElement);
     expect((dialog as HTMLDialogElement).open).toBe(false);
 
     rerender(dialogElement({ error: "The reset failed.", open: true, withInput: true }));

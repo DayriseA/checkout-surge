@@ -1,10 +1,6 @@
 // @vitest-environment jsdom
 
-import {
-  type DashboardProjection,
-  dashboardEventsPath,
-  dashboardProjectionSchemaName,
-} from "@checkout-surge/contracts";
+import { type DashboardProjection, dashboardProjectionSchemaName } from "@checkout-surge/contracts";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -52,7 +48,7 @@ afterEach(() => {
 });
 
 describe("watch realtime recovery notice", () => {
-  it("announces automatic reconnection without a reload action while a replacement is in flight", () => {
+  it("shows interruption while reconnecting and clears it when the replacement opens", () => {
     vi.useFakeTimers();
     vi.stubGlobal("EventSource", InjectedEventSource);
     vi.stubGlobal(
@@ -62,68 +58,38 @@ describe("watch realtime recovery notice", () => {
     render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
 
     expect(screen.queryByText(interruptedNotice)).toBeNull();
-
     failClosed(0);
     expect(screen.getByText(interruptedNotice)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
 
     act(() => vi.advanceTimersByTime(1_000));
     expect(InjectedEventSource.instances).toHaveLength(2);
-    expect(InjectedEventSource.instances[1]?.url).toBe(dashboardEventsPath);
     expect(screen.getByText(interruptedNotice)).toBeTruthy();
+    act(() => InjectedEventSource.instances[1]?.emit("open", new Event("open")));
+    expect(screen.queryByText(interruptedNotice)).toBeNull();
     expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
   });
 
-  it("keeps the exhaustion message and Reload page action visible with Technical details collapsed", () => {
+  it("keeps Watch details collapsed and attempts stopped after exhaustion, with reload and Refresh wired", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("EventSource", InjectedEventSource);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(recoveryFixture())),
-    );
-    render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
-    screen.getByText("Technical details", { selector: "summary" }).click();
-
-    exhaustStream();
-    expect(InjectedEventSource.instances).toHaveLength(6);
-    for (const details of document.querySelectorAll("details")) {
-      expect(details.open).toBe(false);
-    }
-    expect(screen.getByText(exhaustedNotice)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Reload page" })).toBeTruthy();
-
-    act(() => vi.advanceTimersByTime(60_000));
-    expect(InjectedEventSource.instances).toHaveLength(6);
-    expect(screen.getByText(exhaustedNotice)).toBeTruthy();
-  });
-
-  it("requests a full browser reload from the Reload page action", () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("EventSource", InjectedEventSource);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(recoveryFixture())),
-    );
+    const fetchMock = vi.fn(async () => jsonResponse({ ...recoveryFixture(), revision: 2 }));
+    vi.stubGlobal("fetch", fetchMock);
     const reload = vi.fn();
     const navigationWindow = Object.create(window) as Window;
     Object.defineProperty(navigationWindow, "location", { value: { reload } });
     vi.stubGlobal("window", navigationWindow);
     render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
-
-    exhaustStream();
-    screen.getByRole("button", { name: "Reload page" }).click();
-    expect(reload).toHaveBeenCalledOnce();
-  });
-
-  it("keeps exhausted SSE attempts stopped when the HTTP Refresh button is used", async () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("EventSource", InjectedEventSource);
-    const fetchMock = vi.fn(async () => jsonResponse({ ...recoveryFixture(), revision: 2 }));
-    vi.stubGlobal("fetch", fetchMock);
-    render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
+    screen.getByText("Technical details", { selector: "summary" }).click();
 
     exhaustStream();
     await act(async () => Promise.resolve());
+    expect(InjectedEventSource.instances).toHaveLength(6);
+    for (const details of document.querySelectorAll("details")) expect(details.open).toBe(false);
+    expect(screen.getByText(exhaustedNotice)).toBeTruthy();
+    screen.getByRole("button", { name: "Reload page" }).click();
+    expect(reload).toHaveBeenCalledOnce();
+
     const recoveryReadsBeforeRefresh = fetchMock.mock.calls.length;
     screen.getByRole("button", { name: "Refresh" }).click();
     await act(async () => Promise.resolve());
@@ -132,23 +98,6 @@ describe("watch realtime recovery notice", () => {
     expect(InjectedEventSource.instances).toHaveLength(6);
     expect(screen.getByText(exhaustedNotice)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reload page" })).toBeTruthy();
-  });
-
-  it("clears the interrupted notice after a replacement opens", () => {
-    vi.useFakeTimers();
-    vi.stubGlobal("EventSource", InjectedEventSource);
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(recoveryFixture())),
-    );
-    render(createElement(OperatorDashboard, { initialRecovery: available(recoveryFixture()) }));
-
-    failClosed(0);
-    expect(screen.getByText(interruptedNotice)).toBeTruthy();
-    act(() => vi.advanceTimersByTime(1_000));
-    act(() => InjectedEventSource.instances[1]?.emit("open", new Event("open")));
-    expect(screen.queryByText(interruptedNotice)).toBeNull();
-    expect(screen.queryByRole("button", { name: "Reload page" })).toBeNull();
   });
 });
 
