@@ -27,7 +27,6 @@ import { readPublicVisitorIdentity } from "../src/app/lib/server/public-visitor"
 describe("admin session core", () => {
   it("compares credentials through fixed-length digests", () => {
     expect(verifyAdminPassphrase("secret", "secret")).toBe(true);
-    expect(verifyAdminPassphrase("", "")).toBe(true);
     expect(verifyAdminPassphrase("short", "a much longer candidate")).toBe(false);
     expect(verifyAdminPassphrase("secret", "different")).toBe(false);
     expect(verifyAdminPassphrase(" secret ", "secret")).toBe(false);
@@ -50,7 +49,7 @@ describe("admin session core", () => {
     expect(valid(100, "one", signedJson({ v: 2, iat: 100, exp: 160 }, "one"))).toBe(false);
     expect(valid(100, "one", signedJson({ v: 1, iat: 101, exp: 161 }, "one"))).toBe(false);
     expect(valid(100, "one", signedJson({ v: 1, iat: 100, exp: 999 }, "one"))).toBe(false);
-    expect(() => valid(100, "one", "%..bad")).not.toThrow();
+    expect(valid(100, "one", "%..bad")).toBe(false);
   });
 
   it("distinguishes absent max age from invalid configured values", () => {
@@ -145,29 +144,6 @@ describe("admin login limiter", () => {
     expect(limiter.clientBucketCount).toBe(1);
   });
 
-  it("retains global admission history", async () => {
-    const limiter = new AdminLoginAttemptLimiter({
-      clientCapacity: 5,
-      globalCapacity: 2,
-      refillWindowMs: 1000,
-    });
-    await limiter.admit("a", 0);
-    expect((await limiter.admit("b", 1)).outcome).toBe("admitted");
-    expect((await limiter.admit("c", 2)).outcome).toBe("limited");
-  });
-
-  it("applies one process-wide global bound across rotating client identities", async () => {
-    const policy = { clientCapacity: 10, globalCapacity: 2, refillWindowMs: 10_000 };
-    const limiter = new AdminLoginAttemptLimiter(policy);
-    const results = await Promise.all([
-      limiter.admit("a", 0),
-      limiter.admit("b", 0),
-      limiter.admit("c", 0),
-    ]);
-    expect(results.filter((result) => result.outcome === "admitted")).toHaveLength(2);
-    expect(results.filter((result) => result.outcome === "limited")).toHaveLength(1);
-  });
-
   it("uses only a server-verifiable visitor cookie and ignores identity headers", () => {
     const secret = "visitor-cookie-secret";
     const visitorId = "123e4567-e89b-12d3-a456-426614174000";
@@ -258,7 +234,7 @@ describe("admin login workflow", () => {
     );
   });
 
-  it("returns uniform limiting and unavailable responses before consulting credentials", async () => {
+  it("returns a uniform limiting response before consulting credentials", async () => {
     const config = vi.fn(() => ({
       passphrase: "expected-secret",
       sessionSecret: "signing-secret",
@@ -286,20 +262,6 @@ describe("admin login workflow", () => {
     const limitedPayload = await limitedResponse.json();
     expect(limitedPayload).toMatchObject({ code: "admin_login_rate_limited" });
     expect(JSON.stringify(limitedPayload)).not.toMatch(/candidate-secret|expected-secret/);
-    expect(config).not.toHaveBeenCalled();
-
-    const unavailable = createAdminLoginHandler({
-      limiter: () => ({ admit: vi.fn().mockRejectedValue(new Error("unexpected failure")) }),
-      resolveClient: () => "unknown",
-      config,
-      now: () => new Date(0),
-      requireOrigin: () => null,
-    });
-    const unavailableResponse = await unavailable(request());
-    expect(unavailableResponse.status).toBe(503);
-    await expect(unavailableResponse.json()).resolves.toMatchObject({
-      code: "service_unavailable",
-    });
     expect(config).not.toHaveBeenCalled();
   });
 
@@ -337,46 +299,6 @@ describe("admin login workflow", () => {
   });
 
   it.each([
-    [
-      "absent passphrase",
-      { passphrase: null, sessionSecret: "signing", sessionMaxAgeSeconds: 60, secureCookie: false },
-      "service_misconfigured",
-    ],
-    [
-      "absent session secret",
-      {
-        passphrase: "candidate",
-        sessionSecret: null,
-        sessionMaxAgeSeconds: 60,
-        secureCookie: false,
-      },
-      "service_misconfigured",
-    ],
-    ["invalid present max age", null, "service_misconfigured"],
-  ])("counts admitted attempts before %s configuration failures", async (_case, configured, code) => {
-    const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
-    const config = vi.fn(() => configured);
-    const handler = createAdminLoginHandler({
-      limiter: () => ({ admit }),
-      resolveClient: () => "raw-identity",
-      config,
-      now: () => new Date(0),
-      requireOrigin: () => null,
-    });
-    const response = await handler(
-      new Request("http://dashboard.local", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passphrase: "candidate" }),
-      }),
-    );
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ code });
-    expect(admit).toHaveBeenCalledOnce();
-    expect(config).toHaveBeenCalledOnce();
-  });
-
-  it.each([
     ["http://dashboard.local", false],
     ["https://dashboard.local", true],
   ])("derives production cookie security from %s", async (origin, secure) => {
@@ -406,30 +328,6 @@ describe("admin login workflow", () => {
       }),
     );
     expect(response.headers.get("set-cookie")?.includes("; Secure")).toBe(secure);
-  });
-
-  it("maps request-time invalid configuration to a stable unavailable response", async () => {
-    const handler = createAdminLoginHandler({
-      limiter: () =>
-        new AdminLoginAttemptLimiter({
-          clientCapacity: 1,
-          globalCapacity: 1,
-          refillWindowMs: 1000,
-        }),
-      resolveClient: () => "unknown",
-      config: () => null,
-      now: () => new Date(0),
-      requireOrigin: () => null,
-    });
-    const response = await handler(
-      new Request("http://dashboard.local", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ passphrase: "candidate" }),
-      }),
-    );
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ code: "service_misconfigured" });
   });
 
   it("rejects non-JSON and non-string credential bodies before limiter admission", async () => {

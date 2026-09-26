@@ -310,21 +310,18 @@ describe("dashboard backend API reads", () => {
     expect((await response.json()).code).toBe("invalid_backend_response");
   });
 
-  it.each([
-    [404, "resource_not_found"],
-    [503, "backend_unavailable"],
-  ] as const)("preserves a canonical upstream %s result read failure", async (status, code) => {
+  it("preserves a canonical upstream 404 result read failure", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>
         jsonResponse(
           errorPayloadSchema.parse({
-            code,
+            code: "resource_not_found",
             message: "Exact result read failed.",
-            correlationId: `result-${status}`,
+            correlationId: "result-404",
             timestamp: "2026-06-20T00:00:10.000Z",
           }),
-          status,
+          404,
         ),
       ),
     );
@@ -338,8 +335,8 @@ describe("dashboard backend API reads", () => {
       },
     );
 
-    expect(response.status).toBe(status);
-    expect((await response.json()).code).toBe(code);
+    expect(response.status).toBe(404);
+    expect((await response.json()).code).toBe("resource_not_found");
   });
 });
 

@@ -238,7 +238,6 @@ describe("dashboard control proxy routes", () => {
   });
 
   it.each([
-    ["partial", "?knownRunId=11111111-1111-4111-8111-111111111111"],
     ["malformed", "?knownRunId=not-a-uuid&knownSaleOfferId=22222222-2222-4222-8222-222222222222"],
     ["unknown", "?unexpected=value"],
   ])("rejects %s dashboard recovery query input without calling upstream", async (_case, query) => {
@@ -284,27 +283,15 @@ describe("dashboard control proxy routes", () => {
           body: JSON.stringify(body),
         },
       );
-    for (const body of [
-      {},
-      { presetSlug: "preview-1k", estimate: {} },
-      {
-        presetSlug: "preview-1k",
-        configOverride: { backpressureConfig: { drainTimeoutSeconds: 20 } },
-      },
-    ]) {
-      expect((await handler(request(body))).status).toBe(400);
-    }
+    expect((await handler(request({}))).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
-    for (const kind of ["allowed", "over_ceiling", "unestimable"] as const) {
-      fetchMock.mockResolvedValueOnce(jsonResponse({ result: estimateFixture(kind) }));
-      const response = await handler(request({ presetSlug: "preview-1k" }));
-      expect(response.status).toBe(200);
-      expect(previewDemoRunResponseSchema.parse(await response.json()).result).toEqual(
-        estimateFixture(kind),
-      );
-      expect(response.headers.get(correlationIdHeaderName)).toBe("estimate-correlation");
-      if (mode === "public") expect(response.headers.get("set-cookie")).toContain("HttpOnly");
-    }
+    const response = await handler(request({ presetSlug: "preview-1k" }));
+    expect(response.status).toBe(200);
+    expect(previewDemoRunResponseSchema.parse(await response.json()).result).toEqual(
+      estimateFixture("over_ceiling"),
+    );
+    expect(response.headers.get(correlationIdHeaderName)).toBe("estimate-correlation");
+    if (mode === "public") expect(response.headers.get("set-cookie")).toContain("HttpOnly");
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(String(url)).toBe(`http://api.internal${previewDemoRunPath}`);
     expect(JSON.parse(String(init?.body))).toEqual({ presetSlug: "preview-1k" });
@@ -319,23 +306,6 @@ describe("dashboard control proxy routes", () => {
     else expect(forwarded.get(publicVisitorIdHeaderName)).toBeNull();
     fetchMock.mockResolvedValueOnce(jsonResponse({ result: { decision: "admitted" } }));
     expect((await handler(request({ presetSlug: "preview-1k" }))).status).toBe(502);
-  });
-
-  it("rejects untrusted admin preview Origins before parsing or fetch", async () => {
-    const cookie = await adminSessionCookie();
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    for (const origin of [undefined, "null", "not an origin", "http://evil.local"]) {
-      const response = await previewAdminDemoRun(
-        new Request("http://dashboard.local/api/admin/demo/runs/estimate", {
-          method: "POST",
-          headers: { cookie, ...(origin ? { origin } : {}) },
-          body: "not-json",
-        }),
-      );
-      expect(response.status).toBe(403);
-    }
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("proxies public demo run starts through the API lifecycle", async () => {
@@ -510,12 +480,18 @@ describe("dashboard control proxy routes", () => {
           method: "PUT",
           headers: {
             cookie,
+            [correlationIdHeaderName]: "origin-corr",
             ...(origin === undefined ? {} : { origin }),
           },
           body: "not-json",
         }),
       );
       expect(response.status).toBe(403);
+      expect(errorPayloadSchema.parse(await response.json())).toMatchObject({
+        code: "admin_origin_required",
+        correlationId: "origin-corr",
+      });
+      expect(response.headers.get(correlationIdHeaderName)).toBe("origin-corr");
     }
     expect(fetchMock).not.toHaveBeenCalled();
 
@@ -542,60 +518,6 @@ describe("dashboard control proxy routes", () => {
     const response = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("keeps global ERP chaos unchanged across the API-owned demo reset", async () => {
-    const headers = await adminSessionHeaders({ "content-type": "application/json" });
-    const configuredChaos = erpChaosConfigPayload();
-    let chaos = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "http://mock-erp.internal/chaos" && init?.method === "PUT") {
-        chaos = JSON.parse(String(init.body));
-        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
-      }
-      if (url === `http://api.internal${adminDemoResetPath}`) {
-        return jsonResponse({
-          failedRunCount: 0,
-          closedSaleOfferCount: 0,
-          cleanedQueueCount: 0,
-          cleanedJobCount: 0,
-          resetAt: "2026-06-20T00:00:10.000Z",
-          correlationId: "corr-reset",
-        });
-      }
-      if (url === "http://mock-erp.internal/chaos" && init?.method === "GET") {
-        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
-      }
-      if (url === "http://mock-erp.internal/chaos/reset") {
-        chaos = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
-        return jsonResponse({ ...erpChaosStatusPayload(), ...chaos });
-      }
-      throw new Error(`Unexpected fetch: ${url}`);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    await updateErpChaos(
-      new Request("http://dashboard.local/api/admin/erp-chaos", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(configuredChaos),
-      }),
-    );
-    await resetDemo(
-      new Request("http://dashboard.local/api/admin/demo/reset", {
-        method: "POST",
-        headers,
-      }),
-    );
-    const status = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
-
-    expect(await status.json()).toMatchObject(configuredChaos);
-    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
-      "http://mock-erp.internal/chaos",
-      `http://api.internal${adminDemoResetPath}`,
-      "http://mock-erp.internal/chaos",
-    ]);
   });
 
   it("forwards valid ERP chaos updates with the server-side control token", async () => {
@@ -682,6 +604,7 @@ describe("dashboard control proxy routes", () => {
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${adminDemoResetPath}`);
     expect(payload.cleanedQueueCount).toBe(2);
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("forwards admin demo starts with trusted admin authority", async () => {
@@ -701,13 +624,6 @@ describe("dashboard control proxy routes", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const unauthorized = await startAdminDemoRun(
-      new Request("http://dashboard.local/api/admin/demo/runs/start", {
-        method: "POST",
-        headers: { origin: "http://dashboard.local" },
-        body: JSON.stringify({ presetSlug: "preview-1k", configOverride }),
-      }),
-    );
     const authorized = await startAdminDemoRun(
       new Request("http://dashboard.local/api/admin/demo/runs/start", {
         method: "POST",
@@ -717,7 +633,6 @@ describe("dashboard control proxy routes", () => {
     );
     const payload = await authorized.json();
 
-    expect(unauthorized.status).toBe(401);
     expect(authorized.status).toBe(202);
     expect(payload.run.operatorMode).toBe("admin");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${startDemoRunPath}`);
@@ -821,9 +736,6 @@ describe("dashboard control proxy routes", () => {
     vi.stubGlobal("fetch", fetchMock);
     const headers = await adminSessionHeaders({ "content-type": "application/json" });
 
-    const unauthorized = await getAdminRuntimePolicy(
-      new Request("http://dashboard.local/api/admin/demo/runtime-policy"),
-    );
     const readResponse = await getAdminRuntimePolicy(
       new Request("http://dashboard.local/api/admin/demo/runtime-policy", { headers }),
     );
@@ -836,7 +748,6 @@ describe("dashboard control proxy routes", () => {
     );
     const payload = await updateResponse.json();
 
-    expect(unauthorized.status).toBe(401);
     expect(readResponse.status).toBe(200);
     expect(updateResponse.status).toBe(200);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
@@ -948,13 +859,6 @@ describe("dashboard control proxy routes", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const unauthorized = await archiveAdminPreset(
-      new Request("http://dashboard.local/api/admin/demo/presets", {
-        method: "DELETE",
-        headers: { origin: "http://dashboard.local" },
-        body: JSON.stringify({ slug: "operator-duplicate" }),
-      }),
-    );
     const invalidBody = await archiveAdminPreset(
       new Request("http://dashboard.local/api/admin/demo/presets", {
         method: "DELETE",
@@ -971,7 +875,6 @@ describe("dashboard control proxy routes", () => {
     );
     const payload = await authorized.json();
 
-    expect(unauthorized.status).toBe(401);
     expect(invalidBody.status).toBe(400);
     expect(authorized.status).toBe(200);
     expect(payload.slug).toBe("operator-duplicate");

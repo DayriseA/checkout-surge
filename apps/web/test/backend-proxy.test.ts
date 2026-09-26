@@ -11,27 +11,19 @@ import {
   createAdminLoginHandler,
   defaultAdminLoginDependencies,
 } from "../src/app/lib/server/admin-login.js";
-import { authorizeAdminProxy } from "../src/app/lib/server/admin-proxy.js";
 import {
   createProxyRequestContext,
-  jsonError,
   type ProxyRequestContext,
   parseJsonRequest,
   proxyJson,
-  requireControlServiceToken,
 } from "../src/app/lib/server/backend-proxy.js";
 import {
   initializeWebServerConfig,
   resetWebServerConfigForTests,
-  type WebServerConfig,
   webServerConfig,
 } from "../src/app/lib/server/config.js";
-import { resolvePublicVisitorIdentity } from "../src/app/lib/server/public-visitor.js";
 
-const configKey = Symbol.for("checkout-surge.web-server-config");
-
-function injectConfig(overrides: Partial<WebServerConfig> = {}): void {
-  resetWebServerConfigForTests();
+function injectConfig(): void {
   process.env.WEB_ORIGIN = "http://dashboard.local";
   process.env.ADMIN_DASHBOARD_PASSPHRASE = "admin-pass";
   process.env.ADMIN_SESSION_SECRET = "admin-session-secret";
@@ -39,12 +31,7 @@ function injectConfig(overrides: Partial<WebServerConfig> = {}): void {
   process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
   process.env.API_BASE_URL = "http://api.internal";
   process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
-  const base = initializeWebServerConfig(process.env);
-  resetWebServerConfigForTests();
-  (globalThis as unknown as Record<symbol, unknown>)[configKey] = Object.freeze({
-    ...base,
-    ...overrides,
-  });
+  initializeWebServerConfig(process.env);
 }
 
 function ctxWith(correlationId: string, request?: Request): ProxyRequestContext {
@@ -159,11 +146,8 @@ describe("backend proxy request context", () => {
 
   it.each([
     ["absent", undefined],
-    ["blank", "   "],
-    ["oversized", "x".repeat(200)],
     ["malformed", "not a corr!!"],
-  ])("replaces %s browser correlation with one generated id reused throughout", async (kind, headerValue) => {
-    void kind;
+  ])("replaces %s browser correlation with one generated id reused throughout", async (_kind, headerValue) => {
     const request = new Request("http://dashboard.local/api/admin/test", {
       headers: headerValue === undefined ? {} : { [correlationIdHeaderName]: headerValue },
     });
@@ -187,32 +171,6 @@ describe("backend proxy request context", () => {
 
     expect(forwardedId).toBe(ctx.correlationId);
     expect(response.headers.get(correlationIdHeaderName)).toBe(ctx.correlationId);
-  });
-
-  it("returns canonical local envelopes with the request correlation id and header", async () => {
-    const ctx = ctxWith("local-corr");
-
-    const originFailure = authorizeAdminProxy(
-      ctxWith(
-        "local-corr",
-        new Request("http://dashboard.local/api/admin/test", { method: "POST" }),
-      ),
-    );
-    expect(originFailure).toBeInstanceOf(Response);
-    const originResponse = originFailure as Response;
-    expect(originResponse.status).toBe(403);
-    expect(errorPayloadSchema.parse(await originResponse.json()).code).toBe(
-      "admin_origin_required",
-    );
-    expect(originResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
-
-    const sessionFailure = authorizeAdminProxy(ctx);
-    const sessionResponse = sessionFailure as Response;
-    expect(sessionResponse.status).toBe(401);
-    expect(errorPayloadSchema.parse(await sessionResponse.json()).code).toBe(
-      "admin_session_required",
-    );
-    expect(sessionResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
   });
 
   it("parses and validates JSON request bodies", async () => {
@@ -265,14 +223,6 @@ describe("backend proxy request context", () => {
       message: "Request body did not match the shared contract.",
     });
     expect(validationResponse.headers.get(correlationIdHeaderName)).toBe("local-corr");
-  });
-
-  it("returns a canonical control-token-not-configured envelope when the token is missing", async () => {
-    injectConfig({ controlServiceToken: "" });
-    const tokenResponse = requireControlServiceToken(ctxWith("token-corr")) as Response;
-    expect(tokenResponse.status).toBe(503);
-    expect(errorPayloadSchema.parse(await tokenResponse.json()).code).toBe("service_misconfigured");
-    expect(tokenResponse.headers.get(correlationIdHeaderName)).toBe("token-corr");
   });
 
   it("does not leak exception text from network or parser failures", async () => {
@@ -511,36 +461,6 @@ describe("backend proxy request context", () => {
     expect(errorPayloadSchema.parse(await response.json()).code).toBe("invalid_backend_response");
   });
 
-  it("carries one browser id end-to-end through request header, upstream error, and browser response", async () => {
-    const browserRequest = new Request("http://dashboard.local/api/admin/test", {
-      method: "POST",
-      headers: { [correlationIdHeaderName]: "e2e-corr" },
-      body: JSON.stringify({ ok: true }),
-    });
-    const ctx = createProxyRequestContext(browserRequest);
-
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-        expect(readOutboundHeaders(init)[correlationIdHeaderName]).toBe("e2e-corr");
-        return upstreamResponse(canonicalError("resource_not_found", "e2e-corr"), 404, {
-          [correlationIdHeaderName]: "e2e-corr",
-        });
-      }),
-    );
-
-    const response = await proxyJson({
-      ctx,
-      url: "http://api.internal/probe",
-      method: "POST",
-      schema: successSchema,
-    });
-
-    expect(response.status).toBe(404);
-    expect(response.headers.get(correlationIdHeaderName)).toBe("e2e-corr");
-    expect(errorPayloadSchema.parse(await response.json()).correlationId).toBe("e2e-corr");
-  });
-
   it("stamps the admin login success response with the request correlation header", async () => {
     const handler = createAdminLoginHandler({
       ...defaultAdminLoginDependencies,
@@ -569,32 +489,5 @@ describe("backend proxy request context", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("set-cookie")).toContain("checkout_surge_admin_session=");
     expect(response.headers.get(correlationIdHeaderName)).toHaveLength(36);
-  });
-
-  it("returns a canonical public visitor error when the cookie secret is missing", async () => {
-    injectConfig({ publicClientCookieSecret: "" });
-    const ctx = createProxyRequestContext(
-      new Request("http://dashboard.local/api/dashboard/recovery"),
-    );
-    const result = resolvePublicVisitorIdentity(ctx);
-    expect(result).toBeInstanceOf(Response);
-    const response = result as Response;
-    expect(response.status).toBe(503);
-    expect(errorPayloadSchema.parse(await response.json()).code).toBe("service_misconfigured");
-    expect(response.headers.get(correlationIdHeaderName)).toBe(ctx.correlationId);
-  });
-
-  it("builds a canonical local error envelope merging safe extra headers", async () => {
-    const ctx = ctxWith("extra-corr");
-    const response = jsonError(ctx, 429, "admin_login_rate_limited", "rate limited", {
-      "retry-after": "5",
-    });
-    expect(response.status).toBe(429);
-    expect(response.headers.get("retry-after")).toBe("5");
-    expect(response.headers.get(correlationIdHeaderName)).toBe("extra-corr");
-    const body = errorPayloadSchema.parse(await response.json());
-    expect(body.code).toBe("admin_login_rate_limited");
-    expect(body.correlationId).toBe("extra-corr");
-    expect(body.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });

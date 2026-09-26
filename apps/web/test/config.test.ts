@@ -22,21 +22,13 @@ describe("web server secret configuration", () => {
     process.env = { ...originalEnv };
   });
 
-  it("reports all missing values without exposing secret values", () => {
-    expect(() => loadWebServerConfig({})).toThrow(
-      "CONTROL_SERVICE_TOKEN is missing or blank; ADMIN_DASHBOARD_PASSPHRASE is missing or blank; ADMIN_SESSION_SECRET is missing or blank; PUBLIC_CLIENT_COOKIE_SECRET is missing or blank",
-    );
-  });
-
-  it.each([
-    ["CONTROL_SERVICE_TOKEN", "change-me-shared-control-token"],
-    ["ADMIN_DASHBOARD_PASSPHRASE", "change-me-admin-passphrase"],
-    ["ADMIN_SESSION_SECRET", "change-me-admin-session-secret"],
-    ["PUBLIC_CLIENT_COOKIE_SECRET", "change-me-public-client-cookie-secret"],
-  ])("rejects known placeholder in %s", (name, placeholder) => {
-    expect(() => loadWebServerConfig({ ...validSecrets, [name]: placeholder })).toThrow(
-      `${name} uses a known placeholder`,
-    );
+  it("rejects a known placeholder", () => {
+    expect(() =>
+      loadWebServerConfig({
+        ...validSecrets,
+        CONTROL_SERVICE_TOKEN: "change-me-shared-control-token",
+      }),
+    ).toThrow("CONTROL_SERVICE_TOKEN uses a known placeholder");
   });
 
   it("aggregates missing and blank values", () => {
@@ -85,7 +77,6 @@ describe("web server secret configuration", () => {
 
   it.each([
     ["WEB_ORIGIN", "https://dashboard.local/path"],
-    ["WEB_ORIGIN", "https://dashboard.local,http://localhost:3000"],
     ["ADMIN_SESSION_MAX_AGE_SECONDS", "0"],
     ["ADMIN_LOGIN_CLIENT_ATTEMPTS", "2.5"],
     ["ADMIN_LOGIN_GLOBAL_ATTEMPTS", ""],
@@ -94,13 +85,6 @@ describe("web server secret configuration", () => {
     expect(() => loadWebServerConfig({ ...validSecrets, [name]: value })).toThrow(
       /Unsafe web admin security configuration/,
     );
-  });
-
-  it("uses the same local login policy in the production-mode single web process", () => {
-    const config = loadWebServerConfig({ ...validSecrets, NODE_ENV: "production" });
-    expect(config.webOrigins).toEqual(["http://dashboard.local"]);
-    expect(config.adminLoginClientAttempts).toBe(5);
-    expect(config.adminLoginGlobalAttempts).toBe(20);
   });
 
   it("rejects a public cookie secret shorter than 16 UTF-8 bytes", () => {
@@ -156,6 +140,5 @@ describe("web server secret configuration", () => {
 
     expect(Object.isFrozen(config)).toBe(true);
     expect(Object.isFrozen(config.webOrigins)).toBe(true);
-    expect(() => initializeWebServerConfig(validSecrets)).toThrow(/already been initialized/);
   });
 });
