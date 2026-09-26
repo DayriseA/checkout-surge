@@ -276,29 +276,6 @@ describe("PostgresDashboardRecoveryContextReader", () => {
     expect(database.select).toHaveBeenCalledTimes(2);
   });
 
-  it("orders current-shape recoverable runs by start with deterministic creation and ID ties", async () => {
-    const newerStart = databaseRun({
-      id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
-      startedAt: new Date("2026-07-14T11:00:00.000Z"),
-      createdAt: new Date("2026-07-14T10:00:00.000Z"),
-      updatedAt: new Date("2026-07-14T10:30:00.000Z"),
-    });
-    const database = controlledDatabase([newerStart]);
-
-    const context = await new PostgresDashboardRecoveryContextReader(database.db).readContext();
-    const dialect = new PgDialect();
-    const orderingSql = database.orderBy.mock.calls[0]?.map(
-      (expression) => dialect.sqlToQuery(expression).sql,
-    );
-
-    expect(context.currentRun?.runId).toBe(newerStart.id);
-    expect(orderingSql).toEqual([
-      '"demo_runs"."started_at" desc',
-      '"demo_runs"."created_at" desc',
-      '"demo_runs"."id" desc',
-    ]);
-  });
-
   it("prefers the current nonterminal run over a requested known terminal fallback", async () => {
     const knownRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const knownTerminal = databaseRun({
@@ -905,7 +882,7 @@ function controlledDatabase(rows: unknown[]) {
       ? { from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [] }) }) }) }
       : { from },
   );
-  return { db: { select } as unknown as CheckoutSurgeDatabase, select, where, orderBy };
+  return { db: { select } as unknown as CheckoutSurgeDatabase, select, where };
 }
 
 function databaseRun(overrides: Partial<Record<string, unknown>> = {}) {

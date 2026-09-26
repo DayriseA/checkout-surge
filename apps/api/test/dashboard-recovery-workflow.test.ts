@@ -57,18 +57,26 @@ describe("dashboard recovery workflow cancellation", () => {
 
   it("releases once when non-cooperative recovery setup or cleanup never settles", async () => {
     const release = vi.fn();
+    let buildEntered!: () => void;
+    const buildStarted = new Promise<void>((resolve) => {
+      buildEntered = resolve;
+    });
     const admission = {
       admit: vi.fn(async () => ({ outcome: "admitted" as const, release })),
     };
     const workflow = new DashboardRecoveryWorkflow({
       admission,
       recovery: {
-        build: async () => await new Promise<never>(() => undefined),
+        build: () => {
+          buildEntered();
+          return new Promise<never>(() => undefined);
+        },
       } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();
     const result = workflow.recover(input(controller.signal));
 
+    await buildStarted;
     controller.abort(new OperationDeadlineExceededError(50));
 
     await expect(result).resolves.toEqual({ outcome: "timed_out" });
@@ -77,6 +85,10 @@ describe("dashboard recovery workflow cancellation", () => {
 
   it("settles an abort/completion race deterministically and releases once", async () => {
     const release = vi.fn();
+    let buildEntered!: () => void;
+    const buildStarted = new Promise<void>((resolve) => {
+      buildEntered = resolve;
+    });
     const admission = {
       admit: vi.fn(async () => ({ outcome: "admitted" as const, release })),
     };
@@ -87,12 +99,16 @@ describe("dashboard recovery workflow cancellation", () => {
     const workflow = new DashboardRecoveryWorkflow({
       admission,
       recovery: {
-        build: async () => recoveryPromise,
+        build: () => {
+          buildEntered();
+          return recoveryPromise;
+        },
       } as unknown as DashboardProjectionService,
     });
     const controller = new AbortController();
     const result = workflow.recover(input(controller.signal));
 
+    await buildStarted;
     controller.abort(new OperationDeadlineExceededError(50));
     resolveRecovery(recoveryFixture());
 

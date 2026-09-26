@@ -124,6 +124,7 @@ describe("Redis dashboard traffic metric reset", () => {
       })),
       observedAt: "2026-07-13T00:01:40.000Z",
     });
+    expect(await redis.llen(`demo-run:${runA}:traffic-metrics`)).toBe(50);
 
     const restoredSurge = await store.readRecent(runA);
     expect(restoredSurge).toEqual(

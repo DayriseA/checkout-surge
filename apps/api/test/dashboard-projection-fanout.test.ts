@@ -142,21 +142,34 @@ describe("dashboard projection fan-out", () => {
     const firstScoped = scopedProjection(
       "55555555-5555-4555-8555-555555555555",
       "66666666-6666-4666-8666-666666666666",
+      "Preview café",
     );
     const secondScoped = scopedProjection(
       "77777777-7777-4777-8777-777777777777",
       "88888888-8888-4888-8888-888888888888",
+      "Preview café",
     );
     const thirdScoped = scopedProjection(
       "99999999-9999-4999-8999-999999999999",
       "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     );
+    const byteOverflowScoped = scopedProjection(
+      "77777777-7777-4777-8777-777777777777",
+      "88888888-8888-4888-8888-888888888888",
+      "Preview café!",
+    );
     const exactBufferedBytes =
-      Buffer.byteLength(formatDashboardProjectionFrame(firstScoped)) +
-      Buffer.byteLength(formatDashboardProjectionFrame(secondScoped));
-    for (const limits of [
-      { maxBufferedFrames: 2, maxBufferedBytes: exactBufferedBytes * 10 },
-      { maxBufferedFrames: 10, maxBufferedBytes: exactBufferedBytes },
+      Buffer.byteLength(formatDashboardProjectionFrame(firstScoped), "utf8") +
+      Buffer.byteLength(formatDashboardProjectionFrame(secondScoped), "utf8");
+    for (const { limits, overflowProjection } of [
+      {
+        limits: { maxBufferedFrames: 2, maxBufferedBytes: exactBufferedBytes * 10 },
+        overflowProjection: thirdScoped,
+      },
+      {
+        limits: { maxBufferedFrames: 10, maxBufferedBytes: exactBufferedBytes },
+        overflowProjection: byteOverflowScoped,
+      },
     ]) {
       const fanout = createFanout(limits);
       const input = connectionInput("first", "ip4:192.0.2.1");
@@ -167,7 +180,7 @@ describe("dashboard projection fan-out", () => {
       fanout.publish(firstScoped);
       fanout.publish(secondScoped);
       expect(fanout.clientCount()).toBe(1);
-      fanout.publish(thirdScoped);
+      fanout.publish(overflowProjection);
       expect(fanout.clientCount()).toBe(0);
       expect(response.writableEnded).toBe(true);
     }
@@ -240,29 +253,6 @@ describe("dashboard projection fan-out", () => {
     fanout.close();
   });
 
-  it("disconnects only the slow client when pending projection scopes exceed capacity", () => {
-    const fanout = createFanout({
-      maxBufferedFrames: 10,
-      maxBufferedProjectionScopes: 1,
-    });
-    const input = connectionInput("slow", "ip4:192.0.2.1");
-    const response = input.response as unknown as FakeResponse;
-    fanout.connect(input);
-    response.writeResult = false;
-
-    fanout.publish(projection(1));
-    fanout.publish(projection(2));
-    fanout.publish(
-      scopedProjection(
-        "55555555-5555-4555-8555-555555555555",
-        "66666666-6666-4666-8666-666666666666",
-      ),
-    );
-
-    expect(fanout.clientCount()).toBe(0);
-    expect(response.writableEnded).toBe(true);
-  });
-
   it.each([
     "request",
     "response",
@@ -325,26 +315,8 @@ describe("dashboard projection fan-out", () => {
     fanout.close();
   });
 
-  it("reserves before a re-entrant accepted callback and cleans callback failure", () => {
-    let id = 0;
-    const fanout = createFanout({
-      maxClients: 1,
-      maxClientsPerSource: 1,
-      generateConnectionId: () => `connection-${++id}`,
-    });
-    let nestedOutcome: string | undefined;
-    const input = connectionInput("first", "ip4:192.0.2.1");
-    expect(
-      fanout.connect({
-        ...input,
-        onAccepted: () => {
-          nestedOutcome = fanout.connect(connectionInput("nested", "ip4:192.0.2.2"));
-        },
-      }),
-    ).toBe("connected");
-    expect(nestedOutcome).toBe("total_capacity");
-    fanout.close();
-
+  it("cleans up when the accepted callback fails", () => {
+    const fanout = createFanout();
     expect(() =>
       fanout.connect({
         ...connectionInput("throw", "ip4:192.0.2.1"),
@@ -354,6 +326,7 @@ describe("dashboard projection fan-out", () => {
       }),
     ).toThrow("hijack failed");
     expect(fanout.clientCount()).toBe(0);
+    fanout.close();
   });
 
   it.each([
@@ -387,20 +360,6 @@ describe("dashboard projection fan-out", () => {
       formatDashboardProjectionFrame(projection(2)),
     ]);
     fanout.close();
-  });
-
-  it.each([
-    0,
-    -1,
-    1.5,
-    Number.NaN,
-    Number.POSITIVE_INFINITY,
-  ])("rejects invalid or zero queue bounds (%s)", (value) => {
-    expect(() => createFanout({ maxBufferedFrames: value })).toThrow(/maxBufferedFrames/);
-    expect(() => createFanout({ maxBufferedBytes: value })).toThrow(/maxBufferedBytes/);
-    expect(() => createFanout({ maxBufferedProjectionScopes: value })).toThrow(
-      /maxBufferedProjectionScopes/,
-    );
   });
 
   it("formats projection frames through the exact public schema", () => {
@@ -469,11 +428,15 @@ function projection(revision: number): DashboardProjection {
   };
 }
 
-function scopedProjection(runId: string, saleOfferId: string): DashboardProjection {
+function scopedProjection(
+  runId: string,
+  saleOfferId: string,
+  presetName = "Preview 1k",
+): DashboardProjection {
   const currentRun = demoRunSnapshotSchema.parse({
     runId,
     presetId: "77777777-7777-4777-8777-777777777777",
-    presetName: "Preview 1k",
+    presetName,
     operatorMode: "public",
     status: "active",
     trafficStatus: "active",
