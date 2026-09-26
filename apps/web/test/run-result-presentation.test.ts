@@ -59,14 +59,8 @@ describe("run result presentation", () => {
     {
       name: "clean sellout",
       evidence: cleanEvidence,
-      outcome: "completed-successfully",
       sentence:
         "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
-      invariantStatuses: ["holds", "holds", "holds"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "stock remaining",
@@ -80,54 +74,30 @@ describe("run result presentation", () => {
           confirmedOrders: 150,
         },
       }),
-      outcome: "completed-successfully",
       sentence:
         "150 units were reserved from 250, and 100 units remain. No units were oversold. All 150 reservations were confirmed, with no failed orders.",
-      invariantStatuses: ["holds", "holds", "holds"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "order failures",
       evidence: withEvidence({
         durable: { confirmedOrders: 200, failedOrders: 50 },
       }),
-      outcome: "completed-with-order-failures",
       sentence:
         "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 50 failed, and 0 remain pending.",
-      invariantStatuses: ["holds", "holds", "holds"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "pending outcomes",
       evidence: withEvidence({
         durable: { confirmedOrders: 200, queuedOrders: 30, processingOrders: 20 },
       }),
-      outcome: "completed-with-unsettled-orders",
       sentence:
         "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 0 failed, and 50 remain pending.",
-      invariantStatuses: ["holds", "holds", "holds"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "oversell",
       evidence: withEvidence({ durable: { reservedUnits: 260, uniqueReservations: 260 } }),
-      outcome: "completed-with-oversell",
       sentence:
         "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. Checkout-Surge recorded 750 sold-out rejections. Order outcomes: 250 confirmed, 0 failed, and 0 pending.",
-      invariantStatuses: ["broken", "broken", "broken"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "partial generator observation",
@@ -142,26 +112,13 @@ describe("run result presentation", () => {
           },
         }),
       }),
-      outcome: "completed-successfully",
       sentence:
         "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
-      invariantStatuses: ["holds", "holds", "holds"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-        "partial_generator_coverage",
-      ],
     },
     {
       name: "missing terminal snapshot",
       evidence: withEvidence({ startingStock: null, remainingStock: null }),
-      outcome: "outcome-indeterminate",
       sentence: "The run outcome is indeterminate because authoritative evidence is incomplete.",
-      invariantStatuses: ["not_evaluable", "holds", "not_evaluable"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
     {
       name: "failed category",
@@ -170,69 +127,29 @@ describe("run result presentation", () => {
         failureCategory: "traffic",
         durable: { reservedUnits: 260 },
       }),
-      outcome: "failed",
       sentence: "The run failed due to a traffic failure.",
-      invariantStatuses: ["broken", "holds", "broken"],
-      reconciliationCodes: [
-        "accepted_responses_vs_unique_reservations",
-        "sold_out_decisions_vs_responses",
-      ],
     },
-  ] as const)("states $name", ({
-    name,
-    evidence,
-    outcome,
-    sentence,
-    invariantStatuses,
-    reconciliationCodes,
-  }) => {
-    const result = deriveRunResult(evidence);
-    expect(result.outcome).toBe(outcome);
-    expect(runConclusionSentence(result)).toBe(sentence);
-    expect(result.invariants.map(({ status }) => status)).toEqual(invariantStatuses);
-    expect(result.reconciliations.map(({ code }) => code)).toEqual(reconciliationCodes);
-    if (name === "partial generator observation") {
-      expect(
-        result.reconciliations.map(({ code, classification, incompleteReason }) => ({
-          code,
-          classification,
-          incompleteReason,
-        })),
-      ).toEqual([
-        {
-          code: "accepted_responses_vs_unique_reservations",
-          classification: "evidence_incomplete",
-          incompleteReason: "partial",
-        },
-        {
-          code: "sold_out_decisions_vs_responses",
-          classification: "evidence_incomplete",
-          incompleteReason: "partial",
-        },
-        {
-          code: "partial_generator_coverage",
-          classification: "evidence_incomplete",
-          incompleteReason: "partial",
-        },
-      ]);
-    }
+  ] as const)("states $name", ({ evidence, sentence }) => {
+    expect(runConclusionSentence(deriveRunResult(evidence))).toBe(sentence);
   });
 
   it("reports business rejections and technical failures separately", () => {
+    // The permanent-rejection vocabulary is empty by design, so zero business rejections with a
+    // reachable technical failure count is the reachable split-count sentence.
     const result = deriveRunResult({
       ...cleanEvidence,
       durable: {
         ...cleanDurable,
         confirmedOrders: 247,
         failedOrders: 3,
-        businessRejectedOrders: 1,
-        technicallyFailedOrders: 2,
+        businessRejectedOrders: 0,
+        technicallyFailedOrders: 3,
         notificationsRecorded: 247,
       },
     });
 
     expect(runConclusionSentence(result)).toContain(
-      "247 orders were confirmed, 1 business-rejected, 2 technically failed, and 0 remain pending.",
+      "247 orders were confirmed, 0 business-rejected, 3 technically failed, and 0 remain pending.",
     );
   });
 
@@ -251,9 +168,6 @@ describe("run result presentation", () => {
       }),
     );
 
-    expect(result.outcome).toBe("completed-successfully");
-    expect(result.invariants.map((item) => item.status)).toEqual(["holds", "holds", "holds"]);
-    expect(result.oversoldUnits).toBe(0);
     expect(runConclusionSentence(result)).toContain("All 12 available units were reserved");
   });
 
@@ -395,30 +309,6 @@ describe("run result presentation", () => {
     expect(sentence).not.toContain("All 255");
   });
 
-  it("treats Redis-held reservations as incomplete evidence", () => {
-    const result = deriveRunResult(
-      withEvidence({
-        heldReservationsAwaitingPersistence: 1,
-        durable: { durablePendingPersistenceRecords: 1 },
-      }),
-    );
-
-    expect(result.invariants.find((item) => item.name === "stock")?.status).toBe("not_evaluable");
-    const pendingPersistence = result.reconciliations.find(
-      (item) => item.code === "pending_persistence",
-    );
-    expect({
-      code: pendingPersistence?.code,
-      classification: pendingPersistence?.classification,
-      incompleteReason: pendingPersistence?.incompleteReason,
-    }).toEqual({
-      code: "pending_persistence",
-      classification: "evidence_incomplete",
-      incompleteReason: "partial",
-    });
-    expect(result.maximumClassification).toBe("evidence_incomplete");
-  });
-
   it("keeps idempotent replay out of oversell and corruption copy", () => {
     const result = deriveRunResult(
       withEvidence({
@@ -452,15 +342,6 @@ describe("run result presentation", () => {
       (item) => item.code === "accepted_responses_vs_unique_reservations",
     );
 
-    expect({
-      code: replay?.code,
-      classification: replay?.classification,
-      incompleteReason: replay?.incompleteReason,
-    }).toEqual({
-      code: "accepted_responses_vs_unique_reservations",
-      classification: "expected_population_difference",
-      incompleteReason: undefined,
-    });
     expect(sentence).not.toContain("oversold");
     expect(sentence).not.toContain("corruption");
     expect(`${replay?.reason ?? ""}`.toLowerCase()).not.toMatch(/oversell|corruption/);

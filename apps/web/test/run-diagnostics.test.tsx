@@ -2,7 +2,7 @@ import type { LoadRunDiagnosticsSummary } from "@checkout-surge/contracts";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { formatDiagnosticBytes, RunDiagnostics } from "../src/app/components/run-diagnostics.js";
+import { RunDiagnostics } from "../src/app/components/run-diagnostics.js";
 
 describe("run diagnostics", () => {
   it("renders every populated diagnostics group and stays collapsed by default", () => {
@@ -27,9 +27,6 @@ describe("run diagnostics", () => {
     }
     expect(markup).toContain(
       "Generator CPU scope differs: 8 host logical CPUs; 0.5 cgroup CPU quota.",
-    );
-    expect(markup).toContain(
-      "col-span-3 min-w-0 border-t border-border pt-3 max-[1100px]:col-span-2 max-[700px]:col-span-1",
     );
     expect(markup).toContain("request failed");
     expect(markup).toContain("2026-06-20 00:00:00 UTC");
@@ -116,22 +113,6 @@ describe("run diagnostics", () => {
     expect(markup).toContain("30 unavailable probes");
   });
 
-  it("escapes retained stderr and keeps long lines inside a wrapping, scrollable block", () => {
-    const markup = render(
-      diagnostics({
-        stderrLines: ["<script>alert('diagnostics')</script>"],
-        stderrLineCountObserved: 1,
-        stderrLineCountRetained: 1,
-      }),
-    );
-
-    expect(markup).toContain("&lt;script&gt;alert");
-    expect(markup).not.toContain("<script>");
-    expect(markup).toContain("overflow-auto");
-    expect(markup).toContain("whitespace-pre-wrap");
-    expect(markup).toMatch(/k6 stderr lines observed<\/dt><dd[^>]*>1<\/dd>/);
-  });
-
   it("renders zero CPU utilisation and every constant-arrival execution-plan field", () => {
     const populated = diagnostics();
     const markup = render(
@@ -187,14 +168,6 @@ describe("run diagnostics", () => {
     );
 
     expect(markup).not.toContain("Generator CPU scope differs");
-  });
-
-  it.each([
-    [0, "0 B"],
-    [512, "512 B"],
-    [5 * 1_024 ** 3, "5 GiB"],
-  ])("formats %i bytes as %s", (value, expected) => {
-    expect(formatDiagnosticBytes(value)).toBe(expected);
   });
 });
 

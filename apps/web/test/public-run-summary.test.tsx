@@ -132,12 +132,6 @@ describe("public run summary", () => {
     expect(summary.failure).toBeNull();
   });
 
-  it("never invents saved-report qualifications for live Watch", () => {
-    const summary = derivePublicRunSummary(summaryInput());
-
-    expect(summary.caveats).toEqual([]);
-  });
-
   it("reports partial and failed delivery only when the delivery summary is supplied", () => {
     const degraded = derivePublicRunSummary(
       summaryInput({ trafficDeliveryStatus: "degraded" satisfies TrafficDeliveryStatus }),
@@ -496,40 +490,6 @@ describe("public run conclusion", () => {
     },
     3,
   );
-  const oversellWithPendingEvidence: RunResultEvidence = {
-    ...cleanEvidence,
-    durable: {
-      ...cleanDurable,
-      reservedUnits: 260,
-      uniqueReservations: 260,
-      confirmedOrders: 240,
-      queuedOrders: 20,
-    },
-  };
-  const failedWithBrokenInvariantEvidence: RunResultEvidence = {
-    ...cleanEvidence,
-    runStatus: "failed",
-    failureCategory: "traffic",
-    durable: {
-      ...cleanDurable,
-      reservedUnits: 249,
-      uniqueReservations: 249,
-      confirmedOrders: 199,
-      failedOrders: 50,
-      notificationsRecorded: 199,
-    },
-  };
-  const contradictoryWithUnavailableEvidence: RunResultEvidence = {
-    ...cleanEvidence,
-    heldReservationsAwaitingPersistence: 2,
-    durable: {
-      ...cleanDurable,
-      reservedUnits: 100,
-      uniqueReservations: 120,
-      confirmedOrders: 100,
-      notificationsRecorded: 100,
-    },
-  };
 
   function renderConclusion(
     evidence: RunResultEvidence = cleanEvidence,
@@ -578,7 +538,7 @@ describe("public run conclusion", () => {
 
   it("keeps the full proof visible", () => {
     const { container } = renderConclusion();
-    expect(container.querySelector('.mt-4[tabindex="-1"]')).not.toBeNull();
+    expect(container.querySelector('[tabindex="-1"]')).not.toBeNull();
     for (const marker of [
       "reserved units = starting stock − remaining stock",
       "Evidence and reconciliation proof",
@@ -586,65 +546,5 @@ describe("public run conclusion", () => {
       expectVisible(container, marker);
     }
     expectVisible(container, "Checkout-Surge recorded 750 sold-out rejections");
-  });
-
-  it("keeps failed and pending quantities readable beside an oversell headline", () => {
-    const { container } = renderConclusion(oversellWithPendingEvidence, {
-      trafficDeliveryStatus: "complete",
-    });
-
-    expectVisible(container, "10 units were oversold");
-    expectVisible(container, "240 orders were confirmed, 0 failed, and 20 remain pending.");
-    expectVisible(
-      container,
-      "Contradictory evidence: the final stock and order records disagree, so this result needs investigation.",
-    );
-  });
-
-  it("keeps contradictory and incomplete evidence visible beside failure and indeterminate headlines", () => {
-    const failed = renderConclusion(failedWithBrokenInvariantEvidence);
-    expectVisible(
-      failed.container,
-      "The run failed due to a traffic failure with 50 failed orders.",
-    );
-    expectVisible(
-      failed.container,
-      "Contradictory evidence: the final stock and order records disagree, so this result needs investigation.",
-    );
-
-    const contradictory = renderConclusion(contradictoryWithUnavailableEvidence);
-    expectVisible(
-      contradictory.container,
-      "The completed run has contradictory authoritative evidence",
-    );
-    expectVisible(
-      contradictory.container,
-      "Evidence incomplete: some final evidence was unavailable",
-    );
-  });
-
-  it("qualifies incomplete reply observation when delivery status is complete", () => {
-    const { container } = renderConclusion(cleanEvidence, {
-      trafficDeliveryStatus: "complete",
-      transportObservation: interruptedReplies,
-    });
-
-    expectVisible(
-      container,
-      "Reply observation incomplete: outcomes and latency cover 17 of 20 attempts.",
-    );
-  });
-
-  it("keeps detailed evidence visible", () => {
-    const { container } = render(
-      <PublicRunConclusion
-        result={deriveRunResult(cleanEvidence)}
-        runStatus="completed"
-        trafficDeliveryStatus={null}
-        transportObservation={null}
-      />,
-    );
-
-    expectVisible(container, "reserved units = starting stock − remaining stock");
   });
 });

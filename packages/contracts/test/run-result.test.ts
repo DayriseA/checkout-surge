@@ -113,6 +113,18 @@ describe("deriveRunResult", () => {
     );
     expect(result.invariants[0]?.status).toBe("not_evaluable");
     expect(result.maximumClassification).toBe("evidence_incomplete");
+    const pendingPersistence = result.reconciliations.find(
+      (item) => item.code === "pending_persistence",
+    );
+    expect({
+      code: pendingPersistence?.code,
+      classification: pendingPersistence?.classification,
+      incompleteReason: pendingPersistence?.incompleteReason,
+    }).toEqual({
+      code: "pending_persistence",
+      classification: "evidence_incomplete",
+      incompleteReason: "partial",
+    });
   });
 
   it("warns when Redis and PostgreSQL pending-persistence counts disagree", () => {
@@ -286,6 +298,13 @@ describe("deriveRunResult", () => {
       result.reconciliations.find((item) => item.code === "partial_generator_coverage")
         ?.classification,
     ).toBe("evidence_incomplete");
+
+    // Partial generator coverage makes even a matching population inconclusive.
+    const accepted = result.reconciliations.find(
+      (item) => item.code === "accepted_responses_vs_unique_reservations",
+    );
+    expect(accepted?.classification).toBe("evidence_incomplete");
+    expect(accepted?.incompleteReason).toBe("partial");
   });
 
   it("reports sold-out decisions with stock remaining as a warning", () => {
