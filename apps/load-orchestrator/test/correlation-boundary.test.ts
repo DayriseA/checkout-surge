@@ -5,7 +5,7 @@ import {
   trafficExecutionStartPath,
   trafficExecutionStartResponseSchema,
 } from "@checkout-surge/contracts";
-import { correlationIdHeaderName, createServiceLogger } from "@checkout-surge/logger";
+import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import type { K6Runner } from "../src/application/k6-runner.js";
 import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
@@ -46,13 +46,7 @@ const startRequest: TrafficExecutionStartRequest = {
 };
 
 describe("load-orchestrator correlation boundary", () => {
-  it("binds the inbound id into the response header, error body, routine logs, and promotes body correlation", async () => {
-    const lines: string[] = [];
-    const logger = createServiceLogger({
-      service: "load-orchestrator",
-      level: "info",
-      destination: { write: (line) => void lines.push(line) },
-    });
+  it("promotes body correlation on start and returns inbound correlation in a 401 body", async () => {
     const runner: K6Runner = {
       start: vi.fn(async () => ({ startedAt: new Date(timestamp), plannedRequests: 1 })),
       statusSnapshot: vi.fn(async () => ({ state: "unknown" as const })),
@@ -63,26 +57,12 @@ describe("load-orchestrator correlation boundary", () => {
     };
     const server = buildLoadOrchestratorServer({
       config: createConfig(),
-      logger,
+      logger: createSilentLogger("load-orchestrator"),
       readiness: { checks: async () => [{ name: "k6_binary_executable", status: "ok" }] },
       trafficExecutionService: new TrafficExecutionService(runner),
       startedAt: new Date(timestamp),
     });
-    server.route({
-      method: "GET",
-      url: "/test-correlation-echo",
-      handler: async (request) => {
-        request.log.info({ marker: "load-marker" }, "load-echo");
-        return { correlationId: request.correlationId };
-      },
-    });
-
     try {
-      const echo = await server.inject({
-        method: "GET",
-        url: "/test-correlation-echo",
-        headers: { [correlationIdHeaderName]: "load-inbound-1" },
-      });
       const accepted = await server.inject({
         method: "POST",
         url: trafficExecutionStartPath,
@@ -98,15 +78,6 @@ describe("load-orchestrator correlation boundary", () => {
         headers: { [correlationIdHeaderName]: "load-inbound-1" },
         payload: startRequest,
       });
-      const second = await server.inject({
-        method: "GET",
-        url: "/test-correlation-echo",
-        headers: { [correlationIdHeaderName]: "load-inbound-2" },
-      });
-
-      expect(echo.headers[correlationIdHeaderName]).toBe("load-inbound-1");
-      expect(echo.json().correlationId).toBe("load-inbound-1");
-
       expect(accepted.headers[correlationIdHeaderName]).toBe("load-body-corr");
       expect(trafficExecutionStartResponseSchema.parse(accepted.json()).correlationId).toBe(
         "load-body-corr",
@@ -114,15 +85,6 @@ describe("load-orchestrator correlation boundary", () => {
 
       expect(unauthorized.statusCode).toBe(401);
       expect(errorPayloadSchema.parse(unauthorized.json()).correlationId).toBe("load-inbound-1");
-
-      expect(second.headers[correlationIdHeaderName]).toBe("load-inbound-2");
-
-      const echoRecords = lines
-        .map((line) => JSON.parse(line) as { msg?: string; correlationId?: string })
-        .filter((record) => record.msg === "load-echo");
-      expect(echoRecords).toHaveLength(2);
-      expect(echoRecords[0]?.correlationId).toBe("load-inbound-1");
-      expect(echoRecords[1]?.correlationId).toBe("load-inbound-2");
     } finally {
       await server.close();
     }

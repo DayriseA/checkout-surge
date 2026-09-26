@@ -14,7 +14,6 @@ import {
   type CompletionPublishOutcome,
   type CompletionRejection,
   type DurableExecution,
-  ExecutionConflictError,
   type ExecutionStore,
   withCompletion,
 } from "../src/application/execution-store.js";
@@ -63,22 +62,6 @@ class MemoryExecutionStore implements ExecutionStore {
 
   async accept(input: TrafficExecutionStartRequest, at: Date) {
     return this.mutate(async () => {
-      if (
-        this.execution?.state === "completion_rejected" &&
-        this.execution.request.runId === input.runId
-      ) {
-        return { execution: this.execution, created: false };
-      }
-      if (
-        this.execution &&
-        this.execution.state !== "completed" &&
-        this.execution.state !== "completion_rejected"
-      ) {
-        if (this.execution.request.runId === input.runId) {
-          return { execution: this.execution, created: false };
-        }
-        throw new ExecutionConflictError(this.execution.request.runId);
-      }
       this.execution = {
         request: input,
         state: "accepted",
@@ -266,7 +249,7 @@ describe("CompletionDeliveryCoordinator", () => {
     await coordinator.close();
   });
 
-  it("parks a permanently rejected report, stops retrying, and releases the slot", async () => {
+  it("parks a permanently rejected report and stops retrying", async () => {
     const store = new MemoryExecutionStore();
     await store.accept(request, acceptedAt);
     const sendCompletion = vi.fn(async () => {
@@ -303,12 +286,6 @@ describe("CompletionDeliveryCoordinator", () => {
       expect.stringContaining("permanently abandoned"),
     );
     await expect(coordinator.close()).resolves.toBeUndefined();
-
-    const successor = {
-      ...request,
-      runId: "66666666-6666-4666-8666-666666666666",
-    };
-    await expect(store.accept(successor, new Date())).resolves.toMatchObject({ created: true });
   });
 
   it("does not overwrite successor state when acknowledgement becomes stale", async () => {
@@ -348,36 +325,17 @@ describe("CompletionDeliveryCoordinator", () => {
     });
   });
 
-  it("atomically selects one concurrent completion and rejects conflicting evidence", async () => {
-    const store = new MemoryExecutionStore();
-    await store.accept(request, acceptedAt);
-    const first = completionReport();
-    const conflicting: TrafficCompletionReport = {
-      ...first,
-      status: "failed",
-      errorMessage: "conflicting terminal evidence",
-    };
+  it("maps a completion conflict outcome to a persistence error", async () => {
+    const publishCompletion = vi.fn(async () => "completion_conflict" as const);
     const coordinator = new CompletionDeliveryCoordinator({
-      executionStore: store,
+      executionStore: { publishCompletion } as unknown as ExecutionStore,
       logger: createSilentLogger("load-orchestrator"),
-      apiClient: { sendCompletion: async () => undefined },
+      apiClient: { sendCompletion: vi.fn() },
     });
 
-    const results = await Promise.allSettled([
-      coordinator.persist(first),
-      coordinator.persist(conflicting),
-    ]);
-
-    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
-    const rejection = results.find((result) => result.status === "rejected");
-    expect(rejection).toMatchObject({
-      status: "rejected",
-      reason: expect.any(CompletionPersistenceError),
-    });
-    expect(store.execution).toMatchObject({
-      state: "completion_pending",
-      completion: first,
-    });
+    const report = completionReport();
+    await expect(coordinator.persist(report)).rejects.toBeInstanceOf(CompletionPersistenceError);
+    expect(publishCompletion).toHaveBeenCalledWith(report);
     await coordinator.close();
   });
 

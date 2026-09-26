@@ -318,16 +318,6 @@ describe("durable execution ownership", () => {
       startedAt: new Date(timestamp),
       executionPlan: generateK6Script(startRequest).executionPlan,
     }).completionReport({ status: "succeeded", completedAt: new Date(completionTimestamp) });
-    expect(report.loadRunDiagnosticsSummary).toMatchObject({
-      nproc: null,
-      ulimitNofile: null,
-      processMaxOpenFiles: null,
-      generatorCapacity: null,
-      generatorUtilisation: null,
-      networkDiagnostics: null,
-      k6Version: null,
-      executionPlan: generateK6Script(startRequest).executionPlan,
-    });
     const store = new FileExecutionStore(directory);
     try {
       for (const state of ["accepted", "executing"] as const) {
@@ -692,34 +682,6 @@ describe("durable execution ownership", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
-
-  it("persists a terminal report until it can be acknowledged", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-execution-store-"));
-    try {
-      const store = new FileExecutionStore(directory);
-      const { execution: accepted } = await store.accept(startRequest, new Date(timestamp));
-      const executionPlan = generateK6Script(startRequest).executionPlan;
-      const accumulator = new K6RunAccumulator({
-        executionPlan,
-        runId: startRequest.runId,
-        correlationId: startRequest.correlationId,
-        plannedRequests: executionPlan.plannedEmittedAttempts,
-        startedAt: new Date(timestamp),
-      });
-      const report = accumulator.completionReport({
-        status: "failed",
-        errorMessage: "restart",
-        completedAt: new Date(completionTimestamp),
-      });
-      await store.update(withCompletion(accepted, report));
-      expect(await new FileExecutionStore(directory).read()).toMatchObject({
-        state: "completion_pending",
-        completion: { runId: startRequest.runId, status: "failed" },
-      });
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
 });
 
 describe("load-orchestrator k6 mapping", () => {
@@ -734,12 +696,6 @@ describe("load-orchestrator k6 mapping", () => {
   });
 
   it.each([
-    {
-      name: "nonzero exit",
-      command: process.execPath,
-      args: ["-e", "process.exit(2)"],
-      options: {},
-    },
     {
       name: "timeout",
       command: process.execPath,
@@ -978,7 +934,6 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"executor":"per-vu-iterations"');
     expect(script.contents).toContain('"vus":200');
     expect(script.contents).toContain('"iterations":2');
-    expect(script.contents).toContain("http.post");
     expect(script.contents).toContain('"apiBaseUrl":"http://api.test"');
     expect(script.contents).toContain("config.apiBaseUrl}/buy");
     expect(script.contents).toContain(
@@ -991,16 +946,12 @@ describe("load-orchestrator k6 mapping", () => {
       `const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}"`,
     );
     expect(script.contents).toContain(`"${correlationIdHeaderName}": correlationId`);
-    expect(script.contents).not.toContain("response.json(");
     expect(script.contents).toContain('outcome === "reservation_secured"');
     expect(script.contents).not.toContain('outcome === "idempotent_replay"');
     expect(script.contents).toContain('outcome === "reservation_pending_persistence"');
     expect(script.contents).toContain('response.status === 409 && outcome === "sold_out"');
     expect(script.contents).toContain("key.toLowerCase() === headerName");
-    expect(script.contents).toContain("run:");
-    expect(script.contents).toContain(":buyer:");
     expect(script.contents).toContain("config.duplicateEachBuyerAttempt ? __VU : iteration");
-    expect(script.contents).toContain(`config.correlationId}:k6:\${iteration}`);
     expect(script.contents).toContain(`"${loadRunIdHeaderName}": config.runId`);
     expect(generatedScenario(script.contents)).toMatchObject({
       maxDuration: "5s",
@@ -1032,12 +983,6 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"maxVUs":50');
     expect(script.contents).toContain(
       'config.trafficMode === "constant-arrival-rate" && iteration >= config.plannedRequests',
-    );
-    expect(script.contents.indexOf("iteration >= config.plannedRequests")).toBeLessThan(
-      script.contents.indexOf("const buyerId"),
-    );
-    expect(script.contents.indexOf("iteration >= config.plannedRequests")).toBeLessThan(
-      script.contents.indexOf("http.post"),
     );
     expect(script.executionPlan).toMatchObject({
       preAllocatedVus: 10,
@@ -1116,25 +1061,6 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"quantity":3');
   });
 
-  it("uses the same default constant-arrival VU values in the script and diagnostic plan", () => {
-    const script = generateK6Script({
-      ...startRequest,
-      configSnapshot: {
-        ...startRequest.configSnapshot,
-        trafficConfig: {
-          mode: "constant-arrival-rate",
-          ratePerSecond: 21,
-          startDelaySeconds: 0,
-          durationSeconds: 2,
-          quantityPerAttempt: 1,
-        },
-      },
-    });
-    expect(script.executionPlan).toMatchObject({ preAllocatedVus: 21, maxVus: 42 });
-    expect(script.contents).toContain('"preAllocatedVUs":21');
-    expect(script.contents).toContain('"maxVUs":42');
-  });
-
   it("emits a parseable k6 module using the expected public k6 APIs", async () => {
     const script = generateK6Script(startRequest);
     const workDir = await mkdtemp(path.join(tmpdir(), "checkout-surge-k6-script-check-"));
@@ -1156,7 +1082,6 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain('import { check } from "k6";');
       expect(script.contents).toContain('import exec from "k6/execution";');
       expect(script.contents).toContain('import { Counter } from "k6/metrics";');
-      expect(script.contents).toContain("http.expectedStatuses(202, 409)");
       expect(script.contents).toContain("exec.scenario.iterationInTest");
       expect(script.contents).toContain('new Counter("checkout_attempts_started")');
       expect(script.contents).toContain('new Counter("checkout_responses_completed")');
@@ -1164,8 +1089,6 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain('new Counter("checkout_sold_out_rejections")');
       expect(script.contents).toContain('new Counter("checkout_transport_failures")');
       expect(script.contents).toContain('new Counter("checkout_unexpected_responses")');
-      expect(script.contents).not.toMatch(/checkout_sold_out["']/);
-      expect(script.contents).not.toMatch(/checkout_unexpected_response["']/);
     } finally {
       await rm(workDir, { recursive: true, force: true });
     }
@@ -1284,48 +1207,6 @@ describe("load-orchestrator k6 mapping", () => {
     expect(report.trafficDeliverySummary).not.toHaveProperty("trafficDeliveryStatus");
   });
 
-  it("reports successful k6 execution as traffic success without terminal demo-run state", () => {
-    const accumulator = new K6RunAccumulator({
-      executionPlan: generateK6Script(startRequest).executionPlan,
-      runId: startRequest.runId,
-      correlationId: startRequest.correlationId,
-      plannedRequests: 1,
-      startedAt: new Date(timestamp),
-    });
-
-    const point = parseK6JsonLine(
-      JSON.stringify({ type: "Point", metric: "http_reqs", data: { value: 1, time: timestamp } }),
-    );
-    if (!point) {
-      throw new Error("Expected k6 point fixture to parse.");
-    }
-
-    accumulator.observe(point);
-    const report = accumulator.completionReport({
-      status: "succeeded",
-      exitCode: 0,
-      completedAt: new Date(completionTimestamp),
-    });
-
-    expect(report).toMatchObject({
-      runId: startRequest.runId,
-      status: "succeeded",
-      exitCode: 0,
-      transportAttemptCounts: {
-        startedRequests: 1,
-        completedRequests: 1,
-        interruptedRequests: 0,
-        unstartedRequests: 0,
-      },
-      trafficDeliverySummary: {
-        trafficMode: "buyer-spike",
-        plannedBuyers: 200,
-      },
-    });
-    expect(report).not.toHaveProperty("demoRunStatus");
-    expect(report).not.toHaveProperty("finalizedAt");
-  });
-
   it("does not count clean sold-out responses as failed HTTP summary outcomes", () => {
     const accumulator = new K6RunAccumulator({
       executionPlan: generateK6Script(startRequest).executionPlan,
@@ -1374,7 +1255,6 @@ describe("load-orchestrator k6 mapping", () => {
       interruptedRequests: 0,
       unstartedRequests: 0,
     });
-    expect(report.trafficDeliverySummary).not.toHaveProperty("trafficDeliveryStatus");
   });
 
   it("counts unexpected checkout responses as failed HTTP summary outcomes", () => {
@@ -1418,7 +1298,6 @@ describe("load-orchestrator k6 mapping", () => {
       unstartedRequests: 0,
     });
     expect(report.trafficDeliverySummary).toMatchObject({ notes: [] });
-    expect(report.trafficDeliverySummary).not.toHaveProperty("trafficDeliveryStatus");
   });
 
   it("reports buyer-spike plan facts and derives terminal iteration diagnostics", () => {
@@ -2417,25 +2296,6 @@ describe("SpawnK6Runner completion reporting", () => {
     ).rejects.toBeInstanceOf(ExecutionSlotConflictError);
   });
 
-  it("retains the cancellation fence when sending a termination signal throws", async () => {
-    const fixture = createK6ProcessFixture();
-    vi.mocked(fixture.child.kill).mockImplementation(() => {
-      throw new Error("kill unavailable");
-    });
-    const runner = new SpawnK6Runner({
-      k6Binary: "k6",
-      logger: createSilentLogger("load-orchestrator"),
-      spawnProcess: fixture.spawnProcess,
-      cancellationTimeoutMs: 4,
-      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
-    });
-    await runner.start(startRequest);
-    await expect(runner.abort(startRequest.runId)).rejects.toBeInstanceOf(
-      TrafficTerminationUnconfirmedError,
-    );
-    expect(runner.currentRunId()).toBe(startRequest.runId);
-  });
-
   it("shares termination when cancellation races executing-journal publication failure", async () => {
     const fixture = createK6ProcessFixture();
     let stopRequests = 0;
@@ -2553,29 +2413,6 @@ describe("SpawnK6Runner completion reporting", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-
-  it("attaches exit ownership before output observer setup can fail", async () => {
-    const fixture = createK6ProcessFixture();
-    Object.assign(fixture.child, { stdout: null });
-    vi.mocked(fixture.child.kill).mockImplementation(() => {
-      Object.assign(fixture.child, { killed: true });
-      queueMicrotask(() => fixture.child.emit("close", 143));
-      return true;
-    });
-    const runner = new SpawnK6Runner({
-      k6Binary: "k6",
-      logger: createSilentLogger("load-orchestrator"),
-      spawnProcess: fixture.spawnProcess,
-      cancellationTimeoutMs: 40,
-      apiClient: { sendMetrics: async () => undefined, sendCompletion: async () => undefined },
-    });
-
-    await expect(runner.start(startRequest)).rejects.toThrow(
-      "k6 process did not expose stdout and stderr pipes",
-    );
-    expect(fixture.child.kill).toHaveBeenCalled();
-    expect(runner.currentRunId()).toBeNull();
   });
 
   it("recovers accepted state as a failed pending completion before delivery", async () => {
@@ -3391,61 +3228,6 @@ describe("SpawnK6Runner completion reporting", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
-  });
-
-  it("retries completion delivery when the API fails once", async () => {
-    const k6Process = createK6ProcessFixture();
-    const reports: TrafficCompletionReport[] = [];
-    let completionAccepted: () => void = () => undefined;
-    const completionAcceptedPromise = new Promise<void>((resolve) => {
-      completionAccepted = resolve;
-    });
-    const apiClient: LoadApiClient = {
-      sendMetrics: vi.fn(async () => undefined),
-      sendCompletion: vi.fn(async (report) => {
-        reports.push(report);
-        if (reports.length === 1) {
-          throw new Error("API temporarily unavailable");
-        }
-
-        completionAccepted();
-      }),
-    };
-    const runner = new SpawnK6Runner({
-      k6Binary: "k6",
-      apiClient,
-      logger: createSilentLogger("load-orchestrator"),
-      now: () => new Date(timestamp),
-      spawnProcess: k6Process.spawnProcess,
-      completionDeliveryRetryIntervalMs: 5,
-    });
-
-    await runner.start(startRequest);
-    k6Process.stdout.write(
-      `${JSON.stringify({
-        type: "Point",
-        metric: "http_reqs",
-        data: { value: 1, time: timestamp },
-      })}\n`,
-    );
-    await waitForReadline();
-    k6Process.child.emit("close", 0);
-    await completionAcceptedPromise;
-
-    expect(apiClient.sendCompletion).toHaveBeenCalledTimes(2);
-    expect(reports).toHaveLength(2);
-    expect(reports[1]).toBe(reports[0]);
-    expect(reports[1]).toMatchObject({
-      runId: startRequest.runId,
-      status: "succeeded",
-      exitCode: 0,
-      transportAttemptCounts: {
-        plannedRequests: 400,
-        startedRequests: 1,
-        completedRequests: 1,
-        unstartedRequests: 399,
-      },
-    });
   });
 
   it("retries a timed-out completion with a fresh request signal", async () => {

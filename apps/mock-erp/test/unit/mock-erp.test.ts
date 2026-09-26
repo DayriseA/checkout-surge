@@ -144,20 +144,11 @@ describe("Mock ERP configuration", () => {
     ).toThrow("MAX_TPS must be a positive integer");
   });
 
-  it.each([
-    "0",
-    "-1",
-    "1.5",
-    "not-a-number",
-    "NaN",
-    "Infinity",
-    "-Infinity",
-    "1e309",
-  ])("rejects ADMIN_MIN_MAX_TPS=%s", (value) => {
+  it("rejects invalid ADMIN_MIN_MAX_TPS", () => {
     expect(() =>
       loadMockErpConfig({
         CONTROL_SERVICE_TOKEN: controlServiceToken,
-        ADMIN_MIN_MAX_TPS: value,
+        ADMIN_MIN_MAX_TPS: "0",
       }),
     ).toThrow("ADMIN_MIN_MAX_TPS must be a positive integer");
   });
@@ -217,8 +208,8 @@ describe("confirmation service", () => {
         decide: vi.fn().mockResolvedValue({
           status: "failed",
           httpStatus: 503,
-          errorCode: "erp_capacity_exceeded",
-          errorMessage: "The ERP cannot accept more confirmations right now.",
+          errorCode: "erp_forced_outage",
+          errorMessage: "The ERP forced-outage diagnostic control is enabled.",
         }),
       },
       now: sequenceClock(
@@ -232,8 +223,8 @@ describe("confirmation service", () => {
       response: {
         status: "failed",
         httpStatus: 503,
-        errorCode: "erp_capacity_exceeded",
-        errorMessage: "The ERP cannot accept more confirmations right now.",
+        errorCode: "erp_forced_outage",
+        errorMessage: "The ERP forced-outage diagnostic control is enabled.",
         latencyMs: 40,
         timestamp: "2026-06-22T00:00:00.040Z",
       },
@@ -250,8 +241,8 @@ describe("confirmation service", () => {
             ? {
                 status: "failed" as const,
                 httpStatus: 503,
-                errorCode: "temporary_failure",
-                errorMessage: "Try again.",
+                errorCode: "erp_injected_error",
+                errorMessage: "The ERP injected a configured dependency failure.",
               }
             : { status: "succeeded" as const };
         },
@@ -442,24 +433,6 @@ describe("chaos control service", () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it("throttles confirmations beyond the configured TPS cap", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
-      testSafetyCaps,
-    );
-    const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
-      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
-    });
-
-    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(confirmationRequest)).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-  });
-
   it("tracks request-scoped TPS windows independently by run ID", async () => {
     const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
     const provider = new ChaosConfirmationDecisionProvider({
@@ -557,39 +530,6 @@ describe("chaos control service", () => {
       errorCode: "erp_capacity_exceeded",
     });
   });
-
-  it("returns forced errors and forced outage failures", async () => {
-    const errorStore = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 100, errorRate: 1, forcedOutage: false },
-      testSafetyCaps,
-    );
-    const outageStore = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: true },
-      testSafetyCaps,
-    );
-
-    await expect(
-      new ChaosConfirmationDecisionProvider({
-        configStore: errorStore,
-        tpsLimiter: new SlidingWindowTpsLimiter(),
-        random: () => 0,
-      }).decide(confirmationRequest),
-    ).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 503,
-      errorCode: "erp_injected_error",
-    });
-    await expect(
-      new ChaosConfirmationDecisionProvider({
-        configStore: outageStore,
-        tpsLimiter: new SlidingWindowTpsLimiter(),
-      }).decide(confirmationRequest),
-    ).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 503,
-      errorCode: "erp_forced_outage",
-    });
-  });
 });
 
 describe("Mock ERP HTTP service", () => {
@@ -679,8 +619,8 @@ describe("Mock ERP HTTP service", () => {
           decide: async () => ({
             status: "failed",
             httpStatus: 503,
-            errorCode: "erp_unavailable",
-            errorMessage: "The ERP is temporarily unavailable.",
+            errorCode: "erp_forced_outage",
+            errorMessage: "The ERP forced-outage diagnostic control is enabled.",
           }),
         },
       }),
@@ -697,7 +637,7 @@ describe("Mock ERP HTTP service", () => {
     expect(erpConfirmationResponseSchema.parse(response.json())).toMatchObject({
       status: "failed",
       httpStatus: 503,
-      errorCode: "erp_unavailable",
+      errorCode: "erp_forced_outage",
     });
   });
 

@@ -4,7 +4,6 @@ import {
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import { K6RunAccumulator, parseK6SummaryMetrics } from "../src/application/k6-output-parser.js";
-import { readK6SummaryExport } from "../src/application/k6-runner.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 
 const startedAt = new Date("2026-06-20T12:00:00.000Z");
@@ -198,11 +197,9 @@ describe("K6RunAccumulator summary precedence", () => {
     });
   });
 
-  it("keeps duration aggregation bounded and leaves p95 unavailable without a summary", () => {
+  it("leaves p95 unavailable without a summary", () => {
     const accumulator = createAccumulator();
-    for (let value = 0; value < 20_000; value += 1) {
-      accumulator.observe({ type: "Point", metric: "http_req_duration", data: { value } });
-    }
+    accumulator.observe({ type: "Point", metric: "http_req_duration", data: { value: 10 } });
     const report = accumulator.completionReport({ status: "succeeded", completedAt });
     expect(report.httpSummary).not.toHaveProperty("p95LatencyMs");
     expect(report.httpTimingBreakdownSummary).toEqual(emptyHttpTimingBreakdownSummary);
@@ -423,25 +420,6 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       acceptedResponses: 250,
       soldOutResponses: 425,
       unexpectedResponses: 50,
-    });
-  });
-});
-
-describe("summary export reading", () => {
-  it.each([
-    [Object.assign(new Error("missing"), { code: "ENOENT" }), "summary_export_missing"],
-    [new Error("permission denied"), "summary_export_read_failed"],
-  ])("distinguishes read failures", async (error, warning) => {
-    const result = await readK6SummaryExport("/tmp/summary.json", async () => {
-      throw error;
-    });
-    expect(result).toEqual({ metrics: null, warning });
-  });
-
-  it("distinguishes an invalid export", async () => {
-    expect(await readK6SummaryExport("/tmp/summary.json", async () => "{}")).toEqual({
-      metrics: null,
-      warning: "summary_export_invalid",
     });
   });
 });

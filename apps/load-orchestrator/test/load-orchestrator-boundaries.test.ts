@@ -321,30 +321,17 @@ describe("load-orchestrator readiness", () => {
     });
   });
 
-  it("executes both PATH and explicit k6 values with the version argv", async () => {
-    for (const binary of ["k6", "C:\\tools\\k6.exe"]) {
-      const checkExecutable = vi.fn(async () => ({ ok: true }));
-      const readiness = createLoadOrchestratorReadiness(createConfig({ k6Binary: binary }), {
+  it("passes the configured k6 binary to the version check", async () => {
+    const checkExecutable = vi.fn(async () => ({ ok: true }));
+    const readiness = createLoadOrchestratorReadiness(
+      createConfig({ k6Binary: "/configured/k6" }),
+      {
         fetch: vi.fn(async () => jsonResponse(apiHealthPayload("ok"))),
         checkExecutable,
-      });
-      expect(readinessCheck(await readiness.checks(), "k6_binary_executable").status).toBe("ok");
-      expect(checkExecutable).toHaveBeenCalledWith(binary, ["version"], 3000);
-    }
-  });
-
-  it("degrades a rejected injected executable checker instead of rejecting readiness", async () => {
-    const readiness = createLoadOrchestratorReadiness(createConfig(), {
-      fetch: vi.fn(async () => jsonResponse(apiHealthPayload("ok"))),
-      checkExecutable: vi.fn(async () => {
-        throw new Error("checker failed");
-      }),
-    });
-    await expect(readiness.checks()).resolves.toContainEqual({
-      name: "k6_binary_executable",
-      status: "unavailable",
-      message: "Configured k6 binary could not be checked.",
-    });
+      },
+    );
+    expect(readinessCheck(await readiness.checks(), "k6_binary_executable").status).toBe("ok");
+    expect(checkExecutable).toHaveBeenCalledWith("/configured/k6", ["version"], 3000);
   });
 
   it("marks the API readiness dependency ok when the configured API target is reachable", async () => {

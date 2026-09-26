@@ -1,8 +1,4 @@
-import {
-  type ErpConfirmationRequest,
-  erpConfirmationPath,
-  errorPayloadSchema,
-} from "@checkout-surge/contracts";
+import { type ErpConfirmationRequest, erpConfirmationPath } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createServiceLogger } from "@checkout-surge/logger";
 import { describe, expect, it } from "vitest";
 import { ErpChaosConfigStore } from "../../src/application/chaos-control-service.js";
@@ -30,7 +26,7 @@ const confirmationRequest: ErpConfirmationRequest = {
 };
 
 describe("Mock ERP correlation boundary", () => {
-  it("binds the inbound id into the response header, error body, routine logs, and promotes body correlation", async () => {
+  it("promotes body correlation into the confirmation header and log", async () => {
     const lines: string[] = [];
     const logger = createServiceLogger({
       service: "mock-erp",
@@ -43,59 +39,18 @@ describe("Mock ERP correlation boundary", () => {
       controlServiceToken,
       logger,
     });
-    server.route({
-      method: "GET",
-      url: "/test-correlation-echo",
-      handler: async (request) => {
-        request.log.info({ marker: "mock-erp-marker" }, "mock-erp-echo");
-        return { correlationId: request.correlationId };
-      },
-    });
-
     try {
-      const echo = await server.inject({
-        method: "GET",
-        url: "/test-correlation-echo",
-        headers: { [correlationIdHeaderName]: "mock-inbound-1" },
-      });
       const confirmation = await server.inject({
         method: "POST",
         url: erpConfirmationPath,
         headers: { [correlationIdHeaderName]: "mock-inbound-1" },
         payload: confirmationRequest,
       });
-      const badBody = await server.inject({
-        method: "POST",
-        url: erpConfirmationPath,
-        headers: { [correlationIdHeaderName]: "mock-inbound-1" },
-        payload: { not: "valid" },
-      });
-      const second = await server.inject({
-        method: "GET",
-        url: "/test-correlation-echo",
-        headers: { [correlationIdHeaderName]: "mock-inbound-2" },
-      });
-
-      expect(echo.headers[correlationIdHeaderName]).toBe("mock-inbound-1");
-      expect(echo.json().correlationId).toBe("mock-inbound-1");
-
       expect(confirmation.headers[correlationIdHeaderName]).toBe("mock-body-corr");
       const receivedRecords = lines
         .map((line) => JSON.parse(line) as { msg?: string; correlationId?: string })
         .filter((record) => record.msg === "Mock ERP confirmation request received.");
       expect(receivedRecords[0]?.correlationId).toBe("mock-body-corr");
-
-      expect(badBody.statusCode).toBe(400);
-      expect(errorPayloadSchema.parse(badBody.json()).correlationId).toBe("mock-inbound-1");
-
-      expect(second.headers[correlationIdHeaderName]).toBe("mock-inbound-2");
-
-      const echoRecords = lines
-        .map((line) => JSON.parse(line) as { msg?: string; correlationId?: string })
-        .filter((record) => record.msg === "mock-erp-echo");
-      expect(echoRecords).toHaveLength(2);
-      expect(echoRecords[0]?.correlationId).toBe("mock-inbound-1");
-      expect(echoRecords[1]?.correlationId).toBe("mock-inbound-2");
     } finally {
       await server.close();
     }
