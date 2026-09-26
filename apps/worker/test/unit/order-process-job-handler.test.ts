@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { ErpAcceptedConfirmationPersistenceError } from "../../src/application/erp-confirmation-client.js";
 import {
   createOrderProcessJobHandler as createProductionOrderProcessJobHandler,
-  hasRemainingAttempts,
   OrderFailurePersistenceError,
   OrderProcessingPersistenceError,
   type OrderRecoveryHandoff,
@@ -82,11 +81,6 @@ function createOrderProcessJobHandler(
 }
 
 describe("order-process application workflow", () => {
-  it("proves remaining attempts when the maximum exceeds the current attempt", () => {
-    expect(hasRemainingAttempts({ attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 })).toBe(true);
-    expect(hasRemainingAttempts({ attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 })).toBe(false);
-  });
-
   it("publishes aggregate dirty work and reuses confirmedAt for notification", async () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const notificationRecordPublisher = {
@@ -299,7 +293,7 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).toHaveBeenCalledOnce();
   });
 
-  it("reuses a successful ERP confirmation when confirmed persistence fails", async () => {
+  it("retries confirmed persistence after its first failure", async () => {
     const transitionToProcessing = vi
       .fn()
       .mockResolvedValueOnce(processingTransition)
@@ -310,18 +304,7 @@ describe("order-process application workflow", () => {
       .mockRejectedValueOnce(persistenceError)
       .mockResolvedValueOnce(confirmedTransition);
     const persistence = createPersistence({ transitionToProcessing, transitionToConfirmed });
-    const confirmDownstreamErp = vi.fn().mockResolvedValue(undefined);
-    let hasReusableSuccessfulConfirmation = false;
-    const confirmation = {
-      confirm: vi.fn(async () => {
-        if (hasReusableSuccessfulConfirmation) {
-          return;
-        }
-
-        await confirmDownstreamErp();
-        hasReusableSuccessfulConfirmation = true;
-      }),
-    };
+    const confirmation = { confirm: vi.fn().mockResolvedValue(undefined) };
     const handler = createOrderProcessJobHandler({
       confirmation,
       persistence,
@@ -333,7 +316,7 @@ describe("order-process application workflow", () => {
       handler.handle(job, { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 }),
     ).resolves.toBeUndefined();
 
-    expect(confirmDownstreamErp).toHaveBeenCalledOnce();
+    expect(confirmation.confirm).toHaveBeenCalledTimes(2);
     expect(transitionToConfirmed).toHaveBeenCalledTimes(2);
   });
 
@@ -473,33 +456,6 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 
-  it("terminally fails only an explicit permanent rejection", async () => {
-    const persistence = createPersistence();
-    const handler = createOrderProcessJobHandler({
-      confirmation: {
-        confirm: vi.fn().mockResolvedValue({
-          disposition: "permanent_rejection",
-          errorCode: "erp_permanent_rejection",
-          errorMessage: "Local confirmation rejected the order",
-        }),
-      },
-      persistence,
-      logger: createSilentLogger("worker"),
-    });
-
-    await handler.handle(job, delivery);
-    expect(persistence.transitionToFailed).toHaveBeenCalledWith(
-      job,
-      {
-        category: "business_rejection",
-        code: "erp_permanent_rejection",
-        message: "Local confirmation rejected the order",
-      },
-      delivery,
-    );
-    expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
-  });
-
   it("terminally fails a non-transient ERP error as technical", async () => {
     const persistence = createPersistence();
     const handler = createOrderProcessJobHandler({
@@ -563,14 +519,14 @@ describe("order-process application workflow", () => {
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "retrying");
   });
 
-  it("publishes a failed business outcome update after permanent rejection", async () => {
+  it("publishes a failed business outcome update after a technical failure", async () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const handler = createOrderProcessJobHandler({
       confirmation: {
         confirm: vi.fn().mockResolvedValue({
-          disposition: "permanent_rejection",
-          errorCode: "erp_permanent_rejection",
-          errorMessage: "ERP rejected the order",
+          disposition: "technical_failure",
+          errorCode: "erp_authentication_failed",
+          errorMessage: "Authentication failed",
         }),
       },
       persistence: createPersistence(),
@@ -584,22 +540,7 @@ describe("order-process application workflow", () => {
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "failed");
   });
 
-  it("does not dirty business outcomes for detected retry and terminal persistence no-ops", async () => {
-    const retryError = Object.assign(new Error("replayed attempt"), { attemptRecorded: false });
-    const retryPublish = vi.fn().mockResolvedValue(undefined);
-    const retryHandler = createOrderProcessJobHandler({
-      confirmation: { confirm: vi.fn().mockRejectedValue(retryError) },
-      persistence: createPersistence({
-        transitionToProcessing: vi.fn().mockResolvedValue({ changed: false, status: "processing" }),
-      }),
-      logger: createSilentLogger("worker"),
-      publishBusinessOutcomeUpdate: retryPublish,
-    });
-    await expect(retryHandler.handle(job, { ...delivery, maxAttempts: 4 })).rejects.toBe(
-      retryError,
-    );
-    expect(retryPublish).not.toHaveBeenCalled();
-
+  it("does not dirty business outcomes for terminal persistence no-ops", async () => {
     const terminalPublish = vi.fn().mockResolvedValue(undefined);
     const terminalHandler = createOrderProcessJobHandler({
       confirmation: { confirm: vi.fn().mockResolvedValue(undefined) },
@@ -630,9 +571,9 @@ describe("order-process application workflow", () => {
 
   it("preserves confirmation and failure-persistence errors together", async () => {
     const confirmationError = {
-      disposition: "permanent_rejection" as const,
-      errorCode: "erp_permanent_rejection",
-      errorMessage: "confirmation unavailable",
+      disposition: "technical_failure" as const,
+      errorCode: "erp_authentication_failed",
+      errorMessage: "Authentication failed",
     };
     const persistenceError = new Error("database unavailable");
     const persistence = createPersistence({

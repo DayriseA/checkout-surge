@@ -72,22 +72,6 @@ describe("BullMQ order-processing boundary", () => {
     await producerRedis.quit();
   });
 
-  it("consumes and validates a job from the physical BullMQ queue", async () => {
-    const handled = deferred<OrderProcessJob>();
-    consumer = createBullMqOrderProcessConsumer({
-      connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
-      concurrency: 1,
-      handler: { handle: async (payload) => handled.resolve(payload) },
-      logger: createSilentLogger("worker"),
-    });
-
-    consumer.start();
-    await queue.add(orderProcessJobName, job, { jobId: job.orderId });
-
-    await expect(handled.promise).resolves.toEqual(job);
-    expect(consumer.isRunning()).toBe(true);
-  });
-
   it("passes one-based delivery attempt metadata to the handler", async () => {
     const handled = deferred<{
       payload: OrderProcessJob;

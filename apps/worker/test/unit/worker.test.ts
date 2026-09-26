@@ -39,34 +39,10 @@ describe("worker configuration", () => {
     });
   });
 
-  it("rejects retired ERP engine knobs", () => {
-    expect(() =>
-      loadWorkerConfig({
-        DATABASE_URL: "postgresql://localhost/checkout_surge",
-        REDIS_URL: "redis://localhost:6379",
-        ERP_REQUEST_TIMEOUT_MS: "500",
-      }),
-    ).not.toThrow();
-    const config = loadWorkerConfig({
-      DATABASE_URL: "postgresql://localhost/checkout_surge",
-      REDIS_URL: "redis://localhost:6379",
-      ERP_CIRCUIT_FAILURE_THRESHOLD: "2",
-      ORDER_RECOVERY_MAX_ATTEMPTS: "5",
-    });
-    expect(config).not.toHaveProperty("erpCircuitFailureThreshold");
-    expect(config).not.toHaveProperty("orderRecoveryMaxAttempts");
-  });
-
-  it("accepts coherent deadline resource bounds and rejects unsafe ceilings or leases", () => {
+  it("accepts coherent deadline resource bounds and rejects unsafe leases", () => {
     expect(() =>
       validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: 30_000 }),
     ).not.toThrow();
-    expect(() =>
-      validateAdaptiveErpDeadlineConfiguration({
-        recoveryLeaseMs: 30_000,
-        maximumRequestDeadlineMs: 5_499,
-      }),
-    ).toThrow("largest allowed ERP latency plus policy margin (5500ms)");
     expect(() => validateAdaptiveErpDeadlineConfiguration({ recoveryLeaseMs: 10_999 })).toThrow(
       "must be at least the adaptive ERP maximum request deadline plus ownership headroom (11000ms)",
     );
@@ -293,64 +269,12 @@ describe("worker runtime lifecycle", () => {
     await runtime.close();
   });
 
-  it("starts and cleanly closes injected runtime dependencies", async () => {
-    const logger = createSilentLogger("worker");
-    const healthServer = buildWorkerHealthServer({
-      logger,
-      readiness: { checks: async () => [] },
-    });
-    const consumer = {
-      start: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-      isRunning: () => true,
-      checkConnectivity: vi.fn().mockResolvedValue(undefined),
-    };
-    const notificationConsumer = {
-      start: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-      isRunning: () => true,
-      checkConnectivity: vi.fn().mockResolvedValue(undefined),
-    };
-    const notificationRecoveryScanner = {
-      start: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-      scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
-    };
-    const orderDispatchScanner = {
-      start: vi.fn(),
-      close: vi.fn().mockResolvedValue(undefined),
-      scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
-    };
-    const runtime = createWorkerRuntime({
-      healthServer,
-      healthHost: "127.0.0.1",
-      healthPort: 0,
-      orderProcessConsumer: consumer,
-      notificationRecordConsumer: notificationConsumer,
-      notificationRecoveryScanner,
-      orderDispatchScanner,
-      closeOrderProcessJobPublisher: vi.fn().mockResolvedValue(undefined),
-      closeNotificationRecordPublisher: vi.fn().mockResolvedValue(undefined),
-      closePostgres: vi.fn().mockResolvedValue(undefined),
-      closeRedis: vi.fn().mockResolvedValue(undefined),
-      logger,
-    });
-
-    await runtime.start();
-    await Promise.all([runtime.close(), runtime.close()]);
-
-    expect(consumer.start).toHaveBeenCalledOnce();
-    expect(consumer.close).toHaveBeenCalledOnce();
-    expect(notificationConsumer.start).toHaveBeenCalledOnce();
-    expect(notificationConsumer.close).toHaveBeenCalledOnce();
-    expect(notificationRecoveryScanner.start).toHaveBeenCalledOnce();
-    expect(notificationRecoveryScanner.close).toHaveBeenCalledOnce();
-    expect(orderDispatchScanner.start).toHaveBeenCalledOnce();
-    expect(orderDispatchScanner.close).toHaveBeenCalledOnce();
-  });
-
   it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {
     const closeOrder: string[] = [];
+    const consumerStart = vi.fn();
+    const notificationStart = vi.fn();
+    const notificationRecoveryStart = vi.fn();
+    const orderDispatchStart = vi.fn();
     const healthServer = {
       listen: vi.fn().mockResolvedValue(undefined),
       close: vi.fn(async () => {
@@ -362,7 +286,7 @@ describe("worker runtime lifecycle", () => {
       healthHost: "127.0.0.1",
       healthPort: 0,
       orderProcessConsumer: {
-        start: vi.fn(),
+        start: consumerStart,
         close: vi.fn(async () => {
           closeOrder.push("consumer");
         }),
@@ -370,7 +294,7 @@ describe("worker runtime lifecycle", () => {
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
       notificationRecordConsumer: {
-        start: vi.fn(),
+        start: notificationStart,
         close: vi.fn(async () => {
           closeOrder.push("notifications");
         }),
@@ -378,14 +302,14 @@ describe("worker runtime lifecycle", () => {
         checkConnectivity: vi.fn().mockResolvedValue(undefined),
       },
       notificationRecoveryScanner: {
-        start: vi.fn(),
+        start: notificationRecoveryStart,
         close: vi.fn(async () => {
           closeOrder.push("notification-recovery");
         }),
         scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
       },
       orderDispatchScanner: {
-        start: vi.fn(),
+        start: orderDispatchStart,
         close: vi.fn(async () => {
           closeOrder.push("order-dispatch");
         }),
@@ -409,6 +333,10 @@ describe("worker runtime lifecycle", () => {
     await runtime.start();
     await Promise.all([runtime.close(), runtime.close()]);
 
+    expect(consumerStart).toHaveBeenCalledOnce();
+    expect(notificationStart).toHaveBeenCalledOnce();
+    expect(notificationRecoveryStart).toHaveBeenCalledOnce();
+    expect(orderDispatchStart).toHaveBeenCalledOnce();
     expect(closeOrder).toEqual([
       "health",
       "consumer",

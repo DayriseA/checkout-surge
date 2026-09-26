@@ -138,10 +138,15 @@ describe("PostgreSQL durable order recovery boundary", () => {
       .db.select()
       .from(orderRecoveryJobs)
       .where(eq(orderRecoveryJobs.recoveryKey, `order:${ids.order}`));
-    expect(row).toMatchObject({ status: "resolved", attempts: 2 });
+    expect(row).toMatchObject({
+      status: "resolved",
+      attempts: 2,
+      sourceJobId: "source-job",
+      sourceDisposition: "source-job:1",
+    });
   });
 
-  it("deduplicates poison DLQ records by queue/job/name", async () => {
+  it("deduplicates poison DLQ records and stores scalar payloads", async () => {
     const input = {
       jobId: "poison-boundary-job",
       jobName: "wrong-name",
@@ -153,10 +158,16 @@ describe("PostgreSQL durable order recovery boundary", () => {
     };
     await requirePersistence().recordDeadLetter(input);
     await requirePersistence().recordDeadLetter(input);
+    await requirePersistence().recordDeadLetter({ ...input, jobId: "scalar-job", payload: null });
     const rows = await requireConnection()
       .db.select()
       .from(orderDeadLetters)
       .where(eq(orderDeadLetters.jobId, input.jobId));
     expect(rows).toHaveLength(1);
+    const [scalarRow] = await requireConnection()
+      .db.select()
+      .from(orderDeadLetters)
+      .where(eq(orderDeadLetters.jobId, "scalar-job"));
+    expect(scalarRow?.payload).toBeNull();
   });
 });

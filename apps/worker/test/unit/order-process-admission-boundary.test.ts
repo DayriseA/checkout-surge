@@ -1,10 +1,7 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
-import { createSilentLogger } from "@checkout-surge/logger";
-import type { Job } from "bullmq";
 import { describe, expect, it, vi } from "vitest";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
-import { processJob } from "../../src/queue/bullmq-order-process-consumer.js";
 
 const data: OrderProcessJob = {
   orderId: "11111111-1111-4111-8111-111111111111",
@@ -433,32 +430,4 @@ function confirmationOutcome(disposition: "succeeded" | "capacity_rejected") {
     httpStatus: disposition === "capacity_rejected" ? 429 : 200,
     ...(disposition === "capacity_rejected" ? { retryAfterMs: 60_000 } : {}),
   };
-}
-
-describe("order process consumer boundary", () => {
-  it("leaves ERP admission inside the claimed handler workflow", async () => {
-    const handler = { handle: vi.fn().mockRejectedValue(new Error("handler failed")) };
-    await expect(
-      processJob(bullJob(), {
-        connection: {},
-        concurrency: 10,
-        handler,
-        recovery: { recordRecoverable: vi.fn(), recordDeadLetter: vi.fn() },
-        logger: createSilentLogger("worker"),
-      }),
-    ).rejects.toThrow("handler failed");
-    expect(handler.handle).toHaveBeenCalledOnce();
-    expect(bullJob().moveToDelayed).not.toHaveBeenCalled();
-  });
-});
-
-function bullJob() {
-  return {
-    id: data.orderId,
-    name: "order.process",
-    data,
-    attemptsMade: 0,
-    opts: { attempts: 1 },
-    moveToDelayed: vi.fn(),
-  } as unknown as Job<OrderProcessJob, void, "order.process">;
 }

@@ -21,12 +21,14 @@ import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
-import { ErpUnresolvedCallReconciler } from "../../src/application/erp-reconciliation.js";
+import {
+  ErpUnresolvedCallReconciler,
+  ScheduledErpOrderConfirmation,
+} from "../../src/application/erp-reconciliation.js";
 import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import {
   createOrderProcessJobHandler,
-  type OrderConfirmation,
   type OrderTransitionPersistence,
 } from "../../src/application/order-process-job-handler.js";
 import {
@@ -237,6 +239,7 @@ describe("PostgreSQL ERP attempt recovery", () => {
       const originalHandler = createHandler(
         createHttpConfirmation(originalErp.baseUrl, requirePersistence()),
         interruptedPersistence,
+        requireConnection(),
       );
       interruption = await originalHandler
         .handle(job, {
@@ -278,6 +281,7 @@ describe("PostgreSQL ERP attempt recovery", () => {
       const replayHandler = createHandler(
         createHttpConfirmation(replacementErp.baseUrl, requirePersistence()),
         transitionPersistence,
+        requireConnection(),
       );
       await replayHandler.handle(replayJob, {
         attemptNumber: 2,
@@ -492,29 +496,25 @@ function testAdmission(now: () => number = Date.now): AdaptiveErpRuntimeAdmissio
 }
 
 function createHandler(
-  confirmation: OrderConfirmation | HttpErpOrderConfirmation,
+  client: HttpErpOrderConfirmation,
   persistence: OrderTransitionPersistence,
+  connection: ReturnType<typeof createDatabaseConnection>,
 ) {
+  const admission = testAdmission();
+  const control = new PostgresOrderRecoveryPersistence(connection.db);
   return createOrderProcessJobHandler({
-    confirmation: toExplicitConfirmation(confirmation),
+    confirmation: new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({ client, callResolution: control, admission }),
+      admission,
+      control,
+    }),
     persistence,
     logger: createSilentLogger("worker"),
     publishBusinessOutcomeUpdate: async () => undefined,
     notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
     recovery: { handoff: async () => undefined, resolve: async () => undefined },
   });
-}
-
-function toExplicitConfirmation(
-  confirmation: OrderConfirmation | HttpErpOrderConfirmation,
-): OrderConfirmation {
-  if (!(confirmation instanceof HttpErpOrderConfirmation)) return confirmation;
-  return {
-    confirm: async (job, delivery) =>
-      (await confirmation.findSuccessfulAttempt(job))
-        ? { disposition: "succeeded" }
-        : confirmation.dispatch(job, delivery, erpResiliencePolicy.initialRequestDeadlineMs),
-  };
 }
 
 async function startInMemoryErpService(

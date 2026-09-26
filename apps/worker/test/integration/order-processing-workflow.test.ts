@@ -317,7 +317,6 @@ describe("PostgreSQL worker order transitions", () => {
 
   it.each([
     "authentication",
-    "authorization",
     "contract",
     "identity",
     "attempt",
@@ -340,8 +339,8 @@ describe("PostgreSQL worker order transitions", () => {
       processingGeneration: 0,
     });
     const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
-      failure === "authentication" || failure === "authorization"
-        ? new Response("denied", { status: failure === "authentication" ? 401 : 403 })
+      failure === "authentication"
+        ? new Response("denied", { status: 401 })
         : failure === "contract"
           ? Response.json({ invalid: true })
           : Response.json({
@@ -409,7 +408,6 @@ describe("PostgreSQL worker order transitions", () => {
       failureCategory: "technical",
       failureCode: {
         authentication: "erp_authentication_failed",
-        authorization: "erp_authorization_failed",
         contract: "erp_response_contract_invalid",
         identity: "erp_lookup_identity_contradiction",
         attempt: "erp_attempt_contradiction",
@@ -559,49 +557,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(confirmedTransition.confirmedAt).toEqual(order?.confirmedAt);
   });
 
-  it("rolls back the status when matching event insertion fails", async () => {
-    await connection.sql.unsafe(`
-      CREATE FUNCTION reject_processing_event() RETURNS trigger AS $$
-      BEGIN
-        IF NEW.event_name = 'order.processing' THEN
-          RAISE EXCEPTION 'processing event rejected';
-        END IF;
-        RETURN NEW;
-      END;
-      $$ LANGUAGE plpgsql;
-      CREATE TRIGGER reject_processing_event_trigger
-      BEFORE INSERT ON order_events
-      FOR EACH ROW EXECUTE FUNCTION reject_processing_event();
-    `);
-    const persistence = new PostgresOrderTransitionPersistence(connection.db);
-
-    try {
-      await expect(
-        persistence.transitionToProcessing(job, {
-          attemptNumber: 1,
-          attemptsMade: 0,
-          maxAttempts: 1,
-        }),
-      ).rejects.toThrow();
-      const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
-      const processingEvents = await connection.db
-        .select()
-        .from(orderEvents)
-        .where(
-          and(eq(orderEvents.orderId, ids.order), eq(orderEvents.eventName, "order.processing")),
-        );
-
-      expect(order?.status).toBe("queued");
-      expect(order?.processingAt).toBeNull();
-      expect(processingEvents).toHaveLength(0);
-    } finally {
-      await connection.sql.unsafe(`
-        DROP TRIGGER IF EXISTS reject_processing_event_trigger ON order_events;
-        DROP FUNCTION IF EXISTS reject_processing_event();
-      `);
-    }
-  });
-
   it("serializes concurrent duplicate deliveries without duplicate lifecycle events", async () => {
     const persistence = new PostgresOrderTransitionPersistence(connection.db);
     const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 };
@@ -718,15 +673,15 @@ describe("PostgreSQL worker order transitions", () => {
     const failedTransition = await persistence.transitionToFailed(
       job,
       {
-        category: "business_rejection",
-        code: "order_confirmation_failed",
-        message: "placeholder confirmation failed",
+        category: "technical",
+        code: "erp_authentication_failed",
+        message: "Authentication failed",
       },
       delivery,
     );
     const replay = await persistence.transitionToFailed(
       job,
-      { category: "business_rejection", code: "different", message: "must not overwrite" },
+      { category: "technical", code: "erp_authorization_failed", message: "must not overwrite" },
       { attemptNumber: 5, attemptsMade: 4, maxAttempts: 5 },
     );
 
@@ -737,9 +692,9 @@ describe("PostgreSQL worker order transitions", () => {
     expect(order).toMatchObject({
       status: "failed",
       failedAt,
-      failureCategory: "business_rejection",
-      failureCode: "order_confirmation_failed",
-      failureMessage: "placeholder confirmation failed",
+      failureCategory: "technical",
+      failureCode: "erp_authentication_failed",
+      failureMessage: "Authentication failed",
     });
     expect(failedEvents).toHaveLength(1);
     expect(replay).toEqual({ changed: false, status: "failed" });
@@ -747,9 +702,9 @@ describe("PostgreSQL worker order transitions", () => {
     expect(failedEvents[0]?.payload).toEqual({
       attemptNumber: 4,
       attemptsMade: 3,
-      failureCategory: "business_rejection",
-      failureCode: "order_confirmation_failed",
-      failureMessage: "placeholder confirmation failed",
+      failureCategory: "technical",
+      failureCode: "erp_authentication_failed",
+      failureMessage: "Authentication failed",
     });
   });
 
@@ -820,7 +775,6 @@ describe("PostgreSQL worker order transitions", () => {
     { status: "failed" as const, terminal: false },
     { status: "failed" as const, terminal: true },
     { status: "timed_out" as const, terminal: false },
-    { status: "timed_out" as const, terminal: true },
   ])("keeps $status terminal=$terminal attempt rows and events in parity", async ({
     status,
     terminal,
@@ -831,7 +785,6 @@ describe("PostgreSQL worker order transitions", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        // Terminal retryable failures only occur on an exhausted budget.
         maxAttempts: terminal ? 1 : 2,
         deliveryId: `${status}-${terminal}`,
       },

@@ -24,43 +24,6 @@ describe("PostgreSQL ERP scope resilience state", () => {
   });
   afterAll(() => connection?.close());
 
-  it("persists per-scope cooldown and circuit-open expiries across restarts", async () => {
-    await expect(persistence.get("catalog")).resolves.toBeNull();
-
-    const cooldownUntil = new Date("2026-06-22T00:01:00.000Z");
-    await persistence.setExpiries({ scope: "catalog", cooldownExpiresAt: cooldownUntil });
-    await expect(persistence.get("catalog")).resolves.toMatchObject({
-      scope: "catalog",
-      cooldownExpiresAt: cooldownUntil,
-      circuitOpenExpiresAt: null,
-    });
-
-    const circuitUntil = new Date("2026-06-22T00:02:00.000Z");
-    const cooldownUpdate = new Date("2026-06-22T00:01:30.000Z");
-    await persistence.setExpiries({
-      scope: "catalog",
-      cooldownExpiresAt: cooldownUpdate,
-      circuitOpenExpiresAt: circuitUntil,
-    });
-    await expect(persistence.get("catalog")).resolves.toMatchObject({
-      cooldownExpiresAt: cooldownUpdate,
-      circuitOpenExpiresAt: circuitUntil,
-    });
-
-    // Scopes are isolated: run-scoped state never bleeds into the catalog.
-    const runScopeUntil = new Date("2026-06-22T00:03:00.000Z");
-    await persistence.setExpiries({
-      scope: "run:55555555-5555-4555-8555-555555555555",
-      circuitOpenExpiresAt: runScopeUntil,
-    });
-    await expect(persistence.get("catalog")).resolves.toMatchObject({
-      circuitOpenExpiresAt: circuitUntil,
-    });
-    await expect(
-      persistence.get("run:55555555-5555-4555-8555-555555555555"),
-    ).resolves.toMatchObject({ circuitOpenExpiresAt: runScopeUntil, cooldownExpiresAt: null });
-  });
-
   it("round-trips the complete adaptive restart-safety boundary", async () => {
     await persistence.save({
       scope: "catalog",

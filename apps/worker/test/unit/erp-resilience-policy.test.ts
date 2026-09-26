@@ -47,9 +47,9 @@ describe("adaptive ERP request deadlines", () => {
     expect(controller.deadline("catalog")).toBe(6_000);
   });
 
-  it("counts timeouts at their used deadline and excludes lookup, replay, and local reuse", () => {
+  it("counts timeouts at their used deadline and excludes lookup and replay", () => {
     const controller = new AdaptiveErpRequestDeadlineController({ now: () => 0 });
-    for (const source of ["lookup", "replay", "local_reuse"] as const) {
+    for (const source of ["lookup", "replay"] as const) {
       controller.record({
         scope: "catalog",
         source,
@@ -282,13 +282,9 @@ describe("adaptive ERP admission policy", () => {
   });
 
   it("bounds jitter, escalates fallback backoff, and caps retry guidance", () => {
-    const invalidClock = testClock();
-    const minimumJitter = createController(invalidClock, () => 0);
-    const invalid = acquire(minimumJitter, "catalog", "confirmation", 10);
-    minimumJitter.feedback(invalid, {
-      outcome: "capacity_rejected",
-      retryAfterMs: Number.NaN,
-    });
+    const minimumJitter = createController(testClock(), () => 0);
+    const minimumPermit = acquire(minimumJitter, "catalog", "confirmation", 10);
+    minimumJitter.feedback(minimumPermit, { outcome: "capacity_rejected" });
     expect(minimumJitter.snapshot("catalog", 10).scope?.cooldownUntilMs).toBe(500);
 
     const clock = testClock();
