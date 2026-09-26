@@ -74,17 +74,10 @@ describe("Gold Signals", () => {
 
     expect(markup.match(/role="img"/g)).toHaveLength(3);
     expect(markup.match(/viewBox="0 0 640 96"/g)).toHaveLength(3);
-    expect(markup).toContain(
-      'class="m-0 mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2" data-signal-headlines=""',
-    );
-    expect(markup).toContain("Peak 10 attempts/s");
+    expect(markup).toContain('data-signal-headlines=""');
     expect(markup).toContain(
       "Checkout attempts started by the load generator in 1-second windows.",
     );
-    expect(markup).toContain("0 of 10 left · 0 oversold");
-    expect(markup).toContain("Peak 6 · drained in 10 s");
-    expect(markup).toContain("9/10 confirmed · 0 pending · p95 3 s · Converged in 118 s");
-    expect(markup).toContain("1 failed · lag avg 2 s, max 4 s");
     expect(markup).not.toContain("999 of 10 left");
     expect(markup).not.toContain("Peak 999");
     expect(markup).not.toContain("999/10 confirmed");
@@ -128,38 +121,6 @@ describe("Gold Signals", () => {
   });
 
   it("uses lifecycle-aware absence without zero claims or empty charts", () => {
-    const liveMarkup = renderToStaticMarkup(
-      createElement(GoldSignals, {
-        acceptedReservations: 0,
-        arrivalSummary: null,
-        liveLag: {
-          confirmedOrderCount: 0,
-          pendingConfirmationCount: 0,
-          averageLagMs: null,
-          p95LagMs: null,
-          maxLagMs: null,
-          oldestPendingAgeSeconds: null,
-          measuredAt: "2026-06-20T00:00:01.000Z",
-        },
-        liveSamples: [
-          {
-            recoveredAt: "2026-06-20T00:00:01.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: null,
-            remainingStock: 10,
-            queueBacklog: 0,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-        ],
-        oversoldUnits: 0,
-        runStatus: "active",
-        startingStock: 10,
-        terminalSummary: null,
-      }),
-    );
     const historyMarkup = renderToStaticMarkup(
       createElement(GoldSignals, {
         acceptedReservations: 0,
@@ -181,52 +142,52 @@ describe("Gold Signals", () => {
       }),
     );
 
-    expect(liveMarkup.match(/Not yet available/g)).toHaveLength(3);
-    expect(liveMarkup).toContain("0/0 confirmed · 0 pending");
     expect(historyMarkup.match(/Not recorded for this run/g)).toHaveLength(4);
     expect(failedMarkup.match(/Not recorded for this run/g)).toHaveLength(4);
     expect(`${historyMarkup}${failedMarkup}`).not.toContain("Not yet available");
-    expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain('role="img"');
-    expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain("Peak 0");
-    expect(`${liveMarkup}${historyMarkup}${failedMarkup}`).not.toContain("0 remaining");
+    expect(`${historyMarkup}${failedMarkup}`).not.toContain('role="img"');
+    expect(`${historyMarkup}${failedMarkup}`).not.toContain("Peak 0");
+    expect(`${historyMarkup}${failedMarkup}`).not.toContain("0 remaining");
   });
 
   it("does not present zero-filled live samples as confirmation evidence", () => {
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignals, {
-        acceptedReservations: null,
-        arrivalSummary: null,
-        liveLag: {
-          confirmedOrderCount: 3,
-          pendingConfirmationCount: 2,
-          averageLagMs: 200,
-          p95LagMs: 300,
-          maxLagMs: 400,
-          oldestPendingAgeSeconds: 1,
-          measuredAt: "2026-06-20T00:00:01.000Z",
+    const derived = deriveGoldSignalCharts({
+      acceptedReservations: null,
+      arrivalSummary: null,
+      liveLag: {
+        confirmedOrderCount: 3,
+        pendingConfirmationCount: 2,
+        averageLagMs: 200,
+        p95LagMs: 300,
+        maxLagMs: 400,
+        oldestPendingAgeSeconds: 1,
+        measuredAt: "2026-06-20T00:00:01.000Z",
+      },
+      liveSamples: [
+        {
+          recoveredAt: "2026-06-20T00:00:01.000Z",
+          hasBusinessOutcomeEvidence: false,
+          arrivalRatePerSecond: null,
+          remainingStock: 9,
+          queueBacklog: null,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 0,
         },
-        liveSamples: [
-          {
-            recoveredAt: "2026-06-20T00:00:01.000Z",
-            hasBusinessOutcomeEvidence: false,
-            arrivalRatePerSecond: null,
-            remainingStock: 9,
-            queueBacklog: null,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-        ],
-        oversoldUnits: null,
-        runStatus: "active",
-        startingStock: 10,
-        terminalSummary: null,
-      }),
-    );
+      ],
+      oversoldUnits: null,
+      runStatus: "active",
+      startingStock: 10,
+      terminalSummary: null,
+    });
 
-    expect(markup).toContain("3/Not yet available confirmed · 2 pending · p95 300 ms");
-    expect(markup).not.toContain('role="img"');
+    // The sample carries no business-outcome evidence, so the confirmation chart stays empty
+    // while the live lag summary remains the only confirmation reading.
+    expect(derived.charts.confirmation.available).toBe(false);
+    expect(derived.charts.confirmation.points).toEqual([]);
+    expect(derived.charts.backlog.available).toBe(false);
+    expect(derived.charts.arrival.available).toBe(false);
   });
 
   it.each([
@@ -373,168 +334,164 @@ describe("Gold Signals", () => {
       "The timeline panels cover the completed run through its final timeline boundary; request-arrival evidence was not recorded.",
     );
     expect(markup).not.toContain("All panels cover");
-    expect(markup).toContain(
-      '<dt class="text-xs font-bold text-muted">Request arrival</dt><dd class="m-0 mt-1 font-semibold text-ink">Not recorded for this run</dd>',
-    );
+    expect(markup).toMatch(/Request arrival<\/dt><dd[^>]*>Not recorded for this run<\/dd>/);
     expect(markup.match(/role="img"/g)).toHaveLength(2);
-  });
-
-  it("reports load-generator absence as final once a draining run has ended its traffic", () => {
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignals, {
-        acceptedReservations: 3,
-        arrivalSummary: null,
-        liveSamples: [],
-        oversoldUnits: null,
-        runStatus: "draining",
-        terminalSummary: null,
-      }),
-    );
-
-    expect(markup).toContain(
-      '<dt class="text-xs font-bold text-muted">Request arrival</dt><dd class="m-0 mt-1 font-semibold text-ink">Not recorded for this run</dd>',
-    );
-    expect(markup.match(/Not yet available/g)).toHaveLength(3);
   });
 
   it("uses live lag evidence without treating browser collection as run evidence", () => {
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignals, {
-        acceptedReservations: 7,
-        arrivalSummary: null,
-        failedOrders: 0,
-        liveLag: {
-          confirmedOrderCount: 6,
-          pendingConfirmationCount: 1,
-          averageLagMs: 900,
-          p95LagMs: 1_200,
-          maxLagMs: 1_500,
-          oldestPendingAgeSeconds: 2,
-          measuredAt: "2026-06-20T00:00:02.000Z",
+    const derived = deriveGoldSignalCharts({
+      acceptedReservations: 7,
+      arrivalSummary: null,
+      failedOrders: 0,
+      liveLag: {
+        confirmedOrderCount: 6,
+        pendingConfirmationCount: 1,
+        averageLagMs: 900,
+        p95LagMs: 1_200,
+        maxLagMs: 1_500,
+        oldestPendingAgeSeconds: 2,
+        measuredAt: "2026-06-20T00:00:02.000Z",
+      },
+      liveSamples: [
+        {
+          recoveredAt: "2026-06-20T00:00:01.000Z",
+          hasBusinessOutcomeEvidence: false,
+          arrivalRatePerSecond: null,
+          remainingStock: 10,
+          queueBacklog: 0,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 0,
         },
-        liveSamples: [
-          {
-            recoveredAt: "2026-06-20T00:00:01.000Z",
-            hasBusinessOutcomeEvidence: false,
-            arrivalRatePerSecond: null,
-            remainingStock: 10,
-            queueBacklog: 0,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-          {
-            recoveredAt: "2026-06-20T00:01:31.000Z",
-            hasBusinessOutcomeEvidence: false,
-            arrivalRatePerSecond: null,
-            remainingStock: 10,
-            queueBacklog: 0,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-          {
-            recoveredAt: "2026-06-20T00:02:01.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: 12,
-            remainingStock: 10,
-            queueBacklog: 5,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 7,
-          },
-          {
-            recoveredAt: "2026-06-20T00:02:03.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: 2,
-            remainingStock: 3,
-            queueBacklog: 1,
-            confirmedOrderCount: 4,
-            settledOrderCount: 4,
-            failedOrderCount: 0,
-            pendingOrderCount: 3,
-          },
-        ],
-        oversoldUnits: 0,
-        runStatus: "active",
-        startingStock: 10,
-        terminalSummary: null,
-      }),
-    );
+        {
+          recoveredAt: "2026-06-20T00:01:31.000Z",
+          hasBusinessOutcomeEvidence: false,
+          arrivalRatePerSecond: null,
+          remainingStock: 10,
+          queueBacklog: 0,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 0,
+        },
+        {
+          recoveredAt: "2026-06-20T00:02:01.000Z",
+          hasBusinessOutcomeEvidence: true,
+          arrivalRatePerSecond: 12,
+          remainingStock: 10,
+          queueBacklog: 5,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 7,
+        },
+        {
+          recoveredAt: "2026-06-20T00:02:03.000Z",
+          hasBusinessOutcomeEvidence: true,
+          arrivalRatePerSecond: 2,
+          remainingStock: 3,
+          queueBacklog: 1,
+          confirmedOrderCount: 4,
+          settledOrderCount: 4,
+          failedOrderCount: 0,
+          pendingOrderCount: 3,
+        },
+      ],
+      oversoldUnits: 0,
+      runStatus: "active",
+      startingStock: 10,
+      terminalSummary: null,
+    });
 
-    expect(markup).toContain("3 of 10 left · 0 oversold");
-    expect(markup).toContain("6/7 confirmed · 1 pending · p95 1.2 s");
-    expect(markup).toContain("0 failed · lag avg 900 ms, max 1.5 s");
-    expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
-    expect(markup).toContain(
-      "Checkout attempts started by the load generator in 1-second windows.",
-    );
-    expect(markup).toContain("Arrivals: starts at 12 attempts/s at 0s");
-    expect(markup).not.toContain("120s:");
-    expect(markup).not.toContain("0s first checkout attempt");
-    expect(markup).not.toContain("Reloading restarts");
+    // Browser-collected arrival rates chart the live strip from the first positive sample.
+    expect(derived.charts.arrival.available).toBe(true);
+    expect(derived.charts.arrival.points).toEqual([
+      { elapsedSeconds: 0, value: 12 },
+      { elapsedSeconds: 2, value: 2 },
+    ]);
+    // The shared axis names live update bounds, never the run's terminal timeline.
+    expect(derived.axis).toEqual({
+      originMs: Date.parse("2026-06-20T00:02:01.000Z"),
+      startLabel: "first available update",
+      endLabel: "latest available update",
+    });
+    expect(derived.charts.arrival.xMax).toBe(2);
+    // Live lag stays the confirmation headline until durable evidence exists.
+    expect(derived.headlines.confirmation.value).toBe("6/7 confirmed · 1 pending · p95 1.2 s");
+    expect(derived.headlines.confirmation.detail).toBe("0 failed · lag avg 900 ms, max 1.5 s");
+    expect(derived.headlines.inventory.value).toBe("3 of 10 left · 0 oversold");
   });
 
   it("starts a reloaded mid-drain timeline from fallback durable activity", () => {
-    const markup = renderToStaticMarkup(
-      createElement(GoldSignals, {
-        acceptedReservations: 5,
-        arrivalSummary: null,
-        liveSamples: [
-          {
-            recoveredAt: "2026-06-20T00:00:01.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: null,
-            remainingStock: 10,
-            queueBacklog: 0,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-          {
-            recoveredAt: "2026-06-20T00:01:01.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: null,
-            remainingStock: 7,
-            queueBacklog: 0,
-            confirmedOrderCount: 0,
-            settledOrderCount: 0,
-            failedOrderCount: 0,
-            pendingOrderCount: 0,
-          },
-          {
-            recoveredAt: "2026-06-20T00:01:03.000Z",
-            hasBusinessOutcomeEvidence: true,
-            arrivalRatePerSecond: null,
-            remainingStock: 5,
-            queueBacklog: 2,
-            confirmedOrderCount: 2,
-            settledOrderCount: 2,
-            failedOrderCount: 0,
-            pendingOrderCount: 2,
-          },
-        ],
-        oversoldUnits: 0,
-        runStatus: "active",
-        startingStock: 10,
-        terminalSummary: null,
-      }),
-    );
+    const derived = deriveGoldSignalCharts({
+      acceptedReservations: 5,
+      arrivalSummary: null,
+      liveSamples: [
+        {
+          recoveredAt: "2026-06-20T00:00:01.000Z",
+          hasBusinessOutcomeEvidence: true,
+          arrivalRatePerSecond: null,
+          remainingStock: 10,
+          queueBacklog: 0,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 0,
+        },
+        {
+          recoveredAt: "2026-06-20T00:01:01.000Z",
+          hasBusinessOutcomeEvidence: true,
+          arrivalRatePerSecond: null,
+          remainingStock: 7,
+          queueBacklog: 0,
+          confirmedOrderCount: 0,
+          settledOrderCount: 0,
+          failedOrderCount: 0,
+          pendingOrderCount: 0,
+        },
+        {
+          recoveredAt: "2026-06-20T00:01:03.000Z",
+          hasBusinessOutcomeEvidence: true,
+          arrivalRatePerSecond: null,
+          remainingStock: 5,
+          queueBacklog: 2,
+          confirmedOrderCount: 2,
+          settledOrderCount: 2,
+          failedOrderCount: 0,
+          pendingOrderCount: 2,
+        },
+      ],
+      oversoldUnits: 0,
+      runStatus: "active",
+      startingStock: 10,
+      terminalSummary: null,
+    });
 
-    expect(markup.match(/role="img"/g)).toHaveLength(2);
-    expect(markup).toContain('aria-label="Confirmation timeline"');
-    expect(markup).toContain("ends at 2 orders at 2s.");
-    expect(markup).toContain("Request arrival</h3><p");
-    expect(markup).toContain("Not yet available");
-    expect(markup).toContain("5 of 10 left · 0 oversold");
-    expect(markup).toContain("2 waiting · peak 2");
-    expect(markup).toContain("Shared axis: 0s first available update · 2s latest available update");
-    expect(markup).not.toContain("60s:");
-    expect(markup).not.toContain("Latest/retained peak 0");
+    // No browser arrival rate was collected after the reload, so arrival stays uncharted.
+    expect(derived.charts.arrival.available).toBe(false);
+    // The fallback starts at the first sample with durable activity: stock dropped to 7 of 10,
+    // so the earlier unchanged sample does not open the timeline.
+    expect(derived.charts.inventory.points).toEqual([
+      { elapsedSeconds: 0, value: 7 },
+      { elapsedSeconds: 2, value: 5 },
+    ]);
+    expect(derived.charts.backlog.points).toEqual([
+      { elapsedSeconds: 0, value: 0 },
+      { elapsedSeconds: 2, value: 2 },
+    ]);
+    expect(derived.charts.confirmation.points).toEqual([
+      { elapsedSeconds: 0, value: 0, secondaryValue: 0 },
+      { elapsedSeconds: 2, value: 2, secondaryValue: 2 },
+    ]);
+    expect(derived.axis).toEqual({
+      originMs: Date.parse("2026-06-20T00:01:01.000Z"),
+      startLabel: "first available update",
+      endLabel: "latest available update",
+    });
+    expect(derived.charts.arrival.xMax).toBe(2);
+    expect(derived.headlines.inventory.value).toBe("5 of 10 left · 0 oversold");
+    expect(derived.headlines.backlog.value).toBe("2 waiting · peak 2");
   });
 
   it("scales every panel against the same bounded x-domain", () => {

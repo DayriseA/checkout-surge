@@ -121,22 +121,26 @@ describe("live technical board", () => {
     projection.businessOutcome = {
       ...projection.businessOutcome,
       failedOrders: 3,
-      businessRejectedOrders: 2,
-      technicallyFailedOrders: 1,
+      // The permanent-rejection vocabulary is empty, so zero business rejections is the
+      // reachable reading; the technical failures carry the distinction a swap would break.
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 3,
     };
+    const run = runFixture("draining");
+    projection.currentRun = run;
     const { container } = render(
       createElement(LiveTechnicalBoard, {
         freshness: liveFreshness,
         projection,
-        run: runFixture("draining"),
+        run,
       }),
     );
     expect(
       rowByLabel(container, "Business-rejected orders")?.querySelector("dd")?.textContent,
-    ).toBe("2");
+    ).toBe("0");
     expect(
       rowByLabel(container, "Technically failed orders")?.querySelector("dd")?.textContent,
-    ).toBe("1");
+    ).toBe("3");
     expect(container.querySelector("#watch-signal-confirmation > p")?.textContent).toBe("350");
     expect(rowByLabel(container, "Failed")).toBeNull();
   });

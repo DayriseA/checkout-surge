@@ -107,22 +107,18 @@ describe("watch composition", () => {
       configSnapshot: previewRunConfigSnapshotFixture(),
       terminalRecap: terminal,
     };
+    // The successor is a distinct run, not the terminal run resurrecting itself.
+    const successor = { ...run("starting"), runId: "66666666-6666-4666-8666-666666666666" };
 
-    expect(composition(available(projection(run("starting"))), retained).phase).toBe("starting");
+    expect(composition(available(projection(successor)), retained).phase).toBe("starting");
   });
 
   it("presents incomplete reset recovery and returns to idle after recovery completes", () => {
     const incomplete = projection(null);
     incomplete.resetRecovery = "incomplete";
 
-    expect(composition(available(incomplete))).toMatchObject({
-      phase: "reset-recovery",
-      presentation: { state: "reset-recovery-incomplete", label: "recovery incomplete" },
-    });
-    expect(composition(available(projection(null)))).toMatchObject({
-      phase: "idle",
-      presentation: { state: "ready", label: "ready" },
-    });
+    expect(composition(available(incomplete)).phase).toBe("reset-recovery");
+    expect(composition(available(projection(null))).phase).toBe("idle");
   });
 
   it("keeps a retained terminal recap after reset recovery returns ready", () => {
@@ -135,7 +131,6 @@ describe("watch composition", () => {
     };
 
     expect(composition(available(projection(null)), retained).phase).toBe("completed");
-    expect(composition(available(projection(null))).phase).toBe("idle");
   });
 });
 

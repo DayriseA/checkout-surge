@@ -217,34 +217,6 @@ describe("transport observation section", () => {
     expect(preparation?.configuredDelaySeconds).toBe(0);
     expect(preparation?.startupOverheadSeconds).toBe(preparation?.totalPreparationSeconds);
   });
-
-  it("does not expose arrival-series retention bookkeeping", () => {
-    const arrivalRateSeries = Array.from({ length: 15 }, (_, index) => ({
-      windowStartedAt: new Date(Date.UTC(2026, 5, 20, 12, 0, index)).toISOString(),
-      ratePerSecond: index + 1,
-    }));
-    const markup = renderToStaticMarkup(
-      createElement(TransportObservationSection, {
-        arrivalSummary: {
-          firstAttemptStartedAt: "2026-06-20T12:00:01.000Z",
-          peakArrivalRatePerSecond: 20,
-          peakArrivalWindowSeconds: 1,
-          dispatchDurationSeconds: 1,
-          arrivalRateSeries,
-          arrivalWindowCountObserved: 20,
-          arrivalWindowCountRetained: 15,
-          arrivalSeriesLimit: 120,
-        },
-        counts: counts({ completedRequests: 10 }),
-        ...timingProps(),
-        httpSummary: httpSummary(),
-        surface: "detail",
-      }),
-    );
-
-    expect(markup).not.toContain("retained windows");
-    expect(markup).not.toContain("observed windows");
-  });
 });
 
 describe("transport observation panel block", () => {

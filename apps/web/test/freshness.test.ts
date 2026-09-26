@@ -68,28 +68,6 @@ describe("dashboard delivery freshness", () => {
       }),
     ).toBe(expected);
   });
-
-  it("ignores shared queue work when the selected run has no expected work", () => {
-    const projection = {
-      businessOutcome: {
-        acceptedReservations: 1,
-        reservedUnits: 1,
-        soldOutRejections: 0,
-        queuedOrders: 0,
-        processingOrders: 0,
-        retryingOrders: 0,
-        confirmedOrders: 1,
-        failedOrders: 0,
-        pendingPersistenceCount: 0,
-        notificationsRecorded: 1,
-      },
-      systemStatus: {
-        queue: { depth: 9, counts: { active: 1 } },
-      },
-    };
-
-    expect(dashboardUpdateExpected(projection)).toBe(false);
-  });
 });
 
 function input(

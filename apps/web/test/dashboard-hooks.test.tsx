@@ -913,10 +913,17 @@ describe("useDashboardRecovery", () => {
       useDashboardRecovery(available(projectionFixture())),
     );
 
+    // The 503 settles while mounted, so the hook really schedules its unavailable-read retry.
     act(() => void result.current.refresh());
-    unmount();
     request.resolve(errorResponse("down", 503));
     await act(async () => request.promise);
+    expect(result.current.recovery.status).toBe("unavailable");
+    expect(result.current.isRetryScheduled).toBe(true);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+    // Unmount must cancel the retained retry timer, so no later fetch can ever fire.
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
     await act(async () => vi.runAllTimersAsync());
     expect(fetchMock).toHaveBeenCalledOnce();
   });

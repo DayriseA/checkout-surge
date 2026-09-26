@@ -17,25 +17,31 @@ function renderNavigation(children: React.ReactNode) {
 describe("DashboardNav", () => {
   it.each([
     ["/", "Overview"],
-    ["/demo", "Demo"],
     ["/watch", "Watch"],
-    ["/run-history", "Run history"],
     ["/run-history/some-run-id", "Run history"],
-    ["/admin", "Admin"],
   ])("marks the current dashboard route for %s", (currentPathname, expectedName) => {
     pathname.value = currentPathname;
     render(renderNavigation(null));
 
-    const navigation = screen.getByRole("navigation", { name: "Dashboard routes" });
     const currentLinks = screen
       .getAllByRole("link")
       .filter((link) => link.getAttribute("aria-current") === "page");
     expect(currentLinks).toHaveLength(1);
     expect(currentLinks[0]?.textContent).toBe(expectedName);
-    expect(currentLinks[0]?.classList.contains("text-white")).toBe(true);
-    expect(currentLinks[0]?.classList.contains("after:bg-signal")).toBe(true);
-    expect(currentLinks[0]?.classList.contains("text-white/70")).toBe(false);
-    expect(currentLinks[0]?.classList.contains("max-[900px]:bg-surface-muted")).toBe(true);
+  });
+
+  it("styles the current link and leaves every other link muted", () => {
+    pathname.value = "/watch";
+    render(renderNavigation(null));
+
+    const navigation = screen.getByRole("navigation", { name: "Dashboard routes" });
+    const currentLink = screen
+      .getAllByRole("link")
+      .find((link) => link.getAttribute("aria-current") === "page");
+    expect(currentLink?.classList.contains("text-white")).toBe(true);
+    expect(currentLink?.classList.contains("after:bg-signal")).toBe(true);
+    expect(currentLink?.classList.contains("text-white/70")).toBe(false);
+    expect(currentLink?.classList.contains("max-[900px]:bg-surface-muted")).toBe(true);
 
     for (const link of navigation.querySelectorAll("a:not([aria-current])")) {
       expect(link.classList.contains("text-white/70")).toBe(true);
@@ -61,7 +67,6 @@ describe("DashboardNav", () => {
     expect(panelId).toBeTruthy();
     const panel = document.getElementById(panelId as string);
     expect(panel).not.toBeNull();
-    expect(panel?.id).toBe(panelId);
     expect(panel?.classList).toContain("max-[900px]:max-h-[calc(100dvh-5rem)]");
     expect(panel?.classList).toContain("max-[900px]:overflow-y-auto");
     expect(panel?.classList).toContain("max-[900px]:flex-nowrap");

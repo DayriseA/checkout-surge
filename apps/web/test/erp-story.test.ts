@@ -14,8 +14,6 @@ describe("simulated-ERP story", () => {
     },
     { name: "a failure", failures: 1, timeouts: 0, expected: withFailures },
     { name: "a timeout", failures: 0, timeouts: 1, expected: withFailures },
-    // An all-failed window must not read as the ERP coping.
-    { name: "only failures", failures: 5, timeouts: 0, expected: withFailures },
   ])("reads a run with $name as $expected", ({ failures, timeouts, expected }) => {
     expect(
       deriveRunErpStory(

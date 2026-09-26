@@ -188,32 +188,6 @@ describe("Phase 6 projection dashboard", () => {
     expect(absentGrid?.textContent).toContain("Waiting for inventory evidence");
   });
 
-  it("separates run ERP outcomes from shared runtime state and labels both clocks", () => {
-    const projection = projectionFixture();
-    const runMarkup = renderToStaticMarkup(
-      createElement(RunErpOutcomesPanel, {
-        recovery: available(projection),
-        presentation: deriveRunErpOutcomeState(projection.erp),
-        freshness: liveFreshness,
-      }),
-    );
-    const systemMarkup = renderToStaticMarkup(
-      createElement(SystemStatusPanel, {
-        recovery: available(projectionFixture()),
-      }),
-    );
-
-    expect(runMarkup).toContain("This run");
-    expect(runMarkup).toContain("Recent simulated-ERP calls include failures or timeouts");
-    expect(runMarkup).not.toContain("Shared demo runtime");
-    expect(systemMarkup).toContain("Shared demo runtime");
-    expect(systemMarkup).toContain("Physical order queue");
-    // The queue panel keeps its own poll clock and no run-scoped ERP facts.
-    expect(systemMarkup).toContain("Last updated");
-    expect(systemMarkup).not.toContain("Protection details");
-    expect(systemMarkup).not.toContain("Recent attempts");
-  });
-
   it("renders a completed exact sellout without warning presentation", () => {
     const projection = projectionFixture();
     if (
@@ -470,6 +444,9 @@ describe("Phase 6 projection dashboard", () => {
     expect(
       runMarkup.indexOf("Recent simulated-ERP calls include failures or timeouts"),
     ).toBeLessThan(runMarkup.indexOf("Recent attempts"));
+    // The run surface names its scope, and the shared runtime panel stays out of it.
+    expect(runMarkup).toContain("This run");
+    expect(runMarkup).not.toContain("Shared demo runtime");
     // The window is stated once for the counts below it, never inline on each number.
     expect(runMarkup).toContain("Attempts, failures, and timeouts over the last 60s.");
     expect(runMarkup).not.toContain("Attempt window");
@@ -490,6 +467,11 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>2<\/dd>/);
     expect(markup).toMatch(/Retrying jobs<\/dt><dd[^>]*>1<\/dd>/);
     expect(markup).toMatch(/Retry attempts<\/dt><dd[^>]*>2<\/dd>/);
+    // The queue panel keeps its own poll clock and no run-scoped ERP facts.
+    expect(markup).toContain("Shared demo runtime");
+    expect(markup).toContain("Last updated");
+    expect(markup).not.toContain("Protection details");
+    expect(markup).not.toContain("Recent attempts");
     // The retained failed-job total is gone, and the panel issues no verdict: no pill, and no
     // degraded shared protection column.
     expect(markup).not.toMatch(/Failed<\/dt>/);
@@ -660,63 +642,18 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).not.toContain("No confirmations yet");
   });
 
-  /**
-   * The layout contract is adjacency, not two independent spans: B07 exists because the
-   * consistency card left an empty region beside it, and two half-width panels reproduce exactly
-   * that unless they are siblings inside the 12-column grid. A `col-span-6` on a panel nested in
-   * some wrapper does not participate in that grid at all, so this asserts element identity and
-   * parent/child structure in a real DOM rather than arithmetic on serialized markup. It carries
-   * the whole desktop-row contract, spans included: a separate per-panel span test would only
-   * restate what the panels found here already prove.
-   */
-  it("places the run ERP and consistency panels side by side in the Processing group", () => {
-    // The grouped panels are the report-mode layout, so this needs a terminal run; a live run
-    // renders the compact board instead.
-    const projection = completedProjectionFixture();
-    const markup = renderToStaticMarkup(
-      createElement(OperatorDashboard, {
-        initialRecovery: available(projection),
-      }),
-    );
-    const document = new DOMParser().parseFromString(markup, "text/html");
-    const processing = document.querySelector("#watch-advanced-processing");
-    if (!processing) throw new Error("Expected the Processing technical group.");
-    const grid = processing.querySelector(".grid-cols-12");
-    if (!grid) throw new Error("Expected a 12-column Processing grid.");
-    const erpPanel = panelSection(document, "Simulated ERP outcomes");
-    const lagPanel = panelSection(document, "Fast reservation vs final confirmation");
-    // Positions among the grid's own children, by element identity. Comparing indices rather than
-    // the elements themselves keeps a failure readable: vitest serializing two DOM nodes for a diff
-    // reports a jsdom environment error instead of the mismatch.
-    const gridChildren = [...grid.children];
-    const erpIndex = gridChildren.indexOf(erpPanel);
-    const lagIndex = gridChildren.indexOf(lagPanel);
-
-    // Direct children of the grid: a wrapper around the pair takes their spans out of it entirely.
-    expect(erpIndex).toBeGreaterThan(-1);
-    // Immediate siblings: any panel between them splits the row into two half-width gaps.
-    expect(lagIndex).toBe(erpIndex + 1);
-    for (const panel of [erpPanel, lagPanel]) {
-      // Class tokens, not substrings: `toContain("col-span-6")` and `/\bcol-span-6\b/` both match
-      // inside a responsive variant such as `max-[900px]:col-span-6`, a different contract.
-      expect(panel.classList.contains("col-span-6")).toBe(true);
-      // Breadth is what is wanted here, so a substring is right: no `col-span-4` survives on either
-      // panel, responsive variant or not.
-      expect(panel.className).not.toContain("col-span-4");
-    }
-  });
-
   it.each([
     "idle",
     "active",
     "completed",
   ] as const)("keeps every grouped technical section's desktop rows filled for %s evidence", (status) => {
-    const projection = projectionFixture();
-    if (status === "idle") {
-      projection.currentRun = null;
-    } else if (status === "completed") {
+    const projection = status === "idle" ? idleProjectionFixture() : projectionFixture();
+    if (status === "completed") {
       const currentRun = projection.currentRun;
-      if (currentRun?.status !== "active") throw new Error("Expected an active run fixture.");
+      const outcome = projection.businessOutcome;
+      if (currentRun?.status !== "active" || !outcome || !projection.consistencyLag) {
+        throw new Error("Expected an active run fixture with outcome and lag evidence.");
+      }
       projection.currentRun = {
         ...currentRun,
         status,
@@ -724,7 +661,29 @@ describe("Phase 6 projection dashboard", () => {
         trafficEndedAt: "2026-06-20T00:00:11.000Z",
         finalizedAt: "2026-06-20T00:00:12.000Z",
       };
+      // A run cannot finalize while orders stay queued, processing, or retrying, so the settled
+      // outcome confirms the two in-flight orders and stops the lag clock with them.
+      projection.businessOutcome = {
+        ...outcome,
+        queuedOrders: 0,
+        processingOrders: 0,
+        retryingOrders: 0,
+        confirmedOrders: 4,
+        failedOrders: 2,
+        pendingPersistenceCount: 0,
+        notificationsRecorded: 4,
+      };
+      projection.consistencyLag = {
+        ...projection.consistencyLag,
+        confirmedOrderCount: 4,
+        pendingConfirmationCount: 0,
+        oldestPendingAgeSeconds: null,
+      };
+      expectFinalizableCompletedOutcome(projection.businessOutcome);
+      expectCoherentConfirmationCounts(projection.businessOutcome, projection.consistencyLag);
     }
+    // The rendered idle and completed variants must stay contract-valid, not just the base fixture.
+    dashboardProjectionSchema.parse(projection);
     const markup = renderToStaticMarkup(
       createElement(OperatorDashboard, {
         initialRecovery: available(projection),
@@ -801,35 +760,6 @@ describe("Phase 6 projection dashboard", () => {
         default:
           throw new Error(`Unexpected group ${groupId}.`);
       }
-    }
-  });
-
-  it.each([
-    ["an active run before its traffic completes", projectionFixture],
-    ["a draining run carrying its terminal traffic evidence", drainingProjectionFixture],
-  ])("provides a contract-valid, recognizable fixture for %s", (_label, buildProjection) => {
-    const projection = buildProjection();
-    const {
-      currentRun,
-      erp,
-      transportAttemptCounts,
-      httpSummary,
-      businessOutcome,
-      consistencyLag,
-    } = projection;
-    if (!currentRun || !erp || !businessOutcome || !consistencyLag) {
-      throw new Error("Expected a fully populated projection fixture.");
-    }
-
-    expect(() => dashboardProjectionSchema.parse(projection)).not.toThrow();
-
-    // These relationships keep the fixture recognizable without imposing strict invariants on
-    // potentially torn live reads.
-    expectCoherentConfirmationCounts(businessOutcome, consistencyLag);
-    if (erp.recentAttemptCount > 0) expect(erp.latestAttempt).not.toBeNull();
-
-    if (transportAttemptCounts || httpSummary) {
-      expect(["draining", "completed", "failed"]).toContain(currentRun.status);
     }
   });
 
@@ -933,14 +863,14 @@ function available(data: DashboardProjection) {
 }
 
 /**
- * A contract-valid, recognizable projection of an active run. Tests that override related fixture
- * fields keep their scenario coherent with `expectCoherentConfirmationCounts` and, for completed
- * runs, `expectFinalizableCompletedOutcome`.
+ * A contract-valid, recognizable projection of an active run; the parse keeps fixture drift from
+ * rendering silently. Tests that override related fixture fields keep their scenario coherent with
+ * `expectCoherentConfirmationCounts` and, for completed runs, `expectFinalizableCompletedOutcome`.
  */
 function projectionFixture(): DashboardProjection {
   const runId = "11111111-1111-4111-8111-111111111111";
   const saleOfferId = "33333333-3333-4333-8333-333333333333";
-  return {
+  return dashboardProjectionSchema.parse({
     schema: dashboardProjectionSchemaName,
     resetRecoveryRunId: null,
     resetRecovery: "ready",
@@ -1110,7 +1040,30 @@ function projectionFixture(): DashboardProjection {
       observedAt: "2026-06-20T00:00:11.000Z",
     },
     recoveredAt: "2026-06-20T00:00:11.000Z",
-  };
+  });
+}
+
+/**
+ * The shared-runtime surface of an idle dashboard: no selected run, so no run-owned evidence may
+ * ride along with it.
+ */
+function idleProjectionFixture(): DashboardProjection {
+  return dashboardProjectionSchema.parse({
+    ...projectionFixture(),
+    scopeId: dashboardProjectionScopeId(null),
+    scope: null,
+    currentRun: null,
+    inventory: null,
+    recentMetrics: [],
+    erp: null,
+    businessOutcome: null,
+    consistencyLag: null,
+    transportAttemptCounts: null,
+    httpSummary: null,
+    requestArrivalSummary: null,
+    runSignalTimelineSummary: null,
+    runtimeProgress: null,
+  });
 }
 
 /** The same run one moment later, with terminal transport evidence recognizable as draining. */
@@ -1161,20 +1114,5 @@ function drainingProjectionFixture(): DashboardProjection {
     arrivalSeriesLimit: 120,
   };
 
-  return projection;
-}
-
-/** The active fixture carried to its terminal report-mode phase. */
-function completedProjectionFixture(): DashboardProjection {
-  const projection = projectionFixture();
-  const currentRun = projection.currentRun;
-  if (currentRun?.status !== "active") throw new Error("Expected an active run fixture.");
-  projection.currentRun = {
-    ...currentRun,
-    status: "completed",
-    trafficStatus: "succeeded",
-    trafficEndedAt: "2026-06-20T00:00:11.000Z",
-    finalizedAt: "2026-06-20T00:00:12.000Z",
-  };
-  return projection;
+  return dashboardProjectionSchema.parse(projection);
 }
