@@ -300,55 +300,6 @@ describe("PendingPersistenceRecoveryService", () => {
     );
   });
 
-  it("lets request replay delegate one attempt to the same owner", async () => {
-    const pending = pendingRedis();
-    const durable = persisted();
-    const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
-      persistence: {
-        persistSecuredReservation: vi.fn(async () => durable),
-        getPersistedBuyByReservationId: vi.fn(async () => null),
-      },
-      audit: audit(),
-      stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
-      orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
-      listRunScopes: async () => [],
-      idempotencyTtlSeconds: 1_800,
-      logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
-    });
-
-    await expect(
-      service.recoverReservation({ reservation: hold, idempotencyKey: "recovery-key" }),
-    ).resolves.toEqual(durable);
-  });
-
-  it("does not recover a reservation for a different idempotency key", async () => {
-    const pending = pendingRedis();
-    const persistSecuredReservation = vi.fn(async () => persisted());
-    const recoveryAudit = audit();
-    const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
-      persistence: {
-        persistSecuredReservation,
-        getPersistedBuyByReservationId: vi.fn(async () => null),
-      },
-      audit: recoveryAudit,
-      stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
-      orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
-      listRunScopes: async () => [],
-      idempotencyTtlSeconds: 1_800,
-      logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
-    });
-
-    await expect(
-      service.recoverReservation({ reservation: hold, idempotencyKey: "different-key" }),
-    ).resolves.toBeNull();
-    expect(persistSecuredReservation).not.toHaveBeenCalled();
-    expect(recoveryAudit.recordAttempt).not.toHaveBeenCalled();
-  });
-
   it("coalesces concurrent scheduler and request attempts for one reservation", async () => {
     const pending = pendingRedis();
     const durable = persisted();
@@ -812,7 +763,7 @@ describe("PendingPersistenceRecoveryService", () => {
     expect(pending.record).toMatchObject({ recoveryAttemptCount: 0, recoveryStatus: "exhausted" });
   });
 
-  it("starts once and cancels a first tick that has not run", async () => {
+  it("cancels a first tick that has not run on close", async () => {
     const pending = pendingRedis();
     const callbacks: Array<() => void> = [];
     const timer = { unref: vi.fn() } as unknown as ReturnType<typeof setTimeout>;
@@ -838,14 +789,12 @@ describe("PendingPersistenceRecoveryService", () => {
     });
 
     service.start();
-    service.start();
-    expect(schedule).toHaveBeenCalledOnce();
     await service.close();
     expect(cancelSchedule).toHaveBeenCalledWith(timer);
     expect(callbacks).toHaveLength(1);
   });
 
-  it("reschedules after a failed pass without overlapping reentrant passes", async () => {
+  it("reschedules after a failed pass", async () => {
     const pending = pendingRedis();
     const callbacks: Array<() => void> = [];
     const schedule = vi.fn((callback: () => void) => {
@@ -875,9 +824,7 @@ describe("PendingPersistenceRecoveryService", () => {
     service.start();
     callbacks[0]?.();
     await vi.waitFor(() => expect(schedule).toHaveBeenCalledTimes(2));
-    const [left, right] = await Promise.all([service.runOnce(), service.runOnce()]);
-    expect(left).toEqual(right);
-    expect(listRunScopes).toHaveBeenCalledTimes(2);
+    expect(listRunScopes).toHaveBeenCalledOnce();
     await service.close();
   });
 

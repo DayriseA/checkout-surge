@@ -47,6 +47,7 @@ describe("single-attempt BullMQ wake-ups", () => {
     const firstStored = await queue.getJob(base.orderId);
     const secondStored = await queue.getJob(second.orderId);
     expect(firstStored?.opts).toMatchObject({ attempts: 1 });
+    expect(firstStored?.data.runId).toBe(runA);
     expect(secondStored?.opts).toMatchObject({ attempts: 1 });
     expect(await queue.getJobCounts("waiting")).toMatchObject({ waiting: 2 });
     await publisher.close();

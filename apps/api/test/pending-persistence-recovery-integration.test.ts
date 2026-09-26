@@ -1,6 +1,7 @@
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
 import {
   createAbortableDatabaseConnection,
+  createDatabaseConnection,
   createRedisClient,
   initializeInventory,
   inventoryKeys,
@@ -24,6 +25,7 @@ const hold: SecuredReservationHold = {
 describe("pending-persistence recovery cancellation boundaries", () => {
   it("closes during an actual abortable PostgreSQL discovery statement", async () => {
     const databaseUrl = requireTestDatabaseUrl();
+    const control = createDatabaseConnection(databaseUrl, { max: 1 });
     const redis = createRedisClient(requireTestRedisUrl(), {
       lazyConnect: true,
       maxRetriesPerRequest: 0,
@@ -41,7 +43,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
       listRunScopes: async (signal) => {
         const operation = createAbortableDatabaseConnection(databaseUrl, signal, { max: 1 });
         try {
-          const query = operation.sql`select pg_sleep(30)`;
+          const query = operation.sql`select pg_sleep(30) /* pending-recovery-discovery-cancel */`;
           discoveryStarted?.();
           await query;
           return [];
@@ -55,10 +57,27 @@ describe("pending-persistence recovery cancellation boundaries", () => {
       logger: createSilentLogger("api"),
     });
 
-    const pass = service.runOnce();
-    await started;
+    try {
+      const pass = service.runOnce();
+      await started;
+      await vi.waitFor(
+        async () => {
+          const rows = await control.sql`
+          select count(*)::int as count from pg_stat_activity
+          where state = 'active'
+            and query like '%pending-recovery-discovery-cancel%'
+            and pid <> pg_backend_pid()
+        `;
+          expect(rows[0]?.count).toBe(1);
+        },
+        { timeout: 3_000 },
+      );
 
-    await expect(within(Promise.all([pass, service.close()]))).resolves.toBeDefined();
+      await expect(within(Promise.allSettled([pass, service.close()]))).resolves.toHaveLength(2);
+    } finally {
+      await service.close().catch(() => undefined);
+      await control.close();
+    }
   });
 
   it("disconnects an actual blocked Redis command in an exact direct attempt", async () => {
@@ -71,6 +90,11 @@ describe("pending-persistence recovery cancellation boundaries", () => {
       lazyConnect: true,
       maxRetriesPerRequest: 0,
     });
+    const controlRedis = createRedisClient(redisUrl, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 0,
+    });
+    let operationClientId: number | undefined;
     const keys = inventoryKeys(hold.saleOfferId);
     await initializeInventory(discoveryRedis, { saleOfferId: hold.saleOfferId, allocatedStock: 1 });
     await reserveInventoryStock(discoveryRedis, {
@@ -114,6 +138,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
           audit: noOpAudit(),
           stockReservations: {
             promoteAccepted: async () => {
+              operationClientId = await operationRedis.client("ID");
               promotionStarted?.();
               await operationRedis.brpop("pending-persistence-recovery-never", 0);
             },
@@ -137,6 +162,24 @@ describe("pending-persistence recovery cancellation boundaries", () => {
         idempotencyKey: "recovery-integration-key",
       });
       await started;
+      await vi.waitFor(
+        async () => {
+          const clients = String(await controlRedis.client("LIST"));
+          expect(
+            clients
+              .split("\n")
+              .some(
+                (line) =>
+                  line.includes(`id=${operationClientId} `) &&
+                  line.includes("cmd=brpop") &&
+                  line
+                    .split(" ")
+                    .some((field) => field.startsWith("flags=") && field.includes("b")),
+              ),
+          ).toBe(true);
+        },
+        { timeout: 3_000 },
+      );
 
       await expect(within(Promise.all([attempt, service.close()]))).resolves.toEqual([
         null,
@@ -153,6 +196,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
         if (scopedKeys.length > 0) await inventoryKeysToDelete.unlink(...scopedKeys);
       } finally {
         inventoryKeysToDelete.disconnect();
+        controlRedis.disconnect();
         discoveryRedis.disconnect();
         operationRedis.disconnect();
       }

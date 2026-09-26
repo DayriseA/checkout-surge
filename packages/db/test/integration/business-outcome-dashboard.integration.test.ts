@@ -196,6 +196,27 @@ describe("business outcome dashboard projection", () => {
       queuedAt: new Date(now.getTime() - 6_000),
       processingAt: new Date(now.getTime() - 6_000),
     });
+    await connection.db.insert(reservations).values({
+      id: "55555555-5555-4555-8555-555555555556",
+      saleOfferId,
+      runId: null,
+      correlationId: "corr-unscoped",
+      quantity: 1,
+      reservationToken: "res-unscoped",
+      securedAt: now,
+      expiresAt: new Date("2026-06-21T00:15:00.000Z"),
+    });
+    await connection.db.insert(orders).values({
+      id: "66666666-6666-4666-8666-666666666666",
+      publicOrderId: "ord-unscoped",
+      saleOfferId,
+      reservationId: "55555555-5555-4555-8555-555555555556",
+      runId: null,
+      correlationId: "corr-unscoped",
+      quantity: 1,
+      status: "queued",
+      queuedAt: now,
+    });
     await connection.db.insert(erpAttempts).values({
       orderId: "66666666-6666-4666-8666-666666666661",
       deliveryId: "dashboard-delivery-1",

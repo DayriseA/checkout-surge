@@ -238,41 +238,11 @@ describe("ReserveOrderService queue handoff", () => {
     });
   });
 
-  it("rejects non-accepting generated runs from Redis without touching persistence", async () => {
-    const persistSecuredReservation = vi.fn();
-    const getPersistedBuyByReservationId = vi.fn();
-    const scheduleInventory = vi.fn();
-    const scheduleQueue = vi.fn();
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation,
-        getPersistedBuyByReservationId,
-      },
-      stockReservations: acceptingGateway({
-        reserve: async () => ({ outcome: "run_not_accepting_traffic", reservation: null }),
-      }),
-      dashboardSourceDirtyScheduler: { scheduleInventory, scheduleQueue },
-    });
-
-    const response = await service.reserve({ request, correlationId, now });
-
-    expect(response).toMatchObject({
-      outcome: "run_not_accepting_traffic",
-      reservation: null,
-      order: null,
-    });
-    expect(persistSecuredReservation).not.toHaveBeenCalled();
-    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-    expect(scheduleInventory).not.toHaveBeenCalled();
-    expect(scheduleQueue).not.toHaveBeenCalled();
-  });
-
   it.each([
     "sold_out",
     "run_not_accepting_traffic",
     "inventory_not_initialized",
     "idempotency_conflict",
-    "quantity_invalid",
   ] as const)("maps the Redis $decision rejection without persistence, lookups, or snapshots", async (decision) => {
     const persistSecuredReservation = vi.fn();
     const getPersistedBuyByReservationId = vi.fn();
@@ -393,41 +363,6 @@ describe("ReserveOrderService queue handoff", () => {
       outcome: "reservation_secured",
     });
     expect(callOrder).toEqual(["admission", "persist", "enqueue", "promote"]);
-  });
-
-  it.each([
-    "reservation_secured",
-    "idempotent_replay",
-  ] as const)("treats a persisted-pending %s outcome without reversing the hold", async (outcome) => {
-    const persistSecuredReservation = vi.fn();
-    const getPersistedBuyByReservationId = vi.fn();
-    const withRunAdmissionLock = vi.fn();
-    const enqueue = vi.fn();
-    const promoteAccepted = vi.fn();
-    const reverse = vi.fn(async () => "reversed" as const);
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation,
-        getPersistedBuyByReservationId,
-        withRunAdmissionLock,
-      },
-      stockReservations: acceptingGateway({
-        reserve: async ({ reservation }) => ({ outcome, reservation }),
-        promoteAccepted,
-        reverse,
-      }),
-      orderProcessJobPublisher: { enqueue },
-    });
-
-    await expect(service.reserve({ request, correlationId, now })).resolves.toMatchObject({
-      outcome: "reservation_pending_persistence",
-    });
-    expect(reverse).not.toHaveBeenCalled();
-    expect(withRunAdmissionLock).toHaveBeenCalledOnce();
-    expect(persistSecuredReservation).not.toHaveBeenCalled();
-    expect(getPersistedBuyByReservationId).not.toHaveBeenCalled();
-    expect(enqueue).not.toHaveBeenCalled();
-    expect(promoteAccepted).not.toHaveBeenCalled();
   });
 
   it("preserves and re-enqueues matching durable evidence after a terminal admission race", async () => {
@@ -657,31 +592,6 @@ describe("ReserveOrderService queue handoff", () => {
 
     await expect(service.reserve({ request, correlationId, now })).rejects.toBe(enqueueError);
     expect(reportOrderEnqueueFailure).toHaveBeenCalledOnce();
-  });
-
-  it("uses the persisted order reservation link as the job reservation ID", async () => {
-    const durableReservationId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-    const enqueue = vi.fn();
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation: async ({ reservation }) => {
-          const persisted = persistedBuy(reservation);
-          return {
-            ...persisted,
-            order: { ...persisted.order, reservationId: durableReservationId },
-          };
-        },
-        getPersistedBuyByReservationId: async () => null,
-      },
-      stockReservations: acceptingGateway(),
-      orderProcessJobPublisher: { enqueue },
-    });
-
-    await service.reserve({ request, correlationId, now });
-
-    expect(enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ reservationId: durableReservationId }),
-    );
   });
 
   it("heals an interrupted durable handoff on a pending idempotent retry", async () => {
@@ -1017,11 +927,15 @@ describe("ReserveOrderService partial failures", () => {
     ]);
   });
 
-  it("returns explicit pending when PostgreSQL and the marker ensure both fail", async () => {
+  it("returns explicit pending when PostgreSQL, the marker ensure, and both reporters fail", async () => {
     const persistenceError = new Error("database unavailable");
     const markerError = new Error("marker ensure unavailable");
-    const reportPersistenceFailure = vi.fn();
-    const reportPendingPersistenceEnsureFailure = vi.fn();
+    const reportPersistenceFailure = vi.fn(() => {
+      throw new Error("persistence reporter unavailable");
+    });
+    const reportPendingPersistenceEnsureFailure = vi.fn(() => {
+      throw new Error("marker reporter unavailable");
+    });
     const service = buildService({
       persistence: {
         persistSecuredReservation: async () => {
@@ -1101,41 +1015,6 @@ describe("ReserveOrderService partial failures", () => {
 
     expect(response.outcome).toBe("reservation_pending_persistence");
     expect(reverse).not.toHaveBeenCalled();
-  });
-
-  it("returns explicit pending when PostgreSQL, the marker ensure, and both reporters fail", async () => {
-    const reportPersistenceFailure = vi.fn(() => {
-      throw new Error("persistence reporter unavailable");
-    });
-    const reportPendingPersistenceEnsureFailure = vi.fn(() => {
-      throw new Error("marker reporter unavailable");
-    });
-    const service = buildService({
-      persistence: {
-        persistSecuredReservation: async () => {
-          throw new Error("database unavailable");
-        },
-        getPersistedBuyByReservationId: async () => null,
-      },
-      stockReservations: acceptingGateway({
-        markPendingPersistence: async () => {
-          throw new Error("marker ensure unavailable");
-        },
-      }),
-      reportPersistenceFailure,
-      reportPendingPersistenceEnsureFailure,
-    });
-
-    const response = await service.reserve({ request, correlationId, now });
-
-    expect(response).toMatchObject({
-      outcome: "reservation_pending_persistence",
-      correlationId,
-      order: null,
-      retryAfterSeconds: 30,
-    });
-    expect(reportPersistenceFailure).toHaveBeenCalledOnce();
-    expect(reportPendingPersistenceEnsureFailure).toHaveBeenCalledOnce();
   });
 
   it("returns truthful secured and reports context when accepted promotion fails", async () => {

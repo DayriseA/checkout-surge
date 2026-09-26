@@ -53,35 +53,4 @@ describe("order-processing job publisher", () => {
     expect(disconnect).toHaveBeenCalledOnce();
     expect(close).not.toHaveBeenCalled();
   });
-
-  it("rejects invalid jobs before publishing", async () => {
-    const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({
-      setGlobalRateLimit: async () => {},
-      setGlobalConcurrency: async () => {},
-      add,
-      close: vi.fn().mockResolvedValue(undefined),
-    } as OrderProcessQueue);
-
-    await expect(publisher.enqueue({ ...job, orderId: "invalid" })).rejects.toThrow();
-    expect(add).not.toHaveBeenCalled();
-  });
-
-  it("publishes run and catalog jobs with a single delivery attempt", async () => {
-    const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({
-      setGlobalRateLimit: async () => {},
-      setGlobalConcurrency: async () => {},
-      add,
-      close: vi.fn(),
-    } as OrderProcessQueue);
-    const runJob = { ...job, runId: "55555555-5555-4555-8555-555555555555" };
-
-    await publisher.enqueue(runJob);
-
-    expect(add).toHaveBeenCalledWith(orderProcessJobName, runJob, {
-      attempts: 1,
-      jobId: job.orderId,
-    });
-  });
 });

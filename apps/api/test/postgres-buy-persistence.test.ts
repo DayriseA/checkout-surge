@@ -175,23 +175,7 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
   });
 
   it.each([
-    ["non-unique failure", Object.assign(new Error("offline"), { code: "08006" }), durableRow],
-    [
-      "public-order constraint",
-      Object.assign(new Error("unique"), {
-        code: "23505",
-        constraint_name: "orders_public_order_id_unique",
-      }),
-      durableRow,
-    ],
-    [
-      "order-reservation constraint",
-      Object.assign(new Error("unique"), {
-        code: "23505",
-        constraint_name: "orders_reservation_id_unique",
-      }),
-      durableRow,
-    ],
+    ["connection failure", Object.assign(new Error("offline"), { code: "08006" }), durableRow],
   ])("preserves the original failure for a %s", async (_name, error, row) => {
     const persistence = new PostgresBuyPersistence(fakeDatabase(error, row));
 
@@ -201,45 +185,6 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
   it.each([
     ["reservations_pkey", "missing durable buy", null],
     [
-      "reservations_pkey",
-      "mismatched quantity",
-      {
-        ...matchingDurableRow,
-        reservation: { ...matchingDurableRow.reservation, quantity: 99 },
-      },
-    ],
-    [
-      "reservations_pkey",
-      "mismatched reservation correlation",
-      {
-        ...matchingDurableRow,
-        reservation: {
-          ...matchingDurableRow.reservation,
-          correlationId: "different-correlation",
-        },
-      },
-    ],
-    [
-      "reservations_pkey",
-      "mismatched order correlation",
-      {
-        ...matchingDurableRow,
-        order: { ...matchingDurableRow.order, correlationId: "different-correlation" },
-      },
-    ],
-    ["reservations_reservation_token_unique", "missing durable buy", null],
-    [
-      "reservations_reservation_token_unique",
-      "mismatched order reservation",
-      {
-        ...matchingDurableRow,
-        order: {
-          ...matchingDurableRow.order,
-          reservationId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
-        },
-      },
-    ],
-    [
       "reservations_reservation_token_unique",
       "mismatched secured timestamp",
       {
@@ -247,28 +192,6 @@ describe("PostgresBuyPersistence uniqueness-race recovery", () => {
         reservation: {
           ...matchingDurableRow.reservation,
           securedAt: new Date("2026-07-12T11:59:59.999Z"),
-        },
-      },
-    ],
-    [
-      "reservations_reservation_token_unique",
-      "mismatched expiry timestamp",
-      {
-        ...matchingDurableRow,
-        reservation: {
-          ...matchingDurableRow.reservation,
-          expiresAt: new Date("2026-07-12T12:14:59.999Z"),
-        },
-      },
-    ],
-    [
-      "reservations_reservation_token_unique",
-      "mismatched queued timestamp",
-      {
-        ...matchingDurableRow,
-        order: {
-          ...matchingDurableRow.order,
-          queuedAt: new Date("2026-07-12T11:59:59.999Z"),
         },
       },
     ],

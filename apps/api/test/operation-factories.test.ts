@@ -34,14 +34,16 @@ describe("dashboard recovery operation factory", () => {
     expect(harness.disconnectQueue).toHaveBeenCalledOnce();
   });
 
-  it("uses the operation signal to release queued and active work on deadline abort", async () => {
+  it("uses the operation signal to close acquired resources on deadline abort", async () => {
     const harness = dashboardInfrastructure();
     const controller = new AbortController();
     const operation = await dashboardFactory(harness.infrastructure)(controller.signal);
 
     controller.abort(new OperationDeadlineExceededError(50));
+    expect(harness.closeDatabase).toHaveBeenCalledOnce();
+    expect(harness.disconnectRedis).toHaveBeenCalledOnce();
+    expect(harness.disconnectQueue).toHaveBeenCalledOnce();
     await operation.close();
-
     expect(harness.closeDatabase).toHaveBeenCalledOnce();
     expect(harness.disconnectRedis).toHaveBeenCalledOnce();
     expect(harness.disconnectQueue).toHaveBeenCalledOnce();
@@ -135,6 +137,7 @@ describe("pending-persistence operation factory", () => {
     const discoveryController = new AbortController();
     const discovery = await operations.openDiscoveryScope(discoveryController.signal);
     discoveryController.abort(new Error("discovery timed out"));
+    expect(discoveryDisconnect).toHaveBeenCalledOnce();
     await discovery.close();
     await discovery.close();
     const attemptController = new AbortController();
@@ -143,6 +146,9 @@ describe("pending-persistence operation factory", () => {
       timeoutMs: 100,
     });
     attemptController.abort(new Error("attempt timed out"));
+    expect(closeDatabase).toHaveBeenCalledOnce();
+    expect(attemptDisconnect).toHaveBeenCalledOnce();
+    expect(abortPublisher).toHaveBeenCalledOnce();
     await attempt.close();
     await attempt.close();
     await operations.close();

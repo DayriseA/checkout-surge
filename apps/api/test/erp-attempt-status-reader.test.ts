@@ -8,7 +8,6 @@ import {
   orderRecoveryJobs,
   orders,
   products,
-  readBusinessOutcomeSummary,
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
@@ -121,7 +120,7 @@ describe("PostgresErpAttemptStatusReader", () => {
       ordering: "interleaved",
       finishedSeconds: { runAFirst: 1, runASecond: 3, runBFirst: 2, runBSecond: 5, unscoped: 4 },
     },
-  ])("isolates $ordering finishedAt ordering and business outcomes from nullable-unscoped data", async ({
+  ])("isolates $ordering finishedAt ordering from nullable-unscoped data", async ({
     finishedSeconds,
   }) => {
     if (!connection) throw new Error("Test database connection was not initialized.");
@@ -136,21 +135,6 @@ describe("PostgresErpAttemptStatusReader", () => {
         attempt(ids.orderB, ids.runB, 2, "failed", finishedSeconds.runBSecond),
       ]);
     const reader = new PostgresErpAttemptStatusReader(connection.db);
-    const expectedBusinessOutcome = {
-      acceptedReservations: 1,
-      reservedUnits: 1,
-      soldOutRejections: 0,
-      queuedOrders: 1,
-      processingOrders: 0,
-      retryingOrders: 0,
-      confirmedOrders: 0,
-      failedOrders: 0,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 0,
-      pendingPersistenceCount: 0,
-      notificationsRecorded: 0,
-    };
-
     await expect(
       reader.readStatus({ runId: ids.runA }, new Date(startedAt.getTime() + 10_000), 60),
     ).resolves.toMatchObject({
@@ -179,18 +163,6 @@ describe("PostgresErpAttemptStatusReader", () => {
       recentFailureCount: 0,
       recentTimeoutCount: 0,
     });
-    await expect(
-      Promise.all([
-        readBusinessOutcomeSummary(connection.db, {
-          saleOfferId: ids.saleOffer,
-          runId: ids.runA,
-        }),
-        readBusinessOutcomeSummary(connection.db, {
-          saleOfferId: ids.saleOfferB,
-          runId: ids.runB,
-        }),
-      ]),
-    ).resolves.toEqual([expectedBusinessOutcome, expectedBusinessOutcome]);
   });
 });
 
