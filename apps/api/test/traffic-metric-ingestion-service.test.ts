@@ -85,6 +85,28 @@ describe("TrafficMetricIngestionService", () => {
     );
   });
 
+  it("contains a thrown dirty-signal publication failure after retention", async () => {
+    const publicationError = new Error("pubsub unavailable");
+    const warn = vi.fn();
+    const service = createService({
+      appendIfLive: async () => "appended",
+      publishDirtyIfLive: async () => {
+        throw publicationError;
+      },
+      warn,
+    });
+
+    await expect(service.ingest(metricRequest)).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      {
+        err: publicationError,
+        runId: metricRequest.runId,
+        correlationId: metricRequest.correlationId,
+      },
+      "Could not publish traffic metric projection dirty signal.",
+    );
+  });
+
   it("does not let a throwing warning logger redefine accepted retention", async () => {
     const warn = vi.fn(() => {
       throw new Error("logger unavailable");

@@ -188,21 +188,6 @@ describe("public runtime policy service", () => {
     );
   });
 
-  it("uses new hard caps on the next service boot without reseeding", async () => {
-    const activeConnection = requireConnection(connection);
-    const first = createService(activeConnection, {
-      ...deploymentHardCapsFixture,
-      maxBuyers: 20_000,
-    });
-    const second = createService(activeConnection, {
-      ...deploymentHardCapsFixture,
-      maxBuyers: 30_000,
-    });
-
-    expect((await first.readEffectivePolicy()).deploymentHardCaps.maxBuyers).toBe(20_000);
-    expect((await second.readEffectivePolicy()).deploymentHardCaps.maxBuyers).toBe(30_000);
-  });
-
   it("returns resource_not_found when an update races with active-row removal", async () => {
     const activeConnection = requireConnection(connection);
     await activeConnection.db

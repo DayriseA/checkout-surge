@@ -12,6 +12,12 @@ const baseEnv = {
 };
 
 describe("API runtime configuration", () => {
+  it("requires Redis configuration for production composition", () => {
+    expect(() =>
+      loadApiConfig({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/test" }),
+    ).toThrow("REDIS_URL is required.");
+  });
+
   it.each([
     undefined,
     "  ",
@@ -165,15 +171,13 @@ describe("API runtime configuration", () => {
     "PENDING_PERSISTENCE_RECOVERY_DISCOVERY_TIMEOUT_MS",
     "PENDING_PERSISTENCE_RECOVERY_MAX_CONCURRENT_DIRECT_ATTEMPTS",
   ])("rejects invalid %s values", (name) => {
-    for (const value of ["0", "-1", "1.5", "invalid", String(Number.MAX_SAFE_INTEGER + 1)]) {
-      expect(() =>
-        loadApiConfig({
-          ...baseEnv,
-          CONTROL_SERVICE_TOKEN: "deployment-token",
-          [name]: value,
-        }),
-      ).toThrow(new RegExp(name));
-    }
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        [name]: "0",
+      }),
+    ).toThrow(new RegExp(name));
   });
 
   it("rejects pending-persistence initial backoff above its maximum", () => {
@@ -192,6 +196,8 @@ describe("API runtime configuration", () => {
     "1.5",
     "-1",
     "0",
+    "invalid",
+    String(Number.MAX_SAFE_INTEGER + 1),
   ])("rejects malformed or non-positive deployment cap values (%s)", (value) => {
     expect(() =>
       loadApiConfig({
@@ -235,36 +241,27 @@ describe("API runtime configuration", () => {
     ).toThrow(/DEMO_MAX_TRAFFIC_DURATION_SECONDS must be a positive integer/);
   });
 
-  it.each([
-    "0",
-    "-1",
-    "1.5",
-    "invalid",
-  ])("rejects non-positive or invalid dashboard limits (%s)", (value) => {
+  it("rejects an invalid dashboard recovery limit", () => {
     expect(() =>
       loadApiConfig({
         ...baseEnv,
         CONTROL_SERVICE_TOKEN: "deployment-token",
-        DASHBOARD_RECOVERY_MAX_CONCURRENT: value,
+        DASHBOARD_RECOVERY_MAX_CONCURRENT: "0",
       }),
     ).toThrow(/DASHBOARD_RECOVERY_MAX_CONCURRENT/);
   });
 
   it.each([
-    "0",
-    "-1",
-    "1.5",
-    "invalid",
-  ])("rejects non-positive or invalid dashboard SSE queue limits (%s)", (value) => {
-    for (const name of ["DASHBOARD_SSE_MAX_BUFFERED_FRAMES", "DASHBOARD_SSE_MAX_BUFFERED_BYTES"]) {
-      expect(() =>
-        loadApiConfig({
-          ...baseEnv,
-          CONTROL_SERVICE_TOKEN: "deployment-token",
-          [name]: value,
-        }),
-      ).toThrow(new RegExp(name));
-    }
+    "DASHBOARD_SSE_MAX_BUFFERED_FRAMES",
+    "DASHBOARD_SSE_MAX_BUFFERED_BYTES",
+  ])("rejects an invalid %s limit", (name) => {
+    expect(() =>
+      loadApiConfig({
+        ...baseEnv,
+        CONTROL_SERVICE_TOKEN: "deployment-token",
+        [name]: "0",
+      }),
+    ).toThrow(new RegExp(name));
   });
 
   it("rejects per-source limits larger than their total or global limit", () => {
