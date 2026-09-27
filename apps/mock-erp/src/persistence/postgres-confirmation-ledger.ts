@@ -1,5 +1,4 @@
 import {
-  type ErpConfirmationResponse,
   erpConfirmationResponseSchema,
   erpLookupIdentitySchema,
   erpLookupResultSchema,
@@ -71,7 +70,9 @@ export class PostgresConfirmationLedger implements ConfirmationLedger {
     `;
     const canonical = await this.find(entry.identity.idempotencyKey);
     if (!canonical) {
-      throw new Error(`ERP confirmation ledger row ${entry.identity.idempotencyKey} was not found.`);
+      throw new Error(
+        `ERP confirmation ledger row ${entry.identity.idempotencyKey} was not found.`,
+      );
     }
     return { entry: canonical, inserted: inserted.length === 1 };
   }
@@ -87,11 +88,9 @@ function parseLedgerRow(row: LedgerRow): ConfirmationLedgerEntry {
     idempotencyKey: row.idempotencyKey,
     quantity: row.quantity,
   });
-  const response = erpConfirmationResponseSchema.parse(
-    row.terminalResult,
-  ) as ErpConfirmationResponse;
+  const response = erpConfirmationResponseSchema.parse(row.terminalResult);
   const terminal = erpLookupResultSchema.parse({
-    status: response.status === "succeeded" ? "succeeded" : "rejected",
+    status: response.status,
     identity,
     result: response,
   });

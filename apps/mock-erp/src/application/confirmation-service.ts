@@ -6,7 +6,6 @@ import {
   type ErpLookupResponse,
   erpConfirmationResponseSchema,
   erpLookupResponseSchema,
-  erpPermanentRejectionCodeSchema,
 } from "@checkout-surge/contracts";
 
 export class ConfirmationIdempotencyConflictError extends Error {
@@ -32,7 +31,7 @@ export interface ConfirmationDecisionProvider {
 
 export interface ConfirmationLedgerEntry {
   identity: ErpLookupIdentity;
-  response: ErpConfirmationResponse;
+  response: Extract<ErpConfirmationResponse, { status: "succeeded" }>;
 }
 
 export interface ConfirmationLedger {
@@ -104,7 +103,7 @@ export class ConfirmationService {
     return erpLookupResponseSchema.parse({
       lookup: existing
         ? {
-            status: existing.response.status === "succeeded" ? "succeeded" : "rejected",
+            status: "succeeded",
             identity: existing.identity,
             result: existing.response,
           }
@@ -178,11 +177,10 @@ export class InMemoryConfirmationLedger implements ConfirmationLedger {
   }
 }
 
-function isTerminalResponse(response: ErpConfirmationResponse): boolean {
-  return (
-    response.status === "succeeded" ||
-    erpPermanentRejectionCodeSchema.safeParse(response.errorCode).success
-  );
+function isTerminalResponse(
+  response: ErpConfirmationResponse,
+): response is Extract<ErpConfirmationResponse, { status: "succeeded" }> {
+  return response.status === "succeeded";
 }
 
 function assertSameConfirmationIdentity(

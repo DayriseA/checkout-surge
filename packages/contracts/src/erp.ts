@@ -120,7 +120,6 @@ export const erpCumulativeOutcomeCountsSchema = z
     capacityRejected: nonnegativeIntegerSchema,
     temporarilyUnavailable: nonnegativeIntegerSchema,
     uncertainResult: nonnegativeIntegerSchema,
-    permanentRejected: nonnegativeIntegerSchema,
   })
   .strict();
 export type ErpCumulativeOutcomeCounts = z.infer<typeof erpCumulativeOutcomeCountsSchema>;

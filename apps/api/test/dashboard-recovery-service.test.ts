@@ -509,7 +509,6 @@ describe("DashboardProjectionService", () => {
       confirmedOrders: confirmed,
       notificationsRecorded: confirmed,
       failedOrders: failed,
-      technicallyFailedOrders: failed,
     }));
 
     // Upstream DB/worker suites prove state production; this boundary proves their
@@ -541,8 +540,6 @@ describe("DashboardProjectionService", () => {
     });
     expect(draining.businessOutcome).toMatchObject({
       confirmedOrders: 1,
-      technicallyFailedOrders: 1,
-      businessRejectedOrders: 0,
     });
 
     confirmed = 2;

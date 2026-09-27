@@ -62,7 +62,6 @@ describe("PostgresErpAttemptStatusReader", () => {
         capacity_rejected: 90,
         temporarily_unavailable: 10,
         uncertain_result: 5,
-        permanent_rejection: 1,
       },
     });
     await connection.db.insert(erpAttempts).values(
@@ -108,7 +107,6 @@ describe("PostgresErpAttemptStatusReader", () => {
       capacityRejected: 90,
       temporarilyUnavailable: 10,
       uncertainResult: 5,
-      permanentRejected: 1,
     });
     expect(readModel.latestAttempt).toEqual({
       runId: ids.runA,

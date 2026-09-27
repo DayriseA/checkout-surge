@@ -62,8 +62,6 @@ describe("dashboard delivery freshness", () => {
           retryingOrders: values.retrying,
           confirmedOrders: 0,
           failedOrders: 0,
-          businessRejectedOrders: 0,
-          technicallyFailedOrders: 0,
           pendingPersistenceCount: values.pending,
           notificationsRecorded: 0,
         },

@@ -36,13 +36,6 @@ export const orderWaitingReasonValues = [
 export const orderWaitingReasonSchema = z.enum(orderWaitingReasonValues);
 export type OrderWaitingReason = z.infer<typeof orderWaitingReasonSchema>;
 
-/**
- * Terminal order failure categories.
- */
-export const orderFailureCategoryValues = ["business_rejection", "technical"] as const;
-export const orderFailureCategorySchema = z.enum(orderFailureCategoryValues);
-export type OrderFailureCategory = z.infer<typeof orderFailureCategorySchema>;
-
 export const technicalOrderFailureCodeValues = [
   "erp_authentication_failed",
   "erp_authorization_failed",

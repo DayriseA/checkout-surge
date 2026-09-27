@@ -37,8 +37,7 @@ export interface LiveTechnicalBoardValues {
   /** The observed confirmation rate with its effective window, from durable records. */
   confirmationRate: [rate: number | null, windowSeconds: number] | null;
   confirmedOrders: number | null;
-  businessRejectedOrders: number | null;
-  technicallyFailedOrders: number | null;
+  failedOrders: number | null;
   httpFailureRate: [value: number, unit: string] | null;
   lagP95Average: [p95LagMs: number | null, averageLagMs: number | null] | null;
   latency: [value: number, unit: string] | null;
@@ -97,8 +96,7 @@ export function deriveLiveTechnicalBoardValues(
         ]
       : null,
     confirmedOrders: outcome?.confirmedOrders ?? null,
-    businessRejectedOrders: outcome?.businessRejectedOrders ?? null,
-    technicallyFailedOrders: outcome?.technicallyFailedOrders ?? null,
+    failedOrders: outcome?.failedOrders ?? null,
     httpFailureRate: failureRateSample ? [failureRateSample.value, failureRateSample.unit] : null,
     lagP95Average: lag ? [lag.p95LagMs, lag.averageLagMs] : null,
     latency: latencySample ? [latencySample.value, latencySample.unit] : null,
@@ -331,14 +329,9 @@ export function LiveTechnicalBoard({
           value: formatDurationSeconds(values.oldestPending),
         },
         {
-          key: "businessRejectedOrders",
-          label: "Business-rejected orders",
-          value: formatNumber(values.businessRejectedOrders),
-        },
-        {
-          key: "technicallyFailedOrders",
-          label: "Technically failed orders",
-          value: formatNumber(values.technicallyFailedOrders),
+          key: "failedOrders",
+          label: "Failed orders",
+          value: formatNumber(values.failedOrders),
         },
         {
           key: "lagP95Average",

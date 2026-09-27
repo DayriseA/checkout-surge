@@ -26,7 +26,6 @@ import {
   erpOutcomeDispositionValues,
   operatorModeValues,
   orderEventNameValues,
-  orderFailureCategoryValues,
   orderStatusValues,
   orderWaitingReasonValues,
   recoveryJobStatusValues,
@@ -63,11 +62,6 @@ export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurpos
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
 
 export const orderWaitingReasonEnum = pgEnum("order_waiting_reason", orderWaitingReasonValues);
-
-export const orderFailureCategoryEnum = pgEnum(
-  "order_failure_category",
-  orderFailureCategoryValues,
-);
 
 export const erpAttemptStatusEnum = pgEnum("erp_attempt_status", erpAttemptStatusValues);
 
@@ -286,7 +280,6 @@ export const orders = pgTable(
     runId: uuid("run_id"),
     quantity: integer("quantity").default(1).notNull(),
     status: orderStatusEnum("status").default("queued").notNull(),
-    failureCategory: orderFailureCategoryEnum("failure_category"),
     failureCode: text("failure_code"),
     failureMessage: text("failure_message"),
     queuedAt: timestamp("queued_at", { withTimezone: true }).notNull(),
@@ -399,7 +392,9 @@ export const erpConfirmationLedger = pgTable(
     saleOfferId: uuid("sale_offer_id").notNull(),
     runId: uuid("run_id"),
     quantity: integer("quantity").notNull(),
-    terminalResult: jsonb("terminal_result").$type<ErpConfirmationResponse>().notNull(),
+    terminalResult: jsonb("terminal_result")
+      .$type<Extract<ErpConfirmationResponse, { status: "succeeded" }>>()
+      .notNull(),
     createdAt: createdAt(),
   },
   (table) => [

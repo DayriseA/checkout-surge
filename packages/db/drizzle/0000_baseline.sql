@@ -4,9 +4,8 @@ CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> sta
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint
-CREATE TYPE "public"."erp_outcome_disposition" AS ENUM('succeeded', 'capacity_rejected', 'temporarily_unavailable', 'uncertain_result', 'permanent_rejection', 'technical_failure');--> statement-breakpoint
+CREATE TYPE "public"."erp_outcome_disposition" AS ENUM('succeeded', 'capacity_rejected', 'temporarily_unavailable', 'uncertain_result', 'technical_failure');--> statement-breakpoint
 CREATE TYPE "public"."order_event_name" AS ENUM('reservation.secured', 'order.queued', 'order.processing', 'order.confirmed', 'order.failed', 'notification.recorded', 'inventory.updated', 'erp.attempt.failed', 'erp.attempt.succeeded');--> statement-breakpoint
-CREATE TYPE "public"."order_failure_category" AS ENUM('business_rejection', 'technical');--> statement-breakpoint
 CREATE TYPE "public"."order_status" AS ENUM('queued', 'processing', 'confirmed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."order_waiting_reason" AS ENUM('local_admission', 'erp_capacity', 'erp_unavailable', 'uncertain_result');--> statement-breakpoint
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
@@ -242,7 +241,6 @@ CREATE TABLE "orders" (
 	"run_id" uuid,
 	"quantity" integer DEFAULT 1 NOT NULL,
 	"status" "order_status" DEFAULT 'queued' NOT NULL,
-	"failure_category" "order_failure_category",
 	"failure_code" text,
 	"failure_message" text,
 	"queued_at" timestamp with time zone NOT NULL,

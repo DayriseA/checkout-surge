@@ -45,10 +45,9 @@ describe("live technical board", () => {
       downstreamErpStatus: null,
       confirmationRate: null,
       confirmedOrders: 350,
+      failedOrders: 8,
       pendingConfirmation: 20,
       oldestPending: 8.5,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 8,
       lagP95Average: [135, 128],
     });
     expect(values.soldOutRejections).not.toBe(projection.businessOutcome?.soldOutRejections);
@@ -115,16 +114,12 @@ describe("live technical board", () => {
     expect(rateRow?.textContent).not.toContain("0 confirmations/s");
   });
 
-  it("shows business rejections and technical failures separately while draining", () => {
+  it("shows failed orders while draining", () => {
     const projection = activeProjection();
     if (!projection.businessOutcome) throw new Error("Expected business outcomes.");
     projection.businessOutcome = {
       ...projection.businessOutcome,
       failedOrders: 3,
-      // The permanent-rejection vocabulary is empty, so zero business rejections is the
-      // reachable reading; the technical failures carry the distinction a swap would break.
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 3,
     };
     const run = runFixture("draining");
     projection.currentRun = run;
@@ -135,14 +130,8 @@ describe("live technical board", () => {
         run,
       }),
     );
-    expect(
-      rowByLabel(container, "Business-rejected orders")?.querySelector("dd")?.textContent,
-    ).toBe("0");
-    expect(
-      rowByLabel(container, "Technically failed orders")?.querySelector("dd")?.textContent,
-    ).toBe("3");
+    expect(rowByLabel(container, "Failed orders")?.querySelector("dd")?.textContent).toBe("3");
     expect(container.querySelector("#watch-signal-confirmation > p")?.textContent).toBe("350");
-    expect(rowByLabel(container, "Failed")).toBeNull();
   });
 
   it("renders every board value as absent while starting without evidence", () => {
@@ -163,7 +152,7 @@ describe("live technical board", () => {
       expect(container.querySelector(`#${id}`)).not.toBeNull();
     }
     const rows = [...container.querySelectorAll("dl > div")];
-    expect(rows).toHaveLength(19);
+    expect(rows).toHaveLength(18);
     for (const row of rows) {
       expect(row.textContent).toContain("—");
     }
@@ -425,8 +414,6 @@ function activeProjection(): DashboardProjection {
       retryingOrders: 2,
       confirmedOrders: 350,
       failedOrders: 8,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 8,
       pendingPersistenceCount: 4,
       notificationsRecorded: 350,
     },

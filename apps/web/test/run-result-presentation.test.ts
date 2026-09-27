@@ -37,8 +37,6 @@ const cleanDurable: NonNullable<RunResultEvidence["durable"]> = {
   soldOutDecisions: 750,
   confirmedOrders: 250,
   failedOrders: 0,
-  businessRejectedOrders: 0,
-  technicallyFailedOrders: 0,
   queuedOrders: 0,
   processingOrders: 0,
   durablePendingPersistenceRecords: 0,
@@ -85,7 +83,7 @@ describe("run result presentation", () => {
         durable: { confirmedOrders: 200, failedOrders: 50 },
       }),
       sentence:
-        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 0 business-rejected, 50 technically failed, and 0 remain pending.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 50 failed, and 0 remain pending.",
     },
     {
       name: "pending outcomes",
@@ -93,13 +91,13 @@ describe("run result presentation", () => {
         durable: { confirmedOrders: 200, queuedOrders: 30, processingOrders: 20 },
       }),
       sentence:
-        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 0 business-rejected, 0 technically failed, and 50 remain pending.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. 200 orders were confirmed, 0 failed, and 50 remain pending.",
     },
     {
       name: "oversell",
       evidence: withEvidence({ durable: { reservedUnits: 260, uniqueReservations: 260 } }),
       sentence:
-        "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. Checkout-Surge recorded 750 sold-out rejections. Order outcomes: 250 confirmed, 0 business-rejected, 0 technically failed, and 0 pending.",
+        "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. Checkout-Surge recorded 750 sold-out rejections. Order outcomes: 250 confirmed, 0 failed, and 0 pending.",
     },
     {
       name: "partial generator observation",
@@ -135,23 +133,19 @@ describe("run result presentation", () => {
     expect(runConclusionSentence(deriveRunResult(evidence))).toBe(sentence);
   });
 
-  it("reports business rejections and technical failures separately", () => {
-    // The permanent-rejection vocabulary is empty by design, so zero business rejections with a
-    // reachable technical failure count is the reachable split-count sentence.
+  it("reports failed orders", () => {
     const result = deriveRunResult({
       ...cleanEvidence,
       durable: {
         ...cleanDurable,
         confirmedOrders: 247,
         failedOrders: 3,
-        businessRejectedOrders: 0,
-        technicallyFailedOrders: 3,
         notificationsRecorded: 247,
       },
     });
 
     expect(runConclusionSentence(result)).toContain(
-      "247 orders were confirmed, 0 business-rejected, 3 technically failed, and 0 remain pending.",
+      "247 orders were confirmed, 3 failed, and 0 remain pending.",
     );
   });
 
@@ -194,7 +188,7 @@ describe("run result presentation", () => {
 
     expect(result.outcome).toBe("completed-with-order-failures");
     expect(runConclusionSentence(result)).toContain(
-      "200 orders were confirmed, 0 business-rejected, 50 technically failed, and 10 remain pending.",
+      "200 orders were confirmed, 50 failed, and 10 remain pending.",
     );
   });
 
@@ -367,9 +361,7 @@ describe("run result presentation", () => {
       ),
     );
 
-    expect(sentence).toContain(
-      "Order outcomes: 255 confirmed, 0 business-rejected, 0 technically failed, and 0 pending.",
-    );
+    expect(sentence).toContain("Order outcomes: 255 confirmed, 0 failed, and 0 pending.");
     expect(sentence).not.toContain("All 255");
   });
 
@@ -496,7 +488,7 @@ describe("run result presentation", () => {
     );
 
     expect(orderFailures).toContain(
-      "100,000 orders were confirmed, 0 business-rejected, 250,000 technically failed, and 150,000 remain pending.",
+      "100,000 orders were confirmed, 250,000 failed, and 150,000 remain pending.",
     );
     expect(failedRun).toContain("with 100,000 failed orders");
   });
@@ -534,8 +526,6 @@ function withEvidence(
     ...overrides,
     durable: {
       ...cleanDurable,
-      technicallyFailedOrders:
-        overrides.durable?.failedOrders ?? cleanDurable.technicallyFailedOrders,
       ...overrides.durable,
     },
   };
@@ -649,8 +639,6 @@ function dashboardFixture(evidence: RunResultEvidence): DashboardProjection {
       processingOrders: durable.processingOrders,
       confirmedOrders: durable.confirmedOrders,
       failedOrders: durable.failedOrders,
-      businessRejectedOrders: durable.businessRejectedOrders,
-      technicallyFailedOrders: durable.technicallyFailedOrders,
       retryingOrders: 0,
       pendingPersistenceCount: durable.durablePendingPersistenceRecords,
       notificationsRecorded: durable.notificationsRecorded,
@@ -698,8 +686,6 @@ function summaryFixture(evidence: RunResultEvidence): RunHistorySummary {
       retryingOrders: 0,
       confirmedOrders: durable.confirmedOrders,
       failedOrders: durable.failedOrders,
-      businessRejectedOrders: durable.businessRejectedOrders,
-      technicallyFailedOrders: durable.technicallyFailedOrders,
       pendingPersistenceCount: durable.durablePendingPersistenceRecords,
       notificationsRecorded: durable.notificationsRecorded,
     },

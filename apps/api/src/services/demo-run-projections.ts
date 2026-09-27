@@ -77,8 +77,6 @@ export function emptyBusinessOutcomeSummary(): BusinessOutcomeSummary {
     retryingOrders: 0,
     confirmedOrders: 0,
     failedOrders: 0,
-    businessRejectedOrders: 0,
-    technicallyFailedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 0,
   };

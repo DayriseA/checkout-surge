@@ -32,8 +32,6 @@ function evidence(): RunFailureExplanationEvidence {
       confirmedOrders: 1500,
       notificationsRecorded: 1500,
       failedOrders: 0,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 0,
       queuedOrders: 0,
       processingOrders: 0,
       retryingOrders: 0,

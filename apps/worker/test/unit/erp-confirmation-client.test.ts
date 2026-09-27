@@ -103,7 +103,7 @@ describe("HTTP ERP confirmation outcomes", () => {
       disposition: "technical_failure",
       errorCode: "erp_response_contract_invalid",
     },
-  ] as const)("classifies $name without broad permanent rejection", async (testCase) => {
+  ] as const)("classifies $name", async (testCase) => {
     const persistence = attemptPersistence();
     const client = createClient({
       persistence,
@@ -118,7 +118,6 @@ describe("HTTP ERP confirmation outcomes", () => {
       call,
       ...("errorCode" in testCase ? { errorCode: testCase.errorCode } : {}),
     });
-    expect(outcome.disposition).not.toBe("permanent_rejection");
     expect(persistence.recordAttempt).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "dispatched_confirmation",

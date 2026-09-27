@@ -35,7 +35,6 @@ export async function readCumulativeErpOutcomeCounts(
       capacityRejected: sumAttemptCount("capacity_rejected"),
       temporarilyUnavailable: sumAttemptCount("temporarily_unavailable"),
       uncertainResult: sumAttemptCount("uncertain_result"),
-      permanentRejected: sumAttemptCount("permanent_rejection"),
     })
     .from(orderRecoveryJobs)
     .innerJoin(orders, eq(orders.id, orderRecoveryJobs.orderId))
@@ -45,7 +44,6 @@ export async function readCumulativeErpOutcomeCounts(
     capacityRejected: row?.capacityRejected ?? 0,
     temporarilyUnavailable: row?.temporarilyUnavailable ?? 0,
     uncertainResult: row?.uncertainResult ?? 0,
-    permanentRejected: row?.permanentRejected ?? 0,
   };
 }
 
@@ -75,8 +73,6 @@ export async function readBusinessOutcomeSummary(
     retryingOrders,
     confirmedOrders,
     failedOrders,
-    businessRejectedOrders,
-    technicallyFailedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   ] = await Promise.all([
@@ -92,20 +88,6 @@ export async function readBusinessOutcomeSummary(
     countRetryingOrders(db, orderFilter),
     countRows(db, orders, and(orderFilter, eq(orders.status, "confirmed"))),
     countRows(db, orders, and(orderFilter, eq(orders.status, "failed"))),
-    countRows(
-      db,
-      orders,
-      and(
-        orderFilter,
-        eq(orders.status, "failed"),
-        eq(orders.failureCategory, "business_rejection"),
-      ),
-    ),
-    countRows(
-      db,
-      orders,
-      and(orderFilter, eq(orders.status, "failed"), eq(orders.failureCategory, "technical")),
-    ),
     countRows(
       db,
       reservationPendingPersistence,
@@ -126,8 +108,6 @@ export async function readBusinessOutcomeSummary(
     retryingOrders,
     confirmedOrders,
     failedOrders,
-    businessRejectedOrders,
-    technicallyFailedOrders,
     pendingPersistenceCount,
     notificationsRecorded,
   });

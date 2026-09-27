@@ -1,8 +1,5 @@
 import { z } from "zod";
-import {
-  erpConfirmationFailedResponseSchema,
-  erpConfirmationSucceededResponseSchema,
-} from "./erp.js";
+import { erpConfirmationSucceededResponseSchema } from "./erp.js";
 import {
   idempotencyKeySchema,
   isoTimestampSchema,
@@ -14,8 +11,7 @@ import {
  * Closed shared ERP error-code vocabulary with its HTTP statuses:
  * `erp_capacity_exceeded` (429), `erp_forced_outage` (503),
  * `erp_injected_error` (503), and `erp_idempotency_conflict` (409, identity
- * contradiction). Only codes declared here — or in the permanent-rejection
- * vocabulary below — may ever acquire a classification meaning.
+ * contradiction). Only codes declared here may acquire a classification meaning.
  */
 export const erpErrorCodeValues = [
   "erp_capacity_exceeded",
@@ -26,23 +22,12 @@ export const erpErrorCodeValues = [
 export const erpErrorCodeSchema = z.enum(erpErrorCodeValues);
 export type ErpErrorCode = z.infer<typeof erpErrorCodeSchema>;
 
-/**
- * Declared shared vocabulary of permanent business-rejection codes. The
- * current mock ERP emits none, so the list is empty by design: a code must be
- * added here first before any response can terminalize an order as
- * `business_rejection`. Unknown, malformed, 401, 403, 409, unknown-4xx, and
- * opaque-5xx responses can therefore never classify as business rejection.
- */
-export const erpPermanentRejectionCodeValues = [] as const;
-export const erpPermanentRejectionCodeSchema = z.enum(erpPermanentRejectionCodeValues);
-
 /** Disposition classes for recognized ERP outcomes. */
 export const erpOutcomeDispositionValues = [
   "succeeded",
   "capacity_rejected",
   "temporarily_unavailable",
   "uncertain_result",
-  "permanent_rejection",
   "technical_failure",
 ] as const;
 export const erpOutcomeDispositionSchema = z.enum(erpOutcomeDispositionValues);
@@ -78,31 +63,16 @@ export const erpLookupIdentitySchema = z
   .strict();
 export type ErpLookupIdentity = z.infer<typeof erpLookupIdentitySchema>;
 
-const erpTerminalLookupResultShape = {
-  identity: erpLookupIdentitySchema,
-};
-
 /**
- * Canonical terminal result of an ERP confirmation. Terminal branches carry the
- * immutable identity. The `rejected` branch only accepts codes from the
- * declared permanent-rejection vocabulary, so no undeclared code can ever be
- * recorded as a business rejection.
+ * Canonical terminal result of an ERP confirmation. Success carries the
+ * immutable identity.
  */
 export const erpLookupResultSchema = z.discriminatedUnion("status", [
   z
     .object({
-      ...erpTerminalLookupResultShape,
+      identity: erpLookupIdentitySchema,
       status: z.literal("succeeded"),
       result: erpConfirmationSucceededResponseSchema,
-    })
-    .strict(),
-  z
-    .object({
-      ...erpTerminalLookupResultShape,
-      status: z.literal("rejected"),
-      result: erpConfirmationFailedResponseSchema.extend({
-        errorCode: erpPermanentRejectionCodeSchema,
-      }),
     })
     .strict(),
   /**

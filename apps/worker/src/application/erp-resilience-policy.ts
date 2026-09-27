@@ -117,7 +117,7 @@ export class AdaptiveErpRequestDeadlineController {
 
 export type ErpAdmissionFeedback =
   | {
-      outcome: Extract<ErpOutcomeDisposition, "succeeded" | "permanent_rejection">;
+      outcome: Extract<ErpOutcomeDisposition, "succeeded">;
       replayed: boolean;
     }
   | { outcome: Extract<ErpOutcomeDisposition, "capacity_rejected">; retryAfterMs?: number }
@@ -336,7 +336,7 @@ export class AdaptiveErpAdmissionController {
       this.recordUnavailable(state, internal.probe, now);
     } else if (
       internal.operation === "confirmation" &&
-      (feedback.outcome === "succeeded" || feedback.outcome === "permanent_rejection") &&
+      feedback.outcome === "succeeded" &&
       !feedback.replayed
     ) {
       this.recordUsefulProgress(state, internal.probe);

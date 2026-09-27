@@ -466,7 +466,7 @@ export class AdaptiveErpRuntimeAdmission {
 }
 
 function toFeedback(outcome: ErpConfirmationOutcome | ErpLookupOutcome): ErpAdmissionFeedback {
-  if (outcome.disposition === "succeeded" || outcome.disposition === "permanent_rejection") {
+  if (outcome.disposition === "succeeded") {
     return {
       outcome: outcome.disposition,
       replayed: outcome.operation === "status_lookup" || outcome.replayed,

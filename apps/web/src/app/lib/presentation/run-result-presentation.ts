@@ -28,8 +28,6 @@ export function evidenceFromDashboard(projection: DashboardProjection): RunResul
           uniqueReservations: business.acceptedReservations,
           soldOutDecisions: business.soldOutRejections,
           confirmedOrders: business.confirmedOrders,
-          businessRejectedOrders: business.businessRejectedOrders,
-          technicallyFailedOrders: business.technicallyFailedOrders,
           failedOrders: business.failedOrders,
           queuedOrders: business.queuedOrders,
           processingOrders: business.processingOrders,
@@ -62,8 +60,6 @@ export function evidenceFromRunHistorySummary(summary: SummaryLike): RunResultEv
       uniqueReservations: business.acceptedReservations,
       soldOutDecisions: business.soldOutRejections,
       confirmedOrders: business.confirmedOrders,
-      businessRejectedOrders: business.businessRejectedOrders,
-      technicallyFailedOrders: business.technicallyFailedOrders,
       failedOrders: business.failedOrders,
       queuedOrders: business.queuedOrders,
       processingOrders: business.processingOrders,
@@ -225,7 +221,7 @@ function orderSentence(result: RunResult): string {
   if (result.confirmedOrders === null) return "Order evidence is unavailable.";
   const pending = result.pendingOrders ?? 0;
   if ((result.failedOrders ?? 0) > 0 || pending > 0) {
-    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(result.businessRejectedOrders)} business-rejected, ${formatNarrativeCount(result.technicallyFailedOrders)} technically failed, and ${formatNarrativeCount(pending)} remain pending.`;
+    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(result.failedOrders)} failed, and ${formatNarrativeCount(pending)} remain pending.`;
   }
   return result.uniqueReservations === result.confirmedOrders
     ? `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
@@ -234,7 +230,7 @@ function orderSentence(result: RunResult): string {
 
 function neutralOrderSentence(result: RunResult): string {
   if (result.confirmedOrders === null) return "Order evidence is unavailable.";
-  return `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.businessRejectedOrders)} business-rejected, ${formatNarrativeCount(result.technicallyFailedOrders)} technically failed, and ${formatNarrativeCount(result.pendingOrders)} pending.`;
+  return `Order outcomes: ${formatNarrativeCount(result.confirmedOrders)} confirmed, ${formatNarrativeCount(result.failedOrders)} failed, and ${formatNarrativeCount(result.pendingOrders)} pending.`;
 }
 
 /**

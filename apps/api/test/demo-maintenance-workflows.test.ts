@@ -3388,8 +3388,6 @@ async function seedTerminalSummary(
       retryingOrders: 0,
       confirmedOrders: input.status === "completed" ? 10 : 6,
       failedOrders: input.status === "completed" ? 0 : 2,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: input.status === "completed" ? 0 : 2,
       pendingPersistenceCount: 0,
       notificationsRecorded: input.status === "completed" ? 10 : 6,
     },

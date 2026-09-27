@@ -137,8 +137,7 @@ describe("watch narrative", () => {
       "Units left",
       "Orders confirmed",
       "Awaiting confirmation",
-      "Business-rejected orders",
-      "Technically failed orders",
+      "Orders failed",
     ]) {
       expect(output).toContain(label);
     }
@@ -187,25 +186,19 @@ describe("watch narrative", () => {
     expect(draining).toContain("Confirming remaining orders");
   });
 
-  it("keeps all three durable outcome totals distinct while draining", () => {
+  it("shows the durable failed-order total while draining", () => {
     const current = projection(run("draining"));
     current.businessOutcome = {
       ...partialOutcome(),
       failedOrders: 3,
-      // The permanent-rejection vocabulary is empty, so zero business rejections is the
-      // reachable reading; 0 and 3 still detect a swapped label mapping.
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 3,
     };
     const output = markup(available(current));
     for (const [count, label] of [
       [120, "Orders confirmed"],
-      [0, "Business-rejected orders"],
-      [3, "Technically failed orders"],
+      [3, "Orders failed"],
     ]) {
       expect(output).toMatch(new RegExp(`>${count}</p><p[^>]*>${label}</p>`));
     }
-    expect(output).not.toContain("Orders failed");
   });
 
   it("omits the progress bar when the confirmed count contradicts the reservation total", () => {
@@ -247,8 +240,6 @@ describe("watch narrative", () => {
       retryingOrders: 0,
       confirmedOrders: 115,
       failedOrders: 0,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 115,
     };
@@ -288,8 +279,6 @@ describe("watch narrative", () => {
       retryingOrders: 0,
       confirmedOrders: 0,
       failedOrders: 0,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 0,
     };
@@ -402,8 +391,6 @@ const latestRun: RunHistoryListItem = {
   soldOutRejections: 750,
   confirmedOrders: 250,
   failedOrders: 0,
-  businessRejectedOrders: 0,
-  technicallyFailedOrders: 0,
   convergenceDurationSeconds: 1,
 };
 
@@ -448,8 +435,6 @@ function partialOutcome(): NonNullable<DashboardProjection["businessOutcome"]> {
     retryingOrders: 0,
     confirmedOrders: 120,
     failedOrders: 0,
-    businessRejectedOrders: 0,
-    technicallyFailedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 120,
   };
@@ -513,8 +498,6 @@ function terminalProjection(status: "completed" | "failed"): DashboardProjection
     retryingOrders: 0,
     confirmedOrders: status === "completed" ? 250 : 0,
     failedOrders: status === "failed" ? 250 : 0,
-    businessRejectedOrders: 0,
-    technicallyFailedOrders: status === "failed" ? 250 : 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: status === "completed" ? 250 : 0,
   };

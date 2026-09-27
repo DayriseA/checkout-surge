@@ -6,7 +6,6 @@ import {
   erpAttemptHistoryRetentionLimit,
   erpConfirmationResponseSchema,
   erpErrorCodeSchema,
-  erpPermanentRejectionCodeValues,
   recognizedErpErrorCodeDispositions,
   technicalOrderFailureCodeSchema,
 } from "@checkout-surge/contracts";
@@ -452,7 +451,6 @@ async function pruneAttemptHistory(tx: Transaction, orderId: string): Promise<vo
         and(
           eq(erpAttempts.orderId, orderId),
           isNull(erpAttempts.idempotencyKey),
-          ne(erpAttempts.disposition, "permanent_rejection"),
           control?.unresolvedErpCallId
             ? or(
                 isNull(erpAttempts.erpCallId),
@@ -503,7 +501,7 @@ async function pruneDispatchCalls(
         sql`not exists (
           select 1 from ${erpAttempts}
           where ${erpAttempts.erpCallId} = ${erpDispatchCalls.id}
-            and (${erpAttempts.idempotencyKey} is not null or ${erpAttempts.disposition} = 'permanent_rejection')
+            and ${erpAttempts.idempotencyKey} is not null
         )`,
       ),
     )
@@ -557,7 +555,6 @@ async function pruneAttemptEvents(
         eq(orderEvents.orderId, orderId),
         inArray(orderEvents.eventName, attemptEventNames),
         sql`coalesce(${orderEvents.payload} ->> 'canonical', 'false') <> 'true'`,
-        sql`coalesce(${orderEvents.payload} ->> 'disposition', '') <> 'permanent_rejection'`,
         unresolvedErpCallId
           ? sql`coalesce(${orderEvents.payload} ->> 'erpCallId', '') <> ${unresolvedErpCallId}`
           : undefined,
@@ -624,14 +621,7 @@ async function accountForCall(
 
 function isCanonicalTerminalOutcome(record: ErpAttemptRecord): boolean {
   const parsedResponse = erpConfirmationResponseSchema.safeParse(record.response);
-  if (parsedResponse.success && parsedResponse.data.status === "succeeded") return true;
-  if (
-    record.errorCode &&
-    (erpPermanentRejectionCodeValues as readonly string[]).includes(record.errorCode)
-  ) {
-    return true;
-  }
-  return false;
+  return parsedResponse.success && parsedResponse.data.status === "succeeded";
 }
 
 function isDefinitiveCallOutcome(record: ErpAttemptRecord): boolean {

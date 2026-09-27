@@ -92,6 +92,31 @@ describe("PostgreSQL confirmation ledger", () => {
     expect(rows[0]?.count).toBe(1);
   });
 
+  it("rejects a stored non-successful terminal result", async () => {
+    const connection = connect();
+    const ledger = new PostgresConfirmationLedger(connection.sql);
+    const idempotencyKey = "erp-confirmation:invalid-terminal-result";
+    await connection.sql`
+      INSERT INTO erp_confirmation_ledger (
+        idempotency_key, order_id, public_order_id, reservation_id,
+        sale_offer_id, run_id, quantity, terminal_result
+      ) VALUES (
+        ${idempotencyKey}, ${request.orderId}, ${request.publicOrderId},
+        ${request.reservationId}, ${request.saleOfferId}, ${request.runId ?? null},
+        ${request.quantity}, ${JSON.stringify({
+          status: "failed",
+          httpStatus: 503,
+          errorCode: "erp_forced_outage",
+          errorMessage: "Unavailable.",
+          latencyMs: 1,
+          timestamp: "2026-09-20T00:00:00.000Z",
+        })}::jsonb
+      )
+    `;
+
+    await expect(ledger.find(idempotencyKey)).rejects.toThrow();
+  });
+
   it("returns byte-identical canonical JSON through replay and lookup after a service restart", async () => {
     const restartRequest = {
       ...request,

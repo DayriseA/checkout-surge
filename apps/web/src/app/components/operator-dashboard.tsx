@@ -404,7 +404,7 @@ function RunCard({
       <div
         className={`grid gap-4 ${!terminal && liveView === "pipeline" ? "compact-watch:hidden" : ""}`}
       >
-        <CountsRow {...counts} liveOutcome={terminal ? undefined : outcome} />
+        <CountsRow {...counts} />
         <WatchSignalStrip
           charts={stripCharts.charts}
           // The live board renders every signal column even before any chart evidence exists.
@@ -609,7 +609,6 @@ function CountsRow({
   awaiting,
   confirmed,
   failed,
-  liveOutcome,
   progressDenominator,
   remainingStock,
   reserved,
@@ -617,7 +616,6 @@ function CountsRow({
   awaiting: number | null;
   confirmed: number | null;
   failed: number | null;
-  liveOutcome: DashboardProjection["businessOutcome"] | undefined;
   progressDenominator: number | null;
   remainingStock: number | null;
   reserved: number | null;
@@ -631,9 +629,7 @@ function CountsRow({
     confirmed !== null &&
     confirmed <= progressDenominator;
   return (
-    <div
-      className={`grid ${liveOutcome === undefined ? "grid-cols-4" : "grid-cols-5"} gap-2 max-[700px]:grid-cols-2`}
-    >
+    <div className="grid grid-cols-4 gap-2 max-[700px]:grid-cols-2">
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(remainingStock)}</p>
         <p className={tileLabelClassName}>Units left</p>
@@ -657,27 +653,10 @@ function CountsRow({
         <p className={tileValueClassName}>{format(awaiting)}</p>
         <p className={tileLabelClassName}>Awaiting confirmation</p>
       </div>
-      {liveOutcome === undefined ? (
-        <div className={tileClassName}>
-          <p className={tileValueClassName}>{format(failed)}</p>
-          <p className={tileLabelClassName}>Orders failed</p>
-        </div>
-      ) : (
-        <>
-          <div className={tileClassName}>
-            <p className={tileValueClassName}>
-              {format(liveOutcome?.businessRejectedOrders ?? null)}
-            </p>
-            <p className={tileLabelClassName}>Business-rejected orders</p>
-          </div>
-          <div className={tileClassName}>
-            <p className={tileValueClassName}>
-              {format(liveOutcome?.technicallyFailedOrders ?? null)}
-            </p>
-            <p className={tileLabelClassName}>Technically failed orders</p>
-          </div>
-        </>
-      )}
+      <div className={tileClassName}>
+        <p className={tileValueClassName}>{format(failed)}</p>
+        <p className={tileLabelClassName}>Orders failed</p>
+      </div>
     </div>
   );
 }

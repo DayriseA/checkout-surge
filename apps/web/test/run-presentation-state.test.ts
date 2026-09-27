@@ -126,8 +126,6 @@ describe("run presentation state", () => {
       retryingOrders: 0,
       confirmedOrders: example.confirmedOrders,
       failedOrders: example.failedOrders,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: example.failedOrders,
       pendingPersistenceCount: example.pendingPersistenceCount,
       notificationsRecorded: 0,
     };
@@ -381,8 +379,6 @@ function resultEvidence(
       soldOutDecisions: 0,
       confirmedOrders: 10,
       failedOrders: 0,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: durableOverrides.failedOrders ?? 0,
       queuedOrders: 0,
       processingOrders: 0,
       durablePendingPersistenceRecords: 0,
@@ -405,8 +401,6 @@ function businessOutcome(acceptedReservations: number) {
     retryingOrders: 0,
     confirmedOrders: acceptedReservations,
     failedOrders: 0,
-    businessRejectedOrders: 0,
-    technicallyFailedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: acceptedReservations,
   };

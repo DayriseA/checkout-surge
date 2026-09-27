@@ -181,14 +181,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
               ],
               ["Confirmed", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-              [
-                "Business-rejected",
-                formatNumber(summary.businessOutcomeSummary.businessRejectedOrders),
-              ] as [string, ReactNode],
-              [
-                "Technically failed",
-                formatNumber(summary.businessOutcomeSummary.technicallyFailedOrders),
-              ] as [string, ReactNode],
+              ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
               [
                 publicVocabulary.notifications,
                 formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
@@ -737,14 +730,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
                   formatNumber(summary.businessOutcomeSummary.soldOutRejections),
                 ],
                 ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-                [
-                  "Business-rejected orders",
-                  formatNumber(summary.businessOutcomeSummary.businessRejectedOrders),
-                ] as [string, ReactNode],
-                [
-                  "Technically failed orders",
-                  formatNumber(summary.businessOutcomeSummary.technicallyFailedOrders),
-                ] as [string, ReactNode],
+                ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
               ]}
               title="Final evidence"
             />

@@ -291,7 +291,6 @@ describe("demo run finalization service", () => {
       orderFixture(ids.order2, ids.reservation2, "failed"),
       {
         ...orderFixture(ids.order3, ids.reservation3, "failed"),
-        failureCategory: "technical",
         failureCode: "erp_response_contract_invalid",
         failureMessage: "ERP response failed contract validation.",
       },
@@ -328,8 +327,6 @@ describe("demo run finalization service", () => {
       soldOutRejections: 7,
       confirmedOrders: 1,
       failedOrders: 2,
-      businessRejectedOrders: 0,
-      technicallyFailedOrders: 2,
       notificationsRecorded: 1,
       pendingPersistenceCount: 0,
     });
@@ -1762,7 +1759,6 @@ function orderFixture(
       ? {
           processingAt: new Date("2026-06-20T00:00:04.000Z"),
           failedAt: new Date("2026-06-20T00:00:05.000Z"),
-          failureCategory: "technical" as const,
           failureCode: technicalOrderFailureCodeValues[0],
           failureMessage: "ERP failed.",
         }

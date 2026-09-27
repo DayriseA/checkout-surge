@@ -8,7 +8,6 @@ import {
   erpConfirmationRequestSchema,
   erpConfirmationResponseSchema,
   erpLookupResponseSchema,
-  erpPermanentRejectionCodeSchema,
   erpReplayedResponseHeaderName,
   erpReplayedResponseHeaderValue,
   type OrderProcessJob,
@@ -475,14 +474,6 @@ function classifyConfirmationResponse(input: {
       return { ...common, disposition: "succeeded", response: parsed.data };
     }
     const failed = parsed.data;
-    if (erpPermanentRejectionCodeSchema.safeParse(failed.errorCode).success) {
-      return {
-        ...common,
-        disposition: "permanent_rejection",
-        response: failed,
-        errorCode: failed.errorCode,
-      };
-    }
     const disposition =
       recognizedErpErrorCodeDispositions[
         failed.errorCode as keyof typeof recognizedErpErrorCodeDispositions
@@ -548,10 +539,7 @@ function toAttemptRecord(
         : outcome.disposition === "uncertain_result"
           ? "timed_out"
           : "failed",
-    terminal:
-      outcome.disposition === "succeeded" ||
-      outcome.disposition === "permanent_rejection" ||
-      outcome.disposition === "technical_failure",
+    terminal: outcome.disposition === "succeeded" || outcome.disposition === "technical_failure",
     ...(outcome.httpStatus === undefined ? {} : { httpStatus: outcome.httpStatus }),
     ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
     ...(outcome.errorMessage ? { errorMessage: outcome.errorMessage } : {}),

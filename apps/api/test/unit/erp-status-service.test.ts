@@ -36,7 +36,6 @@ function erpReadModel(): Omit<RunErpOutcomeSummary, "runId" | "observedAt"> {
       capacityRejected: 0,
       temporarilyUnavailable: 0,
       uncertainResult: 0,
-      permanentRejected: 0,
     },
   };
 }

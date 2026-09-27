@@ -40,11 +40,6 @@ const enumInventory = {
     "order_event_name",
     contracts.orderEventNameValues,
   ],
-  orderFailureCategoryEnum: [
-    schema.orderFailureCategoryEnum,
-    "order_failure_category",
-    contracts.orderFailureCategoryValues,
-  ],
   orderStatusEnum: [schema.orderStatusEnum, "order_status", contracts.orderStatusValues],
   orderWaitingReasonEnum: [
     schema.orderWaitingReasonEnum,

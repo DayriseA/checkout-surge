@@ -5,7 +5,6 @@ import {
   erpAttemptStatusValues,
   operatorModeValues,
   orderEventNameValues,
-  orderFailureCategoryValues,
   orderStatusValues,
   orderWaitingReasonValues,
   recoveryJobStatusValues,
@@ -56,7 +55,6 @@ describe("shared PostgreSQL vocabulary", () => {
       "erp_unavailable",
       "uncertain_result",
     ]);
-    expect(orderFailureCategoryValues).toEqual(["business_rejection", "technical"]);
     expect(technicalOrderFailureCodeValues).toEqual([
       "erp_authentication_failed",
       "erp_authorization_failed",

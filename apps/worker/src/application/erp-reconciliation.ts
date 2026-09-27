@@ -2,7 +2,6 @@ import {
   type ErpCallReference,
   type ErpConfirmationResponse,
   type ErpLookupIdentity,
-  type ErpOutcomeDisposition,
   type OrderProcessJob,
   type OrderWaitingReason,
   technicalOrderFailureCodeSchema,
@@ -26,7 +25,7 @@ import { acceptedRunSnapshotFailureCode } from "./run-config.js";
 type ScheduledReconciliationResult = (
   | {
       operation: "local_result" | "status_lookup";
-      disposition: "succeeded" | "permanent_rejection";
+      disposition: "succeeded";
       response?: ErpConfirmationResponse;
     }
   | ErpConfirmationOutcome
@@ -44,7 +43,6 @@ export type ErpReconciliationResult =
 
 export type ScheduledErpOutcome =
   | { disposition: "succeeded" }
-  | { disposition: "permanent_rejection"; errorCode: string; errorMessage: string }
   | { disposition: "technical_failure"; errorCode: string; errorMessage: string }
   | {
       disposition: "deferred";
@@ -161,19 +159,6 @@ export class ScheduledErpOrderConfirmation {
     result: ErpReconciliationResult,
   ): Promise<ScheduledErpOutcome> {
     if (result.disposition === "succeeded") return { disposition: "succeeded" };
-    if (result.disposition === "permanent_rejection") {
-      return {
-        disposition: "permanent_rejection",
-        errorCode:
-          "errorCode" in result
-            ? (result.errorCode ?? "erp_permanent_rejection")
-            : "erp_permanent_rejection",
-        errorMessage:
-          "errorMessage" in result
-            ? (result.errorMessage ?? "The ERP permanently rejected the order.")
-            : "The ERP permanently rejected the order.",
-      };
-    }
     if (result.disposition === "technical_failure") {
       await this.options.admission.reconciliationSettled(scope);
       return {
@@ -312,11 +297,9 @@ export class ErpUnresolvedCallReconciler {
         };
       }
       const response = lookup.lookup.lookup.result;
-      const disposition: Extract<ErpOutcomeDisposition, "succeeded" | "permanent_rejection"> =
-        lookup.lookup.lookup.status === "succeeded" ? "succeeded" : "permanent_rejection";
       try {
         await this.options.client.recordLookupResult(
-          lookupAttempt(input.job, input.delivery, input.call, lookup, response, disposition),
+          lookupAttempt(input.job, input.delivery, input.call, lookup, response),
         );
       } catch (error) {
         if (error instanceof Error && error.name === "ErpConfirmationInvalidResponseError") {
@@ -333,7 +316,7 @@ export class ErpUnresolvedCallReconciler {
         throw error;
       }
       await this.resolve(input.call, input.context.scope);
-      return { operation: "status_lookup", disposition, response };
+      return { operation: "status_lookup", disposition: "succeeded", response };
     } finally {
       this.activeOrders.delete(input.job.orderId);
     }
@@ -414,19 +397,16 @@ function lookupAttempt(
   delivery: OrderProcessDeliveryMetadata,
   call: ErpCallReference,
   lookup: Extract<ErpLookupOutcome, { disposition: "succeeded" }>,
-  response: ErpConfirmationResponse,
-  disposition: "succeeded" | "permanent_rejection",
+  response: Extract<ErpConfirmationResponse, { status: "succeeded" }>,
 ): ErpAttemptRecord {
   return {
     job,
     delivery: { ...delivery, deliveryId: `erp-lookup:${call.erpCallId}` },
     operation: "status_lookup",
-    disposition,
-    status: disposition === "succeeded" ? "succeeded" : "failed",
+    disposition: "succeeded",
+    status: "succeeded",
     terminal: true,
     httpStatus: response.httpStatus,
-    ...(response.errorCode ? { errorCode: response.errorCode } : {}),
-    ...(response.errorMessage ? { errorMessage: response.errorMessage } : {}),
     latencyMs: lookup.latencyMs,
     startedAt: lookup.startedAt,
     finishedAt: lookup.finishedAt,

@@ -259,10 +259,6 @@ export const businessOutcomeSummarySchema = z
     retryingOrders: nonnegativeIntegerSchema,
     confirmedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
-    /** Permanent ERP rejections. */
-    businessRejectedOrders: nonnegativeIntegerSchema,
-    /** Non-transient integration failures. */
-    technicallyFailedOrders: nonnegativeIntegerSchema,
     pendingPersistenceCount: nonnegativeIntegerSchema,
     notificationsRecorded: nonnegativeIntegerSchema,
   })
@@ -308,8 +304,6 @@ export const runHistoryListItemSchema = z
     uniqueReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     confirmedOrders: nonnegativeIntegerSchema,
-    businessRejectedOrders: nonnegativeIntegerSchema,
-    technicallyFailedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
     convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
     dataDiscarded: z.boolean().optional(),

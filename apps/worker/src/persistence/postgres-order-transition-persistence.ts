@@ -169,7 +169,6 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
         .update(orders)
         .set({
           status: "failed",
-          failureCategory: failure.category,
           failureCode: failure.code,
           failureMessage: failure.message,
           failedAt: occurredAt,
@@ -340,7 +339,6 @@ async function appendTransitionEvent(
         attemptsMade: delivery.attemptsMade,
         ...(failure
           ? {
-              failureCategory: failure.category,
               failureCode: failure.code,
               failureMessage: failure.message,
             }

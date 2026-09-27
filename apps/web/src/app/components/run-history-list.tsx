@@ -112,11 +112,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-x-5 gap-y-3 border-t border-border pt-3">
           <div className="contents">
             <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
-            <Fact label="Business-rejected orders" value={number(summary.businessRejectedOrders)} />
-            <Fact
-              label="Technically failed orders"
-              value={number(summary.technicallyFailedOrders)}
-            />
+            <Fact label="Failed orders" value={number(summary.failedOrders)} />
             <Fact
               label="Overall duration"
               value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}

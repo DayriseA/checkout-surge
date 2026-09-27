@@ -2181,13 +2181,6 @@
           "notNull": true,
           "default": "'queued'"
         },
-        "failure_category": {
-          "name": "failure_category",
-          "type": "order_failure_category",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": false
-        },
         "failure_code": {
           "name": "failure_code",
           "type": "text",
@@ -3359,7 +3352,6 @@
         "capacity_rejected",
         "temporarily_unavailable",
         "uncertain_result",
-        "permanent_rejection",
         "technical_failure"
       ]
     },
@@ -3377,11 +3369,6 @@
         "erp.attempt.failed",
         "erp.attempt.succeeded"
       ]
-    },
-    "public.order_failure_category": {
-      "name": "order_failure_category",
-      "schema": "public",
-      "values": ["business_rejection", "technical"]
     },
     "public.order_status": {
       "name": "order_status",

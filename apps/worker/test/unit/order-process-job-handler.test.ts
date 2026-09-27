@@ -467,7 +467,6 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToFailed).toHaveBeenCalledWith(
       job,
       {
-        category: "technical",
         code: "erp_authentication_failed",
         message: "Authentication failed",
       },

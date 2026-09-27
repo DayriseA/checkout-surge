@@ -295,7 +295,6 @@ describe("PostgreSQL worker order transitions", () => {
     if (lookupStatus === "unknown") {
       expect(order).toMatchObject({
         status: "failed",
-        failureCategory: "technical",
         failureCode: "accepted_run_snapshot_invalid",
       });
       expect(await control.readControlRecord({ orderId: job.orderId })).toMatchObject({
@@ -405,7 +404,6 @@ describe("PostgreSQL worker order transitions", () => {
       (await connection.db.select().from(orders).where(eq(orders.id, job.orderId)))[0],
     ).toMatchObject({
       status: "failed",
-      failureCategory: "technical",
       failureCode: {
         authentication: "erp_authentication_failed",
         contract: "erp_response_contract_invalid",
@@ -669,7 +667,6 @@ describe("PostgreSQL worker order transitions", () => {
     const failedTransition = await persistence.transitionToFailed(
       job,
       {
-        category: "technical",
         code: "erp_authentication_failed",
         message: "Authentication failed",
       },
@@ -677,7 +674,7 @@ describe("PostgreSQL worker order transitions", () => {
     );
     const replay = await persistence.transitionToFailed(
       job,
-      { category: "technical", code: "erp_authorization_failed", message: "must not overwrite" },
+      { code: "erp_authorization_failed", message: "must not overwrite" },
       { attemptNumber: 5, attemptsMade: 4 },
     );
 
@@ -688,7 +685,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(order).toMatchObject({
       status: "failed",
       failedAt,
-      failureCategory: "technical",
       failureCode: "erp_authentication_failed",
       failureMessage: "Authentication failed",
     });
@@ -698,7 +694,6 @@ describe("PostgreSQL worker order transitions", () => {
     expect(failedEvents[0]?.payload).toEqual({
       attemptNumber: 4,
       attemptsMade: 3,
-      failureCategory: "technical",
       failureCode: "erp_authentication_failed",
       failureMessage: "Authentication failed",
     });

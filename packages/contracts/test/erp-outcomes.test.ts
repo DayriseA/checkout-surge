@@ -5,7 +5,6 @@ import {
   erpLookupResultSchema,
   erpOutcomeDispositionSchema,
   erpOutcomeDispositionValues,
-  erpPermanentRejectionCodeSchema,
   recognizedErpErrorCodeDispositions,
 } from "../src/index.js";
 
@@ -38,10 +37,8 @@ describe("ERP outcome vocabulary", () => {
       "capacity_rejected",
       "temporarily_unavailable",
       "uncertain_result",
-      "permanent_rejection",
       "technical_failure",
     ]);
-    expect(erpOutcomeDispositionSchema.safeParse("business_rejection").success).toBe(false);
   });
 
   it("maps every recognized code to its disposition and nothing else", () => {
@@ -54,31 +51,6 @@ describe("ERP outcome vocabulary", () => {
     for (const [code, disposition] of Object.entries(recognizedErpErrorCodeDispositions)) {
       expect(erpErrorCodeSchema.safeParse(code).success).toBe(true);
       expect(erpOutcomeDispositionSchema.safeParse(disposition).success).toBe(true);
-    }
-  });
-
-  it("declares an empty permanent-rejection vocabulary", () => {
-    expect(erpPermanentRejectionCodeSchema.options).toEqual([]);
-  });
-
-  it("does not classify a capacity code as a permanent rejection", () => {
-    const result = erpLookupResultSchema.safeParse({
-      identity,
-      status: "rejected",
-      result: {
-        status: "failed",
-        httpStatus: 422,
-        errorCode: "erp_capacity_exceeded",
-        errorMessage: "Rejected.",
-        latencyMs: 25,
-        timestamp: "2026-09-20T00:00:00.000Z",
-      },
-    });
-    expect(result.success).toBe(false);
-    if (!result.success) {
-      expect(result.error.issues).toContainEqual(
-        expect.objectContaining({ path: ["result", "errorCode"] }),
-      );
     }
   });
 });
