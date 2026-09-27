@@ -1331,7 +1331,7 @@ export function EffectiveChangeList({
     <ul className="m-0 grid list-none gap-2 p-0">
       {changes.map((change) => (
         <li
-          className="grid grid-cols-[minmax(8rem,1fr)_minmax(4rem,1fr)_auto_minmax(4rem,1fr)] gap-2"
+          className="grid grid-cols-[minmax(8rem,1fr)_minmax(4rem,1fr)_auto_minmax(4rem,1fr)] gap-2 [overflow-wrap:anywhere]"
           key={change.label}
         >
           <span className="font-semibold text-ink">{change.label}</span>
