@@ -827,6 +827,11 @@ function isCloseTriggeredCancellation(error: unknown, signal?: AbortSignal): boo
   if (!(error instanceof Error)) return false;
   if (error.name === "AbortError") return true;
   const code = (error as Error & { code?: unknown }).code;
-  if (code === "57014" || code === "CONNECTION_CLOSED") return true;
-  return error.message === "Connection is closed." || error.message === "Connection is closed";
+  if (code === "57014" || code === "CONNECTION_CLOSED" || code === "CONNECTION_DESTROYED")
+    return true;
+  return (
+    error.message === "Connection is closed." ||
+    error.message === "Connection is closed" ||
+    (error.cause !== undefined && isCloseTriggeredCancellation(error.cause))
+  );
 }

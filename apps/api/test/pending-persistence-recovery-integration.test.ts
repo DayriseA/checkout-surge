@@ -1,6 +1,5 @@
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
 import {
-  createAbortableDatabaseConnection,
   createDatabaseConnection,
   createRedisClient,
   initializeInventory,
@@ -10,6 +9,7 @@ import {
 import { requireTestDatabaseUrl } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { createPendingPersistenceRecoveryOperations } from "../src/runtime/pending-persistence-operation-factory.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
 
 const hold: SecuredReservationHold = {
@@ -25,33 +25,35 @@ const hold: SecuredReservationHold = {
 describe("pending-persistence recovery cancellation boundaries", () => {
   it("closes during an actual abortable PostgreSQL discovery statement", async () => {
     const databaseUrl = requireTestDatabaseUrl();
-    const control = createDatabaseConnection(databaseUrl, { max: 1 });
-    const redis = createRedisClient(requireTestRedisUrl(), {
-      lazyConnect: true,
-      maxRetriesPerRequest: 0,
+    const control = createDatabaseConnection(databaseUrl, { max: 2 });
+    let releaseLock: (() => void) | undefined;
+    const lockReleased = new Promise<void>((resolve) => {
+      releaseLock = resolve;
     });
-    let discoveryStarted: (() => void) | undefined;
-    const started = new Promise<void>((resolve) => {
-      discoveryStarted = resolve;
+    let lockAcquired: (() => void) | undefined;
+    const locked = new Promise<void>((resolve) => {
+      lockAcquired = resolve;
+    });
+    const lockTransaction = control.sql.begin(async (transaction) => {
+      await transaction`lock table demo_runs in access exclusive mode`;
+      lockAcquired?.();
+      await lockReleased;
+    });
+    await locked;
+    const operations = createPendingPersistenceRecoveryOperations({
+      databaseUrl,
+      redisUrl: requireTestRedisUrl(),
+      discoveryTimeoutMs: 30_000,
     });
     const service = new PendingPersistenceRecoveryService({
-      redis,
+      redis: operations.redis,
       persistence: noOpPersistence(),
       audit: noOpAudit(),
       stockReservations: { promoteAccepted: async () => undefined },
       orderProcessJobPublisher: { enqueue: async () => undefined },
-      listRunScopes: async (signal) => {
-        const operation = createAbortableDatabaseConnection(databaseUrl, signal, { max: 1 });
-        try {
-          const query = operation.sql`select pg_sleep(30) /* pending-recovery-discovery-cancel */`;
-          discoveryStarted?.();
-          await query;
-          return [];
-        } finally {
-          await operation.close();
-        }
-      },
-      closeDiscovery: async () => redis.disconnect(),
+      openDiscoveryScope: (signal) => operations.openDiscoveryScope(signal),
+      listRunScopes: (signal) => operations.listRunScopes(signal),
+      closeDiscovery: () => operations.close(),
       idempotencyTtlSeconds: 1_800,
       discoveryTimeoutMs: 30_000,
       logger: createSilentLogger("api"),
@@ -59,13 +61,13 @@ describe("pending-persistence recovery cancellation boundaries", () => {
 
     try {
       const pass = service.runOnce();
-      await started;
       await vi.waitFor(
         async () => {
           const rows = await control.sql`
           select count(*)::int as count from pg_stat_activity
           where state = 'active'
-            and query like '%pending-recovery-discovery-cancel%'
+            and query like '%demo_runs%'
+            and query not like '%pg_stat_activity%'
             and pid <> pg_backend_pid()
         `;
           expect(rows[0]?.count).toBe(1);
@@ -73,8 +75,13 @@ describe("pending-persistence recovery cancellation boundaries", () => {
         { timeout: 3_000 },
       );
 
-      await expect(within(Promise.allSettled([pass, service.close()]))).resolves.toHaveLength(2);
+      await expect(within(Promise.all([pass, service.close()]))).resolves.toEqual([
+        { discovered: 0, attempted: 0, materialized: 0, resolved: 0, deferred: 0, exhausted: 0 },
+        undefined,
+      ]);
     } finally {
+      releaseLock?.();
+      await lockTransaction;
       await service.close().catch(() => undefined);
       await control.close();
     }

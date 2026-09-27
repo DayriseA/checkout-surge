@@ -1510,8 +1510,11 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     for (const result of [serial, parallel]) {
       expect(result.confirmed).toBe(capacityJobs.length);
       expect(result.capacityRejected).toBe(1);
-      expect(result.peakInFlight).toBeLessThanOrEqual(1);
-      expect(result.pauseAfterRejectionMs).toBeGreaterThanOrEqual(1_000);
+      expect(result.peakActivationsPer100Ms).toBeLessThanOrEqual(1);
+      expect(result.lateJobWaitingAt).toBeLessThan(result.rejectionDeadline);
+      expect(result.lateJobActivatedAt).toBeGreaterThanOrEqual(result.rejectionDeadline);
+      expect(result.activations.every(({ at }) => at >= result.rejectionDeadline)).toBe(true);
+      expect(result.activations.length).toBeGreaterThan(0);
       expect(result.actualCalls).toBe(capacityJobs.length + 1);
       expect(result.publications).toBeLessThanOrEqual(12);
       expect(result.scans).toBeLessThanOrEqual(6);
@@ -2255,36 +2258,22 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         reservationId: randomUUID(),
         publicOrderId: `ord_throughput_${index}`,
       };
-      await seedAdditionalQueuedOrder(connection, additionalJob);
       jobs.push(additionalJob);
     }
-    const limiter = new SlidingWindowTpsLimiter();
-    const confirmations: number[] = [];
-    let capacityResponses = 0;
+    await Promise.all(
+      jobs.slice(1).map((additionalJob) => seedAdditionalQueuedOrder(connection, additionalJob)),
+    );
+    let confirmations = 0;
     const client = new HttpErpOrderConfirmation({
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
       attemptPersistence: new PostgresErpAttemptPersistence(connection.db),
       fetch: async () => {
-        if (!limiter.acquire("catalog", declaredCapacity)) {
-          capacityResponses += 1;
-          return Response.json(
-            {
-              status: "failed",
-              httpStatus: 429,
-              errorCode: "erp_capacity_exceeded",
-              errorMessage: "Declared capacity exceeded.",
-              latencyMs: 1,
-              timestamp: new Date().toISOString(),
-            },
-            { status: 429, headers: { "retry-after": "1" } },
-          );
-        }
-        confirmations.push(Date.now());
+        confirmations += 1;
         return Response.json({
           status: "succeeded",
-          confirmationId: `erp_throughput_${confirmations.length}`,
+          confirmationId: `erp_throughput_${confirmations}`,
           httpStatus: 200,
           latencyMs: 1,
           timestamp: new Date().toISOString(),
@@ -2320,22 +2309,32 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       );
       scanner.start();
       consumer.start();
-      await vi.waitFor(() => expect(confirmations.length).toBeGreaterThan(0));
+      await vi.waitFor(async () =>
+        expect(await readActivationsAfter(redis, queue, "0-0", jobs)).not.toHaveLength(0),
+      );
       await new Promise((resolve) => setTimeout(resolve, 1_050));
-      const first = confirmations[0];
-      if (first === undefined) throw new Error("No ERP confirmation recorded.");
-      const firstSecond = confirmations.filter((at) => at - first < 1_000);
+      let activations = (await readActivationsAfter(redis, queue, "0-0", jobs)).map(({ at }) => at);
+      const first = activations[0];
+      if (first === undefined) throw new Error("No job activation recorded.");
+      const firstSecond = activations.filter((at) => at - first < 1_000);
       expect(firstSecond.length).toBeGreaterThanOrEqual(Math.min(backlogSize, 8));
-      await vi.waitFor(() => expect(confirmations).toHaveLength(backlogSize), {
+      await vi.waitFor(() => expect(confirmations).toBe(backlogSize), {
         timeout: 40_000,
         interval: 100,
       });
-      const last = confirmations.at(-1);
-      if (last === undefined) throw new Error("No final ERP confirmation recorded.");
+      activations = (await readActivationsAfter(redis, queue, "0-0", jobs)).map(({ at }) => at);
+      expect(activations).toHaveLength(backlogSize);
+      const last = activations.at(-1);
+      if (last === undefined) throw new Error("No final job activation recorded.");
       const rate = ((backlogSize - 1) * 1_000) / (last - first);
       expect(rate).toBeGreaterThanOrEqual(8);
+      expect(
+        activations.every(
+          (at, index) =>
+            index < declaredCapacity || at - (activations[index - declaredCapacity] ?? 0) >= 1_000,
+        ),
+      ).toBe(true);
       expect(rate).toBeLessThanOrEqual(declaredCapacity);
-      expect(capacityResponses).toBe(0);
       await waitForQueueToSettle(queue);
       const settled = await connection.db.select({ status: orders.status }).from(orders);
       expect(settled).toHaveLength(backlogSize);
@@ -2348,7 +2347,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     }
   }, 45_000);
 
-  it("recovers a test-composed capacity decrease through resolveConfig with native Retry-After pacing", async () => {
+  it("honors the Retry-After pause from an unexpected capacity rejection and resumes the configured rate", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
     await seedQueuedOrder(connection, { runScoped: true });
     const snapshot = configSnapshotFixture();
@@ -2377,8 +2376,9 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       jobs.push(additional);
     }
     let effectiveCapacity = 10;
-    const starts: number[] = [];
-    const responses: Array<{ at: number; status: number }> = [];
+    let requests = 0;
+    const responses: Array<{ status: number }> = [];
+    let rejectedAt = 0;
     const store = new ErpChaosConfigStore(snapshot.erpConfig, {
       maxLatencyMs: 5000,
       minMaxTps: 1,
@@ -2403,10 +2403,14 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       logger: createSilentLogger("mock-erp"),
     });
     server.addHook("onRequest", async () => {
-      starts.push(Date.now());
+      requests += 1;
+    });
+    server.addHook("onSend", async (_request, reply, payload) => {
+      if (reply.statusCode === 429) rejectedAt = Date.now();
+      return payload;
     });
     server.addHook("onResponse", async (_request, reply) => {
-      responses.push({ at: Date.now(), status: reply.statusCode });
+      responses.push({ status: reply.statusCode });
       if (responses.length === 3) effectiveCapacity = 2;
     });
     const baseUrl = await server.listen({ host: "127.0.0.1", port: 0 });
@@ -2420,12 +2424,16 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const rate = erpDispatchRateLimit(10);
     await queue.setGlobalRateLimit(rate.max, rate.duration);
     await queue.setGlobalConcurrency(1);
-    let pausedAt = 0;
+    let pauseStreamId = "";
     const pauseDelivery = vi.fn(async (durationMs: number) => {
-      pausedAt = Date.now();
       await queue.rateLimit(durationMs);
+      pauseStreamId =
+        (await redis.xrevrange(queue.toKey("events"), "+", "-", "COUNT", 1))[0]?.[0] ?? "";
     });
-    consumer = buildConsumer(connection, client, { concurrency: 1, pauseDelivery });
+    consumer = buildConsumer(connection, client, {
+      concurrency: 1,
+      pauseDelivery,
+    });
     const publisher = createBullMqOrderProcessJobPublisher(
       { url: redisUrl, maxRetriesPerRequest: null },
       new PostgresGeneratedRunPublicationFence(connection.db),
@@ -2450,18 +2458,23 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       );
       scanner.start();
       consumer.start();
-      await vi.waitFor(() => expect(pauseDelivery).toHaveBeenCalledOnce(), { timeout: 5000 });
+      await vi.waitFor(
+        () => {
+          expect(pauseDelivery).toHaveBeenCalledOnce();
+          expect(pauseStreamId).not.toBe("");
+        },
+        { timeout: 5000 },
+      );
       const pauseMs = pauseDelivery.mock.calls[0]?.[0] ?? 0;
       expect(pauseMs).toBeGreaterThan(0);
       expect(pauseMs).toBeLessThanOrEqual(1000);
-      expect(await queue.getRateLimitTtl()).toBeGreaterThan(0);
       await vi.waitFor(async () => {
         const retained = await connection.db
           .select()
           .from(orderRecoveryJobs)
           .where(eq(orderRecoveryJobs.waitingReason, "erp_capacity"));
         expect(retained).toHaveLength(1);
-        expect(retained[0]?.nextAttemptAt?.getTime()).toBeGreaterThan(pausedAt);
+        expect(retained[0]?.nextAttemptAt?.getTime()).toBeGreaterThanOrEqual(rejectedAt + 1_000);
       });
       expect(
         (await connection.db.select().from(orders)).some((order) => order.status === "failed"),
@@ -2478,20 +2491,23 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await waitForQueueToSettle(queue);
       const rejectedIndex = responses.findIndex((response) => response.status === 429);
       expect(rejectedIndex).toBe(3);
-      // Native pause uses the remainder after response persistence, not a fresh
-      // full second. The next actual POST must still respect the response deadline.
-      expect(
-        (starts[rejectedIndex + 1] ?? 0) - (responses[rejectedIndex]?.at ?? 0),
-      ).toBeGreaterThanOrEqual(1000);
+      expect(rejectedAt).toBeGreaterThan(0);
+      const rejectionDeadline = rejectedAt + 1_000;
+      const postPauseActivations = await readActivationsAfter(redis, queue, pauseStreamId, jobs);
+      expect(postPauseActivations.length).toBeGreaterThan(0);
+      expect(postPauseActivations.every(({ at }) => at >= rejectionDeadline)).toBe(true);
       expect(responses.filter((response) => response.status === 429)).toHaveLength(1);
-      expect(starts).toHaveLength(21);
+      expect(requests).toBe(21);
       expect(pauseDelivery).toHaveBeenCalledOnce();
       expect(await queue.getGlobalRateLimit()).toEqual(rate);
-      const resumed = starts.slice(rejectedIndex + 1);
+      const resumed = postPauseActivations.map(({ at }) => at);
+      expect(resumed.length).toBeGreaterThan(1);
       const resumedRate =
         ((resumed.length - 1) * 1000) / ((resumed.at(-1) ?? 0) - (resumed[0] ?? 0));
       expect(resumedRate).toBeGreaterThanOrEqual(8);
-      expect(resumedRate).toBeLessThanOrEqual(10);
+      expect(
+        resumed.every((at, index) => index < 10 || at - (resumed[index - 10] ?? 0) >= 1_000),
+      ).toBe(true);
       expect(
         await connection.sql`SELECT count(*)::int AS count FROM erp_confirmation_ledger WHERE run_id=${ids.run}`,
       ).toMatchObject([{ count: 20 }]);
@@ -2513,18 +2529,16 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     for (const capacityJob of capacityJobs.slice(1)) {
       await seedAdditionalQueuedOrder(connection, capacityJob);
     }
-    const confirmationStarts: number[] = [];
-    let inFlight = 0;
-    let peakInFlight = 0;
+    const lateJob = capacityJobs.at(-1);
+    if (!lateJob) throw new Error("No late capacity job configured.");
+    let confirmationCalls = 0;
+    let rejectedAt = 0;
+    let pauseStreamId = "";
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {
-      const startedAt = Date.now();
-      confirmationStarts.push(startedAt);
-      inFlight += 1;
-      peakInFlight = Math.max(peakInFlight, inFlight);
+      const callNumber = ++confirmationCalls;
       await new Promise((resolve) => setTimeout(resolve, 40));
-      inFlight -= 1;
-      if (confirmationStarts.length === 1) {
-        return Response.json(
+      if (callNumber === 1) {
+        const response = Response.json(
           {
             status: "failed",
             httpStatus: 429,
@@ -2535,6 +2549,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           },
           { status: 429, headers: { "retry-after": "1" } },
         );
+        rejectedAt = Date.now();
+        return response;
       }
       return Response.json({
         status: "succeeded",
@@ -2556,7 +2572,12 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     await queue.setGlobalConcurrency(concurrency);
     consumer = buildConsumer(connection, client, {
       concurrency,
-      pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
+      pauseDelivery: async (durationMs) => {
+        await queue.rateLimit(durationMs);
+        pauseStreamId =
+          (await redis.xrevrange(queue.toKey("events"), "+", "-", "COUNT", 1))[0]?.[0] ?? "";
+        await queue.add(orderProcessJobName, lateJob, { attempts: 1, jobId: lateJob.orderId });
+      },
     });
     const publisher = createBullMqOrderProcessJobPublisher({
       url: redisUrl,
@@ -2574,15 +2595,17 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       now: () => new Date(),
     });
     try {
-      consumer.start();
       await Promise.all(
-        capacityJobs.map((capacityJob) =>
+        capacityJobs.slice(0, -1).map((capacityJob) =>
           queue.add(orderProcessJobName, capacityJob, {
             attempts: 1,
             jobId: capacityJob.orderId,
           }),
         ),
       );
+      consumer.start();
+      await vi.waitFor(() => expect(pauseStreamId).not.toBe(""));
+      const rejectionDeadline = rejectedAt + 1_000;
       await waitForQueueToSettle(queue);
       let publications = 0;
       let scans = 0;
@@ -2633,6 +2656,19 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
             capacityJobs.map((capacityJob) => capacityJob.orderId),
           ),
         );
+      // Exact job ID excludes recovery publications from the available-work proof.
+      const lateJobEvents = (
+        await redis.xrange(queue.toKey("events"), `(${pauseStreamId}`, "+")
+      ).filter(([, fields]) => fields[3] === lateJob.orderId);
+      const waiting = lateJobEvents.find(([, fields]) => fields[1] === "waiting");
+      const active = lateJobEvents.find(([, fields]) => fields[1] === "active");
+      expect(
+        waiting,
+        `concurrency ${concurrency}: late job waiting after pause cursor`,
+      ).toBeDefined();
+      expect(active, `concurrency ${concurrency}: initial late job activation`).toBeDefined();
+      const activations = await readActivationsAfter(redis, queue, pauseStreamId, capacityJobs);
+      const allActivations = await readActivationsAfter(redis, queue, "0-0", capacityJobs);
       expect((await queue.getJobCounts()).delayed).toBe(0);
       return {
         confirmed: confirmed.filter((order) => order.status === "confirmed").length,
@@ -2640,8 +2676,17 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           .length,
         publications,
         scans,
-        peakInFlight,
-        pauseAfterRejectionMs: (confirmationStarts[1] ?? 0) - (confirmationStarts[0] ?? 0),
+        // At 10 TPS the declared activation budget is one per 100 ms.
+        peakActivationsPer100Ms: Math.max(
+          ...allActivations.map(
+            ({ at }) =>
+              allActivations.filter((event) => event.at >= at && event.at < at + 100).length,
+          ),
+        ),
+        activations,
+        rejectionDeadline,
+        lateJobWaitingAt: Number(waiting?.[0].split("-")[0]),
+        lateJobActivatedAt: Number(active?.[0].split("-")[0]),
         actualCalls: attempts.length,
       };
     } finally {
@@ -2856,6 +2901,25 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     expect(order?.status).toBe("processing");
   });
 });
+
+async function readActivationsAfter(
+  redis: Redis,
+  queue: Queue,
+  streamId: string,
+  jobs: OrderProcessJob[],
+) {
+  const jobIds = new Set(jobs.map(({ orderId }) => orderId));
+  // moveToActive checks the limiter and appends active in one Redis script.
+  return (await redis.xrange(queue.toKey("events"), `(${streamId}`, "+")).flatMap(
+    ([id, fields]) => {
+      // Recovery publications use recovery-<orderId>-<attempt> as their job ID.
+      const orderId = fields[3]?.replace(/^recovery-(.+)-\d+$/, "$1") ?? "";
+      return fields[0] === "event" && fields[1] === "active" && jobIds.has(orderId)
+        ? [{ orderId, at: Number(id.split("-")[0]) }]
+        : [];
+    },
+  );
+}
 
 function buildConsumer(
   connection: ReturnType<typeof createDatabaseConnection>,
