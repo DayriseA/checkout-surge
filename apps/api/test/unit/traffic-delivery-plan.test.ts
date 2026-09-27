@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   syntheticFailedTrafficSummary,
   syntheticTrafficDeliverySummary,
-} from "../src/services/traffic-delivery-plan.js";
+} from "../../src/services/traffic-delivery-plan.js";
 
 const baseSnapshot = {
   trafficConfig: {

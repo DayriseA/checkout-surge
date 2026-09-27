@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   PendingPersistenceDiscoveryDeadlineError,
   PendingPersistenceRecoveryService,
-} from "../src/services/pending-persistence-recovery-service.js";
+} from "../../src/services/pending-persistence-recovery-service.js";
 
 const hold: SecuredReservationHold & { runId: string } = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

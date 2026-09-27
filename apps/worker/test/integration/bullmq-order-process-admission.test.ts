@@ -94,7 +94,6 @@ describe("BullMQ order-process execution boundary", () => {
     expect(rejected).toBe(0);
     const elapsed = (arrivals.at(-1) ?? 0) - (arrivals[0] ?? 0);
     const observedTps = ((arrivals.length - 1) * 1_000) / elapsed;
-    console.info({ declaredTps: maxTps, ...rateLimit, observedTps, rejected });
     // Floor confirmed against isolated Redis measurements; allows container scheduling overhead.
     expect(observedTps).toBeGreaterThanOrEqual(maxTps * 0.8);
   });

@@ -3,7 +3,7 @@ import {
   closeApiResources,
   createOperationResourceCleanup,
   runWithResourceCleanup,
-} from "../src/runtime/api-resource-cleanup.js";
+} from "../../src/runtime/api-resource-cleanup.js";
 
 describe("API resource cleanup", () => {
   it("runs abort-triggered operation cleanup once and aggregates every failure", async () => {

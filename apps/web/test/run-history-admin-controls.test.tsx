@@ -27,9 +27,6 @@ describe("RunHistoryAdminControls", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete all run summaries" }));
     const confirm = screen.getByRole("button", { name: "Delete all summaries" });
-    expect(screen.getByRole("textbox").classList).toContain("border-control-border");
-    expect(screen.getByRole("textbox").classList).toContain("bg-surface");
-    expect(screen.getByRole("textbox").classList).not.toContain("bg-bg");
     expect(fetchMock).not.toHaveBeenCalled();
     expect((confirm as HTMLButtonElement).disabled).toBe(true);
     await user.type(screen.getByRole("textbox"), "delete");
@@ -62,7 +59,7 @@ describe("RunHistoryAdminControls", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("shows the sticky selection bar only while summaries are selected", async () => {
+  it("shows the selection bar only while summaries are selected", async () => {
     const user = userEvent.setup();
     vi.stubGlobal("fetch", vi.fn());
     renderSurface();
@@ -71,34 +68,14 @@ describe("RunHistoryAdminControls", () => {
     const firstCheckbox = screen.getByRole("checkbox", {
       name: `Select run ${summaries[0]?.runId}`,
     });
-    expect(firstCheckbox.parentElement?.classList).toContain("size-11");
-    expect(
-      screen.getByRole("checkbox", { name: "Select all visible runs" }).closest("label")?.classList,
-    ).toContain("min-h-11");
     const rowDeleteButton = screen.getByRole("button", {
       name: `Delete run ${summaries[0]?.presetName} (${summaries[0]?.runId})`,
     });
-    expect(rowDeleteButton.classList).toContain("size-11");
     expect(rowDeleteButton.getAttribute("title")).toBe(`Delete run ${summaries[0]?.presetName}`);
-    expect(rowDeleteButton.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
-    expect(
-      screen.getByRole("button", { name: "Delete all run summaries" }).querySelector("svg"),
-    ).toBeNull();
     await user.click(firstCheckbox);
     await user.click(screen.getByRole("checkbox", { name: `Select run ${summaries[1]?.runId}` }));
-    const deleteSelectedButton = screen.getByRole("button", { name: "Delete selected (2)" });
-    expect(deleteSelectedButton.classList).toContain("min-h-11");
-    expect(deleteSelectedButton.querySelector("svg")).toBeNull();
-    expect(screen.getByRole("button", { name: "Clear" }).classList).toContain("min-h-11");
-    const toolbar = screen.getByRole("button", { name: "Clear" }).parentElement;
-    expect(toolbar).toBeTruthy();
-    expect(toolbar?.classList).toContain("sticky");
-    expect(toolbar?.classList).not.toContain("fixed");
-    const deleteAllButton = screen.getByRole("button", { name: "Delete all run summaries" });
-    expect(
-      deleteAllButton.compareDocumentPosition(toolbar as Element) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete selected (2)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(screen.queryByRole("button", { name: /Delete selected/ })).toBeNull();

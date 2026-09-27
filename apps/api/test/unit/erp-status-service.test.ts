@@ -4,8 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   RunErpOutcomeService,
   SharedErpProtectionService,
-} from "../src/services/erp-status-service.js";
-import { QueueStatusService } from "../src/services/queue-status-service.js";
+} from "../../src/services/erp-status-service.js";
+import { QueueStatusService } from "../../src/services/queue-status-service.js";
 
 const now = new Date("2026-06-22T00:00:10.000Z");
 const runId = "55555555-5555-4555-8555-555555555555";

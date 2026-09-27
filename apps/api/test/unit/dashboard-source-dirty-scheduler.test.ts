@@ -5,7 +5,7 @@ import {
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DashboardSourceDirtyScheduler } from "../src/services/dashboard-source-dirty-scheduler.js";
+import { DashboardSourceDirtyScheduler } from "../../src/services/dashboard-source-dirty-scheduler.js";
 
 describe("DashboardSourceDirtyScheduler", () => {
   afterEach(() => vi.useRealTimers());

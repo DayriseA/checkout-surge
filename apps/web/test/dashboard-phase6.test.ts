@@ -79,9 +79,9 @@ describe("Phase 6 projection dashboard", () => {
   });
 
   it.each([
-    ["connecting", "connecting to live updates", "connecting", "bg-surface-muted"],
-    ["unsupported", "live updates unsupported", "live updates unsupported", "bg-surface-muted"],
-  ] as const)("renders %s freshness without a disconnect claim", (state, expectedCopy, expectedLabel, expectedToneClass) => {
+    ["connecting", "connecting to live updates", "connecting"],
+    ["unsupported", "live updates unsupported", "live updates unsupported"],
+  ] as const)("renders %s freshness without a disconnect claim", (state, expectedCopy, expectedLabel) => {
     const recovery = available(projectionFixture());
     const markup = renderToStaticMarkup(
       createElement(RequestSurgePanel, {
@@ -93,9 +93,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toContain(
       `Updated <time dateTime="2026-06-20T00:00:12.000Z">2026-06-20 00:00:12 UTC</time> · ${expectedCopy}`,
     );
-    expect(markup).toMatch(
-      new RegExp(`${expectedToneClass}[^>]*><span[^>]*>[^<]*</span>${expectedLabel}</span>`),
-    );
+    expect(markup).toMatch(new RegExp(`><span[^>]*>[^<]*</span>${expectedLabel}</span>`));
     expect(markup).not.toContain("disconnected");
     expect(markup).not.toContain("last known values");
   });
@@ -278,7 +276,6 @@ describe("Phase 6 projection dashboard", () => {
 
     expect(markup).toContain("exact sellout");
     expect(markup).toContain("completed successfully");
-    expect(markup).not.toContain("bg-warning-soft");
   });
 
   it.each([
@@ -519,8 +516,6 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toMatch(/Awaiting confirmation<\/dt><dd[^>]*>2<\/dd>/);
     expect(markup).toMatch(/Oldest pending<\/dt><dd[^>]*>8\.5 s<\/dd>/);
     expect(markup).toContain("processing unique reservations");
-    expect(markup).not.toContain("bg-warning-soft");
-    expect(markup).not.toContain("bg-danger-soft");
   });
 
   // "Yet" may only promise evidence that can still arrive, so the zero-confirmation copy follows
@@ -646,7 +641,7 @@ describe("Phase 6 projection dashboard", () => {
     "idle",
     "active",
     "completed",
-  ] as const)("keeps every grouped technical section's desktop rows filled for %s evidence", (status) => {
+  ] as const)("renders the expected grouped technical sections for %s evidence", (status) => {
     const projection = status === "idle" ? idleProjectionFixture() : projectionFixture();
     if (status === "completed") {
       const currentRun = projection.currentRun;
@@ -692,36 +687,7 @@ describe("Phase 6 projection dashboard", () => {
     const document = new DOMParser().parseFromString(markup, "text/html");
     const groups = [...document.querySelectorAll("[id^='watch-advanced-']")];
     expect(groups.map((group) => group.id)).toEqual(groupIds(status));
-    for (const group of groups) {
-      const grid = group.querySelector(".grid-cols-12");
-      if (!grid) throw new Error(`Expected a 12-column grid in #${group.id}.`);
-      const spans = [...grid.children].map((panel) => {
-        const span = [...panel.classList]
-          .map((className) => /^col-span-(\d+|full)$/.exec(className)?.[1])
-          .find(Boolean);
-        if (!span) throw new Error(`Expected a desktop span on ${panel.textContent}.`);
-        // `col-span-full` is the panels' existing full-width form of 12 columns.
-        return span === "full" ? 12 : Number(span);
-      });
-
-      let rowWidth = 0;
-      for (const span of spans) {
-        rowWidth += span;
-        expect(rowWidth).toBeLessThanOrEqual(12);
-        if (rowWidth === 12) rowWidth = 0;
-      }
-      expect(rowWidth).toBe(0);
-      expect(spans).toEqual(groupSpans(group.id, status));
-    }
-    const processing = document.querySelector("#watch-advanced-processing");
     if (status === "completed") {
-      const grid = processing?.querySelector(".grid-cols-12");
-      if (!grid) throw new Error("Expected the Processing 12-column grid.");
-      const children = [...grid.children];
-      const outcomesIndex = children.findIndex((panel) =>
-        panel.textContent?.includes("Reservation and confirmation summary"),
-      );
-      expect(outcomesIndex).toBe(0);
       expect(document.querySelector("#watch-advanced-consistency")?.textContent).toContain(
         "Evidence and reconciliation proof",
       );
@@ -742,23 +708,6 @@ describe("Phase 6 projection dashboard", () => {
             "watch-advanced-consistency",
             "watch-advanced-connection",
           ];
-      }
-    }
-
-    function groupSpans(groupId: string, phase: "idle" | "active" | "completed"): number[] {
-      switch (groupId) {
-        case "watch-advanced-scenario":
-          return [12, 12];
-        case "watch-advanced-signals":
-          return [12];
-        case "watch-advanced-consistency":
-          return phase === "completed" ? [12, 12] : [12];
-        case "watch-advanced-processing":
-          return [12, 6, 6];
-        case "watch-advanced-connection":
-          return phase === "idle" ? [12] : phase === "active" ? [12, 12] : [4, 8, 12];
-        default:
-          throw new Error(`Unexpected group ${groupId}.`);
       }
     }
   });

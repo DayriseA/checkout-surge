@@ -6,8 +6,8 @@ import {
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { ApiHttpError } from "../src/runtime/errors.js";
-import { HttpTrafficExecutionGateway } from "../src/services/traffic-execution-gateway.js";
+import { ApiHttpError } from "../../src/runtime/errors.js";
+import { HttpTrafficExecutionGateway } from "../../src/services/traffic-execution-gateway.js";
 
 const request: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",

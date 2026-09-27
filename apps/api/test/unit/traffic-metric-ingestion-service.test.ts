@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import type { DashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
+import type { DashboardTrafficMetricStore } from "../../src/services/dashboard-traffic-metric-store.js";
 import {
   maximumPendingTrafficMetricBatches,
   TrafficMetricIngestionService,
-} from "../src/services/traffic-metric-ingestion-service.js";
+} from "../../src/services/traffic-metric-ingestion-service.js";
 
 const metricRequest = {
   batchId: "77777777-7777-4777-8777-777777777777",

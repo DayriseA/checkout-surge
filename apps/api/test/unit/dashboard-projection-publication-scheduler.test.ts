@@ -4,7 +4,7 @@ import type {
 } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DashboardProjectionPublicationScheduler } from "../src/services/dashboard-projection-publication-scheduler.js";
+import { DashboardProjectionPublicationScheduler } from "../../src/services/dashboard-projection-publication-scheduler.js";
 
 describe("DashboardProjectionPublicationScheduler", () => {
   afterEach(() => {

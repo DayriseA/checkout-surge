@@ -21,7 +21,6 @@ describe("ErrorNotice action and disclosure boundary", () => {
 
     const action = screen.getByRole("link", { name: "Watch live" });
     expect(action.getAttribute("href")).toBe("/watch");
-    expect(action.className).toContain("min-h-11");
     expect(screen.queryByText("Technical details")).toBeNull();
     expect(screen.queryByText("private-correlation")).toBeNull();
   });
@@ -37,7 +36,6 @@ describe("ErrorNotice action and disclosure boundary", () => {
     );
 
     const action = screen.getByRole("button", { name: "Check again" });
-    expect(action.className).toContain("min-h-11");
     fireEvent.click(action);
     expect(onRetry).toHaveBeenCalledOnce();
 

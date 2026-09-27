@@ -185,7 +185,6 @@ describe("AdminSignOut", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     render(<AdminSignOut />);
-    expect(screen.getByRole("button", { name: "Sign out" }).classList).toContain("min-h-11");
     await user.click(screen.getByRole("button", { name: "Sign out" }));
     await waitFor(() => expect(navigation.refresh).toHaveBeenCalledOnce());
     expect(fetchMock.mock.calls[0]).toEqual([

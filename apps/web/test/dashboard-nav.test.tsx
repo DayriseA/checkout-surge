@@ -30,34 +30,12 @@ describe("DashboardNav", () => {
     expect(currentLinks[0]?.textContent).toBe(expectedName);
   });
 
-  it("styles the current link and leaves every other link muted", () => {
-    pathname.value = "/watch";
-    render(renderNavigation(null));
-
-    const navigation = screen.getByRole("navigation", { name: "Dashboard routes" });
-    const currentLink = screen
-      .getAllByRole("link")
-      .find((link) => link.getAttribute("aria-current") === "page");
-    expect(currentLink?.classList.contains("text-white")).toBe(true);
-    expect(currentLink?.classList.contains("after:bg-signal")).toBe(true);
-    expect(currentLink?.classList.contains("text-white/70")).toBe(false);
-    expect(currentLink?.classList.contains("max-[900px]:bg-surface-muted")).toBe(true);
-
-    for (const link of navigation.querySelectorAll("a:not([aria-current])")) {
-      expect(link.classList.contains("text-white/70")).toBe(true);
-      expect(link.classList.contains("text-white")).toBe(false);
-      expect(link.classList.contains("after:bg-signal")).toBe(false);
-    }
-  });
-
   it("opens by keyboard and exposes every route, Repository, and the children slot", async () => {
     const user = userEvent.setup();
     render(renderNavigation(<button type="button">Sign out</button>));
 
     const toggle = screen.getByRole("button", { name: "Menu" });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
-    expect(toggle.classList).toContain("min-h-11");
-    expect(toggle.classList).toContain("border-white/30");
 
     toggle.focus();
     await user.keyboard("{Enter}");
@@ -67,15 +45,7 @@ describe("DashboardNav", () => {
     expect(panelId).toBeTruthy();
     const panel = document.getElementById(panelId as string);
     expect(panel).not.toBeNull();
-    expect(panel?.classList).toContain("max-[900px]:max-h-[calc(100dvh-5rem)]");
-    expect(panel?.classList).toContain("max-[900px]:overflow-y-auto");
-    expect(panel?.classList).toContain("max-[900px]:flex-nowrap");
-    expect(panel?.classList).toContain("max-[900px]:justify-start");
     const links = within(panel as HTMLElement).getAllByRole("link");
-    for (const link of links) {
-      expect(link.classList).toContain("min-h-11");
-      expect(link.classList).toContain("inline-flex");
-    }
     expect(links.map((link) => link.textContent?.trim())).toEqual([
       "Overview",
       "Demo",

@@ -1,6 +1,6 @@
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it } from "vitest";
-import { DashboardRecoveryAdmissionService } from "../src/services/dashboard-recovery-admission.js";
+import { DashboardRecoveryAdmissionService } from "../../src/services/dashboard-recovery-admission.js";
 
 describe("dashboard recovery admission", () => {
   it("guards local concurrency and releases permits idempotently", async () => {

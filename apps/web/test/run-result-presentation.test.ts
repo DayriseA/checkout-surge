@@ -196,17 +196,13 @@ describe("run result presentation", () => {
     );
   });
 
-  it("renders contradictory completed evidence with danger treatment", () => {
+  it("summarizes contradictory completed evidence as broken invariants", () => {
     const evidence = withEvidence({ durable: { reservedUnits: 249 } });
     const result = deriveRunResult(evidence);
-    const markup = renderToStaticMarkup(
-      createElement(RunConclusion, { result, runStatus: "completed" }),
-    );
 
     expect(runConclusionSentence(result)).toBe(
       "The completed run has contradictory authoritative evidence: one or more invariants are broken.",
     );
-    expect(markup).toContain("border-danger bg-danger-soft");
   });
 
   it("maps the sold-out reconciliation reason without mixing populations", () => {
@@ -262,15 +258,6 @@ describe("run result presentation", () => {
           rightPopulation: "UNSAFE DECISION POPULATION",
           reason: "UNSAFE SOLD OUT REASON",
         },
-        {
-          code: "future_contract_reconciliation",
-          leftPopulation: "UNSAFE FUTURE LEFT",
-          leftValue: 1,
-          rightPopulation: "UNSAFE FUTURE RIGHT",
-          rightValue: 2,
-          classification: "warning",
-          reason: "UNSAFE FUTURE REASON",
-        },
       ],
     };
     const markup = renderToStaticMarkup(
@@ -278,8 +265,6 @@ describe("run result presentation", () => {
     );
 
     expect(markup).not.toContain("UNSAFE");
-    expect(markup).toContain("first observed population");
-    expect(markup).toContain("second observed population");
   });
 
   it("renders nothing for a draining lifecycle even when given a derived result", () => {

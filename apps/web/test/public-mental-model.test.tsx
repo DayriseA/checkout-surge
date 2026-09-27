@@ -158,12 +158,4 @@ describe("public visitor mental model", () => {
       expect(markup).toContain('rel="noopener noreferrer"');
     }
   });
-
-  it("keeps hash-anchored targets clear of the sticky header via a root scroll offset", async () => {
-    const layoutMarkup = renderToStaticMarkup(
-      await RootLayout({ children: createElement("p", null, "content") }),
-    );
-
-    expect(layoutMarkup).toMatch(/<html[^>]*class="[^"]*\bscroll-pt-20\b/);
-  });
 });

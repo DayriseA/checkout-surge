@@ -1,7 +1,7 @@
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
 import type { CheckoutSurgeDatabase } from "@checkout-surge/db";
 import { describe, expect, it } from "vitest";
-import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
+import { PostgresBuyPersistence } from "../../src/services/postgres-buy-persistence.js";
 
 const hold: SecuredReservationHold = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

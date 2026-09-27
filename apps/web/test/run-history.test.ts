@@ -278,14 +278,12 @@ describe("run history", () => {
     expectVisibleFact(completedRow, "Overall duration", "10 s");
 
     expect(within(warningRow).getByText("1,200 attempts · 100 units")).toBeTruthy();
-    expect(within(warningRow).getByText("Completed with order failures").classList).toContain(
-      "text-warning",
-    );
+    expect(within(warningRow).getByText("Completed with order failures")).toBeTruthy();
     expectVisibleFact(warningRow, "Confirmed orders", "98");
     expectVisibleFact(warningRow, "Failed orders", "2");
     expectVisibleFact(warningRow, "Overall duration", "12 s");
 
-    expect(screen.getByText("Result not fully verified").classList).toContain("text-muted-strong");
+    expect(screen.getByText("Result not fully verified")).toBeTruthy();
     const occurredAt = completedRow.querySelector("time");
     expect(occurredAt?.dateTime).toBe("2026-06-20T00:00:00.000Z");
     expect(occurredAt?.textContent).toContain("2026-06-20 00:00:00 UTC");
@@ -340,15 +338,15 @@ describe("run history", () => {
     expect(
       screen.getByRole("link", {
         name: "View report for Preview 1k run from 2026-06-20 00:00:00 UTC",
-      }).classList,
-    ).toContain("min-h-11");
+      }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("link", {
         name: "View report for Surge 5k run from 2026-06-20 00:01:00 UTC",
       }),
     ).toBeTruthy();
     const pagination = screen.getByRole("navigation", { name: "Run history pages" });
-    expect(within(pagination).getByRole("link", { name: "Next" }).classList).toContain("min-h-11");
+    expect(within(pagination).getByRole("link", { name: "Next" })).toBeTruthy();
     expect(
       within(pagination).queryByRole("button", { name: "Delete all run summaries" }),
     ).toBeNull();
@@ -388,7 +386,6 @@ describe("run history", () => {
     );
     expect(outOfRange).toContain("Page 3 does not exist");
     expect(outOfRange).toContain("View page 1");
-    expect(outOfRange).toContain("min-h-11");
     expect(outOfRange).not.toContain("summaries");
   });
 
@@ -443,12 +440,6 @@ describe("run history", () => {
     expect(markup).toContain("Physical queue");
     expect(markup).toContain("orders-process");
     expect(markup).toContain("Traffic delivery: All planned attempts dispatched");
-    const document = new DOMParser().parseFromString(markup, "text/html");
-    const deliveryPill = [...document.querySelectorAll("span")].find((element) =>
-      element.textContent?.includes("Traffic delivery: All planned attempts dispatched"),
-    );
-    expect(deliveryPill).toBeDefined();
-    expect([...(deliveryPill?.classList ?? [])]).not.toContain("whitespace-nowrap");
     expect(markup).toContain("Lifecycle and reference");
     expect(markup).toContain("Run ended");
     expect(markup).toContain('id="report-advanced-scenario"');
@@ -710,7 +701,6 @@ describe("run history", () => {
     expect(markup).toMatch(
       /role="status"[^>]*>Evidence incomplete: planned checkout attempts and checkout responses completed by the load generator require reconciliation\./,
     );
-    expect(markup).toContain("border-warning bg-warning-soft");
     expect(markup).toContain("Only attempts that reached a response are included");
   });
 
@@ -731,7 +721,6 @@ describe("run history", () => {
     const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
 
     expect(markup).toMatch(/role="status"[^>]*>Reconciliation warning:/);
-    expect(markup).toContain("border-warning bg-warning-soft");
     expect(markup).toContain("accepted responses observed by the load generator");
     expect(markup).toContain("Unique reservations secured");
     expect(markup).not.toContain("private");
@@ -927,14 +916,13 @@ describe("run history", () => {
     expect(markup).not.toContain("Technical detail");
   });
 
-  it("renders exception classification and delivery tones without understating severity", () => {
+  it("renders exception classification and delivery severity without understating it", () => {
     const clean = adminDetailFixture();
     clean.exceptionSummary.generatorWarnings = 0;
     const cleanMarkup = renderToStaticMarkup(
       createElement(AdminRunHistoryDetail, { detail: clean }),
     );
     expect(cleanMarkup).toContain("Clean run · no exceptions require attention.");
-    expect(cleanMarkup).toContain("text-accent");
 
     const incomplete = adminDetailFixture();
     incomplete.exceptionSummary.generatorWarnings = 0;
@@ -943,7 +931,6 @@ describe("run history", () => {
       createElement(AdminRunHistoryDetail, { detail: incomplete }),
     );
     expect(incompleteMarkup).toContain("Evidence incomplete");
-    expect(incompleteMarkup).toContain("text-warning");
     expect(incompleteMarkup).not.toContain("Clean run");
 
     const failed = adminDetailFixture();
@@ -953,8 +940,6 @@ describe("run history", () => {
       createElement(AdminRunHistoryDetail, { detail: failed }),
     );
     expect(failedMarkup).toContain("Correctness failure");
-    expect(failedMarkup).toContain("border-danger bg-danger-soft");
-    expect(failedMarkup).toContain("text-danger");
 
     const failedLifecycle = adminDetailFixture();
     failedLifecycle.summary.status = "failed";
@@ -965,8 +950,6 @@ describe("run history", () => {
       createElement(AdminRunHistoryDetail, { detail: failedLifecycle }),
     );
     expect(failedLifecycleMarkup).toContain("Run failed");
-    expect(failedLifecycleMarkup).toContain("border-danger bg-danger-soft");
-    expect(failedLifecycleMarkup).toContain("text-danger");
     expect(failedLifecycleMarkup).not.toContain("Clean run");
 
     for (const status of ["warning", "degraded"] as const) {
@@ -975,7 +958,6 @@ describe("run history", () => {
       detail.exceptionSummary.partialDelivery = 1;
       const markup = renderToStaticMarkup(createElement(AdminRunHistoryDetail, { detail }));
       expect(markup).toContain(`Delivery ${status}`);
-      expect(markup).toContain("bg-warning-soft text-warning");
       expect(markup).not.toContain(`✓ Delivery ${status}`);
     }
   });

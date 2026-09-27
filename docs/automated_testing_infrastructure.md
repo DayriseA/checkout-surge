@@ -35,6 +35,7 @@ The checked-in commands support Linux host-native development, local Dev Contain
 - Validate pure business logic, shared contracts, schema parsing, small helpers, and error-shape behavior.
 - Frontend DOM component tests may use jsdom and React Testing Library when the behavior depends on rendered markup, accessible names, or label/control associations.
 - Must be safe to run frequently in watch mode.
+- Infra-free test files belong in the owning package's unit lane (for example `apps/api/test/unit/`), not in an infra-backed lane. A package whose unit lane covers production sources declares its own `test:coverage:unit` script so moved files keep counting toward coverage; the move and the script land together.
 
 ### Integration Tests
 
@@ -71,7 +72,7 @@ The repository provides these root scripts:
 - `pnpm test:integration` runs only tests that require PostgreSQL and/or Redis test services.
 - `pnpm test:api` runs only API/service-boundary tests.
 - `pnpm test:watch` runs the fast unit test loop for active development.
-- `pnpm test:coverage` is the bounded full coverage gate. It discovers all seven unit owners, the API/service owner, and the DB, worker, and Mock ERP integration owners through package-local Turbo scripts. Mock ERP has a PostgreSQL confirmation-ledger integration lane, also run by `pnpm test`. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running coverage and always stop them with `pnpm test:infra:down` afterward.
+- `pnpm test:coverage` is the bounded full coverage gate. It discovers all eight unit owners, the API/service owner, and the DB, worker, and Mock ERP integration owners through package-local Turbo scripts. Mock ERP has a PostgreSQL confirmation-ledger integration lane, also run by `pnpm test`. Start clean dedicated PostgreSQL and Redis services with `pnpm test:infra:up` before running coverage and always stop them with `pnpm test:infra:down` afterward.
 - `pnpm test:coverage:unit` is the explicitly fast, infrastructure-free unit-only coverage command.
 - `pnpm test:infra:up` starts the dedicated test PostgreSQL and Redis services and waits for their declared healthchecks before returning.
 - `pnpm test:infra:down` stops dedicated test services and deletes their named volumes.

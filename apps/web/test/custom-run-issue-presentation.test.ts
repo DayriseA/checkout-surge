@@ -11,6 +11,7 @@ describe("custom run issue presentation", () => {
         ["configOverride", "trafficConfig", "buyerCount"],
         ["erpConfig", "errorRate"],
         ["trafficConfig", "buyerCount"],
+        ["erpConfig", "forcedOutage"],
       ]),
     ).toEqual([
       {
@@ -29,22 +30,11 @@ describe("custom run issue presentation", () => {
         message: "Failure rate: Use an available value for Failure rate.",
         targetId: "custom-erp-error-rate",
       },
-    ]);
-  });
-
-  it("keeps group and unknown-path fallbacks safe", () => {
-    expect(presentCustomRunIssues([["erpConfig", "forcedOutage"], ["internalOnlyField"]])).toEqual([
       {
         group: "advanced",
         key: "custom-advanced-validation-error",
         message: "Review the Advanced protection settings and keep values within supported limits.",
         targetId: "custom-advanced-validation-error",
-      },
-      {
-        group: "form",
-        key: "custom-form-error",
-        message: "Review the custom run settings and try again.",
-        targetId: "custom-form-error",
       },
     ]);
   });

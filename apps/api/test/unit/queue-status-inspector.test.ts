@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   type BullMqQueueInspectionClient,
   createOrderProcessQueueInspector,
-} from "../src/queue/bullmq-order-process-queue-inspector.js";
+} from "../../src/queue/bullmq-order-process-queue-inspector.js";
 
 const measuredAt = new Date("2026-06-22T12:00:20.000Z");
 

@@ -467,6 +467,7 @@ describe("dashboard control proxy routes", () => {
     expect(setCookie).toContain("checkout_surge_admin_session=");
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("SameSite=Strict");
+    expect(response.headers.get(correlationIdHeaderName)).toHaveLength(36);
   });
 
   it("rejects every untrusted unsafe admin Origin before parsing or fetch", async () => {
@@ -520,90 +521,117 @@ describe("dashboard control proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
-  it("forwards valid ERP chaos updates with the server-side control token", async () => {
-    const headers = await adminSessionHeaders({ "content-type": "application/json" });
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(init?.method).toBe("PUT");
-      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
-        "control-token",
-      );
-      expect(JSON.parse(String(init?.body))).toMatchObject({
-        latencyMs: 250,
-        maxTps: 20,
-        errorRate: 0.25,
-        forcedOutage: true,
-      });
-      return jsonResponse(erpChaosStatusPayload());
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await updateErpChaos(
-      new Request("http://dashboard.local/api/admin/erp-chaos", {
-        method: "PUT",
-        headers,
-        body: JSON.stringify(erpChaosConfigPayload()),
-      }),
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://mock-erp.internal/chaos");
-    expect(payload.forcedOutage).toBe(true);
-  });
-
-  it("forwards ERP chaos reset with the server-side control token", async () => {
-    const headers = await adminSessionHeaders();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(init?.method).toBe("POST");
-      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
-        "control-token",
-      );
-      return jsonResponse({ ...erpChaosStatusPayload(), forcedOutage: false });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await resetErpChaos(
-      new Request("http://dashboard.local/api/admin/erp-chaos/reset", {
-        method: "POST",
-        headers,
-      }),
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://mock-erp.internal/chaos/reset");
-    expect(payload.forcedOutage).toBe(false);
-  });
-
-  it("forwards demo reset with the server-side control token", async () => {
-    const headers = await adminSessionHeaders();
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(init?.method).toBe("POST");
-      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
-        "control-token",
-      );
-      return jsonResponse({
+  it.each([
+    {
+      name: "valid ERP chaos updates with the server-side control token",
+      handler: updateErpChaos,
+      method: "PUT",
+      requestPath: "/api/admin/erp-chaos",
+      upstreamUrl: "http://mock-erp.internal/chaos",
+      requestBody: erpChaosConfigPayload(),
+      partialBodyMatch: true,
+      mockResponseBody: erpChaosStatusPayload(),
+      expectedPayload: { forcedOutage: true },
+    },
+    {
+      name: "ERP chaos reset with the server-side control token",
+      handler: resetErpChaos,
+      method: "POST",
+      requestPath: "/api/admin/erp-chaos/reset",
+      upstreamUrl: "http://mock-erp.internal/chaos/reset",
+      mockResponseBody: { ...erpChaosStatusPayload(), forcedOutage: false },
+      expectedPayload: { forcedOutage: false },
+    },
+    {
+      name: "demo reset with the server-side control token",
+      handler: resetDemo,
+      method: "POST",
+      requestPath: "/api/admin/demo/reset",
+      upstreamUrl: `http://api.internal${adminDemoResetPath}`,
+      mockResponseBody: {
         failedRunCount: 1,
         closedSaleOfferCount: 1,
         cleanedQueueCount: 2,
         cleanedJobCount: 3,
         resetAt: "2026-06-20T00:00:10.000Z",
         correlationId: "corr-reset",
-      });
+      },
+      expectedPayload: { cleanedQueueCount: 2 },
+    },
+    {
+      name: "generated-run cleanup with validated options",
+      handler: cleanupRuns,
+      method: "POST",
+      requestPath: "/api/admin/demo/runs/cleanup",
+      upstreamUrl: `http://api.internal${adminMaintenanceCleanupRunsPath}`,
+      requestBody: { keepLatest: 15, olderThanDays: 7 },
+      mockResponseBody: {
+        deletedRunCount: 2,
+        deletedSaleOfferCount: 2,
+        preservedLatestCount: 15,
+        preservedActiveRunCount: 0,
+        cutoffBefore: "2026-06-13T00:00:10.000Z",
+        cleanedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-cleanup",
+      },
+      expectedPayload: { deletedRunCount: 2 },
+    },
+    {
+      name: "run history deletion with the server-side control token",
+      handler: deleteRunHistory,
+      method: "DELETE",
+      requestPath: "/api/admin/demo/runs/history",
+      upstreamUrl: `http://api.internal${runHistoryPath}`,
+      requestBody: { deleteAllConfirmation: "DELETE" },
+      mockResponseBody: {
+        deletedSummaryCount: 3,
+        deletedAt: "2026-06-20T00:00:10.000Z",
+        correlationId: "corr-delete-history",
+      },
+      expectedPayload: { deletedSummaryCount: 3 },
+    },
+  ])("forwards $name", async ({
+    handler,
+    method,
+    requestPath,
+    upstreamUrl,
+    requestBody,
+    partialBodyMatch = false,
+    mockResponseBody,
+    expectedPayload,
+  }) => {
+    const headers = await adminSessionHeaders(
+      requestBody ? { "content-type": "application/json" } : undefined,
+    );
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect(init?.method).toBe(method);
+      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
+        "control-token",
+      );
+      if (requestBody !== undefined) {
+        const parsedBody = JSON.parse(String(init?.body));
+        if (partialBodyMatch) {
+          expect(parsedBody).toMatchObject(requestBody);
+        } else {
+          expect(parsedBody).toEqual(requestBody);
+        }
+      }
+      return jsonResponse(mockResponseBody);
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const response = await resetDemo(
-      new Request("http://dashboard.local/api/admin/demo/reset", {
-        method: "POST",
+    const response = await handler(
+      new Request(`http://dashboard.local${requestPath}`, {
+        method,
         headers,
+        ...(requestBody ? { body: JSON.stringify(requestBody) } : {}),
       }),
     );
     const payload = await response.json();
 
     expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${adminDemoResetPath}`);
-    expect(payload.cleanedQueueCount).toBe(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(upstreamUrl);
+    expect(payload).toMatchObject(expectedPayload);
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -637,74 +665,6 @@ describe("dashboard control proxy routes", () => {
     expect(payload.run.operatorMode).toBe("admin");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${startDemoRunPath}`);
     expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
-  it("forwards generated-run cleanup with validated options", async () => {
-    const headers = await adminSessionHeaders({ "content-type": "application/json" });
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(init?.method).toBe("POST");
-      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
-        "control-token",
-      );
-      expect(JSON.parse(String(init?.body))).toEqual({ keepLatest: 15, olderThanDays: 7 });
-      return jsonResponse({
-        deletedRunCount: 2,
-        deletedSaleOfferCount: 2,
-        preservedLatestCount: 15,
-        preservedActiveRunCount: 0,
-        cutoffBefore: "2026-06-13T00:00:10.000Z",
-        cleanedAt: "2026-06-20T00:00:10.000Z",
-        correlationId: "corr-cleanup",
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await cleanupRuns(
-      new Request("http://dashboard.local/api/admin/demo/runs/cleanup", {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ keepLatest: 15, olderThanDays: 7 }),
-      }),
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
-      `http://api.internal${adminMaintenanceCleanupRunsPath}`,
-    );
-    expect(payload.deletedRunCount).toBe(2);
-  });
-
-  it("forwards run history deletion with the server-side control token", async () => {
-    const headers = await adminSessionHeaders({ "content-type": "application/json" });
-    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
-      expect(init?.method).toBe("DELETE");
-      expect((init?.headers as Record<string, string>)[controlServiceTokenHeaderName]).toBe(
-        "control-token",
-      );
-      expect(JSON.parse(String(init?.body))).toEqual({
-        deleteAllConfirmation: "DELETE",
-      });
-      return jsonResponse({
-        deletedSummaryCount: 3,
-        deletedAt: "2026-06-20T00:00:10.000Z",
-        correlationId: "corr-delete-history",
-      });
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const response = await deleteRunHistory(
-      new Request("http://dashboard.local/api/admin/demo/runs/history", {
-        method: "DELETE",
-        headers,
-        body: JSON.stringify({ deleteAllConfirmation: "DELETE" }),
-      }),
-    );
-    const payload = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(`http://api.internal${runHistoryPath}`);
-    expect(payload.deletedSummaryCount).toBe(3);
   });
 
   it("forwards admin runtime policy reads and updates with the server-side control token", async () => {

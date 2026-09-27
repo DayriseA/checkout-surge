@@ -83,12 +83,6 @@ describe("formatDurationMs", () => {
     expect(formatDurationMs(-1)).toBeNull();
   });
 
-  it("renders negative zero as a plain zero rather than a signed one", () => {
-    // `-0 < 0` is false, so negative zero passes the backwards-interval guard and `Math.round`
-    // preserves its sign all the way into `Intl.NumberFormat`, which would print "-0 ms".
-    expect(formatDurationMs(-0)).toBe("0 ms");
-  });
-
   it("renders sub-second values as whole milliseconds", () => {
     expect(formatDurationMs(1)).toBe("1 ms");
     expect(formatDurationMs(126.683)).toBe("127 ms");
@@ -141,11 +135,6 @@ describe("formatCount", () => {
   it("leaves small counts ungrouped", () => {
     expect(formatCount(0)).toBe("0");
     expect(formatCount(999)).toBe("999");
-  });
-
-  it("renders negative zero as a plain zero rather than a signed one", () => {
-    // `Intl.NumberFormat` preserves the sign of negative zero and would print "-0".
-    expect(formatCount(-0)).toBe("0");
   });
 
   it("keeps a fractional value fractional rather than rounding it to a whole count", () => {

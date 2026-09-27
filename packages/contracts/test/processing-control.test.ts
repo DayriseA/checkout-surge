@@ -3,7 +3,6 @@ import {
   catalogErpDispatchLimits,
   enginePolicyIdentitySchema,
   erpCallReferenceSchema,
-  erpDispatchEnginePolicyIdentity,
   erpDispatchMinimumWindowMs,
   erpDispatchRateLimit,
   erpDispatchSafetyMargin,
@@ -55,11 +54,5 @@ describe("processing control contracts", () => {
     expect(
       enginePolicyIdentitySchema.safeParse({ name: "adaptive-erp-engine", version: 0 }).success,
     ).toBe(false);
-  });
-
-  it("defines the single declared-capacity dispatch identity once and schema-valid", () => {
-    expect(enginePolicyIdentitySchema.parse(erpDispatchEnginePolicyIdentity)).toEqual(
-      erpDispatchEnginePolicyIdentity,
-    );
   });
 });

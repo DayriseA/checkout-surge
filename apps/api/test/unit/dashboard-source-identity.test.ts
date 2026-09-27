@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeNetworkSource,
   resolveRecoverySource,
-} from "../src/runtime/dashboard-source-identity.js";
+} from "../../src/runtime/dashboard-source-identity.js";
 
 describe("dashboard source identity", () => {
   it("normalizes IPv4-mapped addresses and IPv6 /64 prefixes consistently", () => {

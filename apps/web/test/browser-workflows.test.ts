@@ -1960,9 +1960,13 @@ describe("watch browser recovery", () => {
         ...configSnapshotFixture(),
         trafficConfig: {
           ...configSnapshotFixture().trafficConfig,
+          buyerCount: 1,
           startDelaySeconds: 15,
         },
-      },
+        inventoryConfig: {
+          startingStock: 1,
+        },
+      } as DemoRunSnapshot["configSnapshot"],
     });
     const markup = renderToStaticMarkup(
       createElement(OperatorDashboard, {
@@ -1979,7 +1983,7 @@ describe("watch browser recovery", () => {
               confirmedOrders: 1,
               failedOrders: 0,
               pendingPersistenceCount: 0,
-              notificationsRecorded: 0,
+              notificationsRecorded: 1,
             },
             requestArrivalSummary: {
               firstAttemptStartedAt,
@@ -2597,30 +2601,22 @@ describe("watch composition", () => {
     await waitFor(() => expect(document.activeElement?.id).toBe("watch-signal-arrival"));
   });
 
-  it("hides one live view at a time only on a compact screen", () => {
-    const { container } = render(
+  it("mirrors the compact-screen view toggle across the Overview and Pipeline buttons", () => {
+    render(
       watchSurface(
         createElement(OperatorDashboard, {
           initialRecovery: available(activeProjectionFixture()),
         }),
       ),
     );
-    const overview = container.querySelector("[data-watch-signals]")?.parentElement;
-    const pipeline = container
-      .querySelector("#watch-signal-arrival")
-      ?.parentElement?.closest("section")?.parentElement;
-    const compactHidden = (element: Element | null | undefined) =>
-      element?.classList.contains("compact-watch:hidden");
-
-    expect(compactHidden(overview)).toBe(false);
-    expect(compactHidden(pipeline)).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: /^Pipeline/ }));
 
-    expect(compactHidden(overview)).toBe(true);
-    expect(compactHidden(pipeline)).toBe(false);
     expect(screen.getByRole("button", { name: /^Overview/ }).getAttribute("aria-pressed")).toBe(
       "false",
+    );
+    expect(screen.getByRole("button", { name: /^Pipeline/ }).getAttribute("aria-pressed")).toBe(
+      "true",
     );
   });
 
@@ -3326,9 +3322,9 @@ function runHistorySummaryFixture(
     },
     terminalInventorySnapshot: {
       saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-      startingStock: 10,
+      startingStock: 6,
       remainingStock: 0,
-      reservedStock: 10,
+      reservedStock: 6,
       acceptedReservations: 6,
       soldOutRejections: 4,
       pendingPersistenceCount: 0,
@@ -3363,7 +3359,16 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
       operatorMode: "public",
       status: "completed",
       trafficStatus: "succeeded",
-      configSnapshot: configSnapshotFixture(),
+      configSnapshot: {
+        ...configSnapshotFixture(),
+        trafficConfig: {
+          ...configSnapshotFixture().trafficConfig,
+          buyerCount: 10,
+        },
+        inventoryConfig: {
+          startingStock: 6,
+        },
+      } as PublicRunHistoryDetailResponse["run"]["configSnapshot"],
       startedAt: "2026-06-20T00:00:00.000Z",
       trafficStartedAt: "2026-06-20T00:00:01.000Z",
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
@@ -3373,7 +3378,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
     result: deriveRunResult({
       runStatus: "completed",
       failureCategory: null,
-      startingStock: 10,
+      startingStock: 6,
       remainingStock: 0,
       durable: {
         reservedUnits: 6,

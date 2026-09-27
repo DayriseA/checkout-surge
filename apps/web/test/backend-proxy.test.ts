@@ -8,10 +8,6 @@ import {
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  createAdminLoginHandler,
-  defaultAdminLoginDependencies,
-} from "../src/app/lib/server/admin-login.js";
-import {
   createProxyRequestContext,
   type ProxyRequestContext,
   parseJsonRequest,
@@ -20,7 +16,6 @@ import {
 import {
   initializeWebServerConfig,
   resetWebServerConfigForTests,
-  webServerConfig,
 } from "../src/app/lib/server/config.js";
 
 function injectConfig(): void {
@@ -459,35 +454,5 @@ describe("backend proxy request context", () => {
 
     expect(response.status).toBe(502);
     expect(errorPayloadSchema.parse(await response.json()).code).toBe("invalid_backend_response");
-  });
-
-  it("stamps the admin login success response with the request correlation header", async () => {
-    const handler = createAdminLoginHandler({
-      ...defaultAdminLoginDependencies,
-      limiter: () =>
-        ({
-          admit: async () => ({ outcome: "admitted" as const }),
-        }) as never,
-      resolveClient: () => "client",
-      config: () => ({
-        passphrase: "admin-pass",
-        sessionSecret: webServerConfig().adminSessionSecret,
-        sessionMaxAgeSeconds: webServerConfig().adminSessionMaxAgeSeconds,
-        secureCookie: false,
-      }),
-      now: () => new Date(0),
-    });
-
-    const response = await handler(
-      new Request("http://dashboard.local/api/admin/session", {
-        method: "POST",
-        headers: { origin: "http://dashboard.local" },
-        body: JSON.stringify({ passphrase: "admin-pass" }),
-      }),
-    );
-
-    expect(response.status).toBe(200);
-    expect(response.headers.get("set-cookie")).toContain("checkout_surge_admin_session=");
-    expect(response.headers.get(correlationIdHeaderName)).toHaveLength(36);
   });
 });

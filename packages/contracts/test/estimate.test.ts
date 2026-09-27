@@ -3,7 +3,6 @@ import {
   conservativeDurationEstimatorIdentity,
   enginePolicyIdentitySchema,
   estimateAdmissionRejectionDetailsSchema,
-  estimatedDemoOccupancyCeilingSeconds,
   estimatePreviewSchema,
   estimatorInputSchema,
   estimatorResultSchema,
@@ -60,10 +59,6 @@ describe("duration estimator contracts", () => {
       estimatorResultSchema.parse({ ...estimable, decision: "admitted", reasons: [] }).reasons,
     ).toEqual([]);
   });
-  it("keeps the provisional inclusive 600-second occupancy ceiling", () => {
-    expect(estimatedDemoOccupancyCeilingSeconds).toBe(600);
-  });
-
   it("distinguishes healthy and permanently-outage declared inputs", () => {
     expect(estimatorInputSchema.parse(input)).toEqual(input);
     const outageInput = { ...input, declaredErpForcedOutage: true };

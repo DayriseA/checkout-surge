@@ -1,6 +1,6 @@
 import { InventoryNotInitializedError } from "@checkout-surge/db";
 import { describe, expect, it } from "vitest";
-import { InventoryStatusService } from "../src/services/inventory-status-service.js";
+import { InventoryStatusService } from "../../src/services/inventory-status-service.js";
 
 const saleOfferId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 describe("InventoryStatusService", () => {

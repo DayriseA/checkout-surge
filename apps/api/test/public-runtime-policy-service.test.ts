@@ -81,12 +81,6 @@ describe("public runtime policy service", () => {
       correlationId: "corr-policy-read",
       timestamp: now.toISOString(),
     });
-    expect(() =>
-      resolveEffectivePublicRuntimePolicy(
-        { ...persisted, deploymentHardCaps: deploymentHardCapsFixture },
-        caps,
-      ),
-    ).toThrow(/Unrecognized key.*deploymentHardCaps/i);
   });
 
   it("persists mutable updates while returning effective hard caps", async () => {

@@ -21,11 +21,6 @@ describe("ConfirmationDialog", () => {
     expect(screen.getByText("Destructive action")).toBeTruthy();
     expect(screen.getByRole("alert")).toHaveProperty("textContent", "The reset failed.");
     expect(screen.getByRole("textbox", { name: "Confirmation value" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Cancel" }).classList).toContain(
-      "border-control-border",
-    );
-    expect(screen.getByRole("button", { name: "Cancel" }).classList).toContain("min-h-11");
-    expect(dialog.innerHTML).not.toContain("bg-bg");
 
     rerender(dialogElement({ open: false }));
     await waitFor(() => expect((dialog as HTMLDialogElement).open).toBe(false));
@@ -70,7 +65,7 @@ describe("ConfirmationDialog", () => {
     );
   });
 
-  it("renders a non-destructive confirmation without danger styling", () => {
+  it("renders a non-destructive confirmation without the destructive section", () => {
     render(
       <ConfirmationDialog
         confirmLabel="Start run"
@@ -83,16 +78,7 @@ describe("ConfirmationDialog", () => {
       />,
     );
     expect(screen.queryByText("Destructive action")).toBeNull();
-    expect(screen.getByRole("button", { name: "Start run" }).classList).toContain("bg-accent");
-  });
-
-  it("does not attach backdrop-click dismissal behavior", () => {
-    const onCancel = vi.fn();
-    renderDialog({ onCancel, open: true });
-    const dialog = screen.getByRole("alertdialog");
-    fireEvent.click(dialog);
-    expect(onCancel).not.toHaveBeenCalled();
-    expect((dialog as HTMLDialogElement).open).toBe(true);
+    expect(screen.getByRole("button", { name: "Start run" })).toBeTruthy();
   });
 });
 

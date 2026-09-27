@@ -6,8 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DashboardProjectionFanout,
   formatDashboardProjectionFrame,
-} from "../src/realtime/dashboard-projection-fanout.js";
-import { acceptedRunConfigSnapshotFixture } from "./demo-administration-test-fixtures.js";
+} from "../../src/realtime/dashboard-projection-fanout.js";
+import { acceptedRunConfigSnapshotFixture } from "../demo-administration-test-fixtures.js";
 
 class FakeRequest extends EventEmitter {}
 

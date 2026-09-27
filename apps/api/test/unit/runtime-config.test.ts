@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { loadApiConfig as loadProductionApiConfig } from "../src/runtime/config.js";
-import { pendingPersistenceRecoveryDefaults } from "../src/runtime/pending-persistence-recovery-policy.js";
+import { loadApiConfig as loadProductionApiConfig } from "../../src/runtime/config.js";
+import { pendingPersistenceRecoveryDefaults } from "../../src/runtime/pending-persistence-recovery-policy.js";
 
 const loadApiConfig = (environment: Record<string, string | undefined>) =>
   loadProductionApiConfig({ ...environment, NODE_ENV: "test" });

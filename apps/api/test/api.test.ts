@@ -2714,7 +2714,7 @@ describe("API gateway routes", () => {
     const client = new HttpLoadApiClient({
       apiBaseUrl: "http://api.test",
       controlServiceToken: "test-control-token",
-      requestTimeoutMs: 5,
+      requestTimeoutMs: 500,
       fetch: async (url, init) => {
         const response = await server.inject({
           method: "POST",

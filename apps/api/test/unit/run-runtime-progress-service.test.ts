@@ -1,7 +1,7 @@
 import type { RunRuntimeProgress } from "@checkout-surge/contracts";
 import type { RunRuntimeProgressReadModel } from "@checkout-surge/db";
 import { describe, expect, it, vi } from "vitest";
-import { RunRuntimeProgressService } from "../src/services/run-runtime-progress-service.js";
+import { RunRuntimeProgressService } from "../../src/services/run-runtime-progress-service.js";
 
 const now = new Date("2026-09-21T12:00:30.000Z");
 const runId = "11111111-1111-4111-8111-111111111111";

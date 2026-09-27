@@ -5,7 +5,7 @@ import {
   emptyBusinessOutcomeSummary,
   toDemoRunSnapshot,
   toRedisTerminalInventorySnapshot,
-} from "../src/services/demo-run-projections.js";
+} from "../../src/services/demo-run-projections.js";
 
 const configSnapshot: AcceptedRunConfigSnapshot = {
   trafficConfig: {

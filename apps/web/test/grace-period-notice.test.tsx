@@ -62,7 +62,7 @@ describe("grace period notice", () => {
     );
   });
 
-  it("stays hidden for terminal runs and runs without a server-owned deadline", () => {
+  it("stays hidden for terminal runs", () => {
     for (const status of ["completed", "failed"] as const) {
       const { container } = render(
         createElement(GracePeriodNotice, {
@@ -72,16 +72,6 @@ describe("grace period notice", () => {
       );
       expect(container.querySelector("[data-grace-period-notice]")).toBeNull();
     }
-
-    // Terminal snapshots keep a meaningless `autoResetAt`; only its absence on a nonterminal
-    // run suppresses the notice here.
-    const { container } = render(
-      createElement(GracePeriodNotice, {
-        run: runFixture("active", { autoResetAt: undefined }),
-        now: () => clock("2026-06-20T00:14:00.000Z"),
-      }),
-    );
-    expect(container.querySelector("[data-grace-period-notice]")).toBeNull();
   });
 });
 

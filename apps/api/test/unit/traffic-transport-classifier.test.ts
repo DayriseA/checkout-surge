@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyTrafficTransport } from "../src/services/traffic-delivery-classifier.js";
+import { classifyTrafficTransport } from "../../src/services/traffic-delivery-classifier.js";
 
 describe("traffic transport classifier", () => {
   it.each([

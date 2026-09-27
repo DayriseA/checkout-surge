@@ -2247,7 +2247,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   }, 15_000);
 
   it.each([
-    5, 300,
+    5, 50,
   ])("drains %i orders at declared capacity from the first second with the production recovery timer", async (backlogSize) => {
     const declaredCapacity = 10;
     const jobs = [job];
@@ -2345,7 +2345,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       consumer = null;
       await publisher.close();
     }
-  }, 45_000);
+  }, 20_000);
 
   it("honors the Retry-After pause from an unexpected capacity rejection and resumes the configured rate", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });

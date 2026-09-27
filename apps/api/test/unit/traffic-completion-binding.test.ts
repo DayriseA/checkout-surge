@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   findTrafficCompletionBindingMismatch,
   findTrafficCompletionRedeliveryMismatch,
-} from "../src/services/traffic-completion-binding.js";
+} from "../../src/services/traffic-completion-binding.js";
 
 describe("traffic completion binding", () => {
   it("binds the execution plan, planned count, and runner start to the accepted run", () => {

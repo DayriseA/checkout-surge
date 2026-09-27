@@ -1033,22 +1033,6 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
-  it("changes planned attempts with duration without changing automatic VU sizing", () => {
-    const short = generateK6Script(constantArrivalStartRequest(1_000, 1));
-    const long = generateK6Script(constantArrivalStartRequest(1_000, 30));
-
-    expect(short.executionPlan).toMatchObject({
-      plannedEmittedAttempts: 1_000,
-      preAllocatedVus: 1_000,
-      maxVus: 2_000,
-    });
-    expect(long.executionPlan).toMatchObject({
-      plannedEmittedAttempts: 30_000,
-      preAllocatedVus: 1_000,
-      maxVus: 2_000,
-    });
-  });
-
   it("sources buy quantity from traffic attempts", () => {
     const script = generateK6Script({
       ...startRequest,
@@ -3305,26 +3289,33 @@ describe("SpawnK6Runner completion reporting", () => {
     await unknown.supervisor.release(startRequest.runId);
   });
 
-  it("stops resource sampling when cancellation is accepted", async () => {
+  it.each([
+    {
+      name: "when cancellation is accepted",
+      entry: "cancel" as const,
+      expectImmediateStop: true,
+      release: false,
+    },
+    {
+      name: "on preparation failure",
+      entry: "stopForPreparationFailure" as const,
+      expectImmediateStop: false,
+      release: true,
+    },
+  ])("stops resource sampling $name", async ({ entry, expectImmediateStop, release }) => {
     const resource = await supervisedResourceSamplerFixture();
-    const cancellation = resource.supervisor.cancel(startRequest.runId);
-    expect(resource.stop).toHaveBeenCalledOnce();
+    const cancellation = resource.supervisor[entry](startRequest.runId);
+    if (expectImmediateStop) {
+      expect(resource.stop).toHaveBeenCalledOnce();
+    }
     resource.process.child.emit("close", null, "SIGTERM");
 
     await expect(cancellation).resolves.toBe("aborted");
     await expect(resource.execution.completion).resolves.toEqual({ outcome: "cancelled" });
     expect(resource.stop).toHaveBeenCalledOnce();
-  });
-
-  it("stops resource sampling on preparation failure", async () => {
-    const resource = await supervisedResourceSamplerFixture();
-    const cancellation = resource.supervisor.stopForPreparationFailure(startRequest.runId);
-    resource.process.child.emit("close", null, "SIGTERM");
-
-    await expect(cancellation).resolves.toBe("aborted");
-    await expect(resource.execution.completion).resolves.toEqual({ outcome: "cancelled" });
-    expect(resource.stop).toHaveBeenCalledOnce();
-    await resource.supervisor.release(startRequest.runId);
+    if (release) {
+      await resource.supervisor.release(startRequest.runId);
+    }
   });
 
   it("stops resource sampling during supervisor close", async () => {

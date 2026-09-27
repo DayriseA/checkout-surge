@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   parseKernelSomaxconn,
   warnWhenListenBacklogIsCapped,
-} from "../src/runtime/listen-backlog-ceiling.js";
+} from "../../src/runtime/listen-backlog-ceiling.js";
 
 function warningCapturingLogger(): { logger: CheckoutSurgeLogger; warn: ReturnType<typeof vi.fn> } {
   const warn = vi.fn();

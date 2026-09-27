@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invalidDashboardDirtySignalMetadata } from "../src/realtime/invalid-dashboard-dirty-signal-metadata.js";
+import { invalidDashboardDirtySignalMetadata } from "../../src/realtime/invalid-dashboard-dirty-signal-metadata.js";
 
 describe("invalid dashboard dirty signal metadata", () => {
   it("extracts bounded identifiers without retaining the raw invalid payload", () => {

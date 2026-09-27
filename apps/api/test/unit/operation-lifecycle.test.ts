@@ -5,7 +5,7 @@ import {
   ClientDisconnectedError,
   createHttpOperationLifecycle,
   OperationDeadlineExceededError,
-} from "../src/runtime/operation-lifecycle.js";
+} from "../../src/runtime/operation-lifecycle.js";
 
 describe("HTTP operation lifecycle", () => {
   it("aborts on client disconnect and removes listeners and the deadline on dispose", () => {

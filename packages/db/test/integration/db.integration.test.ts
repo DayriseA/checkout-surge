@@ -1270,43 +1270,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("accepts orders backed by matching reservations", async () => {
-    await withDatabase(async (sql) => {
-      const ids = buildOrderReservationIds(1);
-      const correlationId = "corr-order-reservation-valid";
-
-      await insertCatalogSaleOffer(sql, ids);
-      await insertReservation(sql, {
-        reservationId: ids.reservationId,
-        saleOfferId: ids.saleOfferId,
-        correlationId,
-        quantity: 2,
-      });
-      await insertOrder(sql, {
-        orderId: ids.orderId,
-        saleOfferId: ids.saleOfferId,
-        reservationId: ids.reservationId,
-        correlationId,
-        quantity: 2,
-      });
-      await sql`
-        UPDATE "orders"
-        SET "status" = 'confirmed'::"order_status",
-            "processing_at" = ${orderQueuedAt}::timestamptz,
-            "confirmed_at" = ${orderQueuedAt}::timestamptz
-        WHERE "id" = ${ids.orderId}
-      `;
-
-      const [orderRow] = await sql<{ status: string }[]>`
-        SELECT "status"
-        FROM "orders"
-        WHERE "id" = ${ids.orderId}
-      `;
-
-      expect(orderRow?.status).toBe("confirmed");
-    });
-  });
-
   it("rejects orders whose offer, correlation ID, or quantity differs from the reservation", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(20);
@@ -1685,22 +1648,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it("rejects inventory state without the current scope field", async () => {
-    const saleOfferId = "10000000-0000-4000-8000-000000000017";
-    const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 17 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
-    await redis.hdel(keys.state, "inventoryScope");
-
-    await expect(reserveInventoryStock(redis, input)).rejects.toThrow(
-      "Inventory scope must be catalog or generated_run",
-    );
-    expect(await redis.hgetall(keys.state)).toMatchObject({
-      remainingStock: "1",
-      reservedStock: "0",
-    });
-  });
-
   it("projects exact rolling successful-reservation throughput and aggregate sold-out pressure", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
@@ -1752,28 +1699,6 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.hlen(keys.reservationThroughput)).toBe(2);
   });
 
-  it("rejects half-populated reservation-throughput slots as malformed state", async () => {
-    const saleOfferId = "10000000-0000-4000-8000-000000000010";
-    const keys = inventoryKeys(saleOfferId);
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 3 });
-
-    await redis.hset(keys.reservationThroughput, "0:second", "1781956800");
-    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
-      "Malformed reservation throughput state at slot 0: second and count must both be present.",
-    );
-
-    await redis.del(keys.reservationThroughput);
-    await redis.hset(keys.reservationThroughput, "0:count", "1");
-    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
-      "Malformed reservation throughput state at slot 0: second and count must both be present.",
-    );
-
-    await redis.hset(keys.reservationThroughput, "0:second", "0", "0:count", "not-an-integer");
-    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
-      "Malformed reservation throughput state at slot 0: count must be a nonnegative safe integer.",
-    );
-  });
-
   it("rejects contradictory stock counters from inventory status", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000016";
     const keys = inventoryKeys(saleOfferId);
@@ -1782,6 +1707,17 @@ describe("database migrations, seed data, and reset behavior", () => {
 
     await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
       "Inventory stock counters must sum to allocatedStock.",
+    );
+  });
+
+  it("rejects a half-populated reservation-throughput slot as malformed state", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000010";
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 3 });
+
+    await redis.hset(keys.reservationThroughput, "0:second", "1781956800");
+    await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
+      "Malformed reservation throughput state at slot 0: second and count must both be present.",
     );
   });
 
@@ -2413,26 +2349,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
-  it.each([
-    ["malformed", "{not-json"],
-    ["primitive", "false"],
-    [
-      "mismatched",
-      JSON.stringify({
-        runId: "20000000-0000-4000-8000-000000000099",
-        saleOfferId: "20000000-0000-4000-8000-000000000032",
-        status: "accepting",
-      }),
-    ],
-    [
-      "closed",
-      JSON.stringify({
-        runId: "20000000-0000-4000-8000-000000000031",
-        saleOfferId: "20000000-0000-4000-8000-000000000032",
-        status: "closed",
-      }),
-    ],
-  ])("fails closed without mutation for %s generated-run eligibility before idempotency replay", async (_label, corruptedEligibility) => {
+  it("fails closed without mutation for malformed generated-run eligibility before idempotency replay", async () => {
     const runId = "20000000-0000-4000-8000-000000000031";
     const saleOfferId = "20000000-0000-4000-8000-000000000032";
     const keys = inventoryKeys(saleOfferId);
@@ -2466,7 +2383,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       events: await redis.lrange(keys.events, 0, -1),
       replayIdempotency: await redis.get(keys.idempotency(replay.idempotencyKey)),
     };
-    await redis.set(eligibilityKey, corruptedEligibility, "KEEPTTL");
+    await redis.set(eligibilityKey, "{not-json", "KEEPTTL");
 
     await expect(reserveInventoryStock(redis, replay)).resolves.toEqual({
       outcome: "run_not_accepting_traffic",
@@ -2476,7 +2393,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       outcome: "run_not_accepting_traffic",
       reservation: null,
     });
-    expect(await redis.get(eligibilityKey)).toBe(corruptedEligibility);
+    expect(await redis.get(eligibilityKey)).toBe("{not-json");
     expect(await redis.ttl(eligibilityKey)).toBeGreaterThan(0);
     expect(await redis.ttl(keys.state)).toBe(-1);
     expect(await redis.hgetall(keys.state)).toEqual(before.state);

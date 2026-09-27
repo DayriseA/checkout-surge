@@ -5,21 +5,21 @@ import type {
 } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import type { BullMqOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
-import type { BullMqOrderProcessQueueInspector } from "../src/queue/bullmq-order-process-queue-inspector.js";
+import type { BullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
+import type { BullMqOrderProcessQueueInspector } from "../../src/queue/bullmq-order-process-queue-inspector.js";
 import {
   createDashboardRecoveryOperationFactory,
   type DashboardRecoveryInfrastructure,
-} from "../src/runtime/dashboard-recovery-operation-factory.js";
-import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
+} from "../../src/runtime/dashboard-recovery-operation-factory.js";
+import { OperationDeadlineExceededError } from "../../src/runtime/operation-lifecycle.js";
 import {
   createPendingPersistenceRecoveryOperations,
   type PendingPersistenceInfrastructure,
-} from "../src/runtime/pending-persistence-operation-factory.js";
+} from "../../src/runtime/pending-persistence-operation-factory.js";
 import {
   createTerminalInventoryReadOperation,
   type TerminalInventoryReadInfrastructure,
-} from "../src/runtime/terminal-inventory-read-operation.js";
+} from "../../src/runtime/terminal-inventory-read-operation.js";
 
 describe("dashboard recovery operation factory", () => {
   it("closes every acquired resource exactly once after success and repeated close", async () => {

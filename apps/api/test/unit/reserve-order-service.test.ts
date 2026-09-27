@@ -1,6 +1,6 @@
 import type { BuyRequest, SecuredReservationHold } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
-import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
+import type { OrderProcessJobPublisher } from "../../src/services/order-process-job-publisher.js";
 import {
   type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
@@ -10,7 +10,7 @@ import {
   type ReservationPartialFailureReport,
   ReserveOrderService,
   type StockReservationGateway,
-} from "../src/services/reserve-order-service.js";
+} from "../../src/services/reserve-order-service.js";
 
 const request: BuyRequest = {
   saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",

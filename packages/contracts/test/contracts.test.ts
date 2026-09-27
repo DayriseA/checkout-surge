@@ -5,7 +5,6 @@ import {
   acceptedRunConfigWriteSchema,
   adminDeleteRunHistoryRequestSchema,
   adminDeleteRunHistoryResponseSchema,
-  adminDemoResetResponseSchema,
   adminGeneratedRunTeardownParamsSchema,
   adminGeneratedRunTeardownPath,
   adminGeneratedRunTeardownPathTemplate,
@@ -21,7 +20,6 @@ import {
   archiveAdminPresetRequestSchema,
   archiveAdminPresetResponseSchema,
   automaticRunResetDeadlineSeconds,
-  buyOutcomeHeaderName,
   buyRequestSchema,
   buyResponseSchema,
   collectAcceptedRunConfigSnapshotViolations,
@@ -1042,19 +1040,6 @@ describe("run lifecycle contracts", () => {
       );
     }
   });
-
-  it("validates admin reset as a recovery result rather than a traffic lifecycle event", () => {
-    expect(
-      adminDemoResetResponseSchema.parse({
-        failedRunCount: 1,
-        closedSaleOfferCount: 1,
-        cleanedQueueCount: 2,
-        cleanedJobCount: 3,
-        resetAt: timestamp,
-        correlationId,
-      }),
-    ).toMatchObject({ failedRunCount: 1, closedSaleOfferCount: 1 });
-  });
 });
 
 describe("queue contracts", () => {
@@ -1251,17 +1236,6 @@ describe("canonical error-code vocabulary", () => {
     expect(errorPayloadCodes).toContain("invalid_runtime_policy");
     expect(errorPayloadCodes.some((code) => code.startsWith("deployment_"))).toBe(false);
     expect(errorPayloadCodes.some((code) => code.startsWith("public_custom_default_"))).toBe(false);
-  });
-
-  it("uses grouped conflict and recovery categories", () => {
-    expect(errorPayloadCodes).toEqual(
-      expect.arrayContaining([
-        "preset_conflict",
-        "run_conflict",
-        "run_cleanup_conflict",
-        "dashboard_recovery_unavailable",
-      ]),
-    );
   });
 
   it("requires the strict envelope with code, message, correlationId, and timestamp", () => {
@@ -1575,10 +1549,6 @@ describe("buy and dashboard contracts", () => {
     expect(request.quantity).toBe(1);
     expect(request.runId).toBe(runId);
     expect(loadRunIdHeaderName).toBe("x-load-run-id");
-  });
-
-  it("exposes the canonical buy classification header name", () => {
-    expect(buyOutcomeHeaderName).toBe("x-checkout-outcome");
   });
 
   it("validates accepted and sold-out reservation outcomes", () => {

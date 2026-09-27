@@ -4,7 +4,7 @@ import {
   classifyTrafficDelivery,
   classifyTrafficDeliverySummary,
   parsePersistedTrafficDeliverySummary,
-} from "../src/services/traffic-delivery-classifier.js";
+} from "../../src/services/traffic-delivery-classifier.js";
 
 describe("traffic delivery classifier", () => {
   it.each([

@@ -8,13 +8,13 @@ import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { describe, expect, it, vi } from "vitest";
 import { ZodError } from "zod";
-import type { DashboardSseAdmission } from "../src/realtime/dashboard-projection-fanout.js";
-import { registerDashboardRoutes } from "../src/routes/dashboard-routes.js";
-import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
-import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
-import type { DashboardProjectionService } from "../src/services/dashboard-recovery-service.js";
-import type { DashboardRecoveryWorkflowResult } from "../src/services/dashboard-recovery-workflow.js";
-import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
+import type { DashboardSseAdmission } from "../../src/realtime/dashboard-projection-fanout.js";
+import { registerDashboardRoutes } from "../../src/routes/dashboard-routes.js";
+import type { ApiFastifyInstance } from "../../src/runtime/fastify.js";
+import type { DashboardRecoveryAdmissionController } from "../../src/services/dashboard-recovery-admission.js";
+import type { DashboardProjectionService } from "../../src/services/dashboard-recovery-service.js";
+import type { DashboardRecoveryWorkflowResult } from "../../src/services/dashboard-recovery-workflow.js";
+import { DashboardRecoveryWorkflow } from "../../src/services/dashboard-recovery-workflow.js";
 
 const correlationHeader = { [correlationIdHeaderName]: "route-correlation" };
 

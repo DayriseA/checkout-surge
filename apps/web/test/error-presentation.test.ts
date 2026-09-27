@@ -17,7 +17,7 @@ describe("error presentation", () => {
     expect(present("malformed_claimed_job").headline).toBe("Work cleanup needs operator review");
   });
 
-  it("keeps loading neutral and outside error styling", () => {
+  it("keeps the loading state idle and without an error action", () => {
     const presentation = mapErrorPresentation({ status: "loading" }, "watch-read");
     expect(presentation.tone).toBe("idle");
     expect(presentation.action.kind).toBe("none");
@@ -106,31 +106,19 @@ describe("error presentation", () => {
   });
 
   it.each([
-    [
-      "network failure without an HTTP status",
-      { status: "unavailable" as const, reason: "fetch failed" },
-    ],
-    [
-      "malformed success body",
-      { status: "unavailable" as const, httpStatus: 202, reason: "response did not match" },
-    ],
-    [
-      "BFF backend_unavailable",
-      {
+    {
+      name: "a codeless unavailable read",
+      read: { status: "unavailable" as const, reason: "fetch failed" },
+    },
+    {
+      name: "a coded unavailable read",
+      read: {
         status: "unavailable" as const,
         errorCode: "backend_unavailable" as const,
         httpStatus: 502,
       },
-    ],
-    [
-      "BFF invalid_backend_response",
-      {
-        status: "unavailable" as const,
-        errorCode: "invalid_backend_response" as const,
-        httpStatus: 502,
-      },
-    ],
-  ])("maps the uncertain start outcome from %s to the uncertain presentation", (_name, read) => {
+    },
+  ])("maps the uncertain start outcome from $name to the uncertain presentation", ({ read }) => {
     const presentation = mapErrorPresentation(read, {
       surface: "public-start",
       startRequestOutcome: true,

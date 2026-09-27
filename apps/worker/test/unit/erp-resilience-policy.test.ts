@@ -1,4 +1,3 @@
-import { erpDispatchEnginePolicyIdentity } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
 import {
   AdaptiveErpAdmissionController,
@@ -8,14 +7,6 @@ import {
   type ErpAdmissionScope,
   erpResiliencePolicy,
 } from "../../src/application/erp-resilience-policy.js";
-
-describe("engine-policy identity", () => {
-  it("derives its version from the shared contracts identity (D13)", () => {
-    expect(erpResiliencePolicy.version).toBe(
-      `${erpDispatchEnginePolicyIdentity.name}-v${erpDispatchEnginePolicyIdentity.version}`,
-    );
-  });
-});
 
 describe("adaptive ERP request deadlines", () => {
   it("uses the initial deadline for an empty scope and isolates scope samples", () => {

@@ -1,10 +1,10 @@
 import { dashboardProjectionSchemaName } from "@checkout-surge/contracts";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
-import { DashboardRecoveryAdmissionService } from "../src/services/dashboard-recovery-admission.js";
-import type { DashboardProjectionService } from "../src/services/dashboard-recovery-service.js";
-import { DashboardRecoveryWorkflow } from "../src/services/dashboard-recovery-workflow.js";
+import { OperationDeadlineExceededError } from "../../src/runtime/operation-lifecycle.js";
+import { DashboardRecoveryAdmissionService } from "../../src/services/dashboard-recovery-admission.js";
+import type { DashboardProjectionService } from "../../src/services/dashboard-recovery-service.js";
+import { DashboardRecoveryWorkflow } from "../../src/services/dashboard-recovery-workflow.js";
 
 describe("dashboard recovery workflow cancellation", () => {
   it("returns a deadline that expires before local admission without consuming its budget", async () => {
