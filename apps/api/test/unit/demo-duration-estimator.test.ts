@@ -1,8 +1,6 @@
 import {
   type AcceptedRunConfigSnapshot,
-  conservativeDurationEstimatorIdentity,
   type EstimatorInput,
-  erpDispatchEnginePolicyIdentity,
   estimatorInputSchema,
   estimatorResultSchema,
 } from "@checkout-surge/contracts";
@@ -68,8 +66,6 @@ function estimate(value: EstimatorInput, ceiling = 600) {
   const result = estimateDemoDuration(value, ceiling);
   expect(value).toEqual(before);
   expect(estimatorResultSchema.parse(result)).toEqual(result);
-  expect(result.estimatorIdentity).toEqual(conservativeDurationEstimatorIdentity);
-  expect(result.policyIdentity).toEqual(erpDispatchEnginePolicyIdentity);
   return result;
 }
 

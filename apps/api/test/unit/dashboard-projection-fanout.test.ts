@@ -5,6 +5,7 @@ import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/log
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DashboardProjectionFanout,
+  defaultDashboardSseRetryMs,
   formatDashboardProjectionFrame,
 } from "../../src/realtime/dashboard-projection-fanout.js";
 import { acceptedRunConfigSnapshotFixture } from "../demo-administration-test-fixtures.js";
@@ -48,7 +49,7 @@ describe("dashboard projection fan-out", () => {
   });
 
   it("opens with exact SSE headers and reconnect wire bytes", () => {
-    const fanout = createFanout({ retryMs: 1234 });
+    const fanout = createFanout();
     const input = connectionInput("first", "ip4:127.0.0.1");
     const response = input.response as unknown as FakeResponse;
 
@@ -62,7 +63,7 @@ describe("dashboard projection fan-out", () => {
       "x-accel-buffering": "no",
       [correlationIdHeaderName]: "first",
     });
-    expect(response.chunks).toEqual(["retry: 1234\n: connected\n\n"]);
+    expect(response.chunks).toEqual([`retry: ${defaultDashboardSseRetryMs}\n: connected\n\n`]);
     fanout.close();
   });
 
@@ -187,11 +188,9 @@ describe("dashboard projection fan-out", () => {
   });
 
   it("bounds an overflowing slow client and lets its reconnect start from current delivery", () => {
-    let nextId = 0;
     const fanout = createFanout({
       maxBufferedFrames: 10,
       maxBufferedProjectionScopes: 2,
-      generateConnectionId: () => `connection-${++nextId}`,
     });
     const slow = connectionInput("slow", "ip4:192.0.2.1");
     const healthy = connectionInput("healthy", "ip4:192.0.2.2");
@@ -298,11 +297,9 @@ describe("dashboard projection fan-out", () => {
   });
 
   it("atomically distinguishes per-source and total capacity and frees slots once", () => {
-    let id = 0;
     const fanout = createFanout({
       maxClients: 2,
       maxClientsPerSource: 1,
-      generateConnectionId: () => `connection-${++id}`,
     });
     const first = connectionInput("first", "ip4:192.0.2.1");
     expect(fanout.connect(first)).toBe("connected");
@@ -358,11 +355,9 @@ describe("dashboard projection fan-out", () => {
 function createFanout(
   options: Omit<Partial<ConstructorParameters<typeof DashboardProjectionFanout>[0]>, "logger"> = {},
 ) {
-  let nextId = 0;
   return new DashboardProjectionFanout({
     logger: createSilentLogger("api"),
     ...options,
-    generateConnectionId: options.generateConnectionId ?? (() => `connection-${++nextId}`),
   });
 }
 

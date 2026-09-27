@@ -1079,14 +1079,6 @@ describe("PendingPersistenceRecoveryService", () => {
     const firstClose = service.close();
     expect(service.close()).toBe(firstClose);
     await expect(Promise.all([pass, firstClose])).resolves.toBeDefined();
-    await expect(service.runOnce()).resolves.toEqual({
-      discovered: 0,
-      attempted: 0,
-      materialized: 0,
-      resolved: 0,
-      deferred: 0,
-      exhausted: 0,
-    });
     await expect(
       service.recoverReservation({ reservation: hold, idempotencyKey: "recovery-key" }),
     ).resolves.toBeNull();

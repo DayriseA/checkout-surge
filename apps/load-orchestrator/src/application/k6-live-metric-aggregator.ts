@@ -39,12 +39,6 @@ export class K6LiveMetricAggregator {
   private readonly arrivalRateSeries: RequestArrivalSummary["arrivalRateSeries"] = [];
 
   constructor(options: { plannedRequests?: number } = {}) {
-    if (
-      options.plannedRequests !== undefined &&
-      (!Number.isSafeInteger(options.plannedRequests) || options.plannedRequests <= 0)
-    ) {
-      throw new Error("k6 plannedRequests must be a positive safe integer.");
-    }
     this.dispatchProgress = options.plannedRequests
       ? {
           plannedRequests: options.plannedRequests,
@@ -58,7 +52,7 @@ export class K6LiveMetricAggregator {
     if (!normalized) return [];
 
     const windowStartMs = Math.floor(normalized.timestampMs / windowMs) * windowMs;
-    if (!Number.isFinite(windowStartMs) || windowStartMs <= this.finalizedThroughMs) return [];
+    if (windowStartMs <= this.finalizedThroughMs) return [];
 
     const closed =
       this.currentWindow && windowStartMs > this.currentWindow.startMs

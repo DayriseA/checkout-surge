@@ -12,25 +12,18 @@ export interface LoadOrchestratorReadiness {
 
 export interface LoadOrchestratorReadinessOptions {
   fetch?: typeof fetch;
-  apiReadinessPath?: string;
   apiReadinessTimeoutMs?: number;
-  k6CheckTimeoutMs?: number;
-  checkExecutable?: (
-    binary: string,
-    args: string[],
-    timeoutMs: number,
-  ) => Promise<{ ok: boolean; message?: string }>;
 }
 
 const apiReadinessCheckName = "api_readiness_reachable";
 const defaultApiReadinessTimeoutMs = 2000;
+const defaultK6CheckTimeoutMs = 3_000;
 
 export function createLoadOrchestratorReadiness(
   config: LoadOrchestratorConfig,
   options: LoadOrchestratorReadinessOptions = {},
 ): LoadOrchestratorReadiness {
   const fetchApi = options.fetch ?? fetch;
-  const apiReadinessPath = options.apiReadinessPath ?? healthReadyPath;
   const apiReadinessTimeoutMs = options.apiReadinessTimeoutMs ?? defaultApiReadinessTimeoutMs;
 
   return {
@@ -38,14 +31,10 @@ export function createLoadOrchestratorReadiness(
       return [
         await apiReadinessCheck(config.apiBaseUrl, {
           fetch: fetchApi,
-          path: apiReadinessPath,
+          path: healthReadyPath,
           timeoutMs: apiReadinessTimeoutMs,
         }),
-        await k6BinaryCheck(
-          config.k6Binary,
-          options.checkExecutable ?? checkK6Executable,
-          options.k6CheckTimeoutMs ?? 3_000,
-        ),
+        await k6BinaryCheck(config.k6Binary),
       ];
     },
   };
@@ -143,18 +132,14 @@ function joinUrl(baseUrl: string, path: string): string {
   return `${normalizedBaseUrl}${normalizedPath}`;
 }
 
-async function k6BinaryCheck(
-  k6Binary: string,
-  checker: NonNullable<LoadOrchestratorReadinessOptions["checkExecutable"]>,
-  timeoutMs: number,
-): Promise<ReadinessCheck> {
-  const result = await checker(k6Binary, ["version"], timeoutMs);
+async function k6BinaryCheck(k6Binary: string): Promise<ReadinessCheck> {
+  const result = await checkK6Executable(k6Binary, ["version"], defaultK6CheckTimeoutMs);
   return result.ok
     ? { name: "k6_binary_executable", status: "ok" }
     : {
         name: "k6_binary_executable",
         status: "unavailable",
-        message: result.message ?? "Configured k6 binary is unavailable.",
+        message: result.message,
       };
 }
 
@@ -162,7 +147,7 @@ export function checkK6Executable(
   binary: string,
   args: string[],
   timeoutMs: number,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: true } | { ok: false; message: string }> {
   return new Promise((resolve) => {
     try {
       execFile(

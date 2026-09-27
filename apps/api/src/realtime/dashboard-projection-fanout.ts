@@ -14,8 +14,6 @@ export const defaultDashboardSseMaxBufferedProjectionScopes = 8;
 export interface DashboardProjectionFanoutOptions {
   logger: CheckoutSurgeLogger;
   heartbeatMs?: number;
-  retryMs?: number;
-  generateConnectionId?: () => string;
   maxClients?: number;
   maxClientsPerSource?: number;
   maxBufferedFrames?: number;
@@ -53,8 +51,6 @@ export class DashboardProjectionFanout {
   private readonly clients = new Map<string, DashboardSseClient>();
   private readonly logger: CheckoutSurgeLogger;
   private readonly heartbeatMs: number;
-  private readonly retryMs: number;
-  private readonly generateConnectionId: () => string;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private readonly sourceCounts = new Map<string, number>();
   private readonly maxClients: number;
@@ -66,8 +62,6 @@ export class DashboardProjectionFanout {
   constructor(options: DashboardProjectionFanoutOptions) {
     this.logger = options.logger;
     this.heartbeatMs = options.heartbeatMs ?? defaultDashboardSseHeartbeatMs;
-    this.retryMs = options.retryMs ?? defaultDashboardSseRetryMs;
-    this.generateConnectionId = options.generateConnectionId ?? randomUUID;
     this.maxClients = options.maxClients ?? 80;
     this.maxClientsPerSource = options.maxClientsPerSource ?? 6;
     this.maxBufferedFrames = options.maxBufferedFrames ?? defaultDashboardSseMaxBufferedFrames;
@@ -96,7 +90,7 @@ export class DashboardProjectionFanout {
     const close = () => this.closeClient(client, "client_closed");
     const drain = () => this.flushClient(client);
     client = {
-      id: this.generateConnectionId(),
+      id: randomUUID(),
       request: input.request,
       response: input.response,
       close,
@@ -130,7 +124,11 @@ export class DashboardProjectionFanout {
     input.response.on("drain", client.drain);
     this.ensureHeartbeat();
 
-    this.sendFrame(client, `retry: ${this.retryMs}\n: connected\n\n`, "initial_write_failed");
+    this.sendFrame(
+      client,
+      `retry: ${defaultDashboardSseRetryMs}\n: connected\n\n`,
+      "initial_write_failed",
+    );
     this.logger.debug(
       { outcome: "accepted", activeDashboardConnections: this.clients.size },
       "Dashboard SSE admitted.",

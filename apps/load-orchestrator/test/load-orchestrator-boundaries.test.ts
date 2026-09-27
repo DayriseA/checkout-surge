@@ -321,25 +321,12 @@ describe("load-orchestrator readiness", () => {
     });
   });
 
-  it("passes the configured k6 binary to the version check", async () => {
-    const checkExecutable = vi.fn(async () => ({ ok: true }));
-    const readiness = createLoadOrchestratorReadiness(
-      createConfig({ k6Binary: "/configured/k6" }),
-      {
-        fetch: vi.fn(async () => jsonResponse(apiHealthPayload("ok"))),
-        checkExecutable,
-      },
-    );
-    expect(readinessCheck(await readiness.checks(), "k6_binary_executable").status).toBe("ok");
-    expect(checkExecutable).toHaveBeenCalledWith("/configured/k6", ["version"], 3000);
-  });
-
   it("marks the API readiness dependency ok when the configured API target is reachable", async () => {
     const fetchApi = vi
       .fn<typeof globalThis.fetch>()
       .mockResolvedValue(jsonResponse(apiHealthPayload("ok")));
     const readiness = createLoadOrchestratorReadiness(
-      createConfig({ apiBaseUrl: "http://api.test/" }),
+      createConfig({ apiBaseUrl: "http://api.test/", k6Binary: "/missing/k6" }),
       {
         fetch: fetchApi,
       },
@@ -358,7 +345,7 @@ describe("load-orchestrator readiness", () => {
       .fn<typeof globalThis.fetch>()
       .mockRejectedValue(new Error("getaddrinfo ENOTFOUND api"));
     const readiness = createLoadOrchestratorReadiness(
-      createConfig({ apiBaseUrl: "http://api.test" }),
+      createConfig({ apiBaseUrl: "http://api.test", k6Binary: "/missing/k6" }),
       {
         fetch: fetchApi,
       },
@@ -382,7 +369,7 @@ describe("load-orchestrator readiness", () => {
         }),
     );
     const readiness = createLoadOrchestratorReadiness(
-      createConfig({ apiBaseUrl: "http://api.test" }),
+      createConfig({ apiBaseUrl: "http://api.test", k6Binary: "/missing/k6" }),
       {
         apiReadinessTimeoutMs: 25,
         fetch: fetchApi,
@@ -409,7 +396,7 @@ describe("load-orchestrator readiness", () => {
       } as Response;
     });
     const readiness = createLoadOrchestratorReadiness(
-      createConfig({ apiBaseUrl: "http://api.test" }),
+      createConfig({ apiBaseUrl: "http://api.test", k6Binary: "/missing/k6" }),
       {
         apiReadinessTimeoutMs: 25,
         fetch: fetchApi,
@@ -429,7 +416,7 @@ describe("load-orchestrator readiness", () => {
       .fn<typeof globalThis.fetch>()
       .mockResolvedValue(jsonResponse(apiHealthPayload("unavailable"), 503));
     const readiness = createLoadOrchestratorReadiness(
-      createConfig({ apiBaseUrl: "http://api.test" }),
+      createConfig({ apiBaseUrl: "http://api.test", k6Binary: "/missing/k6" }),
       {
         fetch: fetchApi,
       },

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   catalogErpDispatchLimits,
-  enginePolicyIdentitySchema,
   erpCallReferenceSchema,
   erpDispatchMinimumWindowMs,
   erpDispatchRateLimit,
@@ -40,19 +39,6 @@ describe("processing control contracts", () => {
     expect(processingGenerationSchema.parse(3)).toBe(3);
     expect(
       erpCallReferenceSchema.safeParse({ ...reference, processingGeneration: -1 }).success,
-    ).toBe(false);
-  });
-
-  it("requires a versioned engine-policy identity", () => {
-    expect(enginePolicyIdentitySchema.parse({ name: "adaptive-erp-engine", version: 1 })).toEqual({
-      name: "adaptive-erp-engine",
-      version: 1,
-    });
-    expect(enginePolicyIdentitySchema.safeParse({ name: "adaptive-erp-engine" }).success).toBe(
-      false,
-    );
-    expect(
-      enginePolicyIdentitySchema.safeParse({ name: "adaptive-erp-engine", version: 0 }).success,
     ).toBe(false);
   });
 });

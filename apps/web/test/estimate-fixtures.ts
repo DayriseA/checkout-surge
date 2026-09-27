@@ -9,8 +9,6 @@ export function estimateFixture(
 ): EstimatorResult {
   const base = {
     assumptions: [],
-    estimatorIdentity: { name: "conservative-duration-estimator", version: 2 },
-    policyIdentity: { name: "adaptive-erp-admission", version: 1 },
     effectiveCeilingSeconds: 600,
   };
   return kind === "unestimable"

@@ -3,7 +3,6 @@ import {
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
-  trafficCompletionDeliverySummarySchema,
   trafficDeliverySummarySchema,
   trafficHttpSummarySchema,
   transportAttemptCountsSchema,
@@ -44,22 +43,19 @@ export function classifyTrafficTransport(input: {
   return "failed";
 }
 
-/** Adds the API-owned delivery classification to a validated current completion. */
+/** Adds the API-owned delivery classification to a route-validated current completion. */
 export function classifyTrafficDeliverySummary(
   input: TrafficCompletionDeliverySummary,
   transportAttemptCounts: TransportAttemptCounts,
 ): TrafficDeliverySummary {
-  const evidence = trafficCompletionDeliverySummarySchema.parse(input);
-  const canonicalTransportAttemptCounts =
-    transportAttemptCountsSchema.parse(transportAttemptCounts);
   const trafficDeliveryStatus = classifyTrafficDelivery(
-    canonicalTransportAttemptCounts,
+    transportAttemptCounts,
   ) as TrafficDeliverySummary["trafficDeliveryStatus"];
-  return trafficDeliverySummarySchema.parse({
-    ...evidence,
-    completedIterations: evidence.completedIterations ?? null,
+  return {
+    ...input,
+    completedIterations: input.completedIterations ?? null,
     trafficDeliveryStatus,
-  });
+  };
 }
 
 /** Strictly validates the current persisted delivery shape and its API-owned status. */

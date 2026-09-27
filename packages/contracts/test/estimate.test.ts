@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  conservativeDurationEstimatorIdentity,
-  enginePolicyIdentitySchema,
   estimateAdmissionRejectionDetailsSchema,
   estimatePreviewSchema,
   estimatorInputSchema,
@@ -34,17 +32,11 @@ const estimable = {
   assumptions: [
     { code: "erp_overhead_floor", detail: "Latency includes a nonzero overhead floor." },
   ],
-  estimatorIdentity: { name: "conservative-envelope", version: 1 },
-  policyIdentity: { name: "adaptive-erp-engine", version: 1 },
   effectiveCeilingSeconds: 600,
 };
 
 describe("duration estimator contracts", () => {
-  it("validates the shared estimator identity, capacity bottleneck and deployment latency ceiling", () => {
-    expect(enginePolicyIdentitySchema.parse(conservativeDurationEstimatorIdentity)).toEqual({
-      name: "conservative-duration-estimator",
-      version: 2,
-    });
+  it("validates the capacity bottleneck and deployment latency ceiling", () => {
     expect(
       estimatorInputSchema.safeParse({ ...input, declaredErpLatencyMs: largestAllowedErpLatencyMs })
         .success,
@@ -119,8 +111,6 @@ describe("duration estimator contracts", () => {
       estimatorResultSchema.safeParse({
         bottleneck: "erp_capacity" as const,
         assumptions: estimable.assumptions,
-        estimatorIdentity: estimable.estimatorIdentity,
-        policyIdentity: estimable.policyIdentity,
         effectiveCeilingSeconds: estimable.effectiveCeilingSeconds,
         decision: "admitted" as const,
       }).success,
@@ -131,8 +121,6 @@ describe("duration estimator contracts", () => {
     const unestimable = {
       bottleneck: "unestimable" as const,
       assumptions: [],
-      estimatorIdentity: { name: "conservative-envelope", version: 1 },
-      policyIdentity: { name: "adaptive-erp-engine", version: 1 },
       effectiveCeilingSeconds: 600,
       decision: "rejected" as const,
       unestimableReason: "declared_permanent_outage" as const,

@@ -1,6 +1,6 @@
 # Estimator Calibration Procedure
 
-How to re-measure the four host-dependent allowances of the demo duration estimator on the host that will run Checkout-Surge, and how to turn the measurements into environment variables. It assumes no prior knowledge of the repository. The estimator's model itself is described in [Architecture](architecture.md) (search for `conservative-duration-estimator`); this page only covers measuring its allowances.
+How to re-measure the four host-dependent allowances of the demo duration estimator on the host that will run Checkout-Surge, and how to turn the measurements into environment variables. It assumes no prior knowledge of the repository. The estimator's model itself is described in [Architecture](architecture.md) (search for `sequential D11 envelope`); this page only covers measuring its allowances.
 
 ## 1. What is calibrated and why it is safe
 
@@ -15,7 +15,7 @@ The API reads four variables at startup (see the [configuration reference](local
 
 These values only change how pessimistic the admission estimate is. An over-estimate rejects configurations that would have fit under the 600-second occupancy ceiling; an under-estimate admits a run that may overstay it and be automatically reset at 900 seconds. Neither affects accounting, ERP confirmations or notifications. The defaults were measured on the host recorded in task 17b: "Docker 29.6.1-1 on Linux/WSL2, 16 visible CPUs, 7,637 MiB RAM, about 1.2 GiB swap already occupied; one worker and standard Compose resource settings."
 
-Worker policy constants (dispatch margin, cooldowns, probes, deadlines) are versioned in code and are not part of this procedure. The estimator formula, its identity version and the 30% supported error-rate bound are not changed by calibration either.
+Worker policy constants (dispatch margin, cooldowns, probes, deadlines) are versioned in code and are not part of this procedure. The estimator formula and the 30% supported error-rate bound are not changed by calibration either.
 
 ## 2. Prerequisites
 

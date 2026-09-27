@@ -32,7 +32,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
-  erpDispatchEnginePolicyIdentity,
   erpResilienceStatusPath,
   errorPayloadSchema,
   estimateAdmissionRejectionDetailsSchema,
@@ -113,7 +112,10 @@ import {
   createBullMqOrderProcessQueueInspector,
   createOrderProcessQueueInspector,
 } from "../src/queue/bullmq-order-process-queue-inspector.js";
-import { DashboardProjectionFanout } from "../src/realtime/dashboard-projection-fanout.js";
+import {
+  DashboardProjectionFanout,
+  defaultDashboardSseRetryMs,
+} from "../src/realtime/dashboard-projection-fanout.js";
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
@@ -1365,7 +1367,6 @@ describe("API gateway routes", () => {
   it("opens the dashboard realtime SSE stream with browser reconnect guidance", async () => {
     const dashboardProjectionFanout = new DashboardProjectionFanout({
       logger: createSilentLogger("api"),
-      retryMs: 1234,
     });
     const server = await buildTestServer({
       persistence: new AcceptingPersistence(),
@@ -1387,7 +1388,7 @@ describe("API gateway routes", () => {
       expect(response.headers.get("content-type")).toContain("text/event-stream");
       expect(response.headers.get("cache-control")).toContain("no-cache");
       expect(response.headers.get("x-accel-buffering")).toBe("no");
-      expect(initialFrame).toContain("retry: 1234");
+      expect(initialFrame).toContain(`retry: ${defaultDashboardSseRetryMs}`);
       expect(initialFrame).toContain(": connected");
       expect(dashboardProjectionFanout.clientCount()).toBe(1);
     } finally {
@@ -1400,7 +1401,6 @@ describe("API gateway routes", () => {
   it("fans the complete dashboard projection to connected browser SSE clients", async () => {
     const dashboardProjectionFanout = new DashboardProjectionFanout({
       logger: createSilentLogger("api"),
-      retryMs: 1234,
     });
     const server = await buildTestServer({
       persistence: new AcceptingPersistence(),
@@ -1958,8 +1958,6 @@ describe("API gateway routes", () => {
     expect(estimateAdmissionRejectionDetailsSchema.parse(start.json().details)).toMatchObject({
       reason: "over_ceiling",
       effectiveCeilingSeconds: 1,
-      estimatorIdentity: { name: "conservative-duration-estimator", version: 2 },
-      policyIdentity: erpDispatchEnginePolicyIdentity,
     });
   });
 

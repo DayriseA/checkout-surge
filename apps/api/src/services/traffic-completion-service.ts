@@ -1,8 +1,4 @@
-import {
-  type DemoRunSnapshot,
-  type TrafficCompletionReport,
-  trafficCompletionReportSchema,
-} from "@checkout-surge/contracts";
+import type { DemoRunSnapshot, TrafficCompletionReport } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
@@ -48,28 +44,27 @@ export class TrafficCompletionService implements TrafficCompletionController {
   ) {}
 
   async recordTrafficCompletion(input: TrafficCompletionReport): Promise<DemoRunSnapshot> {
-    const report = trafficCompletionReportSchema.parse(input);
     const classifiedTrafficDeliverySummary = classifyTrafficDeliverySummary(
-      report.trafficDeliverySummary,
-      report.transportAttemptCounts,
+      input.trafficDeliverySummary,
+      input.transportAttemptCounts,
     );
     const now = this.now();
     const completionClaim = await this.options.db.transaction(async (tx) => {
       const [run] = await tx
         .select()
         .from(demoRuns)
-        .where(eq(demoRuns.id, report.runId))
+        .where(eq(demoRuns.id, input.runId))
         .limit(1)
         .for("update");
       if (!run) {
         throw new DemoRunValidationError("resource_not_found", "Demo run was not found.", {
-          runId: report.runId,
+          runId: input.runId,
         });
       }
       if (!run.saleOfferId) {
         throw new DemoRunValidationError("run_conflict", "Demo run has no sale offer.", {
           conflictReason: "sale_offer_missing",
-          runId: report.runId,
+          runId: input.runId,
         });
       }
       if (!run.startedAt) {
@@ -83,21 +78,21 @@ export class TrafficCompletionService implements TrafficCompletionController {
           acceptedAt: run.startedAt,
           trafficStartedAt: run.trafficStartedAt,
         },
-        report,
+        input,
       );
       if (bindingMismatch) throwCompletionMismatch(run.id, bindingMismatch);
 
       const [existing] = await tx
         .select()
         .from(demoRunFinalizations)
-        .where(eq(demoRunFinalizations.runId, report.runId))
+        .where(eq(demoRunFinalizations.runId, input.runId))
         .limit(1)
         .for("update");
       if (existing) {
         const redeliveryMismatch = findTrafficCompletionRedeliveryMismatch(
           run,
           existing,
-          report,
+          input,
           classifiedTrafficDeliverySummary,
         );
         if (redeliveryMismatch) throwCompletionMismatch(run.id, redeliveryMismatch);
@@ -110,22 +105,22 @@ export class TrafficCompletionService implements TrafficCompletionController {
         throw new DemoRunValidationError(
           "traffic_report_rejected",
           "Demo run is not eligible for traffic completion ingestion.",
-          { runId: report.runId, status: run.status, trafficStatus: run.trafficStatus },
+          { runId: input.runId, status: run.status, trafficStatus: run.trafficStatus },
         );
       }
 
       const [inserted] = await tx
         .insert(demoRunFinalizations)
         .values({
-          runId: report.runId,
-          exitCode: report.exitCode ?? null,
-          errorMessage: report.errorMessage ?? null,
-          transportAttemptCounts: report.transportAttemptCounts,
-          httpSummary: report.httpSummary,
-          trafficOutcomeSummary: report.trafficOutcomeSummary,
+          runId: input.runId,
+          exitCode: input.exitCode ?? null,
+          errorMessage: input.errorMessage ?? null,
+          transportAttemptCounts: input.transportAttemptCounts,
+          httpSummary: input.httpSummary,
+          trafficOutcomeSummary: input.trafficOutcomeSummary,
           trafficDeliverySummary: classifiedTrafficDeliverySummary,
-          httpTimingBreakdownSummary: report.httpTimingBreakdownSummary,
-          loadRunDiagnosticsSummary: report.loadRunDiagnosticsSummary,
+          httpTimingBreakdownSummary: input.httpTimingBreakdownSummary,
+          loadRunDiagnosticsSummary: input.loadRunDiagnosticsSummary,
           completionEnrichmentStatus: "pending",
           trafficSummaryReceivedAt: now,
           createdAt: now,
@@ -136,15 +131,15 @@ export class TrafficCompletionService implements TrafficCompletionController {
         .update(demoRuns)
         .set({
           status: "draining",
-          trafficStatus: report.status,
+          trafficStatus: input.status,
           trafficStartedAt:
-            run.trafficStartedAt ?? new Date(report.loadRunDiagnosticsSummary.startedAt),
-          trafficEndedAt: new Date(report.completedAt),
+            run.trafficStartedAt ?? new Date(input.loadRunDiagnosticsSummary.startedAt),
+          trafficEndedAt: new Date(input.completedAt),
           updatedAt: now,
         })
         .where(
           and(
-            eq(demoRuns.id, report.runId),
+            eq(demoRuns.id, input.runId),
             inArray(demoRuns.status, ["starting", "active"]),
             inArray(demoRuns.trafficStatus, ["starting", "active"]),
           ),
@@ -154,23 +149,23 @@ export class TrafficCompletionService implements TrafficCompletionController {
         throw new DemoRunValidationError(
           "traffic_report_rejected",
           "Demo run completion could not claim the active traffic lifecycle.",
-          { runId: report.runId },
+          { runId: input.runId },
         );
       }
       return { inserted: true };
     });
 
-    await this.options.completionEnrichmentService.completePendingEnrichment(report.runId);
+    await this.options.completionEnrichmentService.completePendingEnrichment(input.runId);
 
-    const updatedRun = await readDemoRunSnapshot(this.options.db, report.runId);
+    const updatedRun = await readDemoRunSnapshot(this.options.db, input.runId);
     if (completionClaim.inserted) {
       await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: updatedRun,
-        correlationId: report.correlationId,
+        correlationId: input.correlationId,
       });
     }
     return (
-      (await this.options.finalizationService.finalizeRun(report.runId, report.correlationId)) ??
+      (await this.options.finalizationService.finalizeRun(input.runId, input.correlationId)) ??
       updatedRun
     );
   }

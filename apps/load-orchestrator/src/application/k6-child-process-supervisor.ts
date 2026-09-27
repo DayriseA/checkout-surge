@@ -305,26 +305,24 @@ export class K6ChildProcessSupervisor {
     if (!stdout || !stderr) {
       throw new Error("k6 process did not expose stdout and stderr pipes.");
     }
-    const stdoutDrain = stdout
-      ? consumeK6Stdout({
-          stdout,
-          accumulator,
-          liveMetrics,
-          batcher,
-          acceptPoint: () => !active.cancellationAccepted,
-          ...(this.options.maxK6OutputLineLength === undefined
-            ? {}
-            : { maxLineLength: this.options.maxK6OutputLineLength }),
-        }).catch((error) => {
-          this.options.logger.warn(
-            { err: error, runId: input.request.runId },
-            "Could not completely consume k6 stdout.",
-          );
-        })
-      : Promise.resolve();
+    const stdoutDrain = consumeK6Stdout({
+      stdout,
+      accumulator,
+      liveMetrics,
+      batcher,
+      acceptPoint: () => !active.cancellationAccepted,
+      ...(this.options.maxK6OutputLineLength === undefined
+        ? {}
+        : { maxLineLength: this.options.maxK6OutputLineLength }),
+    }).catch((error) => {
+      this.options.logger.warn(
+        { err: error, runId: input.request.runId },
+        "Could not completely consume k6 stdout.",
+      );
+    });
 
-    stderr?.setEncoding("utf8");
-    stderr?.on("data", (chunk) => {
+    stderr.setEncoding("utf8");
+    stderr.on("data", (chunk) => {
       stderrCollector.push(String(chunk));
       this.options.logger.warn(
         { runId: input.request.runId, stderrBytesObserved: Buffer.byteLength(chunk) },

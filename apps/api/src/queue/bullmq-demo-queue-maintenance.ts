@@ -71,58 +71,33 @@ export function createDemoQueueMaintenance(
       }
 
       const queuesToResume = new Set<TargetQueueBoundary>();
-      let result: QueueCleanupSummary | undefined;
-      let primaryError: unknown;
-      try {
-        for (const queue of queues) {
-          if (maintenancePausedQueues.has(queue)) {
-            queuesToResume.add(queue);
-            if (!(await queue.isPaused())) await queue.pause();
-            continue;
-          }
-          if (await queue.isPaused()) continue;
-          maintenancePausedQueues.add(queue);
-          queuesToResume.add(queue);
-          await queue.pause();
-        }
-        while (true) {
-          try {
-            result = await cleanExactJobs(queues, targets);
-            break;
-          } catch (error) {
-            if (
-              !settlement ||
-              !(error instanceof DemoQueueMaintenanceConflict) ||
-              error.code !== "active_job"
-            )
-              throw error;
-            const remaining = settlement.deadline - clock.now();
-            if (remaining <= 0) {
-              result = await cleanExactJobs(queues, targets, true);
-              break;
-            }
-            await clock.delay(Math.min(100, remaining));
-          }
-        }
-      } catch (error) {
-        primaryError = error;
-      } finally {
-        const resumeErrors = await resumeQueues(queuesToResume, maintenancePausedQueues);
+      const [cleanup] = await Promise.allSettled([
+        pauseAndCleanExactJobs(
+          queues,
+          targets,
+          settlement,
+          clock,
+          queuesToResume,
+          maintenancePausedQueues,
+        ),
+      ]);
+      const resumeErrors = await resumeQueues(queuesToResume, maintenancePausedQueues);
+      if (cleanup.status === "rejected") {
         if (resumeErrors.length > 0) {
-          primaryError = primaryError
-            ? new AggregateError(
-                [primaryError, ...resumeErrors],
-                "Queue maintenance failed and could not fully restore queue availability.",
-              )
-            : new AggregateError(
-                resumeErrors,
-                "Queue maintenance could not fully restore queue availability.",
-              );
+          throw new AggregateError(
+            [cleanup.reason, ...resumeErrors],
+            "Queue maintenance failed and could not fully restore queue availability.",
+          );
         }
+        throw cleanup.reason;
       }
-      if (primaryError) throw primaryError;
-      if (!result) throw new Error("Queue maintenance completed without a cleanup result.");
-      return result;
+      if (resumeErrors.length > 0) {
+        throw new AggregateError(
+          resumeErrors,
+          "Queue maintenance could not fully restore queue availability.",
+        );
+      }
+      return cleanup.value;
     },
 
     close() {
@@ -130,6 +105,42 @@ export function createDemoQueueMaintenance(
       return closePromise;
     },
   };
+}
+
+async function pauseAndCleanExactJobs(
+  queues: TargetQueueBoundary[],
+  targets: ReadonlySet<string>,
+  settlement: { deadline: number } | undefined,
+  clock: { now(): number; delay(ms: number): Promise<void> },
+  queuesToResume: Set<TargetQueueBoundary>,
+  maintenancePausedQueues: Set<TargetQueueBoundary>,
+): Promise<QueueCleanupSummary> {
+  for (const queue of queues) {
+    if (maintenancePausedQueues.has(queue)) {
+      queuesToResume.add(queue);
+      if (!(await queue.isPaused())) await queue.pause();
+      continue;
+    }
+    if (await queue.isPaused()) continue;
+    maintenancePausedQueues.add(queue);
+    queuesToResume.add(queue);
+    await queue.pause();
+  }
+  while (true) {
+    try {
+      return await cleanExactJobs(queues, targets);
+    } catch (error) {
+      if (
+        !settlement ||
+        !(error instanceof DemoQueueMaintenanceConflict) ||
+        error.code !== "active_job"
+      )
+        throw error;
+      const remaining = settlement.deadline - clock.now();
+      if (remaining <= 0) return cleanExactJobs(queues, targets, true);
+      await clock.delay(Math.min(100, remaining));
+    }
+  }
 }
 
 function bullMqBoundary(

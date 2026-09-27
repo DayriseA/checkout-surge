@@ -3,7 +3,6 @@ import {
   idempotencyKeySchema,
   isoTimestampSchema,
   nonnegativeIntegerSchema,
-  positiveIntegerSchema,
   uuidSchema,
 } from "./primitives.js";
 
@@ -36,27 +35,13 @@ export const erpCallReferenceSchema = z
 export type ErpCallReference = z.infer<typeof erpCallReferenceSchema>;
 
 /**
- * Versioned engine-policy identity. Engine constants live in a versioned
- * worker policy; its identity accompanies estimator decisions so later
- * calibration can be attributed.
- */
-export const enginePolicyIdentitySchema = z
-  .object({
-    name: z.string().trim().min(1),
-    version: positiveIntegerSchema,
-  })
-  .strict();
-export type EnginePolicyIdentity = z.infer<typeof enginePolicyIdentitySchema>;
-
-/**
- * The single declared-capacity ERP dispatch engine-policy identity. Defined once
- * here so the estimator and worker policy use the same identity. The worker
- * policy derives its version string from it.
+ * The declared-capacity ERP dispatch engine-policy identity. The worker policy
+ * derives its version string from it.
  */
 export const erpDispatchEnginePolicyIdentity = {
   name: "declared-capacity-erp-dispatch",
   version: 2,
-} as const satisfies EnginePolicyIdentity;
+} as const;
 
 /** Small native windows bound sliding-window pressure. */
 export const erpDispatchSafetyMargin = 0.05;

@@ -2,7 +2,6 @@ import { z } from "zod";
 import { largestAllowedErpLatencyMs } from "./erp.js";
 import { inventoryConfigSchema, trafficConfigSchema } from "./load.js";
 import { nonnegativeNumberSchema, percentageSchema, positiveIntegerSchema } from "./primitives.js";
-import { type EnginePolicyIdentity, enginePolicyIdentitySchema } from "./processing-control.js";
 
 /**
  * Initial estimated demo-occupancy ceiling. Inclusive, in seconds,
@@ -16,12 +15,6 @@ export const automaticRunResetDeadlineSeconds = 900 as const;
  * shows the grace-period notice with the time left before the automatic reset.
  */
 export const automaticRunResetGraceNoticeSeconds = estimatedDemoOccupancyCeilingSeconds;
-
-/** Single estimator identity. */
-export const conservativeDurationEstimatorIdentity = {
-  name: "conservative-duration-estimator",
-  version: 2,
-} as const satisfies EnginePolicyIdentity;
 
 /**
  * Declared scenario conditions consumed by the API-owned estimator. The
@@ -82,8 +75,6 @@ const estimatorResultBaseShape = {
   bottleneck: estimatorBottleneckSchema,
   assumptions: z.array(estimateAssumptionSchema),
   reasons: z.array(z.string().trim().min(1)).optional(),
-  estimatorIdentity: enginePolicyIdentitySchema,
-  policyIdentity: enginePolicyIdentitySchema,
   effectiveCeilingSeconds: nonnegativeNumberSchema,
 };
 

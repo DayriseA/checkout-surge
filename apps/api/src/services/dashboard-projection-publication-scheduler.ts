@@ -29,7 +29,6 @@ export interface DashboardProjectionPublicationSchedulerOptions {
   publish(projection: DashboardProjection): void | Promise<void>;
   logger: CheckoutSurgeLogger;
   buildTimeoutMs: number;
-  maxLatencyMs?: number;
   maxPendingScopes?: number;
 }
 
@@ -40,7 +39,6 @@ export interface DashboardProjectionPublicationSchedulerOptions {
  */
 export class DashboardProjectionPublicationScheduler {
   private readonly pending = new Map<string, DirtyProjection>();
-  private readonly maxLatencyMs: number;
   private readonly maxPendingScopes: number;
   private readonly buildTimeoutMs: number;
   private timer: NodeJS.Timeout | null = null;
@@ -50,15 +48,8 @@ export class DashboardProjectionPublicationScheduler {
   private accepting = true;
 
   constructor(private readonly options: DashboardProjectionPublicationSchedulerOptions) {
-    this.buildTimeoutMs = requirePositiveSafeInteger(options.buildTimeoutMs, "buildTimeoutMs");
-    this.maxLatencyMs = requirePositiveSafeInteger(
-      options.maxLatencyMs ?? dashboardProjectionMaxLatencyMs,
-      "maxLatencyMs",
-    );
-    this.maxPendingScopes = requirePositiveSafeInteger(
-      options.maxPendingScopes ?? defaultDashboardProjectionMaxPendingScopes,
-      "maxPendingScopes",
-    );
+    this.buildTimeoutMs = options.buildTimeoutMs;
+    this.maxPendingScopes = options.maxPendingScopes ?? defaultDashboardProjectionMaxPendingScopes;
   }
 
   markDirty(signal: DashboardProjectionDirtySignal): void {
@@ -81,7 +72,9 @@ export class DashboardProjectionPublicationScheduler {
     this.pending.set(key, {
       ...(scope ? { scope } : {}),
       correlationId: normalizeCorrelationId(signal.correlationId),
-      dueAt: urgent ? Date.now() : (existing?.dueAt ?? Date.now() + this.maxLatencyMs),
+      dueAt: urgent
+        ? Date.now()
+        : (existing?.dueAt ?? Date.now() + dashboardProjectionMaxLatencyMs),
       generation: ++this.generation,
       urgent: urgent || (existing?.urgent ?? false),
     });
@@ -148,7 +141,7 @@ export class DashboardProjectionPublicationScheduler {
           this.pending.set(key, {
             ...dirty,
             urgent: false,
-            dueAt: Date.now() + this.maxLatencyMs,
+            dueAt: Date.now() + dashboardProjectionMaxLatencyMs,
           });
         }
         this.options.logger.error(
@@ -208,11 +201,4 @@ function createBuildLifecycle(timeoutMs: number): {
     controller,
     dispose: () => clearTimeout(deadline),
   };
-}
-
-function requirePositiveSafeInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
-  }
-  return value;
 }

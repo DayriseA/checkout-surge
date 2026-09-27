@@ -249,7 +249,6 @@ function createScheduler(options: {
     publish: options.publish ?? vi.fn(),
     logger: createSilentLogger("api"),
     buildTimeoutMs: options.buildTimeoutMs ?? 5_000,
-    maxLatencyMs: 1_000,
   });
 }
 

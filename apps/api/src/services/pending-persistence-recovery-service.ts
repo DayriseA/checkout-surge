@@ -178,7 +178,6 @@ export class PendingPersistenceRecoveryService {
   }
 
   async runOnce(): Promise<PendingPersistenceRecoverySummary> {
-    if (this.closed) return emptySummary();
     const controller = new AbortController();
     this.activeAttemptControllers.add(controller);
     const discoveryTimeoutMs = this.policy().discoveryTimeoutMs;

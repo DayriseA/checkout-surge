@@ -75,7 +75,7 @@ This generator-side headroom changes no duration, delay, or connection-establish
 
 These are local observations of the dispatch, protection and settlement behaviour described in [Architecture](architecture.md#4-downstream-slowness-and-tps-exhaustion). They are a reproducible demonstration on one host, not a hosted benchmark, a statistical confidence claim, or a throughput guarantee. Every number below is a single observation per scenario unless stated otherwise.
 
-**Environment.** Dev container on Linux/WSL2 (`6.18.33.2-microsoft-standard-WSL2`, x86_64), 16 logical CPUs, 9,369,710,592 bytes RAM (8.73 GiB), 4 GiB swap; no explicit CPU or memory limit on any runtime container. Node `v24.18.0`, pnpm `10.33.2`, Docker `29.6.1-1`, Compose `v2.40.3`. One worker container with `ORDER_PROCESS_CONCURRENCY=10`. Dispatch engine `declared-capacity-erp-dispatch` v2, estimator `conservative-duration-estimator` v2, all four `ESTIMATOR_*` variables at their defaults. Measured on 2026-09-22 against the `feat/adaptive-erp-and-admission` branch.
+**Environment.** Dev container on Linux/WSL2 (`6.18.33.2-microsoft-standard-WSL2`, x86_64), 16 logical CPUs, 9,369,710,592 bytes RAM (8.73 GiB), 4 GiB swap; no explicit CPU or memory limit on any runtime container. Node `v24.18.0`, pnpm `10.33.2`, Docker `29.6.1-1`, Compose `v2.40.3`. One worker container with `ORDER_PROCESS_CONCURRENCY=10`. Dispatch engine `declared-capacity-erp-dispatch` v2, all four `ESTIMATOR_*` variables at their defaults. Measured on 2026-09-22 against the `feat/adaptive-erp-and-admission` branch.
 
 **Fixture and command.** The runtime was rebuilt clean (`pnpm runtime:wipe`, `pnpm runtime:setup`, `pnpm runtime:up`), then each scenario was run once, sequentially, with a fresh run identity:
 

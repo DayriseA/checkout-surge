@@ -1,9 +1,7 @@
 import {
-  conservativeDurationEstimatorIdentity,
   type EstimatorBottleneck,
   type EstimatorInput,
   type EstimatorResult,
-  erpDispatchEnginePolicyIdentity,
   erpDispatchSafetyMargin,
   estimatedDemoOccupancyCeilingSeconds,
   orderProcessConcurrencyHardCap,
@@ -48,8 +46,6 @@ export function estimateDemoDuration(
   constants: DurationEstimatorConstants = conservativeDurationEstimatorConstants,
 ): EstimatorResult {
   const base = {
-    estimatorIdentity: conservativeDurationEstimatorIdentity,
-    policyIdentity: erpDispatchEnginePolicyIdentity,
     effectiveCeilingSeconds,
     assumptions: [
       {
