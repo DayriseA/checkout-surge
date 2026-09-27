@@ -207,40 +207,117 @@ describe("run result presentation", () => {
     );
   });
 
-  it("maps the sold-out reconciliation reason without mixing populations", () => {
-    const result = deriveRunResult(
+  it.each([
+    [
+      "pending persistence",
+      withEvidence({ heldReservationsAwaitingPersistence: 1 }),
+      "pending_persistence",
+      "Inventory reservations can precede durable checkout records.",
+    ],
+    [
+      "pending mismatch",
+      withEvidence({ heldReservationsAwaitingPersistence: 1 }),
+      "pending_persistence_evidence_mismatch",
+      "Live reservations and durable pending records differ.",
+    ],
+    [
+      "accepted without replay",
+      cleanEvidence,
+      "accepted_responses_vs_unique_reservations",
+      "Accepted checkout responses and unique reservations measure different stages of the run.",
+    ],
+    [
+      "accepted with replay",
       withEvidence({
-        durable: { soldOutDecisions: 1 },
-        generator: completeGenerator({ soldOutResponses: 2 }),
+        replayPossible: true,
+        generator: completeGenerator({ acceptedResponses: 251 }),
       }),
-    );
-    const markup = renderToStaticMarkup(
-      createElement(RunConclusion, { result, runStatus: "completed" }),
-    );
-
-    expect(markup).toContain(
+      "accepted_responses_vs_unique_reservations",
+      "Some accepted responses may repeat an existing reservation.",
+    ],
+    [
+      "accepted evidence unavailable",
+      { ...cleanEvidence, durable: null },
+      "accepted_responses_vs_unique_reservations",
+      "The durable reservation count is not available for comparison.",
+    ],
+    [
+      "accepted warning",
+      withEvidence({ generator: completeGenerator({ acceptedResponses: 249 }) }),
+      "accepted_responses_vs_unique_reservations",
+      null,
+    ],
+    [
+      "accepted partial",
+      withEvidence({ generator: partialGenerator() }),
+      "accepted_responses_vs_unique_reservations",
+      null,
+    ],
+    [
+      "sold out expected",
+      cleanEvidence,
+      "sold_out_decisions_vs_responses",
+      "Load-generator reply observations and durable rejection records are separate populations.",
+    ],
+    [
+      "sold out warning",
+      withEvidence({ generator: completeGenerator({ soldOutResponses: 751 }) }),
+      "sold_out_decisions_vs_responses",
       "Sold-out rejections seen by the load generator exceed durable sold-out rejections.",
-    );
-    expect(markup).not.toContain("Observed sold-out replies exceed recorded server decisions.");
-  });
-
-  it("owns normal different-population copy for a no-replay result", () => {
+    ],
+    [
+      "sold out evidence unavailable",
+      { ...cleanEvidence, durable: null },
+      "sold_out_decisions_vs_responses",
+      "Durable sold-out rejection evidence is unavailable.",
+    ],
+    [
+      "sold out partial",
+      withEvidence({ generator: partialGenerator() }),
+      "sold_out_decisions_vs_responses",
+      null,
+    ],
+    [
+      "partial generator coverage",
+      withEvidence({ generator: partialGenerator() }),
+      "partial_generator_coverage",
+      "Only attempts that reached a response are included in the load-generator evidence.",
+    ],
+    [
+      "generator unavailable",
+      withEvidence({ generator: null }),
+      "generator_evidence_unavailable",
+      "Load-generator evidence is unavailable.",
+    ],
+    [
+      "sold out with stock",
+      withEvidence({ remainingStock: 1, durable: { reservedUnits: 249 } }),
+      "sold_out_with_stock_remaining",
+      "Sold-out rejections while stock remained need investigation.",
+    ],
+    [
+      "notifications below confirmations",
+      withEvidence({ durable: { notificationsRecorded: 249 } }),
+      "notifications_below_confirmations",
+      "Not every confirmed order has a recorded simulated email.",
+    ],
+  ] as const)("presents $0 reconciliation", (_name, evidence, code, sentence) => {
     const markup = renderToStaticMarkup(
       createElement(RunConclusion, {
-        result: deriveRunResult(cleanEvidence),
+        result: deriveRunResult(evidence),
         runStatus: "completed",
+        showCanonicalCodes: true,
       }),
     );
+    const row = markup
+      .match(/<p class="m-0 text-muted">.*?<\/p>/g)
+      ?.find((item) => item.includes(`<code>${code}</code>`));
 
-    expect(markup).toContain(
-      "Accepted checkout responses and unique reservations measure different stages of the run.",
-    );
-    expect(markup).not.toContain("The populations represent different observations.");
-    expect(markup).not.toContain("accepted responses observed by generator");
-    expect(markup).not.toContain("unique reservations secured");
+    expect(row).toBeDefined();
+    expect(row?.split(" — ")[1] ?? null).toBe(sentence ? `${sentence}</p>` : null);
   });
 
-  it("fails closed for unexpected reconciliation populations and reasons", () => {
+  it("fails closed for unexpected reconciliation populations", () => {
     const result = deriveRunResult(cleanEvidence);
     const accepted = result.reconciliations[0];
     const soldOut = result.reconciliations[1];
@@ -252,13 +329,11 @@ describe("run result presentation", () => {
           ...accepted,
           leftPopulation: "UNSAFE ACCEPTED POPULATION",
           rightPopulation: "UNSAFE RESERVATION POPULATION",
-          reason: "UNSAFE ACCEPTED REASON",
         },
         {
           ...soldOut,
           leftPopulation: "UNSAFE SOLD OUT POPULATION",
           rightPopulation: "UNSAFE DECISION POPULATION",
-          reason: "UNSAFE SOLD OUT REASON",
         },
       ],
     };
@@ -327,13 +402,8 @@ describe("run result presentation", () => {
     const markup = renderToStaticMarkup(
       createElement(RunConclusion, { result, runStatus: "completed" }),
     );
-    const replay = result.reconciliations.find(
-      (item) => item.code === "accepted_responses_vs_unique_reservations",
-    );
-
     expect(sentence).not.toContain("oversold");
     expect(sentence).not.toContain("corruption");
-    expect(`${replay?.reason ?? ""}`.toLowerCase()).not.toMatch(/oversell|corruption/);
     expect(markup).toContain("accepted responses observed by the load generator");
     expect(markup).toContain("(400) vs Unique reservations secured (200)");
     expect(markup).toContain("expected population difference");
@@ -496,6 +566,18 @@ function completeGenerator(
       failureRate: 0,
     },
   };
+}
+
+function partialGenerator(): NonNullable<RunResultEvidence["generator"]> {
+  return completeGenerator({
+    transportAttemptCounts: {
+      plannedRequests: 1_001,
+      startedRequests: 1_000,
+      completedRequests: 1_000,
+      interruptedRequests: 0,
+      unstartedRequests: 1,
+    },
+  });
 }
 
 function runFixture(evidence: RunResultEvidence) {

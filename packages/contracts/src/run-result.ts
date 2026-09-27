@@ -110,7 +110,6 @@ export const runResultInvariantSchema = z
     status: runResultInvariantStatusSchema,
     actual: z.number().int().nullable(),
     expected: z.number().int().nullable(),
-    reason: z.string().trim().min(1).optional(),
   })
   .strict();
 
@@ -131,10 +130,17 @@ export const runResultReconciliationSchema = z
     rightPopulation: z.string().trim().min(1),
     rightValue: z.number().int().nullable(),
     classification: runResultClassificationSchema,
-    reason: z.string().trim().min(1).optional(),
     incompleteReason: runResultEvidenceIncompleteReasonSchema.optional(),
+    replayPossible: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (item) =>
+      (item.replayPossible !== undefined) ===
+      (item.code === "accepted_responses_vs_unique_reservations" &&
+        item.classification === "expected_population_difference"),
+    { path: ["replayPossible"] },
+  );
 
 export const runResultOutcomeSchema = z.enum([
   "failed",
@@ -220,9 +226,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
         : "not_evaluable",
       actual: reservedUnits,
       expected: stockExpected,
-      ...(!stockEvaluable
-        ? { reason: "Stock, durable reservation, or pending-persistence evidence is unavailable." }
-        : {}),
     },
     {
       name: "orders",
@@ -239,7 +242,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
           ? null
           : durable.confirmedOrders + durable.failedOrders + (pendingOrders ?? 0),
       expected: durable?.uniqueReservations ?? null,
-      ...(durable === null ? { reason: "Durable business evidence is unavailable." } : {}),
     },
     {
       name: "oversell",
@@ -247,9 +249,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       status: oversoldUnits === null ? "not_evaluable" : oversoldUnits === 0 ? "holds" : "broken",
       actual: oversoldUnits,
       expected: 0,
-      ...(oversoldUnits === null
-        ? { reason: "Stock or durable reservation evidence is unavailable." }
-        : {}),
     },
   ];
 
@@ -272,7 +271,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightValue: durable?.durablePendingPersistenceRecords ?? null,
       classification: "evidence_incomplete",
       incompleteReason: "partial",
-      reason: "Redis stock has been decremented before PostgreSQL evidence exists.",
     });
     classes.push("evidence_incomplete");
   }
@@ -289,7 +287,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightPopulation: "PostgreSQL pending-persistence rows",
       rightValue: durable.durablePendingPersistenceRecords,
       classification: "warning",
-      reason: "The stores report different pending-persistence populations.",
     });
     classes.push("warning");
   }
@@ -323,11 +320,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       classification,
       ...(classification === "evidence_incomplete" ? { incompleteReason: "partial" as const } : {}),
       ...(classification === "expected_population_difference"
-        ? {
-            reason: input.replayPossible
-              ? "Idempotent replay responses are included."
-              : "The populations represent different observations.",
-          }
+        ? { replayPossible: input.replayPossible === true }
         : {}),
     });
     classes.push(classification);
@@ -348,12 +341,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       ...(soldOutClassification === "evidence_incomplete"
         ? { incompleteReason: "partial" as const }
         : {}),
-      ...(soldOutClassification === "expected_population_difference"
-        ? { reason: "Observed replies and durable decisions are separate populations." }
-        : {}),
-      ...(soldOutClassification === "warning"
-        ? { reason: "Observed sold-out replies exceed recorded server decisions." }
-        : {}),
     });
     classes.push(soldOutClassification);
 
@@ -366,7 +353,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
         rightValue: input.generator.transportAttemptCounts.completedRequests,
         classification: "evidence_incomplete",
         incompleteReason: "partial",
-        reason: "Survivorship limits the observed response population.",
       });
       classes.push("evidence_incomplete");
     }
@@ -380,7 +366,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
         rightValue: null,
         classification: "evidence_incomplete",
         incompleteReason: "unavailable",
-        reason: "Durable reservation evidence is unavailable.",
       },
       {
         code: "sold_out_decisions_vs_responses",
@@ -390,7 +375,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
         rightValue: null,
         classification: "evidence_incomplete",
         incompleteReason: "unavailable",
-        reason: "Durable sold-out decision evidence is unavailable.",
       },
     );
     classes.push("evidence_incomplete", "evidence_incomplete");
@@ -403,7 +387,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightValue: durable?.uniqueReservations ?? null,
       classification: "evidence_incomplete",
       incompleteReason: "unavailable",
-      reason: "Generator evidence is unavailable.",
     });
     classes.push("evidence_incomplete");
   }
@@ -422,7 +405,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightPopulation: "remaining stock observed by Redis",
       rightValue: input.remainingStock,
       classification: "warning",
-      reason: "Sold-out decisions while stock remained need investigation.",
     });
     classes.push("warning");
   }
@@ -435,7 +417,6 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightPopulation: "orders confirmed",
       rightValue: durable.confirmedOrders,
       classification: "warning",
-      reason: "Not every confirmed order has a recorded notification.",
     });
     classes.push("warning");
   }

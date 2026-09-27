@@ -222,8 +222,18 @@ describe("deriveRunResult", () => {
     expect(
       replay.reconciliations.find(
         (item) => item.code === "accepted_responses_vs_unique_reservations",
-      )?.classification,
-    ).toBe("expected_population_difference");
+      ),
+    ).toMatchObject({ classification: "expected_population_difference", replayPossible: true });
+
+    const noReplay = deriveRunResult(evidence({ generator: completeGenerator() }));
+    expect(
+      noReplay.reconciliations.find(
+        (item) => item.code === "accepted_responses_vs_unique_reservations",
+      ),
+    ).toMatchObject({ classification: "expected_population_difference", replayPossible: false });
+    expect(
+      noReplay.reconciliations.find((item) => item.code === "sold_out_decisions_vs_responses"),
+    ).not.toHaveProperty("replayPossible");
 
     const mismatch = deriveRunResult(
       evidence({
@@ -232,11 +242,11 @@ describe("deriveRunResult", () => {
         durable: { ...evidence().durable, uniqueReservations: 4 },
       }),
     );
-    expect(
-      mismatch.reconciliations.find(
-        (item) => item.code === "accepted_responses_vs_unique_reservations",
-      )?.classification,
-    ).toBe("warning");
+    const mismatchReconciliation = mismatch.reconciliations.find(
+      (item) => item.code === "accepted_responses_vs_unique_reservations",
+    );
+    expect(mismatchReconciliation?.classification).toBe("warning");
+    expect(mismatchReconciliation).not.toHaveProperty("replayPossible");
 
     const underreported = deriveRunResult(
       evidence({
@@ -310,6 +320,7 @@ describe("deriveRunResult", () => {
     );
     expect(accepted?.classification).toBe("evidence_incomplete");
     expect(accepted?.incompleteReason).toBe("partial");
+    expect(accepted).not.toHaveProperty("replayPossible");
   });
 
   it("reports sold-out decisions with stock remaining as a warning", () => {
@@ -331,19 +342,16 @@ describe("deriveRunResult", () => {
       name: "fewer observed responses",
       generator: completeGenerator({ soldOutResponses: 2 }),
       classification: "expected_population_difference",
-      reason: "Observed replies and durable decisions are separate populations.",
     },
     {
       name: "equal observed responses",
       generator: completeGenerator({ soldOutResponses: 3 }),
       classification: "expected_population_difference",
-      reason: "Observed replies and durable decisions are separate populations.",
     },
     {
       name: "more observed responses",
       generator: completeGenerator({ soldOutResponses: 4 }),
       classification: "warning",
-      reason: "Observed sold-out replies exceed recorded server decisions.",
     },
     {
       name: "partial generator coverage",
@@ -371,7 +379,6 @@ describe("deriveRunResult", () => {
       result.reconciliations.find((item) => item.code === "sold_out_decisions_vs_responses"),
     ).toMatchObject({
       classification: example.classification,
-      ...(example.reason ? { reason: example.reason } : {}),
       ...(example.incompleteReason ? { incompleteReason: example.incompleteReason } : {}),
     });
   });

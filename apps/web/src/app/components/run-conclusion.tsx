@@ -41,32 +41,35 @@ function publicPopulationLabel(item: Reconciliation, side: "left" | "right"): st
 }
 
 function publicReconciliationReason(item: Reconciliation): string | null {
-  const reason = item.reason;
-  if (!reason) return null;
   switch (item.code) {
     case "pending_persistence":
       return "Inventory reservations can precede durable checkout records.";
     case "pending_persistence_evidence_mismatch":
       return "Live reservations and durable pending records differ.";
     case "accepted_responses_vs_unique_reservations":
-      if (reason === "Idempotent replay responses are included.") {
-        return "Some accepted responses may repeat an existing reservation.";
+      if (item.classification === "expected_population_difference") {
+        return item.replayPossible
+          ? "Some accepted responses may repeat an existing reservation."
+          : "Accepted checkout responses and unique reservations measure different stages of the run.";
       }
-      if (reason === "The populations represent different observations.") {
-        return "Accepted checkout responses and unique reservations measure different stages of the run.";
-      }
-      if (reason === "Durable reservation evidence is unavailable.") {
+      if (
+        item.classification === "evidence_incomplete" &&
+        item.incompleteReason === "unavailable"
+      ) {
         return "The durable reservation count is not available for comparison.";
       }
       return null;
     case "sold_out_decisions_vs_responses":
-      if (reason === "Observed replies and durable decisions are separate populations.") {
+      if (item.classification === "expected_population_difference") {
         return "Load-generator reply observations and durable rejection records are separate populations.";
       }
-      if (reason === "Observed sold-out replies exceed recorded server decisions.") {
+      if (item.classification === "warning") {
         return "Sold-out rejections seen by the load generator exceed durable sold-out rejections.";
       }
-      if (reason === "Durable sold-out decision evidence is unavailable.") {
+      if (
+        item.classification === "evidence_incomplete" &&
+        item.incompleteReason === "unavailable"
+      ) {
         return "Durable sold-out rejection evidence is unavailable.";
       }
       return null;
