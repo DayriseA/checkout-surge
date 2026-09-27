@@ -247,7 +247,7 @@ describe("dashboard projection state", () => {
     expect(state.signalSamples[0]?.hasBusinessOutcomeEvidence).toBe(true);
   });
 
-  it("accepts the C1 idle recovery overlap only after the committed projection", () => {
+  it("accepts the idle recovery overlap only after the committed projection", () => {
     const idle = idleProjection({
       revision: 8,
       recoveredAt: "2026-06-20T00:00:30.000Z",

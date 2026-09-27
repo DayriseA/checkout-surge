@@ -11,7 +11,7 @@ import type {
 } from "../application/order-process-admission.js";
 
 /**
- * Durable per-scope restart-safety state (D07): cooldown and circuit-open
+ * Durable per-scope restart-safety state: cooldown and circuit-open
  * expiries for one downstream capacity scope (`catalog` or `run:<id>`). The
  * adaptive controller reads and writes this state during operation; learned
  * rate and latency state remain process-local.

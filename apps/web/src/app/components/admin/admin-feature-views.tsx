@@ -434,7 +434,7 @@ export function AdminPresetView({
         }
       />
       <div className="grid grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)] gap-6 max-[800px]:grid-cols-1">
-        {/* biome-ignore lint/a11y/useSemanticElements: C04 intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
+        {/* biome-ignore lint/a11y/useSemanticElements: Intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
         <div
           aria-label="Preset selection"
           className="grid content-start gap-1 min-[801px]:sticky min-[801px]:top-20"

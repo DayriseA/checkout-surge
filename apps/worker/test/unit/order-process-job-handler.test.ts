@@ -547,7 +547,7 @@ describe("order-process application workflow", () => {
     expect(terminalPublish).not.toHaveBeenCalled();
   });
 
-  it("retains temporary confirmation failures beyond the old attempt budget", async () => {
+  it("retains temporary confirmation failures without an attempt budget", async () => {
     const persistence = createPersistence();
     const handler = createOrderProcessJobHandler({
       confirmation: {

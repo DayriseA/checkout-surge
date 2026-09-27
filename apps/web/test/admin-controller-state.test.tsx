@@ -1850,7 +1850,7 @@ describe("admin feature controllers", () => {
     expect(screen.getByText("Unsaved")).toBeTruthy();
   });
 
-  it("cancels a run start after showing B14's effective snapshot", async () => {
+  it("cancels a run start after showing the effective snapshot", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();

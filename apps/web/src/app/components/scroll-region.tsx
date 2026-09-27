@@ -1,4 +1,4 @@
-// biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/noRedundantRoles: C03 explicitly requires role=region and keyboard focus on protected horizontal scroll regions.
+// biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/noRedundantRoles: Protected horizontal scroll regions need role=region and keyboard focus.
 import type { ReactNode } from "react";
 
 export function ScrollRegion({

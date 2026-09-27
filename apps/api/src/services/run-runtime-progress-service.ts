@@ -42,7 +42,7 @@ export class PostgresRunDownstreamErpStatusReader implements RunDownstreamErpSta
 }
 
 /**
- * Derives the runtime-progress projection for one run (D13): outstanding
+ * Derives the runtime-progress projection for one run: outstanding
  * orders, oldest outstanding age, and the observed confirmation rate over the
  * effective window from durable order records, plus one downstream status from
  * the worker's durable protection state. A failed status read is reported as

@@ -3,8 +3,7 @@ import type { AcceptedRunConfigSnapshot } from "./load.js";
 
 /**
  * Exact expected business totals for an acceptance fixture. Counts are exact,
- * not eventual-success assertions. No timing or policy constant appears here:
- * engine constants are provisional until task 20 calibration and approval.
+ * not eventual-success assertions. No timing or policy constant appears here.
  */
 export interface AdaptiveErpFixtureExpectedCounts {
   plannedEmittedAttempts: number;
@@ -18,7 +17,7 @@ export interface AdaptiveErpFixtureExpectedCounts {
 }
 
 /**
- * A named deterministic acceptance scenario (task 01). `config` parses with
+ * A named deterministic acceptance scenario. `config` parses with
  * `acceptedRunConfigSnapshotSchema`. Fixtures never contain production runtime resources (URLs,
  * connection strings, or clients).
  */
@@ -42,7 +41,7 @@ function backpressureConfig(
 }
 
 /**
- * The original incident (plan section 2): 25 requests/s for 60 seconds against
+ * The original incident: 25 requests/s for 60 seconds against
  * stock 888, ERP 10/s and 250 ms, worker concurrency 5, no injected error and
  * no outage. Accounting: 888 + 612 = 1,500 attempts; zero terminal failures.
  */
@@ -170,11 +169,9 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
 /**
  * Baseline for the latency acceptance case; admin scope only. Accepted run
  * snapshots override global chaos controls, so changing /chaos cannot produce
- * the historical 15 s–45 s latency segment during a run. Runtime verification
- * derives a separate stable 3000 ms snapshot from this baseline to exceed the
- * adaptive policy's 2000 ms initial deadline for the whole run. This exported
- * fixture's configuration and exact 600-order accounting remain unchanged.
- * No dynamic ERP profile or production injection mechanism is introduced.
+ * the 15 s–45 s latency segment during a run. Runtime verification derives a
+ * separate stable 3000 ms snapshot from this baseline to exceed the adaptive
+ * policy's 2000 ms initial deadline for the whole run.
  */
 export function latencyIncreaseFixture(): AdaptiveErpScenarioFixture {
   return {
@@ -253,14 +250,14 @@ export function duplicateAttemptsFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * The previous surge-10k configuration, frozen for calibration with all
- * concurrency slots busy.
+ * A 10,000-buyer configuration, frozen for calibration with all concurrency
+ * slots busy.
  */
 export function concurrencySaturationReferenceFixture(): AdaptiveErpScenarioFixture {
   return {
     name: "concurrency-saturation-reference",
     description:
-      "The previous surge-10k configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10.",
+      "A 10,000-buyer configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10.",
     operatorScope: "admin",
     presetSlug: null,
     config: {

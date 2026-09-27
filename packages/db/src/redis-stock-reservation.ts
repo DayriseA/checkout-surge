@@ -479,8 +479,9 @@ local inventoryEvent = {
 redis.call("RPUSH", KEYS[4], cjson.encode(inventoryEvent))
 redis.call("LTRIM", KEYS[4], -tonumber(ARGV[7]), -1)
 
--- Securing the Redis hold precedes durable PostgreSQL persistence. Task 3.3 promotes this
--- record to "accepted" only after the reservation and order have been persisted.
+-- Securing the Redis hold precedes durable PostgreSQL persistence.
+-- promoteReservationIdempotencyToAccepted promotes this record to "accepted" only after the
+-- reservation and order have been persisted.
 local preDurableIdempotencyRecord = {
   status = "pending_persistence",
   quantity = quantity,

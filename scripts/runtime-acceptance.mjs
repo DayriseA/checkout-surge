@@ -195,7 +195,7 @@ function stableWindow(durable, http) {
   ).length;
   return {
     definition:
-      "First observed POST + 10s, half-open 60s window; descriptive, not task-20 calibration. Short runs do not cover the window.",
+      "First observed POST + 10s, half-open 60s window; descriptive, not a calibration input. Short runs do not cover the window.",
     start: new Date(start).toISOString(),
     end: new Date(end).toISOString(),
     covered: durable.attempts.some((attempt) => Date.parse(attempt.finished_at) >= end),
@@ -231,7 +231,7 @@ return out`;
   );
 }
 
-// Inputs to docs/estimator_calibration.md; descriptive, never asserted.
+// Calibration evidence; descriptive, never asserted.
 export function calibrationEvidence(durable, jobs, declaredLatencyMs) {
   const durations = jobs.filter(([start, end]) => start && end).map(([start, end]) => end - start);
   const meanMs = durations.length
@@ -652,7 +652,7 @@ export async function runAcceptance(name, outputDirectory) {
       "ERP HTTP in-flight maximum exceeds accepted concurrency",
     );
     if (name === "original-incident")
-      assert(report.durationSeconds < 240, "D14 incident settlement under 240 seconds");
+      assert(report.durationSeconds < 240, "incident settlement under 240 seconds");
     if (name === "finite-outage") assertOutageEvidence(report);
     if (name === "stable-high-latency") {
       assert(

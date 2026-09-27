@@ -572,7 +572,7 @@ async function pruneAttemptEvents(
 }
 
 /**
- * Per-call cumulative accounting (D09): the counters are incremented exactly
+ * Per-call cumulative accounting: the counters are incremented exactly
  * once per durable call identity because only the first successful attempt
  * insert reaches this point. A canonical terminal result resolves every
  * outstanding call for the same order and idempotency key.
@@ -646,7 +646,7 @@ function isDefinitiveCallOutcome(record: ErpAttemptRecord): boolean {
 
 /**
  * Accounting category of an observed attempt outcome, expressed strictly in
- * the shared `ErpOutcomeDisposition` vocabulary (D03/D09).
+ * the shared `ErpOutcomeDisposition` vocabulary.
  */
 function attemptCountCategory(record: ErpAttemptRecord): ErpOutcomeDisposition {
   if (record.disposition !== undefined) return record.disposition;

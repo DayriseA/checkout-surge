@@ -11,7 +11,7 @@ import {
 } from "./primitives.js";
 
 /**
- * Closed shared ERP error-code vocabulary (D03) with its HTTP statuses:
+ * Closed shared ERP error-code vocabulary with its HTTP statuses:
  * `erp_capacity_exceeded` (429), `erp_forced_outage` (503),
  * `erp_injected_error` (503), and `erp_idempotency_conflict` (409, identity
  * contradiction). Only codes declared here — or in the permanent-rejection
@@ -27,7 +27,7 @@ export const erpErrorCodeSchema = z.enum(erpErrorCodeValues);
 export type ErpErrorCode = z.infer<typeof erpErrorCodeSchema>;
 
 /**
- * Declared shared vocabulary of permanent business-rejection codes (D03). The
+ * Declared shared vocabulary of permanent business-rejection codes. The
  * current mock ERP emits none, so the list is empty by design: a code must be
  * added here first before any response can terminalize an order as
  * `business_rejection`. Unknown, malformed, 401, 403, 409, unknown-4xx, and
@@ -36,7 +36,7 @@ export type ErpErrorCode = z.infer<typeof erpErrorCodeSchema>;
 export const erpPermanentRejectionCodeValues = [] as const;
 export const erpPermanentRejectionCodeSchema = z.enum(erpPermanentRejectionCodeValues);
 
-/** Disposition classes for recognized ERP outcomes (D03/D05). */
+/** Disposition classes for recognized ERP outcomes. */
 export const erpOutcomeDispositionValues = [
   "succeeded",
   "capacity_rejected",
@@ -49,8 +49,8 @@ export const erpOutcomeDispositionSchema = z.enum(erpOutcomeDispositionValues);
 export type ErpOutcomeDisposition = z.infer<typeof erpOutcomeDispositionSchema>;
 
 /**
- * Pure data mapping of every recognized shared error code to its disposition
- * (D03). Connection failures and request timeouts carry no code: they are
+ * Pure data mapping of every recognized shared error code to its disposition.
+ * Connection failures and request timeouts carry no code: they are
  * `temporarily_unavailable` and `uncertain_result` respectively. The client
  * classifies opaque 5xx responses as uncertain and other contract failures as
  * technical failures.
@@ -64,7 +64,7 @@ export const recognizedErpErrorCodeDispositions: Readonly<
   erp_idempotency_conflict: "technical_failure",
 };
 
-/** Immutable request identity stored with a durable terminal ERP outcome (D05). */
+/** Immutable request identity stored with a durable terminal ERP outcome. */
 export const erpLookupIdentitySchema = z
   .object({
     orderId: uuidSchema,
@@ -128,7 +128,7 @@ export const erpLookupResponseSchema = z
 export type ErpLookupResponse = z.infer<typeof erpLookupResponseSchema>;
 
 /**
- * Replay metadata (D05): a replay that returns a stored result is flagged by
+ * Replay metadata: a replay that returns a stored result is flagged by
  * this response header, never inside the JSON body, so exact comparisons of
  * canonical results stay valid.
  */

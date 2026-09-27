@@ -13,7 +13,7 @@ export const queueBacklogDrainDurationBoundary =
 export const confirmationLagBoundary = "reservation_secured_to_order_confirmed" as const;
 
 /**
- * One downstream status for the run scope (D13), derived read-only from the
+ * One downstream status for the run scope, derived read-only from the
  * worker's durable protection state. Cooldown times, circuit detail, and probe
  * schedules are never projected — the status enum only.
  */
@@ -22,7 +22,7 @@ export const downstreamErpStatusSchema = z.enum(downstreamErpStatusValues);
 export type DownstreamErpStatus = z.infer<typeof downstreamErpStatusSchema>;
 
 /**
- * Runtime progress for one run (D13). Outstanding work and the confirmation
+ * Runtime progress for one run. Outstanding work and the confirmation
  * rate come from durable order records; a genuine zero rate inside a positive
  * window stays `0`, while telemetry that cannot be read is reported explicitly
  * as `null` (never as zero). The window is the effective measurement window:

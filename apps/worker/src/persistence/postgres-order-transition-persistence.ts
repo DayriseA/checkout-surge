@@ -236,7 +236,7 @@ async function closeControlRecordForTerminalOrder(
 }
 
 /**
- * Creates or claims the order's single durable control record (D04). The
+ * Creates or claims the order's single durable control record. The
  * insert is a no-op when the record already exists; an existing record keeps
  * its generation, lease, and owner so later deliveries can be compared against
  * the current processing generation.

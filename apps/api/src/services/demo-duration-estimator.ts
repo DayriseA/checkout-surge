@@ -10,9 +10,9 @@ import {
 } from "@checkout-surge/contracts";
 
 /**
- * Defaults measured on the host recorded in task 17b ("Docker 29.6.1-1 on Linux/WSL2,
+ * Defaults measured on the reference host ("Docker 29.6.1-1 on Linux/WSL2,
  * 16 visible CPUs, 7,637 MiB RAM, one worker"); they are meant to be re-measured per
- * deployment (task 22 owns the procedure) and overridden through the API environment.
+ * deployment and overridden through the API environment.
  * Estimator allowances include full durable job execution and settlement.
  * They are neither worst-case bounds nor confidence intervals.
  */

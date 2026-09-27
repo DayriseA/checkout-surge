@@ -520,7 +520,7 @@ describe("DashboardProjectionService", () => {
     }
 
     // A reconciled confirmation and a terminal technical failure leave the third
-    // accepted order recoverable even beyond the former five-minute drain target.
+    // accepted order recoverable after more than five minutes.
     observedAt = new Date(now.getTime() + 301_000);
     confirmed = 1;
     failed = 1;

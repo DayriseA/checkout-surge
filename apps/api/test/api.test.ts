@@ -3003,7 +3003,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/buy",
       headers: {
-        "x-correlation-id": "phase2-test-correlation",
+        "x-correlation-id": "test-correlation",
       },
       payload: {
         saleOfferId: fixtureIds.saleOffer,
@@ -3014,9 +3014,9 @@ describe("API gateway routes", () => {
     const payload = buyResponseSchema.parse(response.json());
 
     expect(response.statusCode).toBe(202);
-    expect(response.headers["x-correlation-id"]).toBe("phase2-test-correlation");
+    expect(response.headers["x-correlation-id"]).toBe("test-correlation");
     expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
-    expect(payload.correlationId).toBe("phase2-test-correlation");
+    expect(payload.correlationId).toBe("test-correlation");
     expect(payload.outcome).toBe("reservation_secured");
   });
 

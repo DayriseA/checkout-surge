@@ -2269,7 +2269,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         });
       },
     });
-    // Supply native pacing already: the old application gate must not throttle it again.
+    // Supply native pacing already: no application-level gate throttles it again.
     const rateLimit = erpDispatchRateLimit(declaredCapacity);
     await queue.setGlobalRateLimit(rateLimit.max, rateLimit.duration);
     await queue.setGlobalConcurrency(5);
@@ -2686,7 +2686,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     }
   }
 
-  it("converges after transient failures beyond former execution and publication limits", async () => {
+  it("converges after 101 transient failures", async () => {
     const transientFailures = 101;
     let policyNow = new Date("2026-06-21T00:00:00.000Z");
     const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(async () => {

@@ -50,7 +50,7 @@ Run these scenarios sequentially, three times each, in this order. One repetitio
 | --- | --- | --- |
 | `original-incident` | Settlement; job overhead under declared-capacity dispatch with traffic and processing overlapping | 25 req/s for 60 s, stock 888, ERP 10/s at 250 ms, concurrency 5 |
 | `duplicate-attempts` | Job overhead at low ERP latency | 200 buyers, stock 200, ERP 200/s at 50 ms, concurrency 5 |
-| `concurrency-saturation-reference` | Job overhead at higher latency with all concurrency slots busy | The previous surge-10k configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10 |
+| `concurrency-saturation-reference` | Job overhead at higher latency with all concurrency slots busy | A 10,000-buyer configuration, frozen for calibration: 10,000 buyers, stock 1,000, ERP 250/s at 150 ms, concurrency 10 |
 | `admin-failure-path` | Retry demand margin and excess-attempt pause | Seeded admin preset: 15 req/s for 12 s, stock 200, ERP 30/s at 300 ms, 25% injected transient errors, concurrency 4 |
 
 Each run lasts from a few seconds to under two minutes plus teardown; budget about 15 minutes for the twelve runs.

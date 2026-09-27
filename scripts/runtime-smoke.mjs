@@ -1045,7 +1045,7 @@ function runtimeRunTimeoutMs(env, durationSeconds) {
     "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",
   );
   // Harness-owned tail allowance for processing plus finalization after the
-  // traffic window. Fixed default, independent of any retired configuration knob.
+  // traffic window. Fixed default.
   const tailAllowanceSeconds = 300;
   return (durationSeconds + tailAllowanceSeconds + finalizationSeconds * 3 + 10) * 1_000;
 }

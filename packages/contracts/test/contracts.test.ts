@@ -170,7 +170,7 @@ describe("accepted run configuration", () => {
     },
   };
 
-  it("accepts the retired-field-free accepted run configuration", () => {
+  it("accepts a valid accepted run configuration", () => {
     expect(acceptedRunConfigSnapshotSchema.safeParse(snapshot).success).toBe(true);
   });
 
@@ -189,13 +189,13 @@ describe("accepted run configuration", () => {
     ).toBe(false);
   });
 
-  it("rejects retired run-config fields and engine knobs on new input instead of falling back", () => {
-    const retiredErpConfig = {
+  it("rejects unsupported run-config fields and engine knobs instead of falling back", () => {
+    const unsupportedErpConfig = {
       ...snapshot,
       erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
     };
-    expect(acceptedRunConfigSnapshotSchema.safeParse(retiredErpConfig).success).toBe(false);
-    expect(acceptedRunConfigWriteSchema.safeParse(retiredErpConfig).success).toBe(false);
+    expect(acceptedRunConfigSnapshotSchema.safeParse(unsupportedErpConfig).success).toBe(false);
+    expect(acceptedRunConfigWriteSchema.safeParse(unsupportedErpConfig).success).toBe(false);
     expect(
       acceptedRunConfigSnapshotSchema.safeParse({
         ...snapshot,

@@ -31,7 +31,7 @@ import {
   type PresentationState,
 } from "../src/app/lib/presentation/run-presentation-state.js";
 
-describe("Phase 6 projection dashboard", () => {
+describe("projection dashboard", () => {
   it("renders neutral initial hydration without recovery controls", () => {
     const recovery = { status: "loading" as const };
     const markup = renderToStaticMarkup(
@@ -469,7 +469,7 @@ describe("Phase 6 projection dashboard", () => {
     expect(markup).toContain("Last updated");
     expect(markup).not.toContain("Protection details");
     expect(markup).not.toContain("Recent attempts");
-    // The retained failed-job total is gone, and the panel issues no verdict: no pill, and no
+    // The panel shows no failed-job total and issues no verdict: no pill, and no
     // degraded shared protection column.
     expect(markup).not.toMatch(/Failed<\/dt>/);
     expect(markup).not.toContain("rounded-full");
@@ -519,7 +519,7 @@ describe("Phase 6 projection dashboard", () => {
   });
 
   // "Yet" may only promise evidence that can still arrive, so the zero-confirmation copy follows
-  // A04's pending-versus-settled rule in both directions.
+  // the pending-versus-settled absence rule in both directions.
   it.each([
     { name: "an active run", terminal: false, expected: "No confirmations yet" },
     {
@@ -756,12 +756,11 @@ const liveFreshness: Freshness = {
 };
 
 /**
- * A hard rule, from an explicit named decision rather than an inferred relationship:
- * `businessDrainBlockers` in `apps/api/src/services/demo-run-finalization-service.ts` refuses to
- * finalize a run while notifications trail confirmed orders, or while queued, processing, or
- * retrying orders exceed the counts a timeout escalation has excused. A run presenting as
- * `completed` therefore cannot carry any of them. The escalated counts are zero unless a run was
- * escalated, which none of these fixtures depicts.
+ * A hard rule: `businessDrainBlockers` in `apps/api/src/services/demo-run-finalization-service.ts`
+ * refuses to finalize a run while notifications trail confirmed orders, or while queued,
+ * processing, or retrying orders exceed the counts a timeout escalation has excused. A run
+ * presenting as `completed` therefore cannot carry any of them. The escalated counts are zero
+ * unless a run was escalated, which none of these fixtures depicts.
  */
 function expectFinalizableCompletedOutcome(outcome: BusinessOutcomeSummary): void {
   expect(outcome.notificationsRecorded).toBeGreaterThanOrEqual(outcome.confirmedOrders);

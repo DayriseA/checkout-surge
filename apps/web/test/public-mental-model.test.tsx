@@ -146,7 +146,7 @@ describe("public visitor mental model", () => {
     expect(markup).toContain("Failure is a separate durable outcome");
   });
 
-  it("links the repository safely from about and global navigation and supplies B05 copy", async () => {
+  it("links the repository safely from about and global navigation", async () => {
     const aboutMarkup = renderToStaticMarkup(await OverviewPage());
     const layoutMarkup = renderToStaticMarkup(
       await RootLayout({ children: createElement("p", null, "content") }),

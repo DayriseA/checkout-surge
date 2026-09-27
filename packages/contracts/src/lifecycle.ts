@@ -23,7 +23,7 @@ export const erpAttemptStatusSchema = z.enum(erpAttemptStatusValues);
 export type ErpAttemptStatus = z.infer<typeof erpAttemptStatusSchema>;
 
 /**
- * Operational waiting dimension (D01/D03). A waiting reason is carried by the
+ * Operational waiting dimension. A waiting reason is carried by the
  * order's durable control record; the absence of a reason is "not waiting" and
  * is therefore not a vocabulary member.
  */
@@ -37,7 +37,7 @@ export const orderWaitingReasonSchema = z.enum(orderWaitingReasonValues);
 export type OrderWaitingReason = z.infer<typeof orderWaitingReasonSchema>;
 
 /**
- * Terminal order failure categories (D01/D03).
+ * Terminal order failure categories.
  */
 export const orderFailureCategoryValues = ["business_rejection", "technical"] as const;
 export const orderFailureCategorySchema = z.enum(orderFailureCategoryValues);

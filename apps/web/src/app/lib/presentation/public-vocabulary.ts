@@ -235,7 +235,7 @@ export function publicStatusLabel(input: PublicStatus): string {
 }
 
 /**
- * The one public label for the projected downstream status (D13). The status is the only fact the
+ * The one public label for the projected downstream status. The status is the only fact the
  * server exposes — never cooldown times or protection internals — so the label carries the whole
  * explanation: a limited or unavailable downstream keeps processing and recovers on its own.
  */

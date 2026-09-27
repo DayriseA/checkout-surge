@@ -5,31 +5,29 @@ import { nonnegativeNumberSchema, percentageSchema, positiveIntegerSchema } from
 import { type EnginePolicyIdentity, enginePolicyIdentitySchema } from "./processing-control.js";
 
 /**
- * Initial estimated demo-occupancy ceiling (D11). Inclusive, in seconds,
- * measured from run acceptance through expected business settlement. This is a
- * provisional value: the number is calibrated and frozen only by task 20 with
- * explicit user approval. Admission is granted when the conservative estimate
- * is at most this ceiling.
+ * Initial estimated demo-occupancy ceiling. Inclusive, in seconds,
+ * measured from run acceptance through expected business settlement.
+ * Admission is granted when the conservative estimate is at most this ceiling.
  */
 export const estimatedDemoOccupancyCeilingSeconds = 600 as const;
 export const automaticRunResetDeadlineSeconds = 900 as const;
 /**
- * From this many seconds after acceptance (D10), and only then, the dashboard
+ * From this many seconds after acceptance, and only then, the dashboard
  * shows the grace-period notice with the time left before the automatic reset.
  */
 export const automaticRunResetGraceNoticeSeconds = estimatedDemoOccupancyCeilingSeconds;
 
-/** Single estimator identity; provisional constants are frozen only by task 20. */
+/** Single estimator identity. */
 export const conservativeDurationEstimatorIdentity = {
   name: "conservative-duration-estimator",
   version: 2,
 } as const satisfies EnginePolicyIdentity;
 
 /**
- * Declared scenario conditions consumed by the API-owned estimator (D11). The
+ * Declared scenario conditions consumed by the API-owned estimator. The
  * estimator service owns all estimation logic; contracts describe only the
  * input and result shapes. `declaredErpForcedOutage` is the declared base
- * outage flag kept by D13: a permanently unavailable ERP has no admissible
+ * outage flag: a permanently unavailable ERP has no admissible
  * finite estimate and must be rejected, not estimated as zero duration.
  */
 export const estimatorInputSchema = z
@@ -68,7 +66,7 @@ export const estimatorDecisionValues = ["admitted", "rejected"] as const;
 export const estimatorDecisionSchema = z.enum(estimatorDecisionValues);
 
 /**
- * Why a scenario has no admissible finite estimate (plan section 7, D11).
+ * Why a scenario has no admissible finite estimate.
  * An unestimable result is always a rejection and carries no fabricated
  * durations.
  */
@@ -90,7 +88,7 @@ const estimatorResultBaseShape = {
 };
 
 /**
- * Estimator result (D11/D12). Two mutually exclusive shapes enforced here:
+ * Estimator result. Two mutually exclusive shapes enforced here:
  *
  * - An estimable result carries both durations and no `unestimableReason`.
  *   It is `admitted` if and only if the conservative duration is at most the

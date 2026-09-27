@@ -143,7 +143,7 @@ describe("order recovery scanner", () => {
     expect(store.markPublicationFailed).not.toHaveBeenCalled();
   });
 
-  it("does not abandon work after the former recovery budget", async () => {
+  it("does not abandon work after 101 recovery attempts", async () => {
     const store = persistence({
       findRecoverable: vi.fn().mockResolvedValue([
         {

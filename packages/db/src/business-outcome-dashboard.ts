@@ -187,7 +187,7 @@ export async function readConsistencyLagSummary(
 }
 
 /**
- * Runtime-progress read model for one run (D13), read from the same durable
+ * Runtime-progress read model for one run, read from the same durable
  * order records as the business-outcome and lag projections. `processingStartedAt`
  * is the earliest moment one of the run's orders entered processing; it bounds
  * the confirmation-rate window so a run that started processing moments ago is

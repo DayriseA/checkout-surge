@@ -1,7 +1,7 @@
 /**
  * The single presentation boundary for user-facing instants, durations, and counts.
  *
- * Application policy (see `docs/cross_service_conventions.md`):
+ * Application policy:
  * - Timezone: labelled UTC everywhere, 24-hour clock. Server rendering and client hydration
  *   therefore cannot disagree about a wall clock reading.
  * - Locale: `en-US` grouping through the one shared `Intl.NumberFormat` instance below.

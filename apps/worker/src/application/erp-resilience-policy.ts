@@ -4,7 +4,7 @@ import {
 } from "@checkout-surge/contracts";
 
 export const erpResiliencePolicy = {
-  // Derived from the shared engine-policy identity (D13).
+  // Derived from the shared engine-policy identity.
   version: `${erpDispatchEnginePolicyIdentity.name}-v${erpDispatchEnginePolicyIdentity.version}`,
   fallbackCooldownMs: 1_000,
   maximumCooldownMs: 60_000,
@@ -41,7 +41,7 @@ interface DeadlineScopeState {
   lastUsedAtMs: number;
 }
 
-/** Process-local latency learning. Only task 09 will wire it into dispatch. */
+/** Process-local latency learning. */
 export class AdaptiveErpRequestDeadlineController {
   private readonly scopes = new Map<ErpAdmissionScope, DeadlineScopeState>();
 
@@ -182,7 +182,7 @@ export type AdaptiveErpAdmissionDecision =
       snapshot: AdaptiveErpAdmissionSnapshot;
     };
 
-/** This is the complete task-09 persistence boundary; latency samples are excluded. */
+/** The complete persisted admission-safety state; latency samples are excluded. */
 export interface AdaptiveErpAdmissionSafetyState {
   policyVersion: string;
   scopes: Array<{

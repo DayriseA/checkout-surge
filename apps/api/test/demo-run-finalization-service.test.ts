@@ -774,7 +774,7 @@ describe("demo run finalization service", () => {
       lazyConnect: true,
       maxRetriesPerRequest: 3,
     });
-    const barrierChannel = "task-02-terminal-inventory-timeout-barrier";
+    const barrierChannel = "terminal-inventory-timeout-barrier";
     const barrierSentinel = "terminal-inventory-timeout-observed";
     const terminalEvents: unknown[] = [];
     const observedBarriers: string[] = [];
@@ -944,7 +944,7 @@ describe("demo run finalization service", () => {
       lazyConnect: true,
       maxRetriesPerRequest: 3,
     });
-    const barrierChannel = "task-74-terminal-event-barrier";
+    const barrierChannel = "terminal-event-barrier";
     const barrierSentinel = "finalizer-publishes-complete";
     const terminalEvents: unknown[] = [];
     const observedBarriers: string[] = [];
@@ -1472,7 +1472,7 @@ describe("demo run finalization service", () => {
     await expect(service.finalizeRun(ids.run)).resolves.toMatchObject({ status: "draining" });
   });
 
-  it("keeps missing accepted-response accounting nonterminal after the old deadline", async () => {
+  it("keeps missing accepted-response accounting nonterminal ten minutes into the run", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
     await seedDrainingRun({

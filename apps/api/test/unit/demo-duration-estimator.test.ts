@@ -100,8 +100,8 @@ describe("pure conservative duration estimator", () => {
       (fixture) => fixture.name === "concurrency-saturation-reference",
     )?.config;
     if (!incident || !reference) throw new Error("Missing sanity references");
-    // Capacity-only references remain historical; the refitted full-job rate
-    // makes the calibration run's sequential base 148 s before settlement.
+    // Capacity-only bases ignore job latency; the full-job rate, bounded by worker
+    // concurrency and latency, makes the calibration run's sequential base 148 s before settlement.
     expect(60 + incident.inventoryConfig.startingStock / incident.erpConfig.maxTps).toBe(148.8);
     expect(120 + reference.inventoryConfig.startingStock / reference.erpConfig.maxTps).toBe(124);
     expect(estimate(fromConfig(incident)).explanatoryDurationSeconds).toBe(88.8);
@@ -115,7 +115,7 @@ describe("pure conservative duration estimator", () => {
     expect(estimate(referenceInput).explanatoryDurationSeconds).toBe(120);
   });
 
-  it("covers task 17b’s five measured finalization times", async () => {
+  it("covers the five reference-host finalization measurements", async () => {
     await import("../../../../packages/db/src/scripts/seed.js");
     const reference = acceptanceScenarioFixtures().find(
       (fixture) => fixture.name === "concurrency-saturation-reference",

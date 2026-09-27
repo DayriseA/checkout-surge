@@ -342,7 +342,7 @@ describe("run result presentation", () => {
 
   it("groups six-figure narrative counts instead of rendering a digit wall", () => {
     // Stock is operator-editable and order/decision counts are bounded by `maxTotalRequests`,
-    // whose shipped default is 100,000 — exactly the value B10 names.
+    // whose shipped default is 100,000.
     const result = deriveRunResult(
       withEvidence({
         startingStock: 100_000,

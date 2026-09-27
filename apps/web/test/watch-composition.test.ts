@@ -45,7 +45,7 @@ describe("watch composition", () => {
     expect(composition(available(projection(run(status)))).phase).toBe(expected);
   });
 
-  it("uses the A04 starting presentation while active traffic is still preparing", () => {
+  it("uses the starting presentation while active traffic is still preparing", () => {
     const currentRun = run("active");
     if (currentRun.status !== "active") throw new Error("Expected active run.");
 

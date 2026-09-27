@@ -351,7 +351,7 @@ export const orders = pgTable(
 );
 
 /**
- * Durable identity of one actual confirmation POST (D04/D05). The row is
+ * Durable identity of one actual confirmation POST. The row is
  * written before the HTTP request is sent and keeps the immutable
  * order/reservation/sale/run/quantity/idempotency identity plus correlation
  * lineage, independently of queue delivery identity or BullMQ attempt budgets.
@@ -388,7 +388,7 @@ export const erpDispatchCalls = pgTable(
   ],
 );
 
-/** Mock ERP-owned terminal confirmation evidence (D05). */
+/** Mock ERP-owned terminal confirmation evidence. */
 export const erpConfirmationLedger = pgTable(
   "erp_confirmation_ledger",
   {
@@ -486,7 +486,7 @@ export const orderRecoveryJobs = pgTable(
     escalatedAt: timestamp("escalated_at", { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
-    // Durable per-order processing-control fields (D01/D04/D07).
+    // Durable per-order processing-control fields.
     processingGeneration: integer("processing_generation").default(0).notNull(),
     leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
     waitingReason: orderWaitingReasonEnum("waiting_reason"),
@@ -511,8 +511,8 @@ export const orderRecoveryJobs = pgTable(
 );
 
 /**
- * Restart-safety state per downstream capacity scope (`catalog` or `run:<id>`)
- * (D07). Learned rates and latency samples stay unpersisted; only the durable
+ * Restart-safety state per downstream capacity scope (`catalog` or `run:<id>`).
+ * Learned rates and latency samples stay unpersisted; only the durable
  * cooldown and circuit-open expiries survive a restart.
  */
 export const erpScopeResilienceState = pgTable("erp_scope_resilience_state", {

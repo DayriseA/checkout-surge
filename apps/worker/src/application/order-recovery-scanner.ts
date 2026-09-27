@@ -27,7 +27,7 @@ export interface RecoverableOrderJob {
 }
 
 /**
- * Durable per-order processing-control record (D01/D04). One row per order in
+ * Durable per-order processing-control record. One row per order in
  * `order_recovery_jobs`; it carries the operational situation of the order
  * independent of queue deliveries.
  */

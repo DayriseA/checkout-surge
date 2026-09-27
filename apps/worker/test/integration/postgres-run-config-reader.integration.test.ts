@@ -117,8 +117,8 @@ describe("PostgresRunConfigReader", () => {
       new PostgresGeneratedRunPublicationFence(connection.db),
     );
 
-    // The retired snapshot-fed retry budget is gone: the fence only guards
-    // run non-terminality and the operation no longer reads the snapshot.
+    // The fence only guards run non-terminality; the operation does not read
+    // the snapshot.
     await expect(publisher.enqueue(runOrderJob())).resolves.toBeUndefined();
     expect(add).toHaveBeenCalledOnce();
   });

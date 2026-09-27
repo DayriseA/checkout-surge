@@ -149,7 +149,7 @@ function headlineSentence(result: RunResult): string {
 
 /**
  * Failed and pending quantities stay readable beside every headline that does not already state
- * them (W07). The suffix reuses the existing order wording and never duplicates a quantity the
+ * them. The suffix reuses the existing order wording and never duplicates a quantity the
  * headline carries; unknown counts add nothing rather than implying zero.
  */
 function orderQuantitiesSuffix(result: RunResult): string {

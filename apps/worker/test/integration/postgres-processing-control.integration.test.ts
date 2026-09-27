@@ -295,8 +295,8 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
           `;
           expect(activity?.wait_event_type).toBe("Lock");
         });
-        // Previously the writer held control while waiting for the order FK;
-        // this real execution claim then waited for control, creating a cycle.
+        // The writer must not hold control while waiting for the order FK; otherwise
+        // this real execution claim would wait for control and create a cycle.
         await expect(
           new PostgresOrderTransitionPersistence(tx, () => now).transitionToProcessing(
             seeded.job,

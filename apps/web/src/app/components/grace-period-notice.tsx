@@ -6,7 +6,7 @@ import { formatDurationMs } from "../lib/presentation/format";
 
 /**
  * The server owns the reset deadline (`autoResetAt`); this component only displays it. The notice
- * stays hidden until 600 seconds after acceptance (D10) — no countdown before the grace period —
+ * stays hidden until 600 seconds after acceptance — no countdown before the grace period —
  * then warns that the run will be reset automatically to free the demo, with the time left. It
  * derives everything from the projection's current run plus one clock, so an SSE reconnect or page
  * reload reproduces the same notice without stored client state.
