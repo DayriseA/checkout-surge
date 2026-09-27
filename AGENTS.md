@@ -47,8 +47,10 @@ The test: Every changed line should trace directly to the user's request.
 Test the happy path plus edge cases that are reachable through the public API. Before writing a test, ask "can a caller actually trigger this state in the current codebase?" If not, skip it. Do not test: 
 - unreachable code paths, 
 - invalid inputs already prevented by types or upstream validation,
-- framework/stdlib behavior
-- speculative future requirements. 
+- framework/stdlib behavior,
+- speculative future requirements,
+- states the current producers never emit, even if a contract or type allows them (make the contract match the producer instead),
+- styling (CSS or Tailwind classes, design tokens).
 
 Prefer fewer, meaningful tests over exhaustive coverage.  
 
