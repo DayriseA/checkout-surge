@@ -239,6 +239,8 @@ describe("run history service", () => {
       retryingOrders: 0,
       confirmedOrders: 3,
       failedOrders: 0,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 3,
     };
@@ -289,6 +291,7 @@ describe("run history service", () => {
         ...cleanBusinessOutcome,
         confirmedOrders: 2,
         failedOrders: 1,
+        technicallyFailedOrders: 1,
         notificationsRecorded: 2,
       },
     });
@@ -361,6 +364,8 @@ describe("run history service", () => {
       retryingOrders: 0,
       confirmedOrders: 3,
       failedOrders: 0,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 3,
     };
@@ -412,6 +417,7 @@ describe("run history service", () => {
         retryingOrders: 1,
         confirmedOrders: 0,
         failedOrders: 1,
+        technicallyFailedOrders: 1,
         pendingPersistenceCount: 1,
       },
       terminalInventorySnapshot: { ...cleanInventory, pendingPersistenceCount: 1 },
@@ -621,6 +627,7 @@ describe("run history service", () => {
     await seedRunDetailRecords(db);
     await db.insert(erpAttempts).values([
       {
+        disposition: "temporarily_unavailable",
         id: "88888888-8888-4888-8888-888888888881",
         orderId: ids.order,
         deliveryId: "history-delivery-1",
@@ -635,6 +642,7 @@ describe("run history service", () => {
         createdAt: new Date("2026-06-20T00:00:03.000Z"),
       },
       {
+        disposition: "uncertain_result",
         id: "88888888-8888-4888-8888-888888888882",
         orderId: ids.order,
         deliveryId: "history-delivery-1",
@@ -723,30 +731,27 @@ describe("run history service", () => {
     expect(adminDetail?.erpAttemptSummary.averageLatencyMs).toBeCloseTo(50.666_666, 5);
     expect(adminDetail?.erpAttemptSummary.p95LatencyMs).toBeCloseTo(94.2, 3);
 
-    const {
-      generatorCapacity: _generatorCapacity,
-      generatorUtilisation: _generatorUtilisation,
-      ...legacyDiagnostics
-    } = runHistoryDiagnosticsFixture();
     await db
       .update(demoRunSummaries)
       .set({
         loadRunDiagnosticsSummary: {
-          ...legacyDiagnostics,
+          ...runHistoryDiagnosticsFixture(),
           accountingWarnings: ["accepted_response_accounting_incomplete"],
         },
       })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
-    const legacyAdminDetail = await service.adminDetail(ids.newerRun);
-    expect(legacyAdminDetail?.loadRunDiagnosticsSummary).toMatchObject({
+    const annotatedAdminDetail = await service.adminDetail(ids.newerRun);
+    expect(annotatedAdminDetail?.loadRunDiagnosticsSummary).toMatchObject({
       generatorCapacity: null,
       generatorUtilisation: null,
     });
-    expect(legacyAdminDetail?.loadRunDiagnosticsSummary).not.toHaveProperty("accountingWarnings");
+    expect(annotatedAdminDetail?.loadRunDiagnosticsSummary).not.toHaveProperty(
+      "accountingWarnings",
+    );
 
     await db
       .update(demoRunSummaries)
-      .set({ loadRunDiagnosticsSummary: { ...legacyDiagnostics, nproc: 0 } })
+      .set({ loadRunDiagnosticsSummary: { ...runHistoryDiagnosticsFixture(), nproc: 0 } })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
     await expect(service.adminDetail(ids.newerRun)).rejects.toThrow(
       /loadRunDiagnosticsSummary\.nproc/,
@@ -969,6 +974,7 @@ async function seedRunDetailRecords(
     updatedAt: new Date("2026-06-20T00:00:07.000Z"),
   });
   await db.insert(erpAttempts).values({
+    disposition: "succeeded",
     id: ids.erpAttempt,
     orderId: ids.order,
     deliveryId: "history-delivery-1",
@@ -1041,6 +1047,9 @@ function runFixture(input: {
 }): typeof demoRuns.$inferInsert {
   return {
     id: input.id,
+    correlationId: "corr-history-test",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     presetId: ids.preset,
     presetName: input.presetName,
     operatorMode: "public",
@@ -1117,6 +1126,8 @@ function summaryFixture(input: {
       retryingOrders: 0,
       confirmedOrders: 2,
       failedOrders: 1,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 1,
       pendingPersistenceCount: 0,
       notificationsRecorded: 2,
     },

@@ -246,6 +246,7 @@ describe("run history", () => {
         soldOutRejections: 1_100,
         confirmedOrders: 98,
         failedOrders: 2,
+        technicallyFailedOrders: 2,
         overallDurationMs: 12_000,
         convergenceDurationSeconds: 4,
       },
@@ -274,13 +275,15 @@ describe("run history", () => {
     expect(within(completedRow).getByText("20 attempts · 10 units")).toBeTruthy();
     expect(within(completedRow).getByText("Completed")).toBeTruthy();
     expectVisibleFact(completedRow, "Confirmed orders", "10");
-    expectVisibleFact(completedRow, "Failed orders", "0");
+    expectVisibleFact(completedRow, "Business-rejected orders", "0");
+    expectVisibleFact(completedRow, "Technically failed orders", "0");
     expectVisibleFact(completedRow, "Overall duration", "10 s");
 
     expect(within(warningRow).getByText("1,200 attempts · 100 units")).toBeTruthy();
     expect(within(warningRow).getByText("Completed with order failures")).toBeTruthy();
     expectVisibleFact(warningRow, "Confirmed orders", "98");
-    expectVisibleFact(warningRow, "Failed orders", "2");
+    expectVisibleFact(warningRow, "Business-rejected orders", "0");
+    expectVisibleFact(warningRow, "Technically failed orders", "2");
     expectVisibleFact(warningRow, "Overall duration", "12 s");
 
     expect(screen.getByText("Result not fully verified")).toBeTruthy();
@@ -676,7 +679,8 @@ describe("run history", () => {
     expect(markup).toContain("Unique reservations secured");
     expect(markup).toContain("sold-out rejections recorded by Checkout-Surge");
     expect(markup).toContain("Confirmed orders");
-    expect(markup).toContain("Failed orders");
+    expect(markup).toContain("Business-rejected orders");
+    expect(markup).toContain("Technically failed orders");
     expect(markup).toContain(">0</dd>");
   });
 
@@ -754,6 +758,7 @@ describe("run history", () => {
       ...detail.summary.businessOutcomeSummary,
       confirmedOrders: 200,
       failedOrders: 50,
+      technicallyFailedOrders: 50,
       notificationsRecorded: 200,
     };
     detail.result = deriveRunResult({
@@ -772,7 +777,9 @@ describe("run history", () => {
     );
 
     expect(markup).toContain('aria-hidden="true">!</span>Completed with order failures</span>');
-    expect(markup).toContain("200 orders were confirmed, 50 failed, and 0 remain pending.");
+    expect(markup).toContain(
+      "200 orders were confirmed, 0 business-rejected, 50 technically failed, and 0 remain pending.",
+    );
   });
 
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
@@ -1071,6 +1078,8 @@ function listFixture(): RunHistoryListResponse {
         soldOutRejections: 10,
         confirmedOrders: 10,
         failedOrders: 0,
+        businessRejectedOrders: 0,
+        technicallyFailedOrders: 0,
         convergenceDurationSeconds: 2,
       },
     ],
@@ -1111,6 +1120,8 @@ function detailFixture(
     retryingOrders: 0,
     confirmedOrders: 250,
     failedOrders: 0,
+    businessRejectedOrders: 0,
+    technicallyFailedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 250,
   };
@@ -1135,6 +1146,8 @@ function detailFixture(
       soldOutDecisions: 750,
       confirmedOrders: 250,
       failedOrders: 0,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 0,
       queuedOrders: 0,
       processingOrders: 0,
       durablePendingPersistenceRecords: 0,
@@ -1280,6 +1293,8 @@ function resultEvidence(detail: PublicRunHistoryDetailResponse) {
       uniqueReservations: business.acceptedReservations,
       soldOutDecisions: business.soldOutRejections,
       confirmedOrders: business.confirmedOrders,
+      businessRejectedOrders: business.businessRejectedOrders,
+      technicallyFailedOrders: business.technicallyFailedOrders,
       failedOrders: business.failedOrders,
       queuedOrders: business.queuedOrders,
       processingOrders: business.processingOrders,

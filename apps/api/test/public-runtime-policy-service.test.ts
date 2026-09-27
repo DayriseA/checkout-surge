@@ -1,6 +1,6 @@
 import { createDatabaseConnection, publicRuntimePolicies } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   PublicRuntimePolicyService,
@@ -32,13 +32,8 @@ describe("public runtime policy service", () => {
     await connection?.close();
   });
 
-  it("defaults legacy rows to 600, allows lowering, and rejects exceeding the deployment ceiling", async () => {
-    const db = requireConnection(connection).db;
+  it("allows lowering and rejects exceeding the deployment ceiling", async () => {
     const service = createService(requireConnection(connection));
-    await db.execute(
-      sql`update public_runtime_policies set policy = policy - 'estimatedDemoOccupancyCeilingSeconds' where id = 'active'`,
-    );
-    expect((await service.readEffectivePolicy()).estimatedDemoOccupancyCeilingSeconds).toBe(600);
     const policy = {
       ...publicRuntimePolicyMutableFixture(),
       estimatedDemoOccupancyCeilingSeconds: 123.456,

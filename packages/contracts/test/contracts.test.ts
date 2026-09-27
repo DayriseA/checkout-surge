@@ -53,8 +53,6 @@ import {
   hasObservedRequestArrivals,
   healthReadyPath,
   healthResponseSchema,
-  historicalAcceptedRunConfigSnapshotSchema,
-  historicalTrafficExecutionStartRequestSchema,
   internalLoadMetricIngestPath,
   internalRunFailureReasonSchema,
   internalTrafficCompletionPath,
@@ -211,55 +209,6 @@ describe("accepted run configuration", () => {
         },
       }).success,
     ).toBe(false);
-  });
-
-  it("keeps historical snapshots with retired engine knobs readable and stripped", () => {
-    const historical = historicalAcceptedRunConfigSnapshotSchema.parse({
-      ...snapshot,
-      inventoryConfig: {
-        ...snapshot.inventoryConfig,
-        quantityPerCheckout: 1,
-        reservationHoldMinutes: 15,
-      },
-      erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
-      backpressureConfig: {
-        ...snapshot.backpressureConfig,
-        pendingPersistenceRetryAfterSeconds: 30,
-        retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
-        drainTimeoutSeconds: 300,
-        circuitBreakerFailureThreshold: 5,
-        circuitBreakerResetTimeoutMs: 10_000,
-      },
-    });
-    expect(historical).toEqual(snapshot);
-  });
-
-  it("keeps historical execution journals with retired engine knobs readable", () => {
-    const request = {
-      runId,
-      saleOfferId,
-      apiBaseUrl: "http://localhost:4000",
-      correlationId,
-      configSnapshot: {
-        ...snapshot,
-        erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
-        backpressureConfig: {
-          ...snapshot.backpressureConfig,
-          retryPolicy: { maxAttempts: 1, initialBackoffMs: 0 },
-          drainTimeoutSeconds: 300,
-          circuitBreakerFailureThreshold: 5,
-          circuitBreakerResetTimeoutMs: 10_000,
-        },
-      },
-    };
-    expect(historicalTrafficExecutionStartRequestSchema.parse(request)).toEqual({
-      runId,
-      saleOfferId,
-      apiBaseUrl: "http://localhost:4000",
-      correlationId,
-      configSnapshot: snapshot,
-    });
-    expect(() => trafficExecutionStartRequestSchema.parse(request)).toThrow();
   });
 });
 
@@ -1746,6 +1695,8 @@ describe("buy and dashboard contracts", () => {
         retryingOrders: 2,
         confirmedOrders: 2,
         failedOrders: 1,
+        businessRejectedOrders: 0,
+        technicallyFailedOrders: 1,
         pendingPersistenceCount: 0,
         notificationsRecorded: 0,
       },
@@ -1974,6 +1925,8 @@ describe("buy and dashboard contracts", () => {
           retryingOrders: 0,
           confirmedOrders: 0,
           failedOrders: 0,
+          businessRejectedOrders: 0,
+          technicallyFailedOrders: 0,
           pendingPersistenceCount: 0,
           notificationsRecorded: 0,
         },
@@ -2162,6 +2115,8 @@ describe("public runtime policy contract", () => {
         retryingOrders: 0,
         confirmedOrders: 5,
         failedOrders: 1,
+        businessRejectedOrders: 0,
+        technicallyFailedOrders: 1,
         pendingPersistenceCount: 0,
         notificationsRecorded: 5,
       },
@@ -2193,6 +2148,8 @@ describe("public runtime policy contract", () => {
           soldOutRejections: 4,
           confirmedOrders: 5,
           failedOrders: 1,
+          businessRejectedOrders: 0,
+          technicallyFailedOrders: 1,
           convergenceDurationSeconds: null,
         },
       ],
@@ -2311,6 +2268,8 @@ describe("public runtime policy contract", () => {
           soldOutDecisions: 4,
           confirmedOrders: 5,
           failedOrders: 1,
+          businessRejectedOrders: 0,
+          technicallyFailedOrders: 1,
           queuedOrders: 0,
           processingOrders: 0,
           durablePendingPersistenceRecords: 0,
@@ -2910,6 +2869,7 @@ describe("public runtime policy contract", () => {
 
   it("validates protected public runtime policy reads and update requests", () => {
     const policy = publicRuntimePolicySchema.parse({
+      estimatedDemoOccupancyCeilingSeconds: 600,
       isPublicRunBudgetEnforced: true,
       publicRunBudget: {
         windowSeconds: 120,
@@ -2944,6 +2904,7 @@ describe("public runtime policy contract", () => {
       },
     });
     const mutable = publicRuntimePolicyMutableSchema.parse({
+      estimatedDemoOccupancyCeilingSeconds: policy.estimatedDemoOccupancyCeilingSeconds,
       isPublicRunBudgetEnforced: policy.isPublicRunBudgetEnforced,
       publicRunBudget: policy.publicRunBudget,
       publicCustomDefaults: policy.publicCustomDefaults,

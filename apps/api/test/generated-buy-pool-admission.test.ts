@@ -108,6 +108,9 @@ describe("generated buy bounded-pool admission", () => {
         ...configSnapshot,
       });
       await setup.db.insert(demoRuns).values({
+        correlationId: "corr-test-run",
+        enginePolicyName: "declared-capacity-erp-dispatch",
+        enginePolicyVersion: 2,
         id: ids.run,
         presetId: ids.preset,
         presetName: "Pool Admission",

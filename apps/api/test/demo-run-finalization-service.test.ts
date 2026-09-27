@@ -191,6 +191,7 @@ describe("demo run finalization service", () => {
         await db.insert(reservations).values(reservationFixture(ids.reservation1));
         await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "processing"));
         await db.insert(erpAttempts).values({
+          disposition: "technical_failure",
           id: ids.erpAttempt,
           orderId: ids.order1,
           deliveryId: "finalize-delivery-1",
@@ -636,6 +637,7 @@ describe("demo run finalization service", () => {
         orderFixture(ids.order2, ids.reservation2, "processing"),
       ]);
     await db.insert(erpAttempts).values({
+      disposition: "technical_failure",
       orderId: ids.order1,
       deliveryId: "escalated-retry-delivery",
       correlationId: "corr-finalize-test",
@@ -1635,6 +1637,8 @@ async function seedDrainingRun(input: {
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
   await input.db.insert(demoRuns).values({
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: ids.run,
     presetId: ids.preset,
     presetName: "Finalize Preset",

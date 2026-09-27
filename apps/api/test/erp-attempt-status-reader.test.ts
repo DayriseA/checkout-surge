@@ -74,6 +74,12 @@ describe("PostgresErpAttemptStatusReader", () => {
         const finishedAt = new Date(startedAt.getTime() + 25);
 
         return {
+          disposition:
+            status === "succeeded"
+              ? ("succeeded" as const)
+              : status === "timed_out"
+                ? ("uncertain_result" as const)
+                : ("temporarily_unavailable" as const),
           orderId: ids.order,
           runId: ids.runA,
           deliveryId: `status-reader-delivery-${attemptNumber}`,
@@ -203,6 +209,9 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
   await connection.db.insert(demoRuns).values(
     [ids.runA, ids.runB].map((id, index) => ({
       id,
+      correlationId: "corr-erp-status-reader",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       presetId: ids.preset,
       presetName: "ERP status reader",
       operatorMode: "admin" as const,
@@ -275,6 +284,12 @@ function attempt(
   const startedAt = new Date(`2026-06-22T00:00:0${finishedSecond}.000Z`);
   return {
     orderId,
+    disposition:
+      status === "succeeded"
+        ? ("succeeded" as const)
+        : status === "timed_out"
+          ? ("uncertain_result" as const)
+          : ("temporarily_unavailable" as const),
     runId,
     deliveryId: `status-reader-${orderId}-${attemptNumber}`,
     correlationId: "corr-erp-status-reader",

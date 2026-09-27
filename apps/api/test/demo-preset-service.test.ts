@@ -112,6 +112,9 @@ describe("demo preset service", () => {
       targetSlug: "linked-copy",
     });
     await activeConnection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: "55555555-5555-4555-8555-555555555570",
       presetId: created.preset.id,
       presetName: created.preset.display.name,

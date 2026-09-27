@@ -1012,6 +1012,9 @@ describe("focused demo maintenance workflows", () => {
         expect(abortCurrent).toHaveBeenCalledOnce();
         await expect(
           db.insert(demoRuns).values({
+            correlationId: "corr-test-run",
+            enginePolicyName: "declared-capacity-erp-dispatch",
+            enginePolicyVersion: 2,
             id: ids.startingRun,
             presetId: ids.preset,
             presetName: "Reset Preset",
@@ -1898,6 +1901,9 @@ describe("focused demo maintenance workflows", () => {
       const redisClient = requireRedis(redis);
       await seedBase(db);
       await db.insert(demoRuns).values({
+        correlationId: "corr-test-run",
+        enginePolicyName: "declared-capacity-erp-dispatch",
+        enginePolicyVersion: 2,
         id: ids.startingRun,
         presetId: ids.preset,
         presetName: "Reset Preset",
@@ -2933,6 +2939,9 @@ async function seedRun(
     updatedAt: now,
   });
   await db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: input.runId,
     presetId: ids.preset,
     presetName: "Reset Preset",
@@ -3032,6 +3041,9 @@ async function seedCatalogReferencedTerminalRun(
     updatedAt: now,
   });
   await db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: ids.catalogRun,
     presetId: ids.preset,
     presetName: "Reset Preset",
@@ -3147,6 +3159,7 @@ async function seedCleanupDurableGraph(
     updatedAt: now,
   });
   await db.insert(erpAttempts).values({
+    disposition: "succeeded",
     orderId: ids.completedOrder,
     deliveryId: "cleanup-delivery",
     correlationId: "corr-cleanup-graph",
@@ -3384,6 +3397,8 @@ async function seedTerminalSummary(
       retryingOrders: 0,
       confirmedOrders: input.status === "completed" ? 10 : 6,
       failedOrders: input.status === "completed" ? 0 : 2,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: input.status === "completed" ? 0 : 2,
       pendingPersistenceCount: 0,
       notificationsRecorded: input.status === "completed" ? 10 : 6,
     },

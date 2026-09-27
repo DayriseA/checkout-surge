@@ -255,25 +255,19 @@ export const businessOutcomeSummarySchema = z
     soldOutRejections: nonnegativeIntegerSchema,
     /** Live form of queueBacklogDefinition: accepted_awaiting_first_processing_start. */
     queuedOrders: nonnegativeIntegerSchema,
-    processingOrders: nonnegativeIntegerSchema.default(0),
-    retryingOrders: nonnegativeIntegerSchema.default(0),
+    processingOrders: nonnegativeIntegerSchema,
+    retryingOrders: nonnegativeIntegerSchema,
     confirmedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
-    /** Permanent ERP rejections. Optional for immutable historical summaries. */
-    businessRejectedOrders: nonnegativeIntegerSchema.optional(),
-    /** Non-transient integration failures. Optional for immutable historical summaries. */
-    technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
+    /** Permanent ERP rejections. */
+    businessRejectedOrders: nonnegativeIntegerSchema,
+    /** Non-transient integration failures. */
+    technicallyFailedOrders: nonnegativeIntegerSchema,
     pendingPersistenceCount: nonnegativeIntegerSchema,
     notificationsRecorded: nonnegativeIntegerSchema,
   })
   .strict();
 export type BusinessOutcomeSummary = z.infer<typeof businessOutcomeSummarySchema>;
-
-/** Materialized business outcome state. Persisted summaries may not rely on wire defaults. */
-export const materializedBusinessOutcomeSummarySchema = businessOutcomeSummarySchema.safeExtend({
-  processingOrders: nonnegativeIntegerSchema,
-  retryingOrders: nonnegativeIntegerSchema,
-});
 
 export const consistencyLagSummarySchema = z
   .object({
@@ -314,8 +308,8 @@ export const runHistoryListItemSchema = z
     uniqueReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     confirmedOrders: nonnegativeIntegerSchema,
-    businessRejectedOrders: nonnegativeIntegerSchema.optional(),
-    technicallyFailedOrders: nonnegativeIntegerSchema.optional(),
+    businessRejectedOrders: nonnegativeIntegerSchema,
+    technicallyFailedOrders: nonnegativeIntegerSchema,
     failedOrders: nonnegativeIntegerSchema,
     convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
     dataDiscarded: z.boolean().optional(),
@@ -542,10 +536,7 @@ export type DeploymentHardCaps = z.infer<typeof deploymentHardCapsSchema>;
 
 export const publicRuntimePolicyMutableSchema = z
   .object({
-    estimatedDemoOccupancyCeilingSeconds: z
-      .number()
-      .positive()
-      .default(estimatedDemoOccupancyCeilingSeconds),
+    estimatedDemoOccupancyCeilingSeconds: z.number().positive(),
     isPublicRunBudgetEnforced: z.boolean(),
     publicRunBudget: publicRunBudgetSchema,
     publicCustomDefaults: acceptedRunConfigSnapshotSchema,

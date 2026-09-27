@@ -452,7 +452,7 @@ async function pruneAttemptHistory(tx: Transaction, orderId: string): Promise<vo
         and(
           eq(erpAttempts.orderId, orderId),
           isNull(erpAttempts.idempotencyKey),
-          or(isNull(erpAttempts.disposition), ne(erpAttempts.disposition, "permanent_rejection")),
+          ne(erpAttempts.disposition, "permanent_rejection"),
           control?.unresolvedErpCallId
             ? or(
                 isNull(erpAttempts.erpCallId),
@@ -662,8 +662,9 @@ function attemptCountCategory(record: ErpAttemptRecord): ErpOutcomeDisposition {
 function sameAttempt(existing: typeof erpAttempts.$inferSelect, record: ErpAttemptRecord): boolean {
   const deliveryId = record.delivery.deliveryId ?? record.job.orderId;
   return (
-    (record.call !== undefined || (existing.deliveryId ?? record.job.orderId) === deliveryId) &&
+    (record.call !== undefined || existing.deliveryId === deliveryId) &&
     existing.status === record.status &&
+    existing.disposition === attemptCountCategory(record) &&
     existing.terminal === record.terminal &&
     existing.httpStatus === (record.httpStatus ?? null) &&
     existing.errorCode === (record.errorCode ?? null) &&

@@ -279,6 +279,9 @@ async function seedRun(db: ReturnType<typeof createDatabaseConnection>["db"]) {
     ...previewRunConfigSnapshotFixture(),
   });
   await db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: ids.run,
     presetId: ids.preset,
     presetName: "Run signals",
@@ -358,6 +361,7 @@ async function seedOrders(
   );
   if (!includeRetryAttempt) return;
   await db.insert(erpAttempts).values({
+    disposition: "temporarily_unavailable",
     orderId: "a3000002-0000-4000-8000-000000000005",
     deliveryId: "retry-does-not-reenter-durable-backlog",
     correlationId: "signal-correlation-5",

@@ -689,6 +689,9 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
         ...snapshot,
       });
     await requireConnection().db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: terminalRunId,
       presetId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       presetName: "Terminal recovery",

@@ -56,10 +56,12 @@ async function seedGeneratedRunWithTerminalOrder(sql: TestSql): Promise<void> {
   await sql`
     INSERT INTO "demo_runs" (
       "id", "preset_id", "preset_name", "operator_mode", "status", "traffic_status",
-      "config_snapshot", "sale_offer_id", "started_at"
+      "config_snapshot", "sale_offer_id", "started_at",
+      "correlation_id", "engine_policy_name", "engine_policy_version"
     ) VALUES (
       ${ids.run}, ${ids.preset}, 'Maintenance Guard', 'admin', 'completed', 'succeeded',
-      '{}'::jsonb, ${ids.saleOffer}, '2026-06-20T00:00:00Z'::timestamptz
+      '{}'::jsonb, ${ids.saleOffer}, '2026-06-20T00:00:00Z'::timestamptz,
+      ${runScopedCorrelationId}, 'declared-capacity-erp-dispatch', 2
     )
   `;
   await sql`
@@ -151,6 +153,7 @@ describe("generated-run durable maintenance with processing-control data", () =>
     await requireConnection()
       .db.insert(erpAttempts)
       .values({
+        disposition: "succeeded",
         orderId: ids.order,
         deliveryId: "maintenance-delivery",
         correlationId: runScopedCorrelationId,

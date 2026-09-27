@@ -247,6 +247,8 @@ describe("watch narrative", () => {
       retryingOrders: 0,
       confirmedOrders: 115,
       failedOrders: 0,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 115,
     };
@@ -286,6 +288,8 @@ describe("watch narrative", () => {
       retryingOrders: 0,
       confirmedOrders: 0,
       failedOrders: 0,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 0,
       pendingPersistenceCount: 0,
       notificationsRecorded: 0,
     };
@@ -398,6 +402,8 @@ const latestRun: RunHistoryListItem = {
   soldOutRejections: 750,
   confirmedOrders: 250,
   failedOrders: 0,
+  businessRejectedOrders: 0,
+  technicallyFailedOrders: 0,
   convergenceDurationSeconds: 1,
 };
 
@@ -442,6 +448,8 @@ function partialOutcome(): NonNullable<DashboardProjection["businessOutcome"]> {
     retryingOrders: 0,
     confirmedOrders: 120,
     failedOrders: 0,
+    businessRejectedOrders: 0,
+    technicallyFailedOrders: 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: 120,
   };
@@ -505,6 +513,8 @@ function terminalProjection(status: "completed" | "failed"): DashboardProjection
     retryingOrders: 0,
     confirmedOrders: status === "completed" ? 250 : 0,
     failedOrders: status === "failed" ? 250 : 0,
+    businessRejectedOrders: 0,
+    technicallyFailedOrders: status === "failed" ? 250 : 0,
     pendingPersistenceCount: 0,
     notificationsRecorded: status === "completed" ? 250 : 0,
   };

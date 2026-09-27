@@ -1,6 +1,6 @@
 import {
   type AcceptedRunConfigSnapshot,
-  historicalAcceptedRunConfigSnapshotSchema,
+  materializedAcceptedRunConfigSnapshotSchema,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
@@ -28,9 +28,7 @@ export function parsePersistedRunConfig(
   runId: string,
   configSnapshot: unknown,
 ): AcceptedRunConfigSnapshot {
-  // Historical snapshots keep parsing: the historical schema accepts and
-  // ignores retired engine knobs (D13) instead of failing order processing.
-  const parsed = historicalAcceptedRunConfigSnapshotSchema.safeParse(configSnapshot);
+  const parsed = materializedAcceptedRunConfigSnapshotSchema.safeParse(configSnapshot);
   if (!parsed.success) {
     throw new PersistedRunConfigCorruptionError(runId, parsed.error);
   }

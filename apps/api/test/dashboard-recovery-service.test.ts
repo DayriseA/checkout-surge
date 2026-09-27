@@ -103,6 +103,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     if (!connection) throw new Error("Test database connection was not initialized.");
     const id = "99999999-9999-4999-8999-999999999991";
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Startup failure",
@@ -137,6 +140,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       resetRecovery: "ready",
     });
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: "99999999-9999-4999-8999-999999999992",
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Later ordinary failure",
@@ -161,6 +167,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     const db = connection.db;
     const terminalStartedAt = new Date("2026-07-14T11:58:00.000Z");
     await db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: runId,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Preview 1k",

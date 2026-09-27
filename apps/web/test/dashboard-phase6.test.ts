@@ -961,6 +961,8 @@ function projectionFixture(): DashboardProjection {
       // One order per reservation, so the four statuses account for all six: 1 queued, 1
       // processing (the retrying one), 2 confirmed, 2 failed.
       failedOrders: 2,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 2,
       pendingPersistenceCount: 0,
       notificationsRecorded: 2,
     },

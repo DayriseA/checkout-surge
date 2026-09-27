@@ -490,6 +490,8 @@ function businessOutcomeFixture(): BusinessOutcomeSummary {
     retryingOrders: 1,
     confirmedOrders: 2,
     failedOrders: 1,
+    businessRejectedOrders: 0,
+    technicallyFailedOrders: 1,
     pendingPersistenceCount: 1,
     notificationsRecorded: 0,
   };
@@ -692,6 +694,8 @@ function runHistoryListResponseFixture(): RunHistoryListResponse {
         soldOutRejections: 4,
         confirmedOrders: 6,
         failedOrders: 0,
+        businessRejectedOrders: 0,
+        technicallyFailedOrders: 0,
         convergenceDurationSeconds: null,
       },
     ],
@@ -808,6 +812,8 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
         uniqueReservations: summary.businessOutcomeSummary.acceptedReservations,
         soldOutDecisions: summary.businessOutcomeSummary.soldOutRejections,
         confirmedOrders: summary.businessOutcomeSummary.confirmedOrders,
+        businessRejectedOrders: summary.businessOutcomeSummary.businessRejectedOrders,
+        technicallyFailedOrders: summary.businessOutcomeSummary.technicallyFailedOrders,
         failedOrders: summary.businessOutcomeSummary.failedOrders,
         queuedOrders: summary.businessOutcomeSummary.queuedOrders,
         processingOrders: summary.businessOutcomeSummary.processingOrders,
@@ -4172,6 +4178,9 @@ describe("API buy persistence", () => {
       ...acceptedRunConfigSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: fixtureIds.run,
       presetId,
       presetName: "Generated Pending Test",
@@ -4373,6 +4382,9 @@ describe("API buy persistence", () => {
       ...acceptedRunConfigSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: fixtureIds.run,
       presetId,
       presetName: "Generated Stale Closure Test",

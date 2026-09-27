@@ -73,8 +73,6 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
 
       const occurredAt = this.now();
       if (order.status === "processing") {
-        // Pre-migration in-flight orders may not have a recovery/control row yet.
-        await ensureProcessingOwnership(tx, job, delivery, occurredAt, this.controlLeaseMs);
         const processingGeneration = await claimExecutionOwnership(
           tx,
           job,

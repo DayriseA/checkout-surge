@@ -260,12 +260,8 @@ function toRunHistoryExceptionSummary(
       uniqueReservations: summary.businessOutcomeSummary.acceptedReservations,
       soldOutDecisions: summary.businessOutcomeSummary.soldOutRejections,
       confirmedOrders: summary.businessOutcomeSummary.confirmedOrders,
-      ...(summary.businessOutcomeSummary.businessRejectedOrders === undefined
-        ? {}
-        : { businessRejectedOrders: summary.businessOutcomeSummary.businessRejectedOrders }),
-      ...(summary.businessOutcomeSummary.technicallyFailedOrders === undefined
-        ? {}
-        : { technicallyFailedOrders: summary.businessOutcomeSummary.technicallyFailedOrders }),
+      businessRejectedOrders: summary.businessOutcomeSummary.businessRejectedOrders,
+      technicallyFailedOrders: summary.businessOutcomeSummary.technicallyFailedOrders,
       failedOrders: summary.businessOutcomeSummary.failedOrders,
       queuedOrders: summary.businessOutcomeSummary.queuedOrders,
       processingOrders: summary.businessOutcomeSummary.processingOrders,
@@ -330,12 +326,8 @@ function toRunHistoryListItem(
     uniqueReservations: summary.businessOutcomeSummary.acceptedReservations,
     soldOutRejections: summary.businessOutcomeSummary.soldOutRejections,
     confirmedOrders: summary.businessOutcomeSummary.confirmedOrders,
-    ...(summary.businessOutcomeSummary.businessRejectedOrders === undefined
-      ? {}
-      : { businessRejectedOrders: summary.businessOutcomeSummary.businessRejectedOrders }),
-    ...(summary.businessOutcomeSummary.technicallyFailedOrders === undefined
-      ? {}
-      : { technicallyFailedOrders: summary.businessOutcomeSummary.technicallyFailedOrders }),
+    businessRejectedOrders: summary.businessOutcomeSummary.businessRejectedOrders,
+    technicallyFailedOrders: summary.businessOutcomeSummary.technicallyFailedOrders,
     failedOrders: summary.businessOutcomeSummary.failedOrders,
     convergenceDurationSeconds:
       summary.runSignalTimelineSummary?.convergenceDurationSeconds ?? null,
@@ -356,12 +348,8 @@ function derivePublicRunResult(summary: PublicRunHistorySummary) {
       uniqueReservations: business.acceptedReservations,
       soldOutDecisions: business.soldOutRejections,
       confirmedOrders: business.confirmedOrders,
-      ...(business.businessRejectedOrders === undefined
-        ? {}
-        : { businessRejectedOrders: business.businessRejectedOrders }),
-      ...(business.technicallyFailedOrders === undefined
-        ? {}
-        : { technicallyFailedOrders: business.technicallyFailedOrders }),
+      businessRejectedOrders: business.businessRejectedOrders,
+      technicallyFailedOrders: business.technicallyFailedOrders,
       failedOrders: business.failedOrders,
       queuedOrders: business.queuedOrders,
       processingOrders: business.processingOrders,
@@ -453,14 +441,9 @@ function parseRunHistoryDiagnostics(
 ): LoadRunDiagnosticsSummary | null {
   // Synthetic pre-traffic summaries have no startedAt; real diagnostics always do.
   if (!value || typeof value !== "object" || !("startedAt" in value)) return null;
-  const stored = value as Record<string, unknown>;
   return parsePersistedState(
     loadRunDiagnosticsSummarySchema.strip(),
-    {
-      ...stored,
-      generatorCapacity: stored.generatorCapacity ?? null,
-      generatorUtilisation: stored.generatorUtilisation ?? null,
-    },
+    value,
     context,
     "loadRunDiagnosticsSummary",
   );

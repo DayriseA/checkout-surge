@@ -413,13 +413,13 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
 
   private async publishTerminalProjectionDirty(
     run: DemoRunSnapshot,
-    correlationId: string | null,
+    correlationId: string,
     finalizationActor: FinalizationActor,
   ): Promise<void> {
     try {
       await publishDashboardProjectionDirtySignal(this.options.redis, {
         type: "dashboard.projection.dirty",
-        ...(correlationId ? { correlationId } : {}),
+        correlationId,
         ...(run.saleOfferId ? { scope: { runId: run.runId, saleOfferId: run.saleOfferId } } : {}),
       });
       this.options.logger.debug(

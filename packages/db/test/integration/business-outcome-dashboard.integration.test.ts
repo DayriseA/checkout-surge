@@ -88,6 +88,9 @@ describe("business outcome dashboard projection", () => {
       ...configSnapshotFixture(),
     });
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: runId,
       presetId,
       presetName: "Business Outcome Preset",
@@ -99,6 +102,9 @@ describe("business outcome dashboard projection", () => {
       startedAt: now,
     });
     await connection.db.insert(demoRuns).values({
+      correlationId: "corr-test-run",
+      enginePolicyName: "declared-capacity-erp-dispatch",
+      enginePolicyVersion: 2,
       id: otherRunId,
       presetId,
       presetName: "Business Outcome Preset",
@@ -218,6 +224,7 @@ describe("business outcome dashboard projection", () => {
       queuedAt: now,
     });
     await connection.db.insert(erpAttempts).values({
+      disposition: "technical_failure",
       orderId: "66666666-6666-4666-8666-666666666661",
       deliveryId: "dashboard-delivery-1",
       runId,

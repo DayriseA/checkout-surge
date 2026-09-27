@@ -20,6 +20,8 @@ const cleanDurable: NonNullable<RunResultEvidence["durable"]> = {
   soldOutDecisions: 750,
   confirmedOrders: 250,
   failedOrders: 0,
+  businessRejectedOrders: 0,
+  technicallyFailedOrders: 0,
   queuedOrders: 0,
   processingOrders: 0,
   durablePendingPersistenceRecords: 0,
@@ -270,7 +272,15 @@ describe("public run summary", () => {
     const orderFailures = derivePublicRunSummary(
       summaryInput(
         {},
-        { ...cleanEvidence, durable: { ...cleanDurable, confirmedOrders: 200, failedOrders: 50 } },
+        {
+          ...cleanEvidence,
+          durable: {
+            ...cleanDurable,
+            confirmedOrders: 200,
+            failedOrders: 50,
+            technicallyFailedOrders: 50,
+          },
+        },
       ),
     );
     const unsettled = derivePublicRunSummary(
@@ -299,12 +309,14 @@ describe("public run summary", () => {
 
     expect(orderFailures.title).toBe("Completed with order failures");
     expect(orderFailures.sentence).toBe(
-      "200 orders were confirmed, 50 failed, and 0 remain pending.",
+      "200 orders were confirmed, 0 business-rejected, 50 technically failed, and 0 remain pending.",
     );
     expect(orderFailures.counts.failedOrders).toBe(50);
 
     expect(unsettled.title).toBe("Completed with unsettled orders");
-    expect(unsettled.sentence).toBe("200 orders were confirmed, 0 failed, and 50 remain pending.");
+    expect(unsettled.sentence).toBe(
+      "200 orders were confirmed, 0 business-rejected, 0 technically failed, and 50 remain pending.",
+    );
     expect(unsettled.counts.pendingOrders).toBe(50);
 
     expect(oversell.title).toBe("Oversell detected");
@@ -343,6 +355,7 @@ describe("public run summary", () => {
             uniqueReservations: 249,
             confirmedOrders: 199,
             failedOrders: 50,
+            technicallyFailedOrders: 50,
             queuedOrders: 10,
             notificationsRecorded: 199,
           },
@@ -351,7 +364,7 @@ describe("public run summary", () => {
     );
 
     expect(oversellWithPending.sentence).toBe(
-      "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. 240 orders were confirmed, 0 failed, and 20 remain pending.",
+      "Durable records show 260 units reserved against 250 starting units, so 10 units were oversold. 240 orders were confirmed, 0 business-rejected, 0 technically failed, and 20 remain pending.",
     );
     // The failed headline already states the failed count, so only pending is appended.
     expect(failedWithPending.sentence).toBe(
@@ -373,6 +386,7 @@ describe("public run summary", () => {
             uniqueReservations: 249,
             confirmedOrders: 199,
             failedOrders: 50,
+            technicallyFailedOrders: 50,
             notificationsRecorded: 199,
           },
         },

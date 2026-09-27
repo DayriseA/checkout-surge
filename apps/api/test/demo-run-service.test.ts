@@ -611,11 +611,6 @@ describe("demo-run lifecycle start gating", () => {
       );
       const acceptedLimits = await queue.getGlobalRateLimit();
       const acceptedConcurrency = await queue.getGlobalConcurrency();
-      // Startup accepts persisted snapshots with retired knobs, like other run readers.
-      await db
-        .update(demoRuns)
-        .set({ configSnapshot: sql`config_snapshot || '{"retryPolicy":{"maxAttempts":4}}'::jsonb` })
-        .where(eq(demoRuns.id, accepted.run.runId));
       await queue.removeGlobalRateLimit();
       await queue.removeGlobalConcurrency();
       await new DemoRunQueueLimits(db, writer).synchronize();
@@ -1974,6 +1969,9 @@ async function seedExistingRun(
   },
 ): Promise<void> {
   await connection.db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: input.runId,
     presetId: "33333333-3333-4333-8333-333333333331",
     presetName: "Preview 1k",

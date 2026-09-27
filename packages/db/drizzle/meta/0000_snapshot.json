@@ -699,19 +699,19 @@
           "name": "engine_policy_name",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "engine_policy_version": {
           "name": "engine_policy_version",
           "type": "integer",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "correlation_id": {
           "name": "correlation_id",
           "type": "text",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "sale_offer_id": {
           "name": "sale_offer_id",
@@ -923,7 +923,7 @@
           "type": "erp_outcome_disposition",
           "typeSchema": "public",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "terminal": {
           "name": "terminal",

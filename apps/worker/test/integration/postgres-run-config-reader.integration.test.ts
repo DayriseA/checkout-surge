@@ -48,29 +48,6 @@ describe("PostgresRunConfigReader", () => {
     );
   });
 
-  it("accepts and ignores retired engine knobs in a pre-retirement snapshot", async () => {
-    const snapshot = configSnapshotFixture();
-    await connection.db.execute(
-      sql`UPDATE ${demoRuns}
-          SET config_snapshot = ${JSON.stringify({
-            ...snapshot,
-            erpConfig: { ...snapshot.erpConfig, requestTimeoutMs: 2000 },
-            backpressureConfig: {
-              ...snapshot.backpressureConfig,
-              retryPolicy: { maxAttempts: 4, initialBackoffMs: 500 },
-              drainTimeoutSeconds: 300,
-              circuitBreakerFailureThreshold: 5,
-              circuitBreakerResetTimeoutMs: 10_000,
-            },
-          })}::jsonb
-          WHERE ${demoRuns.id} = ${runId}`,
-    );
-
-    await expect(new PostgresRunConfigReader(connection.db).read(runId)).resolves.toEqual(
-      configSnapshotFixture(),
-    );
-  });
-
   it("retains its configuration-reader semantics after a generated run becomes terminal", async () => {
     await connection.db
       .update(demoRuns)
@@ -284,6 +261,9 @@ async function seedRun(connection: ReturnType<typeof createDatabaseConnection>):
     purpose: "generated_run",
   });
   await connection.db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: runId,
     presetId,
     presetName: "Worker config reader",

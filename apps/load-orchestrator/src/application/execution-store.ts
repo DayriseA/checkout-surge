@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  historicalTrafficExecutionStartRequestSchema,
   materializedTrafficCompletionReportSchema,
   materializedTrafficExecutionStartRequestSchema,
   type TrafficCompletionReport,
@@ -10,11 +9,8 @@ import {
 } from "@checkout-surge/contracts";
 import { z } from "zod";
 
-// The journal read boundary accepts and ignores retired engine knobs in
-// snapshots persisted before the retirement (D13); writers keep the strict
-// materialized schema so rewritten journals use the current format.
 const durableExecutionBaseSchema = z.object({
-  request: historicalTrafficExecutionStartRequestSchema,
+  request: materializedTrafficExecutionStartRequestSchema,
   acceptedAt: z.string().datetime({ offset: true }),
 });
 

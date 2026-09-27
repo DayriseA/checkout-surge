@@ -88,11 +88,11 @@ describe("adaptive ERP acceptance fixtures", () => {
     }
   });
 
-  it("bounds new latency inputs without tightening historical snapshot reads", () => {
-    const legacy = previewRunConfigSnapshotFixture();
-    legacy.erpConfig.latencyMs = largestAllowedErpLatencyMs + 1;
-    expect(() => acceptedRunConfigSnapshotSchema.parse(legacy)).not.toThrow();
-    expect(() => acceptedRunConfigWriteSchema.parse(legacy)).toThrow();
+  it("enforces latency policy at entry while reading persisted snapshots without the current ceiling", () => {
+    const persistedSnapshot = previewRunConfigSnapshotFixture();
+    persistedSnapshot.erpConfig.latencyMs = largestAllowedErpLatencyMs + 1;
+    expect(() => acceptedRunConfigSnapshotSchema.parse(persistedSnapshot)).not.toThrow();
+    expect(() => acceptedRunConfigWriteSchema.parse(persistedSnapshot)).toThrow();
 
     const defaults = previewRunConfigSnapshotFixture();
     const policy = {

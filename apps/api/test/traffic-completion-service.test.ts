@@ -430,6 +430,9 @@ async function seedRun(
     updatedAt: acceptedAt,
   });
   await connection.db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    enginePolicyName: "declared-capacity-erp-dispatch",
+    enginePolicyVersion: 2,
     id: runId,
     presetId,
     presetName: "Completion Preset",

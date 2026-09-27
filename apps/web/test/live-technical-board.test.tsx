@@ -47,8 +47,8 @@ describe("live technical board", () => {
       confirmedOrders: 350,
       pendingConfirmation: 20,
       oldestPending: 8.5,
-      businessRejectedOrders: null,
-      technicallyFailedOrders: null,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 8,
       lagP95Average: [135, 128],
     });
     expect(values.soldOutRejections).not.toBe(projection.businessOutcome?.soldOutRejections);
@@ -424,6 +424,8 @@ function activeProjection(): DashboardProjection {
       retryingOrders: 2,
       confirmedOrders: 350,
       failedOrders: 8,
+      businessRejectedOrders: 0,
+      technicallyFailedOrders: 8,
       pendingPersistenceCount: 4,
       notificationsRecorded: 350,
     },

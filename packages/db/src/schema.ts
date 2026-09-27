@@ -192,10 +192,10 @@ export const demoRuns = pgTable(
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),
-    /** Versioned engine-policy identity (D13) written at run acceptance. Nullable for pre-identity rows. */
-    enginePolicyName: text("engine_policy_name"),
-    enginePolicyVersion: integer("engine_policy_version"),
-    correlationId: text("correlation_id"),
+    /** Versioned engine-policy identity written at run acceptance. */
+    enginePolicyName: text("engine_policy_name").notNull(),
+    enginePolicyVersion: integer("engine_policy_version").notNull(),
+    correlationId: text("correlation_id").notNull(),
     saleOfferId: uuid("sale_offer_id").references(() => saleOffers.id, { onDelete: "restrict" }),
     startedAt: timestamp("started_at", { withTimezone: true }),
     trafficStartedAt: timestamp("traffic_started_at", { withTimezone: true }),
@@ -424,7 +424,7 @@ export const erpAttempts = pgTable(
     }),
     attemptNumber: integer("attempt_number").notNull(),
     status: erpAttemptStatusEnum("status").notNull(),
-    disposition: erpOutcomeDispositionEnum("disposition"),
+    disposition: erpOutcomeDispositionEnum("disposition").notNull(),
     terminal: boolean("terminal").default(false).notNull(),
     httpStatus: integer("http_status"),
     errorCode: text("error_code"),

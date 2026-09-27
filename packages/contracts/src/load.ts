@@ -137,7 +137,10 @@ export const erpRunConfigSchema = z
   .strict();
 export type ErpRunConfig = z.infer<typeof erpRunConfigSchema>;
 
-/** Write/acceptance boundary. Keep erpRunConfigSchema permissive for history readers. */
+/**
+ * Write/acceptance boundary. The latency ceiling is an entry policy: persisted
+ * runs keep the value accepted at the time, so readers use erpRunConfigSchema.
+ */
 export const acceptedErpRunConfigSchema = erpRunConfigSchema.safeExtend({
   latencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs),
 });
@@ -192,32 +195,6 @@ export const materializedAcceptedRunConfigSnapshotSchema = z
   })
   .strict();
 
-/**
- * Read boundary for snapshots persisted before the engine-knob retirement
- * (D13, task 14). Supported fields keep their materialized rigor while the
- * retired configuration keys (`quantityPerCheckout`, `reservationHoldMinutes`,
- * `pendingPersistenceRetryAfterSeconds`) and engine knobs (`retryPolicy`, `drainTimeoutSeconds`,
- * `circuitBreakerFailureThreshold`, `circuitBreakerResetTimeoutMs`, and
- * `erpConfig.requestTimeoutMs`) are accepted and ignored: the plain objects
- * below drop them together with any other unknown key, so historical content
- * stays readable and can never configure new runs.
- */
-export const historicalAcceptedRunConfigSnapshotSchema = z.object({
-  trafficConfig: materializedAcceptedRunConfigSnapshotSchema.shape.trafficConfig,
-  inventoryConfig: z.object({ startingStock: nonnegativeIntegerSchema }),
-  erpConfig: z.object({
-    latencyMs: nonnegativeIntegerSchema,
-    maxTps: positiveIntegerSchema,
-    errorRate: percentageSchema,
-    forcedOutage: z.boolean(),
-  }),
-  backpressureConfig: z.object({
-    queueName: z.literal(orderProcessQueueName),
-    physicalQueueName: z.literal(orderProcessBullMqQueueName),
-    orderProcessConcurrency: positiveIntegerSchema.max(orderProcessConcurrencyHardCap),
-  }),
-});
-
 export const trafficExecutionStartRequestSchema = z
   .object({
     runId: uuidSchema,
@@ -233,17 +210,6 @@ export type TrafficExecutionStartRequest = z.infer<typeof trafficExecutionStartR
 export const materializedTrafficExecutionStartRequestSchema =
   trafficExecutionStartRequestSchema.safeExtend({
     configSnapshot: materializedAcceptedRunConfigSnapshotSchema,
-  });
-
-/**
- * Read boundary for durable execution journals written before the engine-knob
- * retirement (D13, task 14). The journal reader accepts and ignores retired
- * engine knobs in the stored snapshot; writers keep using the materialized
- * schema, so rewritten journals use the retired-field-free format.
- */
-export const historicalTrafficExecutionStartRequestSchema =
-  trafficExecutionStartRequestSchema.safeExtend({
-    configSnapshot: historicalAcceptedRunConfigSnapshotSchema,
   });
 
 export const trafficExecutionStartResponseSchema = z
