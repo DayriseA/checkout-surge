@@ -96,7 +96,6 @@ export class PendingPersistenceRecoveryService {
     string,
     Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null>
   >();
-  private started = false;
   private closed = false;
   private activeDirectAttemptCount = 0;
   private readonly activeAttemptControllers = new Set<AbortController>();
@@ -143,8 +142,6 @@ export class PendingPersistenceRecoveryService {
   }
 
   start(): void {
-    if (this.closed || this.started) return;
-    this.started = true;
     this.scheduleNext(0);
   }
 
@@ -182,7 +179,6 @@ export class PendingPersistenceRecoveryService {
 
   async runOnce(): Promise<PendingPersistenceRecoverySummary> {
     if (this.closed) return emptySummary();
-    if (this.inFlight) return this.inFlight;
     const controller = new AbortController();
     this.activeAttemptControllers.add(controller);
     const discoveryTimeoutMs = this.policy().discoveryTimeoutMs;

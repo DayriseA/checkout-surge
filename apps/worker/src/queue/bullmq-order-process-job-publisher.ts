@@ -46,7 +46,6 @@ interface OrderProcessQueue {
       name?: string;
       data: unknown;
       attemptsMade: number;
-      opts: { attempts?: number };
       failedReason?: string;
       progress?: unknown;
     }>
@@ -78,7 +77,7 @@ export function createOrderProcessJobPublisher(
         state === "waiting" || state === "active" || state === "delayed" || state === "prioritized"
       );
     },
-    async enqueue(input, options?: { jobId?: string; attempts?: number }) {
+    async enqueue(input, options?: { jobId?: string }) {
       const job = orderProcessJobSchema.parse(input);
       const add = async () => {
         await queue.add(orderProcessJobName, job, {
@@ -115,8 +114,6 @@ export function createOrderProcessJobPublisher(
             jobName: failedJob.name ?? orderProcessJobName,
             rawData: failedJob.data,
             attemptsMade: failedJob.attemptsMade,
-            maxAttempts:
-              failedJob.opts.attempts && failedJob.opts.attempts > 0 ? failedJob.opts.attempts : 1,
             failedReason,
             ...(deadLetter.reason ? { reason: deadLetter.reason } : {}),
             ...(deadLetter.orderId ? { orderId: deadLetter.orderId } : {}),
@@ -137,8 +134,6 @@ export function createOrderProcessJobPublisher(
         result.push({
           job: parsed.data,
           attemptsMade: failedJob.attemptsMade,
-          maxAttempts:
-            failedJob.opts.attempts && failedJob.opts.attempts > 0 ? failedJob.opts.attempts : 1,
           failedReason,
           ...(failedJob.id ? { jobId: failedJob.id } : {}),
           ...(dispositionId ? { dispositionId } : {}),

@@ -70,18 +70,10 @@ export class DashboardProjectionFanout {
     this.generateConnectionId = options.generateConnectionId ?? randomUUID;
     this.maxClients = options.maxClients ?? 80;
     this.maxClientsPerSource = options.maxClientsPerSource ?? 6;
-    this.maxBufferedFrames = requirePositiveSafeInteger(
-      options.maxBufferedFrames ?? defaultDashboardSseMaxBufferedFrames,
-      "maxBufferedFrames",
-    );
-    this.maxBufferedBytes = requirePositiveSafeInteger(
-      options.maxBufferedBytes ?? defaultDashboardSseMaxBufferedBytes,
-      "maxBufferedBytes",
-    );
-    this.maxBufferedProjectionScopes = requirePositiveSafeInteger(
-      options.maxBufferedProjectionScopes ?? defaultDashboardSseMaxBufferedProjectionScopes,
-      "maxBufferedProjectionScopes",
-    );
+    this.maxBufferedFrames = options.maxBufferedFrames ?? defaultDashboardSseMaxBufferedFrames;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? defaultDashboardSseMaxBufferedBytes;
+    this.maxBufferedProjectionScopes =
+      options.maxBufferedProjectionScopes ?? defaultDashboardSseMaxBufferedProjectionScopes;
   }
 
   connect(input: DashboardSseConnectionInput): DashboardSseAdmission {
@@ -115,17 +107,10 @@ export class DashboardProjectionFanout {
       bufferedBytes: 0,
     };
 
-    // Reserve both capacities before invoking callbacks or performing I/O. This
-    // keeps admission atomic even when an injected callback is re-entrant.
     this.clients.set(client.id, client);
     this.sourceCounts.set(input.sourceKey, sourceCount + 1);
 
-    try {
-      input.onAccepted?.();
-    } catch (error) {
-      this.closeClient(client, "accept_callback_failed");
-      throw error;
-    }
+    input.onAccepted?.();
 
     try {
       input.response.writeHead(200, {
@@ -335,11 +320,4 @@ export class DashboardProjectionFanout {
 
 export function formatDashboardProjectionFrame(projection: DashboardProjection): string {
   return `data: ${JSON.stringify(dashboardProjectionSchema.parse(projection))}\n\n`;
-}
-
-function requirePositiveSafeInteger(value: number, name: string): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer.`);
-  }
-  return value;
 }

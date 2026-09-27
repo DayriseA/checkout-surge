@@ -37,8 +37,6 @@ function publicPopulationLabel(item: Reconciliation, side: "left" | "right"): st
       return side === "left" ? publicVocabulary.soldOutRejectionsRecorded : "remaining stock";
     case "notifications_below_confirmations":
       return side === "left" ? publicVocabulary.notifications : "confirmed orders";
-    default:
-      return side === "left" ? "first observed population" : "second observed population";
   }
 }
 
@@ -80,8 +78,6 @@ function publicReconciliationReason(item: Reconciliation): string | null {
       return "Sold-out rejections while stock remained need investigation.";
     case "notifications_below_confirmations":
       return "Not every confirmed order has a recorded simulated email.";
-    default:
-      return null;
   }
 }
 

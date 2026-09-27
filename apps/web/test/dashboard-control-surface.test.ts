@@ -527,6 +527,7 @@ function runFixture(status: "active" | "draining"): DashboardProjection["current
     configSnapshot: configSnapshotFixture(),
     saleOfferId: "33333333-3333-4333-8333-333333333333",
     startedAt: "2026-06-20T00:00:00.000Z",
+    autoResetAt: "2026-06-20T00:15:00.000Z",
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
     ...(status === "draining" ? { trafficEndedAt: "2026-06-20T00:00:10.000Z" } : {}),
   });

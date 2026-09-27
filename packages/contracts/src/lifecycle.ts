@@ -9,7 +9,6 @@ export const publicBuyOutcomeValues = [
   "run_not_accepting_traffic",
   "inventory_not_initialized",
   "idempotency_conflict",
-  "quantity_invalid",
 ] as const;
 
 export const reservationDecisionValues = [...publicBuyOutcomeValues, "idempotent_replay"] as const;

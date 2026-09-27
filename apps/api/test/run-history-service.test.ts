@@ -1048,8 +1048,6 @@ function runFixture(input: {
   return {
     id: input.id,
     correlationId: "corr-history-test",
-    enginePolicyName: "declared-capacity-erp-dispatch",
-    enginePolicyVersion: 2,
     presetId: ids.preset,
     presetName: input.presetName,
     operatorMode: "public",

@@ -161,6 +161,7 @@ function run(status: DemoRunSnapshot["status"]): DemoRunSnapshot {
     saleOfferId,
     configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt,
+    autoResetAt: "2026-07-30T12:15:00.000Z",
   };
   if (status === "starting") return { ...base, status, trafficStatus: "starting" };
   if (status === "active") {

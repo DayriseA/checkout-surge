@@ -214,7 +214,6 @@ export async function processJob(
     await options.handler.handle(parsed.data, {
       attemptNumber: job.attemptsMade + 1,
       attemptsMade: job.attemptsMade,
-      maxAttempts: normalizeMaxAttempts(job.opts.attempts),
       deliveryId: String(job.id ?? parsed.data.orderId),
       ...(parsed.data.processingGeneration === undefined
         ? {}
@@ -246,10 +245,7 @@ export async function processJob(
       });
       return;
     }
-    if (
-      job.attemptsMade + 1 >= normalizeMaxAttempts(job.opts.attempts) &&
-      isRecoverableFailure(error)
-    ) {
+    if (isRecoverableFailure(error)) {
       await markRecoverableDisposition(job, error);
       const parsed = orderProcessJobSchema.safeParse(job.data);
       if (parsed.success) {
@@ -259,7 +255,6 @@ export async function processJob(
             delivery: {
               attemptNumber: job.attemptsMade + 1,
               attemptsMade: job.attemptsMade,
-              maxAttempts: normalizeMaxAttempts(job.opts.attempts),
               deliveryId: String(job.id ?? parsed.data.orderId),
             },
             reason: "exhausted_order_processing_delivery",
@@ -365,8 +360,4 @@ function readRecoveryMetadata(
   // Derive the durable key from the validated payload; delimiters in a key are
   // never parsed from the BullMQ id.
   return { recoveryKey: `order:${orderId}`, deliveryId: jobId };
-}
-
-function normalizeMaxAttempts(attempts: number | undefined): number {
-  return attempts && attempts > 0 ? attempts : 1;
 }

@@ -19,7 +19,6 @@ export function GracePeriodNotice({
   now?: (() => number) | undefined;
 }) {
   if (run.status === "completed" || run.status === "failed") return null;
-  if (!run.startedAt || !run.autoResetAt) return null;
   const startedAtMs = Date.parse(run.startedAt);
   const resetAtMs = Date.parse(run.autoResetAt);
   const nowMs = now();

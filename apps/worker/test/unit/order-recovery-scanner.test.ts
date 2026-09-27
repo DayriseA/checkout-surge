@@ -73,7 +73,6 @@ describe("order recovery scanner", () => {
       { ...job, processingGeneration: 7 },
       {
         jobId: "recovery-11111111-1111-4111-8111-111111111111-2",
-        attempts: 1,
       },
     );
     expect(store.claimForPublication).toHaveBeenCalledOnce();
@@ -180,7 +179,7 @@ describe("order recovery scanner", () => {
     expect(store.claimForPublication).toHaveBeenCalledOnce();
     expect(publisher.enqueue).toHaveBeenCalledWith(
       { ...job, processingGeneration: 102 },
-      { jobId: `recovery-${job.orderId}-102`, attempts: 1 },
+      { jobId: `recovery-${job.orderId}-102` },
     );
   });
 
@@ -202,7 +201,6 @@ describe("order recovery scanner", () => {
           jobId: "source-job-1",
           dispositionId: "source-job-1:4",
           attemptsMade: 3,
-          maxAttempts: 4,
           failedReason: "[CHECKOUT_SURGE_RECOVERY_REQUIRED] database unavailable",
         },
         {
@@ -210,7 +208,6 @@ describe("order recovery scanner", () => {
           jobId: "recovery-11111111-1111-4111-8111-111111111111-1",
           dispositionId: "recovery-11111111-1111-4111-8111-111111111111-1:1",
           attemptsMade: 1,
-          maxAttempts: 1,
           failedReason: "[CHECKOUT_SURGE_RECOVERY_REQUIRED] recovery still unavailable",
         },
       ]),
@@ -391,7 +388,7 @@ describe("order recovery scanner", () => {
     expect(store.claimForPublication).toHaveBeenCalledOnce();
     expect(publisher.enqueue).toHaveBeenCalledWith(
       { ...job, processingGeneration: 2 },
-      { jobId: `recovery-${job.orderId}-2`, attempts: 1 },
+      { jobId: `recovery-${job.orderId}-2` },
     );
   });
 
@@ -422,7 +419,7 @@ describe("order recovery scanner", () => {
     expect(store.claimForPublication).toHaveBeenCalledOnce();
     expect(publisher.enqueue).toHaveBeenCalledWith(
       { ...job, processingGeneration: 1 },
-      { jobId: `recovery-${job.orderId}-1`, attempts: 1 },
+      { jobId: `recovery-${job.orderId}-1` },
     );
   });
 });

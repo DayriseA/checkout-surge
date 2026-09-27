@@ -167,7 +167,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const transition = await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
 
@@ -217,7 +216,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: "duplicate-delivery",
     };
 
@@ -255,7 +253,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "overlapping-delivery",
     };
     await transitionPersistence.transitionToProcessing(seeded.job, delivery);
@@ -322,7 +319,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const seeded = await seedOrder({ createdAt: now });
     await controlPersistence.recordRecoverable({
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 },
+      delivery: { attemptNumber: 1, attemptsMade: 0 },
       reason: "publication-retry",
       error: new Error("queue unavailable"),
     });
@@ -362,7 +359,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     expect(row).toMatchObject({ attempts: 2, publicationOwner: `recovery-${seeded.orderId}-2` });
     expect(enqueue).toHaveBeenCalledWith(
       { ...seeded.job, processingGeneration: 2 },
-      { jobId: row?.publicationOwner, attempts: 1 },
+      { jobId: row?.publicationOwner },
     );
     const confirmation = vi.fn().mockResolvedValue(undefined);
     await handlerWith(confirmation).handle(
@@ -370,7 +367,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: row?.publicationOwner ?? "",
       },
     );
@@ -399,7 +395,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       transitionPersistence.transitionToProcessing(seeded.job, {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 4,
         deliveryId: "crashing-delivery",
       }),
     ).rejects.toMatchObject({
@@ -426,7 +421,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
     await requireConnection()
@@ -507,7 +501,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const seeded = await seedOrder({ createdAt: now });
     await controlPersistence.recordRecoverable({
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 },
+      delivery: { attemptNumber: 1, attemptsMade: 0 },
       reason: "publication-retry",
       error: new Error("queue unavailable"),
     });
@@ -583,7 +577,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
     await requireConnection()
@@ -601,7 +594,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await handlerWith(confirmation).handle(recoveryJob, {
       attemptNumber: 2,
       attemptsMade: 1,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
 
@@ -617,7 +609,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "retry-delivery",
     });
     now = new Date(now.getTime() + 31_000);
@@ -626,7 +617,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await handlerWith(confirmation).handle(seeded.job, {
       attemptNumber: 2,
       attemptsMade: 1,
-      maxAttempts: 4,
       deliveryId: "retry-delivery",
     });
 
@@ -638,7 +628,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
     await requireConnection()
@@ -658,7 +647,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await handlerWith(confirmation).handle(recoveryJob, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: recoveryDeliveryId,
       recoveryKey: `order:${seeded.orderId}`,
     });
@@ -690,8 +678,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       });
     await requireConnection().db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: terminalRunId,
       presetId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
       presetName: "Terminal recovery",
@@ -779,7 +765,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
     await requireConnection()
@@ -839,7 +824,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
     await requireConnection()
@@ -967,7 +951,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "initial-delivery",
     });
 
@@ -979,7 +962,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
     const successRecord = {
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4, deliveryId: "d1" },
+      delivery: { attemptNumber: 1, attemptsMade: 0, deliveryId: "d1" },
       call: successCall,
       status: "succeeded" as const,
       terminal: true,
@@ -1017,7 +1000,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await expect(
       attemptPersistence.recordAttempt({
         job: seeded.job,
-        delivery: { attemptNumber: 1, attemptsMade: 1, maxAttempts: 4, deliveryId: "d1" },
+        delivery: { attemptNumber: 1, attemptsMade: 1, deliveryId: "d1" },
         call: capacityCall,
         disposition: "capacity_rejected",
         status: "failed",
@@ -1039,7 +1022,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await expect(
       attemptPersistence.recordAttempt({
         job: seeded.job,
-        delivery: { attemptNumber: 1, attemptsMade: 2, maxAttempts: 4, deliveryId: "d1" },
+        delivery: { attemptNumber: 1, attemptsMade: 2, deliveryId: "d1" },
         call: timeoutCall,
         status: "timed_out",
         terminal: false,
@@ -1089,13 +1072,11 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: "bounded-history",
     });
     await transitionPersistence.transitionToProcessing(other.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: "other-order",
     });
 
@@ -1109,7 +1090,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
     const supersededRecord = {
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+      delivery: { attemptNumber: 1, attemptsMade: 0 },
       call: supersededCall,
       disposition: "uncertain_result" as const,
       status: "timed_out" as const,
@@ -1131,7 +1112,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
     await attemptPersistence.recordAttempt({
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 1, maxAttempts: 1 },
+      delivery: { attemptNumber: 1, attemptsMade: 1 },
       call: canonicalCall,
       disposition: "succeeded",
       status: "succeeded",
@@ -1158,7 +1139,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
     await attemptPersistence.recordAttempt({
       job: seeded.job,
-      delivery: { attemptNumber: 1, attemptsMade: 3, maxAttempts: 1 },
+      delivery: { attemptNumber: 1, attemptsMade: 3 },
       call: timeoutCall,
       disposition: "uncertain_result",
       status: "timed_out",
@@ -1210,7 +1191,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
           delivery: {
             attemptNumber: 1,
             attemptsMade: index + 4,
-            maxAttempts: 1,
             deliveryId: "bounded-history",
           },
           call: {
@@ -1241,7 +1221,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
     await attemptPersistence.recordAttempt({
       job: other.job,
-      delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+      delivery: { attemptNumber: 1, attemptsMade: 0 },
       call: otherCall,
       disposition: "capacity_rejected",
       status: "failed",
@@ -1333,7 +1313,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "malformed-response-delivery",
     };
     const processing = await transitionPersistence.transitionToProcessing(seeded.job, delivery);
@@ -1378,7 +1357,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "transport-failure-delivery",
     };
     const processing = await transitionPersistence.transitionToProcessing(seeded.job, delivery);
@@ -1437,7 +1415,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "replay-delivery",
     };
     await transitionPersistence.transitionToProcessing(seeded.job, delivery);
@@ -1509,7 +1486,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "concurrent-success-delivery",
     });
     const intents = await Promise.allSettled(
@@ -1541,7 +1517,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
         delivery: {
           attemptNumber: 1,
           attemptsMade: 0,
-          maxAttempts: 1,
           deliveryId: "concurrent-success-delivery",
         },
         call,
@@ -1575,7 +1550,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "uncertain-response-delivery",
     });
     const cases = [
@@ -1613,7 +1587,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
         delivery: {
           attemptNumber: index + 1,
           attemptsMade: index,
-          maxAttempts: 4,
           deliveryId: "uncertain-response-delivery",
         },
         call,
@@ -1708,7 +1681,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await transitionPersistence.transitionToProcessing(seeded.job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "transport-delivery",
     });
     const call = await attemptPersistence.recordDispatchIntent({
@@ -1723,7 +1695,6 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 4,
         deliveryId: "transport-delivery",
       },
       call,

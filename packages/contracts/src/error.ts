@@ -7,13 +7,11 @@ import { correlationIdSchema, isoTimestampSchema, jsonObjectSchema } from "./pri
  * vocabulary and may be carried in `details` without becoming wire codes.
  */
 export const errorPayloadCodes = [
-  "service_misconfigured",
   "admin_login_rate_limited",
   "admin_origin_required",
   "admin_passphrase_required",
   "admin_session_required",
   "backend_unavailable",
-  "service_unavailable",
   "invalid_backend_response",
   "invalid_request",
   "control_token_required",
@@ -21,7 +19,6 @@ export const errorPayloadCodes = [
   "operator_mode_required",
   "resource_not_found",
   "inventory_not_initialized",
-  "inventory_unavailable",
   "queue_status_unavailable",
   "dashboard_recovery_unavailable",
   "dashboard_recovery_rate_limited",

@@ -315,20 +315,6 @@ describe("dashboard projection fan-out", () => {
     fanout.close();
   });
 
-  it("cleans up when the accepted callback fails", () => {
-    const fanout = createFanout();
-    expect(() =>
-      fanout.connect({
-        ...connectionInput("throw", "ip4:192.0.2.1"),
-        onAccepted: () => {
-          throw new Error("hijack failed");
-        },
-      }),
-    ).toThrow("hijack failed");
-    expect(fanout.clientCount()).toBe(0);
-    fanout.close();
-  });
-
   it.each([
     "throw",
     "headers",
@@ -443,6 +429,7 @@ function scopedProjection(
     saleOfferId,
     configSnapshot: acceptedRunConfigSnapshotFixture(),
     startedAt: "2026-07-23T11:59:00.000Z",
+    autoResetAt: "2026-07-23T12:14:00.000Z",
     trafficStartedAt: "2026-07-23T11:59:01.000Z",
   });
   return {

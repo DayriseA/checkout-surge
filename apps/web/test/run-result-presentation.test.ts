@@ -509,6 +509,7 @@ function runFixture(evidence: RunResultEvidence) {
     saleOfferId,
     configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt: timestamp,
+    autoResetAt: timestamp,
     trafficStartedAt: timestamp,
     trafficEndedAt: timestamp,
     finalizedAt: timestamp,

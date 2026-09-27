@@ -52,11 +52,9 @@ export function classifyTrafficDeliverySummary(
   const evidence = trafficCompletionDeliverySummarySchema.parse(input);
   const canonicalTransportAttemptCounts =
     transportAttemptCountsSchema.parse(transportAttemptCounts);
-  const trafficDeliveryStatus = classifyTrafficDelivery(canonicalTransportAttemptCounts);
-  if (!trafficDeliveryStatus) {
-    throw new Error("Traffic delivery cannot be classified with zero planned requests.");
-  }
-
+  const trafficDeliveryStatus = classifyTrafficDelivery(
+    canonicalTransportAttemptCounts,
+  ) as TrafficDeliverySummary["trafficDeliveryStatus"];
   return trafficDeliverySummarySchema.parse({
     ...evidence,
     completedIterations: evidence.completedIterations ?? null,

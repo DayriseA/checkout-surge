@@ -104,8 +104,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     const id = "99999999-9999-4999-8999-999999999991";
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Startup failure",
@@ -141,8 +139,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: "99999999-9999-4999-8999-999999999992",
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Later ordinary failure",
@@ -168,8 +164,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     const terminalStartedAt = new Date("2026-07-14T11:58:00.000Z");
     await db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: runId,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Preview 1k",
@@ -884,7 +878,7 @@ describe("DashboardProjectionService", () => {
 function controlledDatabase(rows: unknown[]) {
   const limit = vi.fn(async () => rows);
   const orderBy = vi.fn((..._expressions: SQL[]) => ({ limit }));
-  const where = vi.fn((_expression: SQL) => ({ orderBy, limit: async () => [] }));
+  const where = vi.fn((_expression: SQL) => ({ orderBy, limit }));
   const from = vi.fn(() => ({ where }));
   const select = vi.fn((fields?: unknown) =>
     fields
@@ -1225,6 +1219,7 @@ function runSnapshot(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapshot 
     saleOfferId,
     configSnapshot: configSnapshot(),
     startedAt: now.toISOString(),
+    autoResetAt: new Date(now.getTime() + 900_000).toISOString(),
     trafficStartedAt: now.toISOString(),
     ...overrides,
   });

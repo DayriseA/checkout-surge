@@ -40,8 +40,6 @@ describe("demo-run projections", () => {
       status: "failed",
       trafficStatus: "failed",
       configSnapshot,
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       correlationId: "corr-projection",
       saleOfferId: "33333333-3333-4333-8333-333333333333",
       startedAt: new Date("2026-07-21T10:00:00.000Z"),

@@ -43,14 +43,6 @@ export function mockErpBaseUrl(): string {
   return webServerConfig().mockErpBaseUrl;
 }
 
-export function requireControlServiceToken(ctx: ProxyRequestContext): string | Response {
-  const token = webServerConfig().controlServiceToken;
-  if (!token) {
-    return jsonError(ctx, 503, "service_misconfigured", "Control service token is not configured.");
-  }
-  return token;
-}
-
 export async function parseJsonRequest<T>(
   ctx: ProxyRequestContext,
   schema: ContractSchema<T>,

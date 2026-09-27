@@ -975,7 +975,7 @@ function TechnicalGroups({
     <>
       <RecoveryStatusPanel
         freshness={composition.freshness}
-        fullWidth={livePhase || !projection || !run}
+        fullWidth={livePhase || !projection}
         hasSyncIssue={hasSyncIssue}
         isRefreshing={isRefreshing}
         onRefresh={onRetry}
@@ -984,10 +984,10 @@ function TechnicalGroups({
         recovery={composition.panelRecovery}
         syncIssue={syncIssue}
       />
-      {projection && run && !livePhase ? (
+      {projection && !livePhase ? (
         <RequestSurgePanel freshness={composition.freshness} recovery={composition.panelRecovery} />
       ) : null}
-      {projection && run ? <SystemStatusPanel recovery={composition.panelRecovery} /> : null}
+      {projection ? <SystemStatusPanel recovery={composition.panelRecovery} /> : null}
     </>
   );
   const connectionGroup = (
@@ -1038,7 +1038,7 @@ function TechnicalGroups({
         Technical details
       </summary>
       <div className="grid grid-cols-12 gap-4 border-t border-border p-4 max-[560px]:p-3">
-        {runComposition && projection && run ? (
+        {runComposition && projection ? (
           livePhase ? (
             <>
               {scenarioGroup}

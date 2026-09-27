@@ -210,8 +210,6 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
     [ids.runA, ids.runB].map((id, index) => ({
       id,
       correlationId: "corr-erp-status-reader",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       presetId: ids.preset,
       presetName: "ERP status reader",
       operatorMode: "admin" as const,

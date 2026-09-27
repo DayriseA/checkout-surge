@@ -69,8 +69,7 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricS
       input.batchId,
       ...samplePayloads,
     );
-    if (result === "appended" || result === "duplicate" || result === "fenced") return result;
-    throw new Error("Redis returned an invalid traffic metric append outcome.");
+    return result as TrafficMetricAppendOutcome;
   }
 
   async publishDirtyIfLive(
@@ -180,13 +179,8 @@ function parseTrafficMetricSnapshot(value: unknown): [string[], Array<string | n
 }
 
 function parseTrafficMetricPublishResult(value: unknown): TrafficMetricPublishResult {
-  if (!Array.isArray(value) || value.length === 0 || typeof value[0] !== "string") {
-    throw new Error("Redis returned an invalid traffic metric publication result.");
-  }
-  if (value[0] === "fenced" && value.length === 1) return { outcome: "fenced" };
-  if (value[0] === "published" && value.length === 1) return { outcome: "published" };
-  if (value[0] === "failed" && value.length === 2 && typeof value[1] === "string") {
-    return { outcome: "failed", error: new Error(value[1]) };
-  }
-  throw new Error("Redis returned an invalid traffic metric publication result.");
+  const result = value as string[];
+  if (result[0] === "fenced" && result.length === 1) return { outcome: "fenced" };
+  if (result[0] === "published" && result.length === 1) return { outcome: "published" };
+  return { outcome: "failed", error: new Error(result[1]) };
 }

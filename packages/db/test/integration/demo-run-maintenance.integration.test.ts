@@ -57,11 +57,11 @@ async function seedGeneratedRunWithTerminalOrder(sql: TestSql): Promise<void> {
     INSERT INTO "demo_runs" (
       "id", "preset_id", "preset_name", "operator_mode", "status", "traffic_status",
       "config_snapshot", "sale_offer_id", "started_at",
-      "correlation_id", "engine_policy_name", "engine_policy_version"
+      "correlation_id"
     ) VALUES (
       ${ids.run}, ${ids.preset}, 'Maintenance Guard', 'admin', 'completed', 'succeeded',
       '{}'::jsonb, ${ids.saleOffer}, '2026-06-20T00:00:00Z'::timestamptz,
-      ${runScopedCorrelationId}, 'declared-capacity-erp-dispatch', 2
+      ${runScopedCorrelationId}
     )
   `;
   await sql`

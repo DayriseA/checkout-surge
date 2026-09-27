@@ -253,7 +253,7 @@ function orderStatusFixture(correlationId: string): OrderStatusResponse {
 async function buildTestServer(options: {
   persistence: BuyPersistence;
   stockReservations?: StockReservationGateway;
-  inventoryReader?: InventoryStatusReader | null;
+  inventoryReader?: InventoryStatusReader;
   readiness?: "ok" | "unavailable";
   generateId?: () => string;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
@@ -520,6 +520,7 @@ function demoRunSnapshotFixture(): DemoRunSnapshot {
     saleOfferId: fixtureIds.saleOffer,
     configSnapshot: acceptedRunConfigSnapshotFixture(),
     startedAt: "2026-06-20T00:00:10.000Z",
+    autoResetAt: "2026-06-20T00:15:10.000Z",
     trafficStartedAt: "2026-06-20T00:00:10.000Z",
   };
 }
@@ -786,6 +787,7 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     presetId: _presetId,
     saleOfferId: _saleOfferId,
     failureCategory: _runFailureCategory,
+    autoResetAt: _autoResetAt,
     ...run
   } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
@@ -1087,7 +1089,7 @@ describe("API gateway routes", () => {
   async function trackedServer(options: {
     persistence: BuyPersistence;
     stockReservations?: StockReservationGateway;
-    inventoryReader?: InventoryStatusReader | null;
+    inventoryReader?: InventoryStatusReader;
     readiness?: "ok" | "unavailable";
     generateId?: () => string;
     orderProcessJobPublisher?: OrderProcessJobPublisher;
@@ -4179,8 +4181,6 @@ describe("API buy persistence", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: fixtureIds.run,
       presetId,
       presetName: "Generated Pending Test",
@@ -4383,8 +4383,6 @@ describe("API buy persistence", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: fixtureIds.run,
       presetId,
       presetName: "Generated Stale Closure Test",

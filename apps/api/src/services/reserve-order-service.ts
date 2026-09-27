@@ -320,8 +320,7 @@ export class ReserveOrderService {
     if (
       decision.outcome === "run_not_accepting_traffic" ||
       decision.outcome === "inventory_not_initialized" ||
-      decision.outcome === "idempotency_conflict" ||
-      decision.outcome === "quantity_invalid"
+      decision.outcome === "idempotency_conflict"
     ) {
       return this.rejectedResponse(decision.outcome, input.correlationId, now);
     }

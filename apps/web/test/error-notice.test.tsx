@@ -31,7 +31,7 @@ describe("ErrorNotice action and disclosure boundary", () => {
       <ErrorNotice
         context="public-start"
         onRetry={onRetry}
-        read={{ status: "unavailable", errorCode: "service_unavailable" }}
+        read={{ status: "unavailable", errorCode: "dashboard_recovery_unavailable" }}
       />,
     );
 
@@ -42,7 +42,7 @@ describe("ErrorNotice action and disclosure boundary", () => {
     rerender(
       <ErrorNotice
         context="public-start"
-        read={{ status: "unavailable", errorCode: "service_unavailable" }}
+        read={{ status: "unavailable", errorCode: "dashboard_recovery_unavailable" }}
       />,
     );
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();

@@ -3225,6 +3225,7 @@ function demoRunFixture(overrides: Partial<DemoRunSnapshot> = {}): DemoRunSnapsh
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     configSnapshot: configSnapshotFixture(),
     startedAt: "2026-06-20T00:00:10.000Z",
+    autoResetAt: "2026-06-20T00:15:10.000Z",
     ...(status === "starting" ? {} : { trafficStartedAt: "2026-06-20T00:00:10.000Z" }),
     ...(status === "draining" ? { trafficEndedAt: "2026-06-20T00:00:11.000Z" } : {}),
     ...(status === "completed" || status === "failed"

@@ -23,7 +23,6 @@ const job = {
 const delivery = {
   attemptNumber: 2,
   attemptsMade: 1,
-  maxAttempts: 1,
   processingGeneration: 3,
 };
 const call: ErpCallReference = {

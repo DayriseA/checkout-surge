@@ -37,8 +37,8 @@ export type ErpCallReference = z.infer<typeof erpCallReferenceSchema>;
 
 /**
  * Versioned engine-policy identity (D13). Engine constants live in a versioned
- * worker policy; its identity is persisted with each run and with estimator
- * decisions so later calibration can be attributed.
+ * worker policy; its identity accompanies estimator decisions so later
+ * calibration can be attributed.
  */
 export const enginePolicyIdentitySchema = z
   .object({
@@ -50,9 +50,8 @@ export type EnginePolicyIdentity = z.infer<typeof enginePolicyIdentitySchema>;
 
 /**
  * The single declared-capacity ERP dispatch engine-policy identity (D13). Defined once
- * here so the API persists exactly the identity the worker policy runs: run
- * acceptance stores it on the run row and the worker policy derives its
- * version string from it.
+ * here so the estimator and worker policy use the same identity. The worker
+ * policy derives its version string from it.
  */
 export const erpDispatchEnginePolicyIdentity = {
   name: "declared-capacity-erp-dispatch",

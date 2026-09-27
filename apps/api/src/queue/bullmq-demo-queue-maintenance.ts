@@ -66,7 +66,6 @@ export function createDemoQueueMaintenance(
   return {
     async cleanRuns(runIds, settlement): Promise<QueueCleanupSummary> {
       const targets = new Set(runIds);
-      if (targets.size === 0) return { cleanedQueueCount: 0, cleanedJobCount: 0 };
       if (closePromise) {
         throw new Error("Queue maintenance is closing and cannot clean generated runs.");
       }

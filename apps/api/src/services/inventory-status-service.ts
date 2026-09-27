@@ -7,17 +7,9 @@ export interface InventoryStatusReader {
 }
 
 export class InventoryStatusService {
-  constructor(private readonly reader: InventoryStatusReader | null) {}
+  constructor(private readonly reader: InventoryStatusReader) {}
 
   async getStatus(saleOfferId: string): Promise<InventoryStatus> {
-    if (!this.reader) {
-      throw new ApiHttpError({
-        statusCode: 503,
-        code: "inventory_unavailable",
-        message: "Redis inventory is not configured.",
-      });
-    }
-
     try {
       return await this.reader.getStatus(saleOfferId);
     } catch (error) {

@@ -24,7 +24,6 @@ export async function resetRuntime(options = {}) {
   }
   const request = options.fetch ?? fetch;
   const timeoutMs = options.requestTimeoutMs ?? defaultRequestTimeoutMs;
-  assertPositiveTimeout(timeoutMs);
   const targets = [
     {
       service: "api",
@@ -179,12 +178,6 @@ function sanitizeBody(value, sensitiveValue) {
 
 function removeSensitiveValue(value, sensitiveValue) {
   return sensitiveValue ? value.split(sensitiveValue).join("") : value;
-}
-
-function assertPositiveTimeout(value) {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error("Runtime reset request timeout must be a finite positive number.");
-  }
 }
 
 class RuntimeResetRequestTimeout extends Error {}

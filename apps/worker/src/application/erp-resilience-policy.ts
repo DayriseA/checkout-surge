@@ -4,8 +4,7 @@ import {
 } from "@checkout-surge/contracts";
 
 export const erpResiliencePolicy = {
-  // Derived from the shared engine-policy identity so the API-persisted run
-  // evidence and the actually running policy can never drift (D13).
+  // Derived from the shared engine-policy identity (D13).
   version: `${erpDispatchEnginePolicyIdentity.name}-v${erpDispatchEnginePolicyIdentity.version}`,
   fallbackCooldownMs: 1_000,
   maximumCooldownMs: 60_000,
@@ -34,7 +33,6 @@ export type ErpAdmissionOperation = "confirmation" | "lookup";
 export type ErpLatencyObservationSource =
   | "confirmation_response"
   | "confirmation_timeout"
-  | "local_reuse"
   | "lookup"
   | "replay";
 

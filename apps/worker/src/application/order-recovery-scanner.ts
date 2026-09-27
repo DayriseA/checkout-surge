@@ -113,7 +113,6 @@ export interface FailedOrderJobReader {
       rawData?: unknown;
       jobName?: string;
       attemptsMade: number;
-      maxAttempts: number;
       failedReason: string;
       jobId?: string;
       dispositionId?: string;
@@ -203,7 +202,6 @@ export function createOrderRecoveryScanner(dependencies: {
         delivery: {
           attemptNumber: failed.attemptsMade + 1,
           attemptsMade: failed.attemptsMade,
-          maxAttempts: failed.maxAttempts,
           deliveryId: failed.jobId ?? failed.job.orderId,
         },
         reason: "failed_queue_job_reconciliation",
@@ -269,7 +267,7 @@ export function createOrderRecoveryScanner(dependencies: {
       try {
         await dependencies.publisher.enqueue(
           { ...candidate.job, processingGeneration: claim.processingGeneration },
-          { jobId: claim.jobId, attempts: 1 },
+          { jobId: claim.jobId },
         );
         enqueued += 1;
       } catch (error) {
@@ -280,7 +278,6 @@ export function createOrderRecoveryScanner(dependencies: {
             {
               attemptNumber: claim.attempt,
               attemptsMade: claim.attempt - 1,
-              maxAttempts: 1,
               deliveryId: claim.jobId,
               processingGeneration: claim.processingGeneration,
             },

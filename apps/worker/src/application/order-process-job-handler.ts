@@ -4,7 +4,6 @@ import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkou
 export interface OrderProcessDeliveryMetadata {
   attemptNumber: number;
   attemptsMade: number;
-  maxAttempts: number;
   recoveryKey?: string;
   /** Stable BullMQ/durable publication identity for this delivery. */
   deliveryId?: string;
@@ -156,21 +155,19 @@ export function createOrderProcessJobHandler(dependencies: {
       } catch (error) {
         // Missing/mismatched orders remain poison jobs and are handled by the
         // consumer's DLQ path. Other failures happen before ERP is called and
-        // must retain recovery ownership on the last delivery.
+        // must retain recovery ownership.
         if (isOrderPoisonError(error)) throw error;
         const persistenceError = new OrderProcessingPersistenceError(error);
-        if (!hasRemainingAttempts(delivery)) {
-          await handoffOrThrow(
-            dependencies.recovery,
-            {
-              job,
-              delivery,
-              reason: "order_processing_persistence_unavailable",
-              error: persistenceError,
-            },
-            persistenceError,
-          );
-        }
+        await handoffOrThrow(
+          dependencies.recovery,
+          {
+            job,
+            delivery,
+            reason: "order_processing_persistence_unavailable",
+            error: persistenceError,
+          },
+          persistenceError,
+        );
         throw persistenceError;
       }
 
@@ -399,10 +396,6 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
       // Logging must not fail the durable order transition.
     }
   }
-}
-
-export function hasRemainingAttempts(delivery: OrderProcessDeliveryMetadata): boolean {
-  return delivery.attemptNumber < delivery.maxAttempts;
 }
 
 function isAcceptedConfirmationPersistenceError(error: unknown): error is {

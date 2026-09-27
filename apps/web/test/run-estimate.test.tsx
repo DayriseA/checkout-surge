@@ -469,6 +469,7 @@ function accepted(mode: "public" | "admin") {
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt: timestamp,
+    autoResetAt: timestamp,
     trafficStartedAt: timestamp,
   };
   return { run, recovery: { establishedAt: timestamp }, correlationId: "accepted-run", timestamp };

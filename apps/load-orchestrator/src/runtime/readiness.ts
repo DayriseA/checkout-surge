@@ -148,16 +148,7 @@ async function k6BinaryCheck(
   checker: NonNullable<LoadOrchestratorReadinessOptions["checkExecutable"]>,
   timeoutMs: number,
 ): Promise<ReadinessCheck> {
-  let result: Awaited<ReturnType<typeof checker>>;
-  try {
-    result = await checker(k6Binary, ["version"], timeoutMs);
-  } catch {
-    return {
-      name: "k6_binary_executable",
-      status: "unavailable",
-      message: "Configured k6 binary could not be checked.",
-    };
-  }
+  const result = await checker(k6Binary, ["version"], timeoutMs);
   return result.ok
     ? { name: "k6_binary_executable", status: "ok" }
     : {

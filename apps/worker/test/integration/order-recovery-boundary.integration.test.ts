@@ -95,7 +95,6 @@ describe("PostgreSQL durable order recovery boundary", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: "source-job",
       },
       sourceJobId: "source-job",
@@ -117,7 +116,6 @@ describe("PostgreSQL durable order recovery boundary", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: "retained-source",
       },
       sourceJobId: "retained-source",

@@ -261,9 +261,7 @@ function codePresentation(
         action: { kind: "contact-operator", label: "Review deployment" },
         tone: "danger",
       };
-    case "service_unavailable":
     case "dashboard_recovery_unavailable":
-    case "inventory_unavailable":
     case "queue_status_unavailable":
     case "load_orchestrator_unavailable":
       return context.surface === "public-start"
@@ -281,7 +279,6 @@ function codePresentation(
         ? publicStartUncertainRetryPresentation(retryAfterMs)
         : publicBackendRetryPresentation(retryAfterMs);
     case "internal_error":
-    case "service_misconfigured":
       return context.surface === "public-start"
         ? publicBackendRetryPresentation(retryAfterMs)
         : genericPresentation;

@@ -37,15 +37,6 @@ describe("K6LiveMetricAggregator", () => {
     );
   });
 
-  it("scales request deltas by the full configured window", () => {
-    const aggregator = new K6LiveMetricAggregator({ windowMs: 2_000 });
-    aggregator.observe(point("http_reqs", 4, windowStart));
-
-    expect(aggregator.flush()).toEqual([
-      metric("traffic.response_completion_rate", 2, "requests_per_second"),
-    ]);
-  });
-
   it("closes the prior window on a newer event and flushes the final window only once", () => {
     const aggregator = new K6LiveMetricAggregator();
     aggregator.observe(point("http_reqs", 2, windowStart));

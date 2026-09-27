@@ -116,7 +116,16 @@ export const runResultInvariantSchema = z
 
 export const runResultReconciliationSchema = z
   .object({
-    code: z.string().trim().min(1),
+    code: z.enum([
+      "pending_persistence",
+      "pending_persistence_evidence_mismatch",
+      "accepted_responses_vs_unique_reservations",
+      "sold_out_decisions_vs_responses",
+      "partial_generator_coverage",
+      "generator_evidence_unavailable",
+      "sold_out_with_stock_remaining",
+      "notifications_below_confirmations",
+    ]),
     leftPopulation: z.string().trim().min(1),
     leftValue: z.number().int().nullable(),
     rightPopulation: z.string().trim().min(1),

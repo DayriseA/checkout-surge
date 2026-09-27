@@ -21,7 +21,6 @@ export const publicVocabulary = {
   uniqueReservationsSecured: "Unique reservations secured",
   soldOutRejectionsRecorded: "sold-out rejections recorded by Checkout-Surge",
   soldOutRejectionsSeen: "sold-out rejections seen by the load generator",
-  soldOutAttempts: "Attempts turned away because stock ran out",
   httpFailurePopulation: "load-generator attempts; connection failures may have no response",
   startingStock: "starting stock",
   pendingReservations: "reservations awaiting durable storage",
@@ -36,8 +35,6 @@ export const publicVocabulary = {
 
 export const publicNarrative = {
   repositoryUrl: "https://github.com/DayriseA/checkout-surge",
-  watchOrientation:
-    "You’re watching simulated buyers compete for limited stock: reservations happen first, then queued orders are confirmed or failed.",
 } as const;
 
 export { liveTrafficMetricWindowSeconds };

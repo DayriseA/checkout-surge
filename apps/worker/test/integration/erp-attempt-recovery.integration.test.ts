@@ -124,7 +124,6 @@ describe("PostgreSQL ERP attempt recovery", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 2,
         deliveryId: "original-job",
       },
       status: "failed",
@@ -148,7 +147,6 @@ describe("PostgreSQL ERP attempt recovery", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: "recovery-dddddddd-dddd-4ddd-8ddd-dddddddddddd-1",
       },
       status: "succeeded" as const,
@@ -190,7 +188,6 @@ describe("PostgreSQL ERP attempt recovery", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: "recovery-contradiction",
       },
       status: "succeeded" as const,
@@ -245,7 +242,6 @@ describe("PostgreSQL ERP attempt recovery", () => {
         .handle(job, {
           attemptNumber: 1,
           attemptsMade: 0,
-          maxAttempts: 2,
           deliveryId: "original-delivery",
         })
         .catch((error: unknown) => error);
@@ -286,7 +282,6 @@ describe("PostgreSQL ERP attempt recovery", () => {
       await replayHandler.handle(replayJob, {
         attemptNumber: 2,
         attemptsMade: 1,
-        maxAttempts: 2,
         deliveryId: claim.jobId,
       });
 
@@ -313,13 +308,11 @@ describe("PostgreSQL ERP attempt recovery", () => {
     const processing = await transition.transitionToProcessing(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "uncertain-delivery",
     });
     const delivery = {
       attemptNumber: 2,
       attemptsMade: 1,
-      maxAttempts: 4,
       deliveryId: "reconciliation-delivery",
       processingGeneration: processing.processingGeneration ?? 0,
     };
@@ -394,13 +387,11 @@ describe("PostgreSQL ERP attempt recovery", () => {
     const processing = await transition.transitionToProcessing(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "late-canonical-initial",
     });
     const delivery = {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
       deliveryId: "late-canonical-initial",
       processingGeneration: processing.processingGeneration ?? 0,
     };

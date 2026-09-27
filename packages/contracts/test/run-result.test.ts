@@ -384,6 +384,7 @@ describe("deriveRunResult", () => {
       operatorMode: "public",
       configSnapshot: previewRunConfigSnapshotFixture(),
       startedAt: "2026-06-20T12:00:00.000Z",
+      autoResetAt: "2026-06-20T12:15:00.000Z",
       status: "failed",
       trafficStatus: "failed",
       finalizedAt: "2026-06-20T12:00:01.000Z",

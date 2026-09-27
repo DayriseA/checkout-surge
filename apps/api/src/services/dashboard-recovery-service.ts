@@ -167,7 +167,6 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
               )
             : inArray(demoRuns.status, ["starting", "active", "draining"]),
       )
-      .orderBy(desc(demoRuns.startedAt), desc(demoRuns.createdAt), desc(demoRuns.id))
       .limit(knownScope ? 2 : 1);
     const currentRunRow = knownScope
       ? (rows.find((row) => ["starting", "active", "draining"].includes(row.status)) ??

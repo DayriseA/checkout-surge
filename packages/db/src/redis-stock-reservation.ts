@@ -1,6 +1,5 @@
 import {
   idempotencyKeySchema,
-  positiveIntegerSchema,
   type SecuredReservationHold,
   type StockReservationDecision,
   securedReservationHoldSchema,
@@ -290,10 +289,6 @@ local function parseNonnegativeInteger(value, label)
 end
 
 local quantity = tonumber(ARGV[1])
-if not quantity or quantity <= 0 or quantity ~= math.floor(quantity) or quantity > maximumSafeInteger then
-  return cjson.encode({ outcome = "quantity_invalid", reservation = cjson.null })
-end
-
 local stateType = redis.call("TYPE", KEYS[1]).ok
 if stateType == "none" then
   return cjson.encode({ outcome = "inventory_not_initialized", reservation = cjson.null })
@@ -506,16 +501,9 @@ export async function reserveInventoryStock(
   redis: CheckoutSurgeRedis,
   input: ReserveInventoryStockInput,
 ): Promise<StockReservationDecision> {
-  if (!positiveIntegerSchema.safeParse(input.reservation.quantity).success) {
-    return stockReservationDecisionSchema.parse({
-      outcome: "quantity_invalid",
-      reservation: null,
-    });
-  }
-
   const reservation = securedReservationHoldSchema.parse(input.reservation);
   const idempotencyKey = idempotencyKeySchema.parse(input.idempotencyKey);
-  const idempotencyTtlSeconds = positiveIntegerSchema.parse(input.idempotencyTtlSeconds);
+  const idempotencyTtlSeconds = input.idempotencyTtlSeconds;
   assertValidHoldWindow(reservation);
 
   const keys = inventoryKeys(reservation.saleOfferId);
@@ -607,7 +595,7 @@ export async function promoteReservationIdempotencyToAccepted(
 ): Promise<AcceptedPromotionResult> {
   const idempotencyKey = idempotencyKeySchema.parse(input.idempotencyKey);
   const reservation = securedReservationHoldSchema.parse(input.reservation);
-  const idempotencyTtlSeconds = positiveIntegerSchema.parse(input.idempotencyTtlSeconds);
+  const idempotencyTtlSeconds = input.idempotencyTtlSeconds;
   assertValidHoldWindow(reservation);
   const keys = inventoryKeys(reservation.saleOfferId);
   const result = await redis.eval(

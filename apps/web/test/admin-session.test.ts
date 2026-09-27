@@ -148,7 +148,6 @@ describe("admin login limiter", () => {
     const secret = "visitor-cookie-secret";
     const visitorId = "123e4567-e89b-12d3-a456-426614174000";
     const credential = signPublicVisitorCredential(secret, visitorId, 100);
-    expect(credential).not.toBeNull();
     const request = new Request("http://dashboard.local", {
       headers: {
         cookie: `${publicVisitorCookieName}=${credential}`,
@@ -188,7 +187,7 @@ describe("admin login workflow", () => {
   });
 
   it("denies every untrusted unsafe Origin before limiter admission", async () => {
-    const limiter = { admit: vi.fn().mockResolvedValue({ outcome: "admitted" as const }) };
+    const limiter = { admit: vi.fn().mockReturnValue({ outcome: "admitted" as const }) };
     const handler = createAdminLoginHandler({
       limiter: () => limiter,
       resolveClient: () => "unknown",
@@ -249,7 +248,7 @@ describe("admin login workflow", () => {
       });
     const limited = createAdminLoginHandler({
       limiter: () => ({
-        admit: vi.fn().mockResolvedValue({ outcome: "limited", retryAfterSeconds: 7 }),
+        admit: vi.fn().mockReturnValue({ outcome: "limited", retryAfterSeconds: 7 }),
       }),
       resolveClient: () => "unknown",
       config,
@@ -266,7 +265,7 @@ describe("admin login workflow", () => {
   });
 
   it("does not expose passphrases in admitted credential failures", async () => {
-    const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
+    const admit = vi.fn().mockReturnValue({ outcome: "admitted" as const });
     const handler = createAdminLoginHandler({
       limiter: () => ({ admit }),
       resolveClient: () => "raw-client-identity",
@@ -309,7 +308,7 @@ describe("admin login workflow", () => {
     expect(security).not.toBeNull();
     if (!security) throw new Error("Expected valid security configuration");
     const handler = createAdminLoginHandler({
-      limiter: () => ({ admit: vi.fn().mockResolvedValue({ outcome: "admitted" }) }),
+      limiter: () => ({ admit: vi.fn().mockReturnValue({ outcome: "admitted" }) }),
       resolveClient: () => "unknown",
       config: () => ({
         passphrase: "candidate",
@@ -331,7 +330,7 @@ describe("admin login workflow", () => {
   });
 
   it("rejects non-JSON and non-string credential bodies before limiter admission", async () => {
-    const admit = vi.fn().mockResolvedValue({ outcome: "admitted" as const });
+    const admit = vi.fn().mockReturnValue({ outcome: "admitted" as const });
     const handler = createAdminLoginHandler({
       limiter: () => ({ admit }),
       resolveClient: () => "unknown",
@@ -367,7 +366,7 @@ describe("admin login workflow", () => {
 
   it("signs in with a non-ASCII configured passphrase sent as a JSON body", async () => {
     const handler = createAdminLoginHandler({
-      limiter: () => ({ admit: vi.fn().mockResolvedValue({ outcome: "admitted" as const }) }),
+      limiter: () => ({ admit: vi.fn().mockReturnValue({ outcome: "admitted" as const }) }),
       resolveClient: () => "unknown",
       config: () => ({
         passphrase: "密码🔒",

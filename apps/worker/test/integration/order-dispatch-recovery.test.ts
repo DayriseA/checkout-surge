@@ -141,8 +141,6 @@ describe("queued order dispatch recovery", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: runId,
       presetId: "ffffffff-ffff-4fff-8fff-fffffffffff1",
       presetName: "Terminal dispatch recovery",

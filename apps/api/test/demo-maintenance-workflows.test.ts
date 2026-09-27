@@ -949,7 +949,6 @@ describe("focused demo maintenance workflows", () => {
           await handler.handle(orderProcessJobSchema.parse(job.data), {
             attemptNumber: 1,
             attemptsMade: 0,
-            maxAttempts: 1,
             ...(job.id ? { deliveryId: job.id } : {}),
           });
           observedAt = new Date("2026-06-20T00:00:12.000Z");
@@ -1013,8 +1012,6 @@ describe("focused demo maintenance workflows", () => {
         await expect(
           db.insert(demoRuns).values({
             correlationId: "corr-test-run",
-            enginePolicyName: "declared-capacity-erp-dispatch",
-            enginePolicyVersion: 2,
             id: ids.startingRun,
             presetId: ids.preset,
             presetName: "Reset Preset",
@@ -1902,8 +1899,6 @@ describe("focused demo maintenance workflows", () => {
       await seedBase(db);
       await db.insert(demoRuns).values({
         correlationId: "corr-test-run",
-        enginePolicyName: "declared-capacity-erp-dispatch",
-        enginePolicyVersion: 2,
         id: ids.startingRun,
         presetId: ids.preset,
         presetName: "Reset Preset",
@@ -2940,8 +2935,6 @@ async function seedRun(
   });
   await db.insert(demoRuns).values({
     correlationId: "corr-test-run",
-    enginePolicyName: "declared-capacity-erp-dispatch",
-    enginePolicyVersion: 2,
     id: input.runId,
     presetId: ids.preset,
     presetName: "Reset Preset",
@@ -3042,8 +3035,6 @@ async function seedCatalogReferencedTerminalRun(
   });
   await db.insert(demoRuns).values({
     correlationId: "corr-test-run",
-    enginePolicyName: "declared-capacity-erp-dispatch",
-    enginePolicyVersion: 2,
     id: ids.catalogRun,
     presetId: ids.preset,
     presetName: "Reset Preset",

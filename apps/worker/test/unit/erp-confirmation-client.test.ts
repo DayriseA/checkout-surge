@@ -27,7 +27,6 @@ const job = {
 const delivery: OrderProcessDeliveryMetadata = {
   attemptNumber: 2,
   attemptsMade: 1,
-  maxAttempts: 3,
   processingGeneration: 7,
 };
 const call: ErpCallReference = {

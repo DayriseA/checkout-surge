@@ -35,7 +35,6 @@ export async function GET(
     upstreamQuery.set("knownSaleOfferId", query.knownSaleOfferId);
   }
   const visitor = resolvePublicVisitorIdentity(ctx);
-  if (visitor instanceof Response) return visitor;
   const response = await proxyJson({
     ctx,
     url: `${apiBaseUrl()}${dashboardRecoveryPath}${upstreamQuery.size > 0 ? `?${upstreamQuery}` : ""}`,

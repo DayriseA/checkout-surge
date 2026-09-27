@@ -580,6 +580,7 @@ function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
     configSnapshot: previewRunConfigSnapshotFixture(),
     ...overrides,
+    autoResetAt: overrides.autoResetAt ?? "2026-06-20T00:15:00.000Z",
   };
 }
 

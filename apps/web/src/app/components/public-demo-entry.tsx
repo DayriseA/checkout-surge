@@ -1376,7 +1376,9 @@ function customEntryAppliesToMode(entry: CustomRunSummaryEntry, mode: TrafficMod
   return entry.fieldId !== "custom-buyers" && entry.fieldId !== "custom-safety-cutoff";
 }
 
-export function readinessPresentation(readiness: BackendRead<HealthResponse>): PresentationState {
+function readinessPresentation(
+  readiness: BackendRead<HealthResponse>,
+): Pick<PresentationState, "label" | "tone"> {
   const readinessStatus =
     readiness.status === "unavailable" ||
     (readiness.status === "available" && readiness.data.status === "unavailable")
@@ -1390,13 +1392,8 @@ export function readinessPresentation(readiness: BackendRead<HealthResponse>): P
           readiness: readinessStatus,
         });
   return {
-    state:
-      readiness.status === "loading"
-        ? "infrastructure-checking"
-        : `infrastructure-${readinessStatus}`,
     label: readiness.status === "loading" ? "checking infrastructure" : "backend not ready",
     tone: presentation.tone,
-    description: presentation.explanation ?? presentation.headline,
   };
 }
 

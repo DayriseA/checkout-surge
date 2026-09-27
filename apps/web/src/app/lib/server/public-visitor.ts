@@ -4,7 +4,7 @@ import {
   signPublicVisitorCredential,
   verifyPublicVisitorCredential,
 } from "@checkout-surge/contracts/public-visitor-credential";
-import { jsonError, type ProxyRequestContext } from "./backend-proxy";
+import type { ProxyRequestContext } from "./backend-proxy";
 import { webServerConfig } from "./config";
 
 const publicVisitorMaxAgeSeconds = 365 * 24 * 60 * 60;
@@ -19,9 +19,7 @@ export interface ExistingPublicVisitorIdentity {
   visitorId: string;
 }
 
-export function resolvePublicVisitorIdentity(
-  ctx: ProxyRequestContext,
-): PublicVisitorIdentity | Response {
+export function resolvePublicVisitorIdentity(ctx: ProxyRequestContext): PublicVisitorIdentity {
   const secret = webServerConfig().publicClientCookieSecret;
 
   const existing = readPublicVisitorIdentity(ctx.request, secret);
@@ -31,14 +29,6 @@ export function resolvePublicVisitorIdentity(
 
   const id = randomUUID();
   const credential = signPublicVisitorCredential(secret, id, Date.now());
-  if (!credential) {
-    return jsonError(
-      ctx,
-      503,
-      "service_misconfigured",
-      "Public visitor cookie signing is not configured.",
-    );
-  }
   return {
     credential,
     setCookie: serializePublicVisitorCookie(credential, ctx.request),

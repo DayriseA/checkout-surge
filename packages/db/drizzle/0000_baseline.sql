@@ -95,8 +95,6 @@ CREATE TABLE "demo_runs" (
 	"status" "demo_run_status" DEFAULT 'starting' NOT NULL,
 	"traffic_status" "demo_run_traffic_status" DEFAULT 'not_started' NOT NULL,
 	"config_snapshot" jsonb NOT NULL,
-	"engine_policy_name" text NOT NULL,
-	"engine_policy_version" integer NOT NULL,
 	"correlation_id" text NOT NULL,
 	"sale_offer_id" uuid,
 	"started_at" timestamp with time zone,

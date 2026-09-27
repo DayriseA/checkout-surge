@@ -860,6 +860,7 @@ function projectionFixture(): DashboardProjection {
         },
       },
       startedAt: "2026-06-20T00:00:00.000Z",
+      autoResetAt: "2026-06-20T00:15:00.000Z",
       trafficStartedAt: "2026-06-20T00:00:00.000Z",
     },
     inventory: {

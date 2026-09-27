@@ -262,8 +262,6 @@ async function seedRun(connection: ReturnType<typeof createDatabaseConnection>):
   });
   await connection.db.insert(demoRuns).values({
     correlationId: "corr-test-run",
-    enginePolicyName: "declared-capacity-erp-dispatch",
-    enginePolicyVersion: 2,
     id: runId,
     presetId,
     presetName: "Worker config reader",

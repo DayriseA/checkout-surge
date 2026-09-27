@@ -158,6 +158,7 @@ function runSnapshot() {
     saleOfferId,
     configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt: "2026-07-23T11:59:00.000Z",
+    autoResetAt: "2026-07-23T12:14:00.000Z",
     trafficStartedAt: "2026-07-23T11:59:01.000Z",
   });
 }

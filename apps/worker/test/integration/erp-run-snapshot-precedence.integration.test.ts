@@ -90,7 +90,7 @@ describe("worker and Mock ERP precedence", () => {
           queuedAt: "2026-08-07T00:00:00.000Z",
           processingGeneration: 0,
         },
-        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 },
+        { attemptNumber: 1, attemptsMade: 0, processingGeneration: 0 },
         erpResiliencePolicy.initialRequestDeadlineMs,
       ),
     ).resolves.toMatchObject({ response: { status: "succeeded" } });

@@ -1558,15 +1558,6 @@ describe("buy and dashboard contracts", () => {
         order: null,
       }).outcome,
     ).toBe("sold_out");
-    expect(
-      buyResponseSchema.parse({
-        outcome: "quantity_invalid",
-        correlationId,
-        timestamp,
-        reservation: null,
-        order: null,
-      }).outcome,
-    ).toBe("quantity_invalid");
   });
 
   it("exposes the canonical decision vocabulary for run closures", () => {
@@ -1578,7 +1569,6 @@ describe("buy and dashboard contracts", () => {
     "run_not_accepting_traffic",
     "inventory_not_initialized",
     "idempotency_conflict",
-    "quantity_invalid",
   ] as const)("parses the %s rejection from its outcome alone", (outcome) => {
     const payload = {
       outcome,
@@ -1671,6 +1661,9 @@ describe("buy and dashboard contracts", () => {
       saleOfferId,
       configSnapshot: acceptedRunSnapshot(),
       startedAt: timestamp,
+      autoResetAt: new Date(
+        new Date(timestamp).getTime() + automaticRunResetDeadlineSeconds * 1000,
+      ).toISOString(),
       trafficStartedAt: timestamp,
     };
     const recovery = dashboardProjectionSchema.parse({
@@ -1953,6 +1946,9 @@ describe("buy and dashboard contracts", () => {
       saleOfferId: "33333333-3333-4333-8333-333333333333",
       configSnapshot: acceptedRunSnapshot(),
       startedAt: timestamp,
+      autoResetAt: new Date(
+        new Date(timestamp).getTime() + automaticRunResetDeadlineSeconds * 1000,
+      ).toISOString(),
       trafficStartedAt: timestamp,
     };
     const scope = { runId: currentRun.runId, saleOfferId: currentRun.saleOfferId };
@@ -2306,7 +2302,14 @@ describe("public runtime policy contract", () => {
       adminRunHistoryDetailResponseSchema.parse({
         failureDiagnostic: null,
         summary,
-        run: { ...detail.run, presetId: "33333333-3333-4333-8333-333333333333", saleOfferId },
+        run: {
+          ...detail.run,
+          presetId: "33333333-3333-4333-8333-333333333333",
+          saleOfferId,
+          autoResetAt: new Date(
+            new Date(timestamp).getTime() + automaticRunResetDeadlineSeconds * 1000,
+          ).toISOString(),
+        },
         overallDurationMs: null,
         exceptionSummary: {
           maximumClassification: detail.result.maximumClassification,

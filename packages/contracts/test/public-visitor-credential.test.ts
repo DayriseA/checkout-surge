@@ -7,11 +7,7 @@ import {
 
 const secret = "fixture-cookie-secret";
 const visitorId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const signedFixture = () => {
-  const value = signPublicVisitorCredential(secret, visitorId, 1234);
-  if (!value) throw new Error("Fixture visitor credential could not be signed.");
-  return value;
-};
+const signedFixture = () => signPublicVisitorCredential(secret, visitorId, 1234);
 
 describe("public visitor credentials", () => {
   it("round trips a constant-format signed UUID and issued-at value", () => {
@@ -23,8 +19,8 @@ describe("public visitor credentials", () => {
 
   it("rejects missing, weak, and wrong secrets", () => {
     const value = signedFixture();
-    expect(signPublicVisitorCredential("weak", visitorId, 1234)).toBeNull();
     expect(verifyPublicVisitorCredential(undefined, value)).toBeNull();
+    expect(verifyPublicVisitorCredential("weak", value)).toBeNull();
     expect(verifyPublicVisitorCredential("wrong-fixture-secret", value)).toBeNull();
   });
 

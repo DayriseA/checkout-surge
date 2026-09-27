@@ -1,5 +1,5 @@
 import { correlationIdHeaderName } from "@checkout-surge/logger";
-import type { AdminLoginLimiter, LoginAdmission } from "./admin-login-limiter";
+import type { AdminLoginLimiter } from "./admin-login-limiter";
 import { requireAdminOrigin } from "./admin-origin";
 import { createAdminSessionToken, verifyAdminPassphrase } from "./admin-session";
 import {
@@ -10,8 +10,8 @@ import {
 } from "./backend-proxy";
 
 export interface AdminLoginConfig {
-  passphrase: string | null;
-  sessionSecret: string | null;
+  passphrase: string;
+  sessionSecret: string;
   sessionMaxAgeSeconds: number;
   secureCookie: boolean;
 }
@@ -19,7 +19,7 @@ export interface AdminLoginConfig {
 export interface AdminLoginDependencies {
   limiter(): AdminLoginLimiter;
   resolveClient(request: Request): string;
-  config(): AdminLoginConfig | null;
+  config(): AdminLoginConfig;
   now(): Date;
   requireOrigin(ctx: ProxyRequestContext): Response | null;
 }
@@ -34,13 +34,9 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
     if (candidate === null) return invalidCredential(ctx);
 
     const now = dependencies.now();
-    let admission: LoginAdmission;
-    try {
-      const limiter = dependencies.limiter();
-      admission = await limiter.admit(dependencies.resolveClient(request), now.getTime());
-    } catch {
-      return limiterUnavailable(ctx);
-    }
+    const admission = dependencies
+      .limiter()
+      .admit(dependencies.resolveClient(request), now.getTime());
     if (admission.outcome === "limited") {
       return jsonError(
         ctx,
@@ -54,13 +50,7 @@ export function createAdminLoginHandler(dependencies: AdminLoginDependencies) {
     }
 
     const config = dependencies.config();
-    if (!config)
-      return jsonError(ctx, 503, "service_misconfigured", "Admin sessions are not configured.");
-    if (!config.passphrase)
-      return jsonError(ctx, 503, "service_misconfigured", "Admin controls are not configured.");
     if (!verifyAdminPassphrase(candidate, config.passphrase)) return invalidCredential(ctx);
-    if (!config.sessionSecret)
-      return jsonError(ctx, 503, "service_misconfigured", "Admin sessions are not configured.");
 
     const nowSeconds = Math.floor(now.getTime() / 1000);
     const token = createAdminSessionToken({
@@ -99,8 +89,4 @@ async function readPassphraseFromJsonBody(request: Request): Promise<string | nu
   } catch {
     return null;
   }
-}
-
-function limiterUnavailable(ctx: ProxyRequestContext): Response {
-  return jsonError(ctx, 503, "service_unavailable", "Admin login is temporarily unavailable.");
 }

@@ -20,9 +20,9 @@ describe("dashboard source identity", () => {
       "77777777-7777-4777-8777-777777777777",
       1,
     );
-    expect(
-      resolveRecoverySource({ ip: "192.0.2.4", visitorCredential: credential ?? "", secret }),
-    ).toBe("visitor:77777777-7777-4777-8777-777777777777");
+    expect(resolveRecoverySource({ ip: "192.0.2.4", visitorCredential: credential, secret })).toBe(
+      "visitor:77777777-7777-4777-8777-777777777777",
+    );
     expect(resolveRecoverySource({ ip: "192.0.2.4", visitorCredential: "caller", secret })).toBe(
       "ip4:192.0.2.4",
     );

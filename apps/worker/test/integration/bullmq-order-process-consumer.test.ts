@@ -94,7 +94,6 @@ describe("BullMQ order-processing boundary", () => {
       payload: job,
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: job.orderId,
       processingGeneration: 0,
     });
@@ -190,7 +189,7 @@ describe("BullMQ order-processing boundary", () => {
     await publisher.close();
   });
 
-  it("re-enqueues exhausted work through a durable claim and confirms one recovery delivery", async () => {
+  it("re-enqueues failed work through a durable claim and confirms one recovery delivery", async () => {
     const handled = deferred<OrderProcessJob>();
     const confirmationCalls = vi.fn();
     consumer = createBullMqOrderProcessConsumer({

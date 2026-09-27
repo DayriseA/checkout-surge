@@ -976,6 +976,7 @@ function activeRun(runId = "11111111-1111-4111-8111-111111111111"): ActiveRun {
     trafficStatus: "active",
     saleOfferId: "44444444-4444-4444-8444-444444444444",
     startedAt: "2026-06-20T00:00:00.000Z",
+    autoResetAt: "2026-06-20T00:15:00.000Z",
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
     configSnapshot: previewRunConfigSnapshotFixture(),
   };

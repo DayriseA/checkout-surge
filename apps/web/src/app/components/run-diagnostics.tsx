@@ -398,7 +398,7 @@ function formatDecimal(value: number): string {
   return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 }).format(value);
 }
 
-export function formatDiagnosticBytes(value: number): string {
+function formatDiagnosticBytes(value: number): string {
   if (value < 1_024) return `${formatNumber(value)} B`;
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1_024)), units.length - 1);

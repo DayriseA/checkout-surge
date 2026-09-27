@@ -863,6 +863,7 @@ function activeProjection() {
       saleOfferId,
       configSnapshot: acceptedConfig(),
       startedAt: "2026-07-23T00:00:00.000Z",
+      autoResetAt: "2026-07-23T00:15:00.000Z",
       trafficStartedAt: "2026-07-23T00:00:00.000Z",
     },
     resetRecovery: "ready",

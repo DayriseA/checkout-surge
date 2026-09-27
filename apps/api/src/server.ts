@@ -203,6 +203,5 @@ function sendError(
 
 function publicRunBudgetRetryAfterSeconds(error: DemoRunValidationError): number | undefined {
   if (error.code !== "public_run_budget_exceeded") return undefined;
-  const value = error.retryAfterSeconds;
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  return error.retryAfterSeconds;
 }

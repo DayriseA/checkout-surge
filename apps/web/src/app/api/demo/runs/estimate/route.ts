@@ -11,8 +11,8 @@ import {
   createProxyRequestContext,
   parseJsonRequest,
   proxyJson,
-  requireControlServiceToken,
 } from "../../../../lib/server/backend-proxy";
+import { webServerConfig } from "../../../../lib/server/config";
 import { resolvePublicVisitorIdentity } from "../../../../lib/server/public-visitor";
 
 export async function POST(request: Request) {
@@ -23,11 +23,6 @@ export async function POST(request: Request) {
   }
 
   const visitor = resolvePublicVisitorIdentity(ctx);
-  if (visitor instanceof Response) {
-    return visitor;
-  }
-  const controlToken = requireControlServiceToken(ctx);
-  if (controlToken instanceof Response) return controlToken;
 
   const response = await proxyJson({
     ctx,
@@ -38,7 +33,7 @@ export async function POST(request: Request) {
     headers: {
       [demoRunOperatorModeHeaderName]: "public",
       [publicVisitorIdHeaderName]: visitor.credential,
-      [controlServiceTokenHeaderName]: controlToken,
+      [controlServiceTokenHeaderName]: webServerConfig().controlServiceToken,
     },
   });
   if (visitor.setCookie) {

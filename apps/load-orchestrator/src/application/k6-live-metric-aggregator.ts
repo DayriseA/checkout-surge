@@ -7,6 +7,8 @@ import {
 } from "@checkout-surge/contracts";
 import type { K6Point } from "./k6-output-parser.js";
 
+const windowMs = liveTrafficMetricWindowSeconds * 1_000;
+
 interface TrafficMetricWindow {
   startMs: number;
   arrivalCount: number;
@@ -22,11 +24,9 @@ interface TrafficMetricWindow {
 /**
  * Aggregates supported k6 points into one aligned event-time window. A newer
  * window finalizes the prior one; late points for finalized/older windows are
- * ignored. Overflow-causing observations are ignored, and a derived sample is
- * omitted if it cannot be represented as a finite contract value.
+ * ignored. Overflow-causing observations are ignored.
  */
 export class K6LiveMetricAggregator {
-  private readonly windowMs: number;
   private readonly dispatchProgress: { plannedRequests: number; step: number } | null;
   private currentWindow: TrafficMetricWindow | null = null;
   private finalizedThroughMs = Number.NEGATIVE_INFINITY;
@@ -38,11 +38,7 @@ export class K6LiveMetricAggregator {
   private arrivalWindowCountObserved = 0;
   private readonly arrivalRateSeries: RequestArrivalSummary["arrivalRateSeries"] = [];
 
-  constructor(options: { windowMs?: number; plannedRequests?: number } = {}) {
-    this.windowMs = options.windowMs ?? liveTrafficMetricWindowSeconds * 1_000;
-    if (!Number.isFinite(this.windowMs) || this.windowMs <= 0) {
-      throw new Error("k6 live metric windowMs must be finite and greater than zero.");
-    }
+  constructor(options: { plannedRequests?: number } = {}) {
     if (
       options.plannedRequests !== undefined &&
       (!Number.isSafeInteger(options.plannedRequests) || options.plannedRequests <= 0)
@@ -61,7 +57,7 @@ export class K6LiveMetricAggregator {
     const normalized = normalizeLivePoint(point);
     if (!normalized) return [];
 
-    const windowStartMs = Math.floor(normalized.timestampMs / this.windowMs) * this.windowMs;
+    const windowStartMs = Math.floor(normalized.timestampMs / windowMs) * windowMs;
     if (!Number.isFinite(windowStartMs) || windowStartMs <= this.finalizedThroughMs) return [];
 
     const closed =
@@ -89,7 +85,7 @@ export class K6LiveMetricAggregator {
       firstAttemptStartedAt:
         this.firstAttemptAtMs === null ? null : new Date(this.firstAttemptAtMs).toISOString(),
       peakArrivalRatePerSecond: this.peakArrivalRatePerSecond,
-      peakArrivalWindowSeconds: this.windowMs / 1_000,
+      peakArrivalWindowSeconds: windowMs / 1_000,
       dispatchDurationSeconds:
         this.firstAttemptAtMs === null || this.lastAttemptAtMs === null
           ? 0
@@ -109,8 +105,8 @@ export class K6LiveMetricAggregator {
     this.finalizedThroughMs = window.startMs;
     const timestamp = new Date(window.startMs).toISOString();
     const samples: MetricSample[] = [];
-    const arrivalRate = window.arrivalCount / (this.windowMs / 1_000);
-    if (window.arrivalObservationCount > 0 && Number.isFinite(arrivalRate)) {
+    const arrivalRate = window.arrivalCount / (windowMs / 1_000);
+    if (window.arrivalObservationCount > 0) {
       samples.push({
         metricName: "traffic.request_arrival_rate",
         value: arrivalRate,
@@ -119,8 +115,8 @@ export class K6LiveMetricAggregator {
       });
       this.rememberArrivalWindow(timestamp, arrivalRate);
     }
-    const completionRate = window.completionCount / (this.windowMs / 1_000);
-    if (window.completionObservationCount > 0 && Number.isFinite(completionRate)) {
+    const completionRate = window.completionCount / (windowMs / 1_000);
+    if (window.completionObservationCount > 0) {
       samples.push({
         metricName: "traffic.response_completion_rate",
         value: completionRate,
@@ -129,7 +125,7 @@ export class K6LiveMetricAggregator {
       });
     }
     const meanLatency = window.latencySum / window.latencyCount;
-    if (window.latencyCount > 0 && Number.isFinite(meanLatency)) {
+    if (window.latencyCount > 0) {
       samples.push({
         metricName: "traffic.latency",
         value: meanLatency,
@@ -138,7 +134,7 @@ export class K6LiveMetricAggregator {
       });
     }
     const failureRate = window.failureSum / window.failureCount;
-    if (window.failureCount > 0 && Number.isFinite(failureRate)) {
+    if (window.failureCount > 0) {
       samples.push({
         metricName: "traffic.failure_rate",
         value: failureRate,

@@ -43,10 +43,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
 
   async start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
     const startRequest = trafficExecutionStartRequestSchema.parse(request);
-    const requestTimeoutMs = positiveTimeout(
-      this.options.requestTimeoutMs ?? defaultStartRequestTimeoutMs,
-      "requestTimeoutMs",
-    );
+    const requestTimeoutMs = this.options.requestTimeoutMs ?? defaultStartRequestTimeoutMs;
     let receivedResponse: Response | undefined;
 
     try {
@@ -117,10 +114,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
     correlationId: string;
   }): Promise<TrafficExecutionAbortResponse> {
     const request = trafficExecutionAbortRequestSchema.parse(input);
-    const abortTimeoutMs = positiveTimeout(
-      this.options.abortRequestTimeoutMs ?? defaultAbortRequestTimeoutMs,
-      "abortRequestTimeoutMs",
-    );
+    const abortTimeoutMs = this.options.abortRequestTimeoutMs ?? defaultAbortRequestTimeoutMs;
     let result: { response: Response; confirmation?: TrafficExecutionAbortResponse };
 
     try {
@@ -306,13 +300,6 @@ async function runBoundedTrafficRequest<T>(
 
 function trafficExecutionUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
-}
-
-function positiveTimeout(value: number, name: string): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`${name} must be a finite positive number.`);
-  }
-  return value;
 }
 
 class TrafficStartTimeoutError extends Error {}

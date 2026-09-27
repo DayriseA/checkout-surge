@@ -25,7 +25,7 @@ const runScopedJob: OrderProcessJob = {
   ...job,
   runId: "55555555-5555-4555-8555-555555555555",
 };
-const delivery = { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 };
+const delivery = { attemptNumber: 3, attemptsMade: 2 };
 const processingTransition = {
   changed: true as const,
   status: "processing" as const,
@@ -104,7 +104,7 @@ describe("order-process application workflow", () => {
     );
   });
 
-  it("classifies processing-state persistence outages before ERP and hands off the final delivery", async () => {
+  it("hands processing-state persistence outages to recovery before ERP", async () => {
     const confirmation = { confirm: vi.fn() };
     const recovery = { handoff: vi.fn().mockResolvedValue(undefined) };
     const persistence = createPersistence({
@@ -117,15 +117,9 @@ describe("order-process application workflow", () => {
       recovery,
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 }),
-    ).rejects.toBeInstanceOf(OrderProcessingPersistenceError);
-    expect(confirmation.confirm).not.toHaveBeenCalled();
-    expect(recovery.handoff).not.toHaveBeenCalled();
-
-    await expect(
-      handler.handle(job, { attemptNumber: 2, attemptsMade: 1, maxAttempts: 2 }),
-    ).rejects.toBeInstanceOf(OrderProcessingPersistenceError);
+    await expect(handler.handle(job, { attemptNumber: 2, attemptsMade: 1 })).rejects.toBeInstanceOf(
+      OrderProcessingPersistenceError,
+    );
     expect(confirmation.confirm).not.toHaveBeenCalled();
     expect(recovery.handoff).toHaveBeenCalledWith(
       expect.objectContaining({ reason: "order_processing_persistence_unavailable" }),
@@ -313,7 +307,7 @@ describe("order-process application workflow", () => {
 
     await expect(handler.handle(job, delivery)).rejects.toBe(persistenceError);
     await expect(
-      handler.handle(job, { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 }),
+      handler.handle(job, { attemptNumber: 4, attemptsMade: 3 }),
     ).resolves.toBeUndefined();
 
     expect(confirmation.confirm).toHaveBeenCalledTimes(2);
@@ -324,7 +318,7 @@ describe("order-process application workflow", () => {
     const localPersistenceError = new Error("attempt persistence unavailable");
     const confirmationError = new ErpAcceptedConfirmationPersistenceError(localPersistenceError, {
       job,
-      delivery: { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
+      delivery: { attemptNumber: 3, attemptsMade: 2 },
       status: "succeeded",
       terminal: true,
       httpStatus: 200,
@@ -339,20 +333,20 @@ describe("order-process application workflow", () => {
       logger: createSilentLogger("worker"),
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 }),
-    ).rejects.toBe(confirmationError);
+    await expect(handler.handle(job, { attemptNumber: 3, attemptsMade: 2 })).rejects.toBe(
+      confirmationError,
+    );
 
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
-  it("hands accepted ERP persistence failures to recovery on the final delivery", async () => {
+  it("hands accepted ERP persistence failures to recovery", async () => {
     const confirmationError = new ErpAcceptedConfirmationPersistenceError(
       new Error("attempt persistence unavailable"),
       {
         job,
-        delivery: { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 },
+        delivery: { attemptNumber: 4, attemptsMade: 3 },
         status: "succeeded",
         terminal: true,
         httpStatus: 200,
@@ -370,9 +364,9 @@ describe("order-process application workflow", () => {
       recovery,
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 }),
-    ).rejects.toBe(confirmationError);
+    await expect(handler.handle(job, { attemptNumber: 4, attemptsMade: 3 })).rejects.toBe(
+      confirmationError,
+    );
 
     expect(recovery.handoff).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -423,9 +417,7 @@ describe("order-process application workflow", () => {
       recovery,
     });
 
-    await expect(handler.handle(job, { ...delivery, maxAttempts: 4 })).rejects.toBe(
-      transitionError,
-    );
+    await expect(handler.handle(job, { ...delivery })).rejects.toBe(transitionError);
     expect(recovery.handoff).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: "confirmed_transition_persistence_unavailable",
@@ -484,7 +476,7 @@ describe("order-process application workflow", () => {
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
   });
 
-  it("leaves processing orders retryable after temporary confirmation failures with attempts remaining", async () => {
+  it("leaves processing orders retryable after temporary confirmation failures", async () => {
     const confirmationError = Object.assign(new Error("ERP temporarily unavailable"), {
       attemptRecorded: true,
     });
@@ -495,9 +487,9 @@ describe("order-process application workflow", () => {
       logger: createSilentLogger("worker"),
     });
 
-    await expect(
-      handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 3 }),
-    ).rejects.toBe(confirmationError);
+    await expect(handler.handle(job, { attemptNumber: 1, attemptsMade: 0 })).rejects.toBe(
+      confirmationError,
+    );
 
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
     expect(persistence.transitionToConfirmed).not.toHaveBeenCalled();
@@ -514,7 +506,7 @@ describe("order-process application workflow", () => {
       publishBusinessOutcomeUpdate,
     });
 
-    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 });
+    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0 });
 
     expect(publishBusinessOutcomeUpdate).toHaveBeenCalledWith(job, "retrying");
   });
@@ -565,7 +557,7 @@ describe("order-process application workflow", () => {
       logger: createSilentLogger("worker"),
     });
 
-    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 });
+    await handler.handle(job, { attemptNumber: 1, attemptsMade: 0 });
     expect(persistence.transitionToFailed).not.toHaveBeenCalled();
   });
 

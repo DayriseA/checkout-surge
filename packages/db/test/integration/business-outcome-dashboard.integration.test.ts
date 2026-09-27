@@ -89,8 +89,6 @@ describe("business outcome dashboard projection", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: runId,
       presetId,
       presetName: "Business Outcome Preset",
@@ -103,8 +101,6 @@ describe("business outcome dashboard projection", () => {
     });
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: otherRunId,
       presetId,
       presetName: "Business Outcome Preset",

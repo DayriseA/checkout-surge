@@ -61,7 +61,6 @@ describe("worker order-processing job publisher", () => {
         {
           data: job,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: "The ERP attempt result could not be persisted.",
           progress: {
             type: "recoverable_order_processing_failure",
@@ -72,7 +71,6 @@ describe("worker order-processing job publisher", () => {
         {
           data: job,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: "order rejected",
           progress: 0,
         },
@@ -80,7 +78,7 @@ describe("worker order-processing job publisher", () => {
     });
 
     await expect(publisher.findFailedOrderJobs(10)).resolves.toEqual([
-      expect.objectContaining({ job, attemptsMade: 4, maxAttempts: 4 }),
+      expect.objectContaining({ job, attemptsMade: 4 }),
     ]);
   });
 
@@ -92,7 +90,7 @@ describe("worker order-processing job publisher", () => {
       close: vi.fn(),
     });
 
-    await publisher.enqueue(job, { jobId: "recovery-order-key-2", attempts: 1 });
+    await publisher.enqueue(job, { jobId: "recovery-order-key-2" });
 
     expect(add).toHaveBeenCalledWith(orderProcessJobName, job, {
       attempts: 1,
@@ -127,9 +125,9 @@ describe("worker order-processing job publisher", () => {
       },
     );
 
-    await expect(
-      publisher.enqueue(runJob, { jobId: "recovery-terminal-run", attempts: 1 }),
-    ).rejects.toThrow("generated run is terminal");
+    await expect(publisher.enqueue(runJob, { jobId: "recovery-terminal-run" })).rejects.toThrow(
+      "generated run is terminal",
+    );
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({ runId: runJob.runId, saleOfferId: runJob.saleOfferId }),
     );
@@ -147,7 +145,6 @@ describe("worker order-processing job publisher", () => {
           name: "wrong-name",
           data: { invalid: true },
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: `${deadLetterFailureMarker} ${JSON.stringify({
             reason: "order_identity_mismatch",
             orderId: job.orderId,
@@ -160,21 +157,18 @@ describe("worker order-processing job publisher", () => {
           id: "source-job",
           data: job,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: `${recoverableFailureMarker} Durable order recovery handoff failed.`,
         },
         {
           id: "human-text-job",
           data: job,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: "database unavailable",
         },
         {
           id: "old-dead-letter-marker",
           data: job,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: `${deadLetterFailureMarker} order_identity_mismatch`,
         },
       ]),
@@ -204,7 +198,6 @@ describe("worker order-processing job publisher", () => {
           name: "wrong-name",
           data: rawPayload,
           attemptsMade: 4,
-          opts: { attempts: 4 },
           failedReason: "database unavailable",
           progress: {
             type: "dead_letter_required",

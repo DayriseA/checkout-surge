@@ -695,18 +695,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "engine_policy_name": {
-          "name": "engine_policy_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "engine_policy_version": {
-          "name": "engine_policy_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
         "correlation_id": {
           "name": "correlation_id",
           "type": "text",

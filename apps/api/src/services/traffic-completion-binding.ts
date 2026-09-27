@@ -61,15 +61,6 @@ export function findTrafficCompletionBindingMismatch(
     };
   }
 
-  const expectedPlannedRequests = expectedPlan.plannedEmittedAttempts;
-  if (report.transportAttemptCounts.plannedRequests !== expectedPlannedRequests) {
-    return {
-      field: "transportAttemptCounts.plannedRequests",
-      expected: expectedPlannedRequests,
-      actual: report.transportAttemptCounts.plannedRequests,
-    };
-  }
-
   const reportedStartedAt = Date.parse(report.loadRunDiagnosticsSummary.startedAt);
   if (run.trafficStartedAt) {
     if (run.trafficStartedAt.getTime() !== reportedStartedAt) {

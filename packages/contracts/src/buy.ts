@@ -142,19 +142,11 @@ const idempotencyConflictRejectedResponseSchema = z
   })
   .strict();
 
-const quantityInvalidRejectedResponseSchema = z
-  .object({
-    outcome: z.literal("quantity_invalid"),
-    ...rejectedResponseBaseShape,
-  })
-  .strict();
-
 const rejectedResponseVariants = [
   soldOutRejectedResponseSchema,
   runNotAcceptingTrafficRejectedResponseSchema,
   inventoryNotInitializedRejectedResponseSchema,
   idempotencyConflictRejectedResponseSchema,
-  quantityInvalidRejectedResponseSchema,
 ] as const;
 
 export const reservationRejectedResponseSchema = z.discriminatedUnion(

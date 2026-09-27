@@ -217,7 +217,7 @@ describe("PostgreSQL worker order transitions", () => {
     const control = new PostgresOrderRecoveryPersistence(connection.db);
     const transitions = new PostgresOrderTransitionPersistence(connection.db);
     const attempts = new PostgresErpAttemptPersistence(connection.db);
-    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0 };
     await transitions.transitionToProcessing(runScopedJob, delivery);
     await attempts.recordDispatchIntent({
       job: runScopedJob,
@@ -324,7 +324,7 @@ describe("PostgreSQL worker order transitions", () => {
     const control = new PostgresOrderRecoveryPersistence(connection.db);
     const transitions = new PostgresOrderTransitionPersistence(connection.db);
     const attempts = new PostgresErpAttemptPersistence(connection.db);
-    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0 };
     await transitions.transitionToProcessing(job, delivery);
     const call = await attempts.recordDispatchIntent({
       job,
@@ -456,7 +456,7 @@ describe("PostgreSQL worker order transitions", () => {
     vi.spyOn(transitions, "transitionToFailed").mockRejectedValueOnce(
       new Error("database unavailable"),
     );
-    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0 };
     await expect(handler.handle(job, delivery)).rejects.toThrow(
       "terminal failure could not be persisted",
     );
@@ -495,7 +495,6 @@ describe("PostgreSQL worker order transitions", () => {
     const processingTransition = await persistence.transitionToProcessing(job, {
       attemptNumber: 2,
       attemptsMade: 1,
-      maxAttempts: 4,
     });
     expect(processingTransition).toMatchObject({
       changed: true,
@@ -504,7 +503,6 @@ describe("PostgreSQL worker order transitions", () => {
     const confirmedTransition = await persistence.transitionToConfirmed(job, {
       attemptNumber: 2,
       attemptsMade: 1,
-      maxAttempts: 4,
     });
     expect(confirmedTransition).toMatchObject({
       changed: true,
@@ -559,7 +557,7 @@ describe("PostgreSQL worker order transitions", () => {
 
   it("serializes concurrent duplicate deliveries without duplicate lifecycle events", async () => {
     const persistence = new PostgresOrderTransitionPersistence(connection.db);
-    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 4 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0 };
 
     const processingResults = await Promise.all([
       persistence.transitionToProcessing(job, delivery),
@@ -611,12 +609,10 @@ describe("PostgreSQL worker order transitions", () => {
     await transitionPersistence.transitionToProcessing(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
     });
     await transitionPersistence.transitionToConfirmed(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 4,
     });
 
     await expect(notificationPersistence.record(notificationJob)).resolves.toEqual({
@@ -667,7 +663,7 @@ describe("PostgreSQL worker order transitions", () => {
       if (!time) throw new Error("Unexpected clock read");
       return time;
     });
-    const delivery = { attemptNumber: 4, attemptsMade: 3, maxAttempts: 4 };
+    const delivery = { attemptNumber: 4, attemptsMade: 3 };
 
     await persistence.transitionToProcessing(job, delivery);
     const failedTransition = await persistence.transitionToFailed(
@@ -682,7 +678,7 @@ describe("PostgreSQL worker order transitions", () => {
     const replay = await persistence.transitionToFailed(
       job,
       { category: "technical", code: "erp_authorization_failed", message: "must not overwrite" },
-      { attemptNumber: 5, attemptsMade: 4, maxAttempts: 5 },
+      { attemptNumber: 5, attemptsMade: 4 },
     );
 
     const [order] = await connection.db.select().from(orders).where(eq(orders.id, ids.order));
@@ -715,7 +711,7 @@ describe("PostgreSQL worker order transitions", () => {
 
     await persistence.recordAttempt({
       job,
-      delivery: { attemptNumber: 3, attemptsMade: 2, maxAttempts: 3 },
+      delivery: { attemptNumber: 3, attemptsMade: 2 },
       status: "failed",
       terminal: true,
       httpStatus: 503,
@@ -785,7 +781,6 @@ describe("PostgreSQL worker order transitions", () => {
       delivery: {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: terminal ? 1 : 2,
         deliveryId: `${status}-${terminal}`,
       },
       status,
@@ -835,7 +830,7 @@ describe("PostgreSQL worker order transitions", () => {
       await expect(
         persistence.recordAttempt({
           job,
-          delivery: { attemptNumber: 1, attemptsMade: 0, maxAttempts: 2 },
+          delivery: { attemptNumber: 1, attemptsMade: 0 },
           status: "failed",
           terminal: false,
           httpStatus: 503,
@@ -871,13 +866,13 @@ describe("PostgreSQL worker order transitions", () => {
     await expect(
       persistence.transitionToProcessing(
         { ...job, orderId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" },
-        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+        { attemptNumber: 1, attemptsMade: 0 },
       ),
     ).rejects.toBeInstanceOf(OrderNotFoundError);
     const mismatch = await persistence
       .transitionToProcessing(
         { ...job, correlationId: "wrong-correlation", quantity: 2 },
-        { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1 },
+        { attemptNumber: 1, attemptsMade: 0 },
       )
       .catch((error: unknown) => error);
     expect(mismatch).toBeInstanceOf(OrderJobIdentityMismatchError);
@@ -1381,7 +1376,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       await orderHandler.handle(runScopedJob, {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
       });
       await vi.waitFor(async () => {
         expect(await notificationQueue.getJob(`${ids.order}-email`)).toBeUndefined();
@@ -1530,7 +1524,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     await transition.transitionToProcessing(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: "crashed-delivery",
     });
     const attempts = new PostgresErpAttemptPersistence(connection.db, () => policyNow);
@@ -1696,7 +1689,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       persistence: new PostgresOrderTransitionPersistence(connection.db, () => new Date(now)),
       logger: createSilentLogger("worker"),
     });
-    const delivery = { attemptNumber: 1, attemptsMade: 0, maxAttempts: 1, processingGeneration: 0 };
+    const delivery = { attemptNumber: 1, attemptsMade: 0, processingGeneration: 0 };
     const succeed = (index: number) =>
       responses[index]?.(
         Response.json({
@@ -1744,7 +1737,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     await transition.transitionToProcessing(job, {
       attemptNumber: 1,
       attemptsMade: 0,
-      maxAttempts: 1,
       deliveryId: "delayed-reconciliation",
     });
     const attempts = new PostgresErpAttemptPersistence(connection.db, () => policyNow);
@@ -1981,7 +1973,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           delivery: {
             attemptNumber: 1,
             attemptsMade: 0,
-            maxAttempts: 1,
             deliveryId: recoveryJob.orderId,
           },
           reason: "erp_local_persistence_unavailable",
@@ -2068,7 +2059,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         delivery: {
           attemptNumber: 1,
           attemptsMade: 0,
-          maxAttempts: 1,
           deliveryId: "initial-delivery",
         },
         reason: "erp_local_persistence_unavailable",
@@ -2163,7 +2153,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       const delivery = {
         attemptNumber: 1,
         attemptsMade: 0,
-        maxAttempts: 1,
         deliveryId: "initial-delivery",
         processingGeneration: 0,
       };
@@ -3040,8 +3029,6 @@ async function seedQueuedOrder(
   if (options.runScoped) {
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
-      enginePolicyName: "declared-capacity-erp-dispatch",
-      enginePolicyVersion: 2,
       id: ids.run,
       presetId: ids.preset,
       presetName: "Worker Recovery Preset",

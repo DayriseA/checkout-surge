@@ -96,8 +96,6 @@ function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outc
     case "reservation_secured":
     case "reservation_pending_persistence":
       return 202;
-    case "quantity_invalid":
-      return 400;
     case "inventory_not_initialized":
       return 503;
     case "sold_out":

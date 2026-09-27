@@ -214,9 +214,7 @@ async function insertGeneratedRunContext(
       "config_snapshot",
       "sale_offer_id",
       "started_at",
-      "correlation_id",
-      "engine_policy_name",
-      "engine_policy_version"
+      "correlation_id"
     )
     VALUES (
       ${input.runId},
@@ -228,9 +226,7 @@ async function insertGeneratedRunContext(
       '{}'::jsonb,
       ${input.saleOfferId},
       ${saleStartsAt}::timestamptz,
-      'corr-db-test',
-      'declared-capacity-erp-dispatch',
-      2
+      'corr-db-test'
     )
   `;
   await sql`
@@ -673,10 +669,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         INSERT INTO demo_runs (
           id, preset_id, preset_name, operator_mode, status, config_snapshot, sale_offer_id,
-          correlation_id, engine_policy_name, engine_policy_version
+          correlation_id
         ) VALUES
-          (${runAId}, ${presetId}, 'Run A', 'admin', 'completed', '{}'::jsonb, ${saleOfferAId}, 'corr-db-test', 'declared-capacity-erp-dispatch', 2),
-          (${runBId}, ${presetId}, 'Run B', 'admin', 'completed', '{}'::jsonb, ${saleOfferBId}, 'corr-db-test', 'declared-capacity-erp-dispatch', 2)
+          (${runAId}, ${presetId}, 'Run A', 'admin', 'completed', '{}'::jsonb, ${saleOfferAId}, 'corr-db-test'),
+          (${runBId}, ${presetId}, 'Run B', 'admin', 'completed', '{}'::jsonb, ${saleOfferBId}, 'corr-db-test')
       `;
       await sql`
         INSERT INTO demo_run_sale_contexts (run_id, sale_offer_id)
@@ -753,13 +749,13 @@ describe("database migrations, seed data, and reset behavior", () => {
         const blockerId = `39000000-0000-4000-8000-${(index * 2 + 2).toString().padStart(12, "0")}`;
         const rejectedId = `39000000-0000-4000-8000-${(index * 2 + 3).toString().padStart(12, "0")}`;
         await sql`
-          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id, engine_policy_name, engine_policy_version)
-          VALUES (${blockerId}, ${presetId}, 'Single Run Invariant', 'admin', ${status}, '{}'::jsonb, 'corr-db-test', 'declared-capacity-erp-dispatch', 2)
+          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id)
+          VALUES (${blockerId}, ${presetId}, 'Single Run Invariant', 'admin', ${status}, '{}'::jsonb, 'corr-db-test')
         `;
 
         const violation = await sql`
-          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id, engine_policy_name, engine_policy_version)
-          VALUES (${rejectedId}, ${presetId}, 'Single Run Invariant', 'admin', 'starting', '{}'::jsonb, 'corr-db-test', 'declared-capacity-erp-dispatch', 2)
+          INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id)
+          VALUES (${rejectedId}, ${presetId}, 'Single Run Invariant', 'admin', 'starting', '{}'::jsonb, 'corr-db-test')
         `.catch((error: unknown) => error);
 
         expect(violation).toMatchObject({
@@ -770,10 +766,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       }
 
       await sql`
-        INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id, engine_policy_name, engine_policy_version)
+        INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id)
         VALUES
-          ('39000000-0000-4000-8000-000000000008', ${presetId}, 'Completed History', 'admin', 'completed', '{}'::jsonb, 'corr-db-test', 'declared-capacity-erp-dispatch', 2),
-          ('39000000-0000-4000-8000-000000000009', ${presetId}, 'Failed History', 'admin', 'failed', '{}'::jsonb, 'corr-db-test', 'declared-capacity-erp-dispatch', 2)
+          ('39000000-0000-4000-8000-000000000008', ${presetId}, 'Completed History', 'admin', 'completed', '{}'::jsonb, 'corr-db-test'),
+          ('39000000-0000-4000-8000-000000000009', ${presetId}, 'Failed History', 'admin', 'failed', '{}'::jsonb, 'corr-db-test')
       `;
     });
 
@@ -786,10 +782,10 @@ describe("database migrations, seed data, and reset behavior", () => {
         claimConnections.map(
           (connection, index) =>
             connection.sql`
-            INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id, engine_policy_name, engine_policy_version)
+            INSERT INTO demo_runs (id, preset_id, preset_name, operator_mode, status, config_snapshot, correlation_id)
             VALUES (
               ${`39000000-0000-4000-8000-${(index + 10).toString().padStart(12, "0")}`},
-              ${presetId}, 'Concurrent Claim', 'admin', 'starting', '{}'::jsonb, 'corr-db-test', 'declared-capacity-erp-dispatch', 2
+              ${presetId}, 'Concurrent Claim', 'admin', 'starting', '{}'::jsonb, 'corr-db-test'
             )
           `,
         ),

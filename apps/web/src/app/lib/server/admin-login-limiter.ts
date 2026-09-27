@@ -11,7 +11,7 @@ export type LoginAdmission =
   | { outcome: "limited"; retryAfterSeconds: number };
 
 export interface AdminLoginLimiter {
-  admit(clientIdentity: string, nowMs: number): LoginAdmission | Promise<LoginAdmission>;
+  admit(clientIdentity: string, nowMs: number): LoginAdmission;
 }
 
 export class AdminLoginAttemptLimiter implements AdminLoginLimiter {

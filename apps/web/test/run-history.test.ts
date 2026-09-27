@@ -1268,6 +1268,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
       saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       configSnapshot: detail.run.configSnapshot,
       startedAt: "2026-06-20T00:00:00.000Z",
+      autoResetAt: "2026-06-20T00:15:00.000Z",
       trafficStartedAt: "2026-06-20T00:00:00.000Z",
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",

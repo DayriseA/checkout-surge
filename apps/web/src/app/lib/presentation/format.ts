@@ -82,8 +82,7 @@ export function formatInstantUtc(
 export function formatDurationMs(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
 
-  // `Math.round` preserves negative zero, and `Intl.NumberFormat` renders that as `-0`.
-  const wholeMilliseconds = withoutNegativeZero(Math.round(value));
+  const wholeMilliseconds = Math.round(value);
   if (wholeMilliseconds < millisecondsPerSecond) {
     return `${groupedCountFormatter.format(wholeMilliseconds)} ms`;
   }

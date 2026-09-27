@@ -9,7 +9,6 @@ import {
   destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
-  erpDispatchEnginePolicyIdentity,
   erpDispatchRateLimit,
   orderProcessBullMqQueueName,
   trafficDeliverySummarySchema,
@@ -60,11 +59,8 @@ import { RunHistoryService } from "../src/services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 
 const publicCookieSecret = "test-public-cookie-secret";
-const signedVisitor = (visitorId: string) => {
-  const credential = signPublicVisitorCredential(publicCookieSecret, visitorId, 1_750_000_000_000);
-  if (!credential) throw new Error("Fixture visitor credential could not be signed.");
-  return credential;
-};
+const signedVisitor = (visitorId: string) =>
+  signPublicVisitorCredential(publicCookieSecret, visitorId, 1_750_000_000_000);
 
 describe("demo-run lifecycle validation", () => {
   it.each([
@@ -645,25 +641,6 @@ describe("demo-run lifecycle start gating", () => {
       await writer.close();
       await fenceConnection.close();
     }
-  });
-
-  it("persists the shared engine-policy identity with each accepted run", async () => {
-    const service = createStartService(requireConnection(connection), requireRedis(redis));
-
-    await expect(
-      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-engine-policy"),
-    ).resolves.toMatchObject({ run: { runId: "77777777-7777-4777-8777-777777777777" } });
-
-    const [run] = await requireConnection(connection)
-      .db.select({
-        enginePolicyName: demoRuns.enginePolicyName,
-        enginePolicyVersion: demoRuns.enginePolicyVersion,
-      })
-      .from(demoRuns);
-    expect(run).toEqual({
-      enginePolicyName: erpDispatchEnginePolicyIdentity.name,
-      enginePolicyVersion: erpDispatchEnginePolicyIdentity.version,
-    });
   });
 
   it.each([
@@ -1970,8 +1947,6 @@ async function seedExistingRun(
 ): Promise<void> {
   await connection.db.insert(demoRuns).values({
     correlationId: "corr-test-run",
-    enginePolicyName: "declared-capacity-erp-dispatch",
-    enginePolicyVersion: 2,
     id: input.runId,
     presetId: "33333333-3333-4333-8333-333333333331",
     presetName: "Preview 1k",

@@ -18,10 +18,8 @@ export function signPublicVisitorCredential(
   secret: string,
   visitorId: string,
   issuedAt: number,
-): string | null {
-  const parsed = publicVisitorCredentialSchema.safeParse({ visitorId, issuedAt });
-  if (!parsed.success || !isValidPublicVisitorCredentialSecret(secret)) return null;
-  const value = `${parsed.data.visitorId}.${parsed.data.issuedAt}`;
+): string {
+  const value = `${visitorId}.${issuedAt}`;
   return `${value}.${createHmac("sha256", secret).update(value).digest("hex")}`;
 }
 

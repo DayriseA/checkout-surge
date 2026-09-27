@@ -898,6 +898,7 @@ function startDemoRunPayload(operatorMode: "public" | "admin" = "public") {
       saleOfferId: "22222222-2222-4222-8222-222222222222",
       configSnapshot: configSnapshotPayload(),
       startedAt: "2026-06-20T00:00:10.000Z",
+      autoResetAt: "2026-06-20T00:15:10.000Z",
       trafficStartedAt: "2026-06-20T00:00:10.000Z",
     },
     recovery: { establishedAt: "2026-06-20T00:00:10.000Z" },

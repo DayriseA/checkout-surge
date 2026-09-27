@@ -315,6 +315,7 @@ function runFixture(status: "starting" | "active" | "draining"): DemoRunSnapshot
     saleOfferId,
     configSnapshot: previewRunConfigSnapshotFixture(),
     startedAt: "2026-07-30T12:00:00.000Z",
+    autoResetAt: "2026-07-30T12:15:00.000Z",
   };
   if (status === "starting") return { ...base, status, trafficStatus: "starting" };
   if (status === "draining")

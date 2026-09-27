@@ -761,7 +761,7 @@ The live operator dashboard should expose these states as aggregate run outcomes
 
 ### Purchase Outcome and Order Status
 
-The buy response carries one public `outcome`: `reservation_secured`, `reservation_pending_persistence`, `sold_out`, `run_not_accepting_traffic`, `inventory_not_initialized`, `idempotency_conflict`, or `quantity_invalid`. It does not repeat that decision in a rejection reason or simulated-status field. The internal Redis `idempotent_replay` decision projects to the normal public `reservation_secured` response.
+The buy response carries one public `outcome`: `reservation_secured`, `reservation_pending_persistence`, `sold_out`, `run_not_accepting_traffic`, `inventory_not_initialized`, or `idempotency_conflict`. It does not repeat that decision in a rejection reason or simulated-status field. The internal Redis `idempotent_replay` decision projects to the normal public `reservation_secured` response.
 
 After acceptance, consumers use the order's canonical status directly. This keeps status language aligned with the portfolio story:
 
