@@ -102,7 +102,6 @@ import {
   runHistorySummarySchema,
   securedReservationHoldSchema,
   serverReservationTimingSummarySchema,
-  sharedErpProtectionStatusSchema,
   sharedRuntimeStatusSchema,
   startDemoRunPath,
   startDemoRunRequestSchema,
@@ -1027,13 +1026,6 @@ describe("queue contracts", () => {
       depth: 8,
       counts: { waiting: 3, prioritized: 1, paused: 2, delayed: 2, active: 4, failed: 9 },
       oldestWaitingAgeSeconds: 8.5,
-      retryPressure: {
-        inspectedJobCount: 4,
-        inspectionLimit: 100,
-        retryingJobCount: 2,
-        retryAttemptCount: 3,
-        inspectionTruncated: true,
-      },
       failedJobs: {
         totalCount: 9,
         recent: [
@@ -1052,7 +1044,6 @@ describe("queue contracts", () => {
     });
 
     expect(status.depth).toBe(8);
-    expect(status.retryPressure.inspectionTruncated).toBe(true);
     expect(status.failedJobs.totalCount).toBe(9);
     expect(() => queueStatusSchema.parse({ ...status, physicalName: "orders-process" })).toThrow();
     expect(
@@ -1357,14 +1348,7 @@ describe("ERP contracts", () => {
     ).toBe(false);
   });
 
-  it("validates distinct run ERP outcomes and shared ERP protection", () => {
-    const retryPressure = {
-      retryingJobCount: 2,
-      retryAttemptCount: 4,
-      inspectedJobCount: 10,
-      inspectionLimit: 100,
-      inspectionTruncated: false,
-    };
+  it("validates run ERP outcomes", () => {
     const runOutcome = runErpOutcomeSummarySchema.parse({
       runId,
       latestAttempt: {
@@ -1386,15 +1370,7 @@ describe("ERP contracts", () => {
       },
       observedAt: timestamp,
     });
-    const protection = sharedErpProtectionStatusSchema.parse({
-      status: "degraded",
-      reason: "erp_retries_pending",
-      retryPressure,
-      observedAt: timestamp,
-    });
-
     expect(runOutcome.runId).toBe(runId);
-    expect(protection.status).toBe("degraded");
     expect(
       runErpOutcomeSummarySchema.safeParse({ ...runOutcome, circuitReadStatus: "available" })
         .success,
@@ -1843,29 +1819,10 @@ describe("buy and dashboard contracts", () => {
         depth: 0,
         counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
         oldestWaitingAgeSeconds: null,
-        retryPressure: {
-          inspectedJobCount: 0,
-          inspectionLimit: 100,
-          retryingJobCount: 0,
-          retryAttemptCount: 0,
-          inspectionTruncated: false,
-        },
         failedJobs: {
           totalCount: 0,
           recent: [],
           inspectionLimit: 20,
-          inspectionTruncated: false,
-        },
-        observedAt: timestamp,
-      },
-      erpProtection: {
-        status: "healthy",
-        reason: null,
-        retryPressure: {
-          retryingJobCount: 0,
-          retryAttemptCount: 0,
-          inspectedJobCount: 0,
-          inspectionLimit: 100,
           inspectionTruncated: false,
         },
         observedAt: timestamp,

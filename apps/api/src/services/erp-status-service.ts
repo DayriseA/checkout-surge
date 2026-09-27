@@ -3,7 +3,6 @@ import type {
   ErpCumulativeOutcomeCounts,
   ErpLatestAttemptSummary,
   RunErpOutcomeSummary,
-  SharedErpProtectionStatus,
 } from "@checkout-surge/contracts";
 import { erpAttemptHistoryRetentionLimit } from "@checkout-surge/contracts";
 import {
@@ -13,7 +12,6 @@ import {
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
-import type { QueueStatusService } from "./queue-status-service.js";
 
 export interface ErpStatusReadModel {
   latestAttempt: ErpLatestAttemptSummary | null;
@@ -80,48 +78,6 @@ export class PostgresErpAttemptStatusReader implements ErpAttemptStatusReader {
   }
 }
 
-export class SharedErpProtectionService {
-  constructor(
-    private readonly options: {
-      queueStatusService: Pick<QueueStatusService, "getStatus">;
-      logger: CheckoutSurgeLogger;
-      now?: () => Date;
-    },
-  ) {}
-
-  async getStatus(): Promise<SharedErpProtectionStatus> {
-    const now = this.options.now?.() ?? new Date();
-    const queueResult = await readSafely(() => this.options.queueStatusService.getStatus());
-    const retryPressure = queueResult.ok
-      ? queueResult.value.retryPressure
-      : {
-          retryingJobCount: 0,
-          retryAttemptCount: 0,
-          inspectedJobCount: 0,
-          inspectionLimit: 1,
-          inspectionTruncated: false,
-        };
-    const derived = deriveSharedProtectionState({
-      isQueueReadUnavailable: !queueResult.ok,
-      retryingJobCount: retryPressure.retryingJobCount,
-    });
-
-    if (!queueResult.ok) {
-      this.options.logger.error(
-        { err: queueResult.error },
-        "Shared ERP retry-pressure read failed.",
-      );
-    }
-
-    return {
-      status: derived.status,
-      reason: derived.reason,
-      retryPressure,
-      observedAt: now.toISOString(),
-    };
-  }
-}
-
 export class RunErpOutcomeService {
   constructor(
     private readonly options: {
@@ -156,19 +112,6 @@ export class RunErpOutcomeService {
   }
 }
 
-function deriveSharedProtectionState(input: {
-  isQueueReadUnavailable: boolean;
-  retryingJobCount: number;
-}): { status: "healthy" | "degraded"; reason: string | null } {
-  if (input.isQueueReadUnavailable) {
-    return { status: "degraded", reason: "retry_pressure_unavailable" };
-  }
-  if (input.retryingJobCount > 0) {
-    return { status: "degraded", reason: "erp_retries_pending" };
-  }
-  return { status: "healthy", reason: null };
-}
-
 function toLatestAttemptSummary(
   attempt: Pick<typeof erpAttempts.$inferSelect, "runId" | "status" | "finishedAt">,
 ): ErpLatestAttemptSummary {
@@ -177,14 +120,4 @@ function toLatestAttemptSummary(
     status: attempt.status,
     finishedAt: attempt.finishedAt.toISOString(),
   };
-}
-
-async function readSafely<T>(
-  read: () => Promise<T>,
-): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
-  try {
-    return { ok: true, value: await read() };
-  } catch (error) {
-    return { ok: false, error };
-  }
 }

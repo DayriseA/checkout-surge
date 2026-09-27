@@ -23,7 +23,6 @@ import { RedisDashboardTrafficMetricStore } from "../services/dashboard-traffic-
 import {
   PostgresErpAttemptStatusReader,
   RunErpOutcomeService,
-  SharedErpProtectionService,
 } from "../services/erp-status-service.js";
 import { InventoryStatusService } from "../services/inventory-status-service.js";
 import { QueueStatusService } from "../services/queue-status-service.js";
@@ -126,10 +125,6 @@ export function createDashboardRecoveryOperationFactory(
           getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
         }),
         queueStatusService,
-        sharedErpProtectionService: new SharedErpProtectionService({
-          queueStatusService,
-          logger: config.logger,
-        }),
         runErpOutcomeService: new RunErpOutcomeService({
           attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),
           logger: config.logger,

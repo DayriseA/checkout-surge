@@ -31,7 +31,7 @@ import { runWithResourceCleanup } from "../runtime/api-resource-cleanup.js";
 import { abortReason, settleWithAbort } from "../runtime/operation-lifecycle.js";
 import type { DashboardTrafficMetricReader } from "./dashboard-traffic-metric-store.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
-import type { RunErpOutcomeService, SharedErpProtectionService } from "./erp-status-service.js";
+import type { RunErpOutcomeService } from "./erp-status-service.js";
 import { incompleteAdminResetPredicate } from "./incomplete-admin-reset.js";
 import type { InventoryStatusService } from "./inventory-status-service.js";
 import type { QueueStatusService } from "./queue-status-service.js";
@@ -329,7 +329,6 @@ export class DashboardProjectionService {
     const [
       inventoryResult,
       queueResult,
-      sharedErpProtectionResult,
       runErpOutcomeResult,
       businessOutcomeResult,
       consistencyLagResult,
@@ -343,9 +342,6 @@ export class DashboardProjectionService {
           )
         : Promise.resolve({ ok: true as const, value: null }),
       readSafely("dashboard_queue", signal, () => dependencies.queueStatusService.getStatus()),
-      readSafely("dashboard_shared_erp_protection", signal, () =>
-        dependencies.sharedErpProtectionService.getStatus(),
-      ),
       scope
         ? readSafely("dashboard_run_erp_outcome", signal, () =>
             dependencies.runErpOutcomeService.getOutcomes(scope),
@@ -394,7 +390,6 @@ export class DashboardProjectionService {
     for (const result of [
       inventoryResult,
       queueResult,
-      sharedErpProtectionResult,
       runErpOutcomeResult,
       businessOutcomeResult,
       consistencyLagResult,
@@ -424,13 +419,7 @@ export class DashboardProjectionService {
       inventory: inventoryResult.ok ? inventoryResult.value : null,
       recentMetrics: trafficMetricResult.ok ? trafficMetricResult.value : [],
       erp: runErpOutcomeResult.ok ? runErpOutcomeResult.value : null,
-      systemStatus:
-        queueResult.ok && sharedErpProtectionResult.ok
-          ? {
-              queue: queueResult.value,
-              erpProtection: sharedErpProtectionResult.value,
-            }
-          : null,
+      systemStatus: queueResult.ok ? { queue: queueResult.value } : null,
       businessOutcome: businessOutcomeResult.ok ? businessOutcomeResult.value : null,
       consistencyLag: consistencyLagResult.ok ? consistencyLagResult.value : null,
       transportAttemptCounts: transportObservationResult.ok
@@ -455,7 +444,6 @@ export interface DashboardRecoveryDependencies {
   consistencyLagReader: DashboardConsistencyLagReader;
   inventoryStatusService: Pick<InventoryStatusService, "getStatus">;
   queueStatusService: Pick<QueueStatusService, "getStatus">;
-  sharedErpProtectionService: Pick<SharedErpProtectionService, "getStatus">;
   runErpOutcomeService: Pick<RunErpOutcomeService, "getOutcomes">;
   trafficMetricReader: DashboardTrafficMetricReader;
   transportObservationReader: DashboardTransportObservationReader;

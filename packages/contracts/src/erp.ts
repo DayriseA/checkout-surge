@@ -17,7 +17,6 @@ export const erpConfirmationLookupParamsSchema = z
   .strict();
 export const erpChaosStatusPath = "/chaos" as const;
 export const erpChaosResetPath = "/chaos/reset" as const;
-export const erpResilienceStatusPath = "/erp/status" as const;
 export const controlServiceTokenHeaderName = "x-control-service-token" as const;
 
 /** Deployment ceiling for configured ERP latency, enforced where a configuration is accepted. */
@@ -105,19 +104,6 @@ export const erpChaosStatusSchema = erpChaosConfigSchema
   .strict();
 export type ErpChaosStatus = z.infer<typeof erpChaosStatusSchema>;
 
-export const erpDependencyStatusValues = ["healthy", "degraded", "unavailable"] as const;
-export const erpDependencyStatusSchema = z.enum(erpDependencyStatusValues);
-
-export const erpRetryPressureSchema = z
-  .object({
-    retryingJobCount: nonnegativeIntegerSchema,
-    retryAttemptCount: nonnegativeIntegerSchema,
-    inspectedJobCount: nonnegativeIntegerSchema,
-    inspectionLimit: z.number().int().positive(),
-    inspectionTruncated: z.boolean(),
-  })
-  .strict();
-
 export const erpLatestAttemptSummarySchema = z
   .object({
     runId: uuidSchema.nullable(),
@@ -154,13 +140,3 @@ export const runErpOutcomeSummarySchema = z
   })
   .strict();
 export type RunErpOutcomeSummary = z.infer<typeof runErpOutcomeSummarySchema>;
-
-export const sharedErpProtectionStatusSchema = z
-  .object({
-    status: erpDependencyStatusSchema,
-    reason: z.string().trim().min(1).nullable(),
-    retryPressure: erpRetryPressureSchema,
-    observedAt: isoTimestampSchema,
-  })
-  .strict();
-export type SharedErpProtectionStatus = z.infer<typeof sharedErpProtectionStatusSchema>;

@@ -51,7 +51,6 @@ import {
   DemoRunStartupReconciliationService,
   PostgresStartingDemoRunReconciliationStore,
 } from "./services/demo-run-startup-reconciliation-service.js";
-import { SharedErpProtectionService } from "./services/erp-status-service.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
@@ -133,10 +132,6 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
-  const sharedErpProtectionService = new SharedErpProtectionService({
-    queueStatusService,
-    logger,
-  });
   const inventoryStatusService = new InventoryStatusService({
     getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
   });
@@ -496,7 +491,6 @@ export async function startApiServer(): Promise<void> {
       dashboardProjectionFanout,
       dashboardRecoveryService: dashboardProjectionService,
       dashboardRecoveryAdmission,
-      sharedErpProtectionService,
       inventoryStatusService,
       orderStatusService,
       queueStatusService,

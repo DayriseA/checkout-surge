@@ -136,7 +136,6 @@ function operation(redis: CheckoutSurgeRedis) {
       consistencyLagReader: { read: unavailable },
       inventoryStatusService: { getStatus: unavailable },
       queueStatusService: { getStatus: unavailable },
-      sharedErpProtectionService: { getStatus: unavailable },
       runErpOutcomeService: { getOutcomes: unavailable },
       trafficMetricReader: { readRecent: async () => [] },
       transportObservationReader: { read: async () => null },

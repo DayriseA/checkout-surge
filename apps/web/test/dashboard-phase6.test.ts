@@ -460,17 +460,16 @@ describe("projection dashboard", () => {
     );
 
     expect(markup).toContain("Physical order queue");
-    // The live physical queue facts survive the verdict removal, retry pressure included.
+    // The live physical queue facts remain visible.
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>2<\/dd>/);
-    expect(markup).toMatch(/Retrying jobs<\/dt><dd[^>]*>1<\/dd>/);
-    expect(markup).toMatch(/Retry attempts<\/dt><dd[^>]*>2<\/dd>/);
+    expect(markup).not.toContain("Retrying jobs");
+    expect(markup).not.toContain("Retry attempts");
     // The queue panel keeps its own poll clock and no run-scoped ERP facts.
     expect(markup).toContain("Shared demo runtime");
     expect(markup).toContain("Last updated");
     expect(markup).not.toContain("Protection details");
     expect(markup).not.toContain("Recent attempts");
-    // The panel shows no failed-job total and issues no verdict: no pill, and no
-    // degraded shared protection column.
+    // The panel shows no failed-job total or verdict.
     expect(markup).not.toMatch(/Failed<\/dt>/);
     expect(markup).not.toContain("rounded-full");
     expect(markup).not.toContain("Shared simulated ERP protection");
@@ -922,29 +921,10 @@ function projectionFixture(): DashboardProjection {
         depth: 2,
         counts: { waiting: 2, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
         oldestWaitingAgeSeconds: null,
-        retryPressure: {
-          inspectedJobCount: 2,
-          inspectionLimit: 100,
-          retryingJobCount: 1,
-          retryAttemptCount: 2,
-          inspectionTruncated: false,
-        },
         failedJobs: {
           totalCount: 0,
           recent: [],
           inspectionLimit: 20,
-          inspectionTruncated: false,
-        },
-        observedAt: "2026-06-20T00:00:11.000Z",
-      },
-      erpProtection: {
-        status: "degraded",
-        reason: "erp_retries_pending",
-        retryPressure: {
-          retryingJobCount: 1,
-          retryAttemptCount: 2,
-          inspectedJobCount: 2,
-          inspectionLimit: 100,
           inspectionTruncated: false,
         },
         observedAt: "2026-06-20T00:00:11.000Z",

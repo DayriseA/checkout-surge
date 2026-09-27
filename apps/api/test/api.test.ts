@@ -32,7 +32,6 @@ import {
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   emptyServerReservationTimingSummary,
-  erpResilienceStatusPath,
   errorPayloadSchema,
   estimateAdmissionRejectionDetailsSchema,
   healthResponseSchema,
@@ -62,8 +61,6 @@ import {
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
-  type SharedErpProtectionStatus,
-  sharedErpProtectionStatusSchema,
   startDemoRunPath,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
@@ -134,10 +131,7 @@ import {
 import type { DemoPresetController } from "../src/services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "../src/services/demo-run-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
-import type {
-  RunErpOutcomeService,
-  SharedErpProtectionService,
-} from "../src/services/erp-status-service.js";
+import type { RunErpOutcomeService } from "../src/services/erp-status-service.js";
 import type { GeneratedRunRetentionWorkflow } from "../src/services/generated-run-retention-service.js";
 import type { GeneratedRunTeardownWorkflow } from "../src/services/generated-run-teardown-service.js";
 import {
@@ -193,13 +187,6 @@ function queueStatusFixture(): QueueStatus {
     depth: 10,
     counts: { waiting: 4, prioritized: 1, paused: 3, delayed: 2, active: 3, failed: 2 },
     oldestWaitingAgeSeconds: 12.5,
-    retryPressure: {
-      inspectedJobCount: 10,
-      inspectionLimit: 100,
-      retryingJobCount: 2,
-      retryAttemptCount: 3,
-      inspectionTruncated: false,
-    },
     failedJobs: {
       totalCount: 2,
       recent: [
@@ -261,7 +248,6 @@ async function buildTestServer(options: {
   orderProcessJobPublisher?: OrderProcessJobPublisher;
   orderStatusService?: OrderStatusController;
   queueInspector?: OrderProcessQueueInspector;
-  sharedErpProtectionService?: SharedErpProtectionService;
   dashboardRecoveryService?: DashboardProjectionService;
   dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
   trustedProxyCidrs?: string[];
@@ -313,9 +299,6 @@ async function buildTestServer(options: {
     options.queueInspector ?? { inspect: async () => queueStatusFixture() },
     logger,
   );
-  const sharedErpProtectionService =
-    options.sharedErpProtectionService ??
-    createStaticSharedErpProtectionService(sharedErpProtectionFixture());
   const inventoryStatusService = new InventoryStatusService(inventoryReader);
 
   return buildApiServer({
@@ -349,7 +332,6 @@ async function buildTestServer(options: {
             consistencyLagReader: { read: async () => consistencyLagFixture() },
             inventoryStatusService,
             queueStatusService,
-            sharedErpProtectionService,
             runErpOutcomeService: createStaticRunErpOutcomeService(runErpOutcomeFixture()),
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
@@ -364,7 +346,6 @@ async function buildTestServer(options: {
     dashboardRecoveryAdmission: options.dashboardRecoveryAdmission ?? {
       admit: async () => ({ outcome: "admitted", release: () => undefined }),
     },
-    sharedErpProtectionService,
     inventoryStatusService,
     orderStatusService: options.orderStatusService ?? { getStatus: async () => null },
     queueStatusService,
@@ -928,21 +909,6 @@ function publicRuntimePolicyMutableFixture() {
   };
 }
 
-function sharedErpProtectionFixture(): SharedErpProtectionStatus {
-  return {
-    status: "healthy",
-    reason: null,
-    retryPressure: {
-      retryingJobCount: 0,
-      retryAttemptCount: 0,
-      inspectedJobCount: 0,
-      inspectionLimit: 100,
-      inspectionTruncated: false,
-    },
-    observedAt: "2026-06-20T00:00:10.000Z",
-  };
-}
-
 function runErpOutcomeFixture(): RunErpOutcomeSummary {
   return {
     runId: fixtureIds.run,
@@ -957,12 +923,6 @@ function runErpOutcomeFixture(): RunErpOutcomeSummary {
     recentTimeoutCount: 0,
     observedAt: "2026-06-20T00:00:10.000Z",
   };
-}
-
-function createStaticSharedErpProtectionService(
-  status: SharedErpProtectionStatus,
-): SharedErpProtectionService {
-  return { getStatus: async () => status } as SharedErpProtectionService;
 }
 
 function createStaticRunErpOutcomeService(outcome: RunErpOutcomeSummary): RunErpOutcomeService {
@@ -1097,7 +1057,6 @@ describe("API gateway routes", () => {
     orderProcessJobPublisher?: OrderProcessJobPublisher;
     orderStatusService?: OrderStatusController;
     queueInspector?: OrderProcessQueueInspector;
-    sharedErpProtectionService?: SharedErpProtectionService;
     dashboardRecoveryService?: DashboardProjectionService;
     dashboardRecoveryAdmission?: DashboardRecoveryAdmissionController;
     trustedProxyCidrs?: string[];
@@ -1250,7 +1209,6 @@ describe("API gateway routes", () => {
     expect(payload.correlationId).toBe(response.headers[correlationIdHeaderName]);
     expect(payload.inventory?.remainingStock).toBe(7);
     expect(payload.systemStatus?.queue.depth).toBe(10);
-    expect(payload.systemStatus?.erpProtection.status).toBe("healthy");
     expect(payload.erp?.runId).toBe(fixtureIds.run);
     expect(payload.businessOutcome).toEqual(businessOutcomeFixture());
     expect(payload.consistencyLag).toEqual(consistencyLagFixture());
@@ -1522,22 +1480,6 @@ describe("API gateway routes", () => {
     expect(response.statusCode).toBe(200);
     expect(payload).toEqual(queueStatusFixture());
     expect(payload).not.toHaveProperty("physicalName");
-  });
-
-  it("returns only validated shared ERP protection from the global route", async () => {
-    const status = sharedErpProtectionFixture();
-    const server = await trackedServer({
-      persistence: new AcceptingPersistence(),
-      sharedErpProtectionService: createStaticSharedErpProtectionService(status),
-    });
-
-    const response = await server.inject({ method: "GET", url: erpResilienceStatusPath });
-    const payload = sharedErpProtectionStatusSchema.parse(response.json());
-
-    expect(response.statusCode).toBe(200);
-    expect(payload).toEqual(status);
-    expect(payload).not.toHaveProperty("recentAttemptCount");
-    expect(payload).not.toHaveProperty("latestAttempt");
   });
 
   it("returns public demo presets and runtime policy through shared contracts", async () => {
@@ -3626,12 +3568,6 @@ describe("API buy persistence", () => {
         name: "orders:process",
         depth: 1,
         counts: { waiting: 0, prioritized: 0, paused: 1, delayed: 0, active: 0, failed: 0 },
-        retryPressure: {
-          inspectedJobCount: 1,
-          retryingJobCount: 0,
-          retryAttemptCount: 0,
-          inspectionTruncated: false,
-        },
         failedJobs: { totalCount: 0, recent: [], inspectionTruncated: false },
       });
       expect(queueStatus).not.toHaveProperty("physicalName");
@@ -3644,7 +3580,7 @@ describe("API buy persistence", () => {
     }
   });
 
-  it("projects bounded health from real paused, delayed, retrying, and failed BullMQ jobs", async () => {
+  it("projects bounded health from real paused, delayed, and failed BullMQ jobs", async () => {
     if (!redis) {
       throw new Error("Test Redis was not initialized.");
     }
@@ -3663,12 +3599,7 @@ describe("API buy persistence", () => {
       },
       { connection: { url: redisUrl, maxRetriesPerRequest: null } },
     );
-    const truncatedInspector = createOrderProcessQueueInspector(queue, {
-      retryInspectionLimit: 1,
-      failedJobInspectionLimit: 1,
-    });
-    const fullInspector = createOrderProcessQueueInspector(queue, {
-      retryInspectionLimit: 10,
+    const inspector = createOrderProcessQueueInspector(queue, {
       failedJobInspectionLimit: 1,
     });
     const queueJob = (orderId: string): OrderProcessJob => ({
@@ -3706,36 +3637,17 @@ describe("API buy persistence", () => {
         timeout: 10_000,
         interval: 25,
       });
-      const retrying = await queue.add(orderProcessJobName, queueJob(randomUUID()), {
-        attempts: 2,
-        backoff: 60_000,
-        jobId: "retrying-delayed",
-      });
-      await vi.waitFor(
-        async () => {
-          expect(await retrying.getState()).toBe("delayed");
-          expect((await queue.getJob("retrying-delayed"))?.attemptsMade).toBe(1);
-        },
-        { timeout: 10_000, interval: 25 },
-      );
       await queue.add(orderProcessJobName, queueJob(randomUUID()), {
         delay: 120_000,
         jobId: "scheduled-delayed",
       });
 
-      const boundedStatus = queueStatusSchema.parse(await truncatedInspector.inspect());
+      const boundedStatus = queueStatusSchema.parse(await inspector.inspect());
       expect(boundedStatus).toMatchObject({
         name: "orders:process",
         connectivity: "reachable",
-        depth: 2,
-        counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 2, active: 0, failed: 2 },
-        retryPressure: {
-          inspectedJobCount: 1,
-          inspectionLimit: 1,
-          retryingJobCount: 1,
-          retryAttemptCount: 1,
-          inspectionTruncated: true,
-        },
+        depth: 1,
+        counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 1, active: 0, failed: 2 },
         failedJobs: {
           totalCount: 2,
           inspectionLimit: 1,
@@ -3752,16 +3664,10 @@ describe("API buy persistence", () => {
 
       await queue.pause();
       await queue.add(orderProcessJobName, queueJob(randomUUID()), { jobId: "paused-backlog" });
-      const fullStatus = queueStatusSchema.parse(await fullInspector.inspect());
+      const fullStatus = queueStatusSchema.parse(await inspector.inspect());
 
-      expect(fullStatus.depth).toBe(3);
-      expect(fullStatus.counts).toMatchObject({ paused: 1, delayed: 2, failed: 2 });
-      expect(fullStatus.retryPressure).toMatchObject({
-        inspectedJobCount: 3,
-        retryingJobCount: 1,
-        retryAttemptCount: 1,
-        inspectionTruncated: false,
-      });
+      expect(fullStatus.depth).toBe(2);
+      expect(fullStatus.counts).toMatchObject({ paused: 1, delayed: 1, failed: 2 });
       expect(fullStatus.oldestWaitingAgeSeconds).not.toBeNull();
       expect(fullStatus).not.toHaveProperty("physicalName");
     } finally {

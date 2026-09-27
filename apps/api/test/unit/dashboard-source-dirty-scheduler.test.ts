@@ -288,13 +288,6 @@ function queueStatus(depth: number): QueueStatus {
       failed: 0,
     },
     oldestWaitingAgeSeconds: null,
-    retryPressure: {
-      inspectedJobCount: depth,
-      inspectionLimit: 100,
-      retryingJobCount: 0,
-      retryAttemptCount: 0,
-      inspectionTruncated: false,
-    },
     failedJobs: {
       totalCount: 0,
       recent: [],

@@ -1156,9 +1156,6 @@ describe("demo run finalization service", () => {
               queueStatusService: {
                 getStatus: async () => Promise.reject(new Error("unused queue projection")),
               },
-              sharedErpProtectionService: {
-                getStatus: async () => Promise.reject(new Error("unused ERP projection")),
-              },
               runErpOutcomeService: {
                 getOutcomes: async () => Promise.reject(new Error("unused run ERP projection")),
               },

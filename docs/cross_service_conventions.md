@@ -204,7 +204,7 @@ Run-scoped fields:
 
 | Public evidence | Source and meaning | Clock |
 | --- | --- | --- |
-| Queued / processing backlog | `businessOutcome.queuedOrders` is `accepted_awaiting_first_processing_start`; `processingOrders` and adjacent `retryingOrders` are filtered by `orders.runId`. Retrying remains separate because BullMQ retries can resume after the first processing start. | Complete projection `recoveredAt`; terminal history uses its captured run timeline. |
+| Queued / processing backlog | `businessOutcome.queuedOrders` is `accepted_awaiting_first_processing_start`; `processingOrders` and adjacent `retryingOrders` are filtered by `orders.runId`. Retrying remains separate because durable order recovery can resume processing after the first processing start. | Complete projection `recoveredAt`; terminal history uses its captured run timeline. |
 | Confirmed and failed outcomes | `businessOutcome.confirmedOrders` and `failedOrders` are filtered by the selected `runId`. | Durable event timestamps and projection `recoveredAt`. |
 | ERP attempt totals | `erp.recentAttemptCount`, `recentFailureCount`, and `recentTimeoutCount` query retained rows only for `erp_attempts.run_id = scope.runId`; `recentAttemptWindowSeconds` defines the time predicate and `recentAttemptCoverage = retained_history` prevents treating the bounded tail as complete. `cumulativeOutcomeCounts` sums per-order actual-call counters for capacity, unavailability, uncertainty/timeout, and permanent rejection across the full order lifetime. | `erp.observedAt` is the API observation time. |
 | Latest ERP attempt | `erp.latestAttempt` is selected only inside the same run predicate. Its status and `finishedAt` cannot be inherited from another or unscoped run. | `latestAttempt.finishedAt` is attempt completion time. |
@@ -215,10 +215,8 @@ Shared-runtime fields:
 | --- | --- | --- |
 | Physical queue identity and readiness | `systemStatus.queue.name` and `connectivity` describe the one shared BullMQ queue. | `queue.observedAt` is the queue-inspector poll time. |
 | Physical queue work | `depth`; waiting, prioritized, paused, delayed, active, and failed counts; oldest waiting age; failed-job total; and bounded recent failed details include all runs and visitors. BullMQ cannot filter these counts by run without enumerating and truncating jobs. | Polled on the shared dashboard cadence, currently `dashboardLiveUpdateExpectedIntervalMs`. |
-| Physical retry pressure | Retrying job count, retry-attempt count, inspected count/limit, and truncation flag are bounded shared-queue telemetry. Gold Signals and run outcomes use `businessOutcome.retryingOrders` instead. | The enclosing `queue.observedAt` poll time. |
-| ERP protection verdict | `systemStatus.erpProtection.status` and `reason` derive only from shared queue retry pressure and its read availability. They do not use run attempt failures or timeouts. | `erpProtection.observedAt` is the API observation time. |
 
-The web application displays only the live physical queue counts and retry pressure from these fields (the public Physical order queue panel). The failed-job total and the ERP protection verdict remain API fields; they are not shown publicly and drive no UI verdict.
+The web application displays the live physical queue counts from these fields (the public Physical order queue panel). The failed-job total remains an API field; it is not shown publicly.
 
 There are no public unscoped queue or ERP values. Rows whose nullable `run_id` is absent are excluded from run evidence, and physical BullMQ values are retained only in the explicitly shared system-status area.
 

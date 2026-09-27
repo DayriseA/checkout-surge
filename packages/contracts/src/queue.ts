@@ -69,15 +69,6 @@ export const queueStatusSchema = z
       })
       .strict(),
     oldestWaitingAgeSeconds: nonnegativeNumberSchema.nullable(),
-    retryPressure: z
-      .object({
-        inspectedJobCount: nonnegativeIntegerSchema,
-        inspectionLimit: positiveIntegerSchema,
-        retryingJobCount: nonnegativeIntegerSchema,
-        retryAttemptCount: nonnegativeIntegerSchema,
-        inspectionTruncated: z.boolean(),
-      })
-      .strict(),
     failedJobs: z
       .object({
         totalCount: nonnegativeIntegerSchema,

@@ -12,7 +12,6 @@ import type {
   QueueConnectivityChecker,
 } from "../services/queue-status-service.js";
 
-export const queueRetryInspectionLimit = 100;
 export const recentFailedJobInspectionLimit = 20;
 
 type OrderProcessBullMqJob = Job<OrderProcessJob, void, typeof orderProcessJobName>;
@@ -24,7 +23,7 @@ export interface BullMqQueueInspectionClient {
     start: number,
     end: number,
     asc?: boolean,
-  ): Promise<OrderProcessBullMqJob[]>;
+  ): Promise<(OrderProcessBullMqJob | undefined)[]>;
   close(): Promise<void>;
   disconnect?(): Promise<void>;
 }
@@ -44,7 +43,6 @@ const observedCountTypes = [
   "active",
   "failed",
 ] as const;
-const retryCandidateTypes = ["waiting", "prioritized", "paused", "delayed", "active"] as const;
 const waitingAgeCandidateTypes = ["waiting", "prioritized", "paused"] as const;
 
 export function createBullMqOrderProcessQueueInspector(
@@ -62,24 +60,19 @@ export function createOrderProcessQueueInspector(
   queue: BullMqQueueInspectionClient,
   options: {
     now?: () => Date;
-    retryInspectionLimit?: number;
     failedJobInspectionLimit?: number;
   } = {},
 ): BullMqOrderProcessQueueInspector {
   const now = options.now ?? (() => new Date());
-  const retryInspectionLimit = options.retryInspectionLimit ?? queueRetryInspectionLimit;
   const failedJobInspectionLimit =
     options.failedJobInspectionLimit ?? recentFailedJobInspectionLimit;
-  const retryRangeEnd = Math.ceil(retryInspectionLimit / retryCandidateTypes.length) - 1;
 
   return {
     async inspect(): Promise<QueueStatus> {
       const measuredAt = now();
-      const [counts, oldestWaitingJobs, retryCandidateJobs, failedJobs] = await Promise.all([
+      const [counts, oldestWaitingJobs, failedJobs] = await Promise.all([
         queue.getJobCounts(...observedCountTypes),
         queue.getJobs([...waitingAgeCandidateTypes], 0, 0, true),
-        // BullMQ applies the range to each state, so divide the limit to keep total reads bounded.
-        queue.getJobs([...retryCandidateTypes], 0, retryRangeEnd, true),
         queue.getJobs(["failed"], 0, failedJobInspectionLimit - 1, false),
       ]);
       const normalizedCounts = {
@@ -90,17 +83,12 @@ export function createOrderProcessQueueInspector(
         active: count(counts, "active"),
         failed: count(counts, "failed"),
       };
-      const retryEligibleJobCount =
-        normalizedCounts.waiting +
-        normalizedCounts.prioritized +
-        normalizedCounts.paused +
-        normalizedCounts.delayed +
-        normalizedCounts.active;
-      const inspectedRetryJobs = retryCandidateJobs.slice(0, retryInspectionLimit);
       const oldestWaitingTimestamp = oldestWaitingJobs.reduce<number | null>(
-        (oldest, job) => (oldest === null || job.timestamp < oldest ? job.timestamp : oldest),
+        (oldest, job) =>
+          job && (oldest === null || job.timestamp < oldest) ? job.timestamp : oldest,
         null,
       );
+      const survivingFailedJobs = failedJobs.filter((job) => job !== undefined);
 
       return queueStatusSchema.parse({
         name: orderProcessQueueName,
@@ -116,16 +104,9 @@ export function createOrderProcessQueueInspector(
           oldestWaitingTimestamp === null
             ? null
             : Math.max(0, (measuredAt.getTime() - oldestWaitingTimestamp) / 1000),
-        retryPressure: {
-          inspectedJobCount: inspectedRetryJobs.length,
-          inspectionLimit: retryInspectionLimit,
-          retryingJobCount: inspectedRetryJobs.filter((job) => job.attemptsMade > 0).length,
-          retryAttemptCount: inspectedRetryJobs.reduce((total, job) => total + job.attemptsMade, 0),
-          inspectionTruncated: retryEligibleJobCount > inspectedRetryJobs.length,
-        },
         failedJobs: {
           totalCount: normalizedCounts.failed,
-          recent: failedJobs.slice(0, failedJobInspectionLimit).map((job) => ({
+          recent: survivingFailedJobs.slice(0, failedJobInspectionLimit).map((job) => ({
             jobId: job.id ?? "unknown",
             jobName: job.name,
             attemptsMade: job.attemptsMade,
@@ -133,7 +114,7 @@ export function createOrderProcessQueueInspector(
             failedAt: job.finishedOn === undefined ? null : new Date(job.finishedOn).toISOString(),
           })),
           inspectionLimit: failedJobInspectionLimit,
-          inspectionTruncated: normalizedCounts.failed > failedJobs.length,
+          inspectionTruncated: normalizedCounts.failed > survivingFailedJobs.length,
         },
         observedAt: measuredAt.toISOString(),
       });

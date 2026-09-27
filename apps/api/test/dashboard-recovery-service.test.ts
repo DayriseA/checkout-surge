@@ -13,7 +13,6 @@ import {
   type RunErpOutcomeSummary,
   type RunRuntimeProgress,
   runSignalBucketCount,
-  type SharedErpProtectionStatus,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-surge/contracts/testing";
@@ -430,11 +429,20 @@ describe("DashboardProjectionService", () => {
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.runtimeProgress).not.toHaveBeenCalled();
     expect(harness.queue).toHaveBeenCalledOnce();
-    expect(harness.sharedErp).toHaveBeenCalledOnce();
     expect(harness.runErp).not.toHaveBeenCalled();
-    expect(recovery.systemStatus).not.toBeNull();
+    expect(recovery.systemStatus).toEqual({ queue: queueStatusFixture() });
     expect(recovery.erp).toBeNull();
     expect(recovery.runtimeProgress).toBeNull();
+  });
+
+  it("omits shared status when the queue read fails", async () => {
+    const harness = serviceHarness({ currentRun: null, saleOfferId: null });
+    harness.queue.mockRejectedValueOnce(new Error("queue unavailable"));
+
+    const recovery = await harness.service.build({ correlationId: "corr-queue-unavailable" });
+
+    expect(recovery.systemStatus).toBeNull();
+    expect(harness.queue).toHaveBeenCalledOnce();
   });
 
   it("passes one selected run scope and one captured time to every owned projection", async () => {
@@ -616,7 +624,6 @@ describe("DashboardProjectionService", () => {
     expect(harness.metrics).not.toHaveBeenCalled();
     expect(harness.transportAttemptCounts).not.toHaveBeenCalled();
     expect(harness.queue).not.toHaveBeenCalled();
-    expect(harness.sharedErp).not.toHaveBeenCalled();
     expect(harness.runErp).not.toHaveBeenCalled();
     expect(harness.allocateRevision).not.toHaveBeenCalled();
     expect(harness.close).toHaveBeenCalledOnce();
@@ -804,9 +811,6 @@ describe("DashboardProjectionService", () => {
             consistencyLagReader: { read: async () => consistencyLagFixture() },
             inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
             queueStatusService: { getStatus: async () => queueStatusFixture() },
-            sharedErpProtectionService: {
-              getStatus: async () => sharedErpProtectionFixture(),
-            },
             runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
             trafficMetricReader: { readRecent: async () => [] },
             transportObservationReader: { read: async () => null },
@@ -928,9 +932,6 @@ function projectionDependencies(options: {
     consistencyLagReader: { read: async () => consistencyLagFixture() },
     inventoryStatusService: { getStatus: async () => inventoryStatusFixture() },
     queueStatusService: { getStatus: async () => queueStatusFixture() },
-    sharedErpProtectionService: {
-      getStatus: async () => sharedErpProtectionFixture(),
-    },
     runErpOutcomeService: { getOutcomes: async () => runErpOutcomeFixture() },
     trafficMetricReader: { readRecent: async () => [] },
     transportObservationReader: { read: async () => null },
@@ -993,7 +994,6 @@ function serviceHarness(
           : null,
       );
   const queue = vi.fn(async () => queueStatusFixture());
-  const sharedErp = vi.fn(async () => sharedErpProtectionFixture());
   const runErp = vi.fn(async (scope: { runId: string }) => runErpOutcomeFixture(scope.runId));
   const loggerWarn = vi.fn();
   let revision = 0;
@@ -1025,7 +1025,6 @@ function serviceHarness(
         consistencyLagReader: { read: lag },
         inventoryStatusService: { getStatus: inventory },
         queueStatusService: { getStatus: queue },
-        sharedErpProtectionService: { getStatus: sharedErp },
         runErpOutcomeService: { getOutcomes: runErp },
         trafficMetricReader: { readRecent: metrics },
         transportObservationReader: { read: transportAttemptCounts },
@@ -1045,7 +1044,6 @@ function serviceHarness(
     metrics,
     transportAttemptCounts,
     queue,
-    sharedErp,
     runErp,
     runtimeProgress,
     loggerWarn,
@@ -1156,29 +1154,7 @@ function queueStatusFixture(): QueueStatus {
     depth: 0,
     counts: { waiting: 0, prioritized: 0, paused: 0, delayed: 0, active: 0, failed: 0 },
     oldestWaitingAgeSeconds: null,
-    retryPressure: {
-      inspectedJobCount: 0,
-      inspectionLimit: 100,
-      retryingJobCount: 0,
-      retryAttemptCount: 0,
-      inspectionTruncated: false,
-    },
     failedJobs: { totalCount: 0, recent: [], inspectionLimit: 20, inspectionTruncated: false },
-    observedAt: now.toISOString(),
-  };
-}
-
-function sharedErpProtectionFixture(): SharedErpProtectionStatus {
-  return {
-    status: "healthy",
-    reason: null,
-    retryPressure: {
-      retryingJobCount: 0,
-      retryAttemptCount: 0,
-      inspectedJobCount: 0,
-      inspectionLimit: 100,
-      inspectionTruncated: false,
-    },
     observedAt: now.toISOString(),
   };
 }

@@ -4,7 +4,7 @@ import {
   consistencyLagSummarySchema,
   demoRunSnapshotSchema,
 } from "./demo.js";
-import { runErpOutcomeSummarySchema, sharedErpProtectionStatusSchema } from "./erp.js";
+import { runErpOutcomeSummarySchema } from "./erp.js";
 import { inventoryStatusSchema } from "./inventory.js";
 import { requestArrivalSummarySchema, trafficHttpSummarySchema } from "./load.js";
 import {
@@ -52,7 +52,6 @@ export type DashboardProjectionScope = z.infer<typeof dashboardProjectionScopeSc
 export const sharedRuntimeStatusSchema = z
   .object({
     queue: queueStatusSchema,
-    erpProtection: sharedErpProtectionStatusSchema,
   })
   .strict();
 

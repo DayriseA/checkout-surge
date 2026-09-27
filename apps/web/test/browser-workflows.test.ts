@@ -1904,29 +1904,10 @@ describe("watch browser recovery", () => {
                   failed: 0,
                 },
                 oldestWaitingAgeSeconds: 4,
-                retryPressure: {
-                  inspectedJobCount: 41,
-                  inspectionLimit: 100,
-                  retryingJobCount: 29,
-                  retryAttemptCount: 37,
-                  inspectionTruncated: false,
-                },
                 failedJobs: {
                   totalCount: 0,
                   recent: [],
                   inspectionLimit: 20,
-                  inspectionTruncated: false,
-                },
-                observedAt: "2026-06-20T00:00:10.000Z",
-              },
-              erpProtection: {
-                status: "degraded",
-                reason: "erp_retries_pending",
-                retryPressure: {
-                  retryingJobCount: 29,
-                  retryAttemptCount: 37,
-                  inspectedJobCount: 41,
-                  inspectionLimit: 100,
                   inspectionTruncated: false,
                 },
                 observedAt: "2026-06-20T00:00:10.000Z",
@@ -1939,12 +1920,11 @@ describe("watch browser recovery", () => {
 
     expect(markup).not.toContain('aria-label="Run conclusion"');
     expect(markup).toContain("7 waiting · peak 7");
-    // Run-owned outcome totals stay reachable on the live board: the run's own retrying count (3)
-    // is separate from the shared queue's retry pressure (29) in the run context's system status.
+    // Run-owned outcome totals stay reachable on the live board.
     expect(markup).toMatch(/Retrying<\/dt><dd[^>]*>3<\/dd>/);
     expect(markup).toContain("Physical order queue");
     expect(markup).toMatch(/Depth \(all runs\)<\/dt><dd[^>]*>41<\/dd>/);
-    expect(markup.match(/Retrying jobs<\/dt><dd[^>]*>29<\/dd>/g)).toHaveLength(1);
+    expect(markup).not.toContain("Retrying jobs");
     expect(markup).not.toContain("41 waiting · peak 41");
     expect(markup).not.toContain("Run-owned retrying orders are shown separately (29)");
   });

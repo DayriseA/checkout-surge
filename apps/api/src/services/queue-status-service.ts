@@ -29,7 +29,6 @@ export class QueueStatusService {
           physicalQueueName: orderProcessBullMqQueueName,
           depth: status.depth,
           activeCount: status.counts.active,
-          retryingJobCount: status.retryPressure.retryingJobCount,
           failedJobCount: status.failedJobs.totalCount,
           observedAt: status.observedAt,
         },

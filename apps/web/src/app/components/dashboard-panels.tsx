@@ -717,14 +717,6 @@ export function SystemStatusPanel({ recovery }: { recovery: BackendRead<Dashboar
               <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
               <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
               <Fact label="Active" value={formatNumber(queue.counts.active)} />
-              <Fact
-                label="Retrying jobs"
-                value={formatNumber(queue.retryPressure.retryingJobCount)}
-              />
-              <Fact
-                label="Retry attempts"
-                value={formatNumber(queue.retryPressure.retryAttemptCount)}
-              />
             </dl>
           </details>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">

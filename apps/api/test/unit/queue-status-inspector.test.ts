@@ -8,18 +8,12 @@ import {
 const measuredAt = new Date("2026-06-22T12:00:20.000Z");
 
 describe("order-processing queue inspection", () => {
-  it("derives exact state counts and bounded wait, retry, and failure visibility", async () => {
+  it("derives exact state counts and bounded wait and failure visibility", async () => {
     const queue = fakeQueue({
       counts: { waiting: 5, prioritized: 2, paused: 4, delayed: 3, active: 1, failed: 4 },
       oldestWaitingJobs: [
         job({ id: "waiting", timestamp: measuredAt.getTime() - 12_000 }),
         job({ id: "paused", timestamp: measuredAt.getTime() - 15_000 }),
-      ],
-      retryJobs: [
-        job({ id: "first-attempt", attemptsMade: 0 }),
-        job({ id: "retried-once", attemptsMade: 1 }),
-        job({ id: "retried-twice", attemptsMade: 2 }),
-        job({ id: "paused-retry", attemptsMade: 1 }),
       ],
       failedJobs: [
         job({
@@ -38,7 +32,6 @@ describe("order-processing queue inspection", () => {
     });
     const inspector = createOrderProcessQueueInspector(queue, {
       now: () => measuredAt,
-      retryInspectionLimit: 4,
       failedJobInspectionLimit: 2,
     });
 
@@ -48,13 +41,6 @@ describe("order-processing queue inspection", () => {
       depth: 14,
       counts: { waiting: 5, prioritized: 2, paused: 4, delayed: 3, active: 1, failed: 4 },
       oldestWaitingAgeSeconds: 15,
-      retryPressure: {
-        inspectedJobCount: 4,
-        inspectionLimit: 4,
-        retryingJobCount: 3,
-        retryAttemptCount: 4,
-        inspectionTruncated: true,
-      },
       failedJobs: {
         totalCount: 4,
         inspectionLimit: 2,
@@ -67,12 +53,28 @@ describe("order-processing queue inspection", () => {
       observedAt: measuredAt.toISOString(),
     });
     expect(queue.getJobs).toHaveBeenCalledWith(["waiting", "prioritized", "paused"], 0, 0, true);
-    expect(queue.getJobs).toHaveBeenCalledWith(
-      ["waiting", "prioritized", "paused", "delayed", "active"],
-      0,
-      0,
-      true,
-    );
+    expect(queue.getJobs).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips jobs removed between BullMQ state and job reads", async () => {
+    const queue = fakeQueue({
+      counts: { waiting: 2, failed: 2 },
+      oldestWaitingJobs: [undefined, job({ timestamp: measuredAt.getTime() - 7_000 })],
+      failedJobs: [undefined, job({ id: "surviving-failure", failedReason: "ERP unavailable" })],
+    });
+
+    await expect(
+      createOrderProcessQueueInspector(queue, { now: () => measuredAt }).inspect(),
+    ).resolves.toMatchObject({
+      depth: 2,
+      counts: { waiting: 2, failed: 2 },
+      oldestWaitingAgeSeconds: 7,
+      failedJobs: {
+        totalCount: 2,
+        recent: [expect.objectContaining({ jobId: "surviving-failure" })],
+        inspectionTruncated: true,
+      },
+    });
   });
 
   it("uses one lightweight count command for connectivity", async () => {
@@ -87,9 +89,8 @@ describe("order-processing queue inspection", () => {
 
 function fakeQueue(options: {
   counts?: Record<string, number>;
-  oldestWaitingJobs?: ReturnType<typeof job>[];
-  retryJobs?: ReturnType<typeof job>[];
-  failedJobs?: ReturnType<typeof job>[];
+  oldestWaitingJobs?: (ReturnType<typeof job> | undefined)[];
+  failedJobs?: (ReturnType<typeof job> | undefined)[];
 }): BullMqQueueInspectionClient {
   return {
     getJobCounts: vi.fn().mockResolvedValue(options.counts ?? {}),
@@ -100,7 +101,7 @@ function fakeQueue(options: {
       if (types.length === 3) {
         return options.oldestWaitingJobs ?? [];
       }
-      return options.retryJobs ?? [];
+      return [];
     }),
     close: vi.fn().mockResolvedValue(undefined),
   } as BullMqQueueInspectionClient;
