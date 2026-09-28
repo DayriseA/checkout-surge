@@ -2121,24 +2121,45 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
   });
 
-  it("does not recreate a pending cursor removed after page discovery", async () => {
-    const saleOfferId = "10000000-0000-4000-8000-000000000035";
+  it.each([
+    {
+      change: "promoted",
+      sequence: 35,
+      remainingScore: null,
+      apply: (input: ReturnType<typeof buildReservationInput>) =>
+        promoteReservationIdempotencyToAccepted(redis, input),
+    },
+    {
+      change: "rescheduled",
+      sequence: 37,
+      remainingScore: Date.parse("2026-06-20T12:00:05.000Z").toString(),
+      apply: (input: ReturnType<typeof buildReservationInput>) =>
+        deferPendingPersistenceRecord(redis, {
+          saleOfferId: input.reservation.saleOfferId,
+          reservationId: input.reservation.id,
+          attemptCount: 1,
+          status: "pending",
+          nextRecoveryAt: new Date("2026-06-20T12:00:05.000Z"),
+          recoveryDeadlineAt: new Date("2026-06-20T12:05:00.000Z"),
+          lastError: "retry later",
+        }),
+    },
+  ])("skips a due cursor $change between page discovery and the read", async (scenario) => {
+    const saleOfferId = `10000000-0000-4000-8000-0000000000${scenario.sequence}`;
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 35 });
+    const input = buildReservationInput({ saleOfferId, sequence: scenario.sequence });
     await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
     await reserveInventoryStock(redis, input);
-    const originalHget = redis.hget.bind(redis);
-    const hgetSpy = vi.spyOn(redis, "hget").mockImplementation(async (key, field) => {
-      if (key === keys.pendingPersistenceRecords && field === input.reservation.id) {
-        await redis
-          .multi()
-          .zrem(keys.pendingPersistence, input.reservation.id)
-          .hdel(keys.pendingPersistenceRecords, input.reservation.id)
-          .exec();
-        return null;
-      }
-      return originalHget(key, field);
-    });
+    const originalZrangebyscore = redis.zrangebyscore.bind(redis) as (
+      ...args: unknown[]
+    ) => Promise<string[]>;
+    const zrangebyscoreSpy = vi.spyOn(redis, "zrangebyscore").mockImplementationOnce((async (
+      ...args: unknown[]
+    ) => {
+      const ids = await originalZrangebyscore(...args);
+      await scenario.apply(input);
+      return ids;
+    }) as never);
 
     try {
       await expect(
@@ -2147,64 +2168,56 @@ describe("database migrations, seed data, and reset behavior", () => {
           dueAt: new Date(reservationSecuredAt),
           limit: 1,
         }),
-      ).resolves.toEqual({
-        records: [],
-        issues: [{ reservationId: input.reservation.id, reason: "missing_pending_record" }],
-      });
+      ).resolves.toEqual({ records: [], issues: [] });
     } finally {
-      hgetSpy.mockRestore();
+      zrangebyscoreSpy.mockRestore();
     }
 
-    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
-    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
+      scenario.remainingScore,
+    );
   });
 
-  it("does not recreate a pending cursor removed after an exact membership read", async () => {
+  it("quarantines an exactly read cursor whose pending record is missing", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000036";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 36 });
     await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
     await reserveInventoryStock(redis, input);
-    const originalZscore = redis.zscore.bind(redis);
-    const originalHget = redis.hget.bind(redis);
-    let signalRemovalComplete: () => void = () => undefined;
-    const removalComplete = new Promise<void>((resolve) => {
-      signalRemovalComplete = resolve;
-    });
-    const zscoreSpy = vi.spyOn(redis, "zscore").mockImplementationOnce(async (key, member) => {
-      const score = await originalZscore(key, member);
-      await redis
-        .multi()
-        .zrem(keys.pendingPersistence, input.reservation.id)
-        .hdel(keys.pendingPersistenceRecords, input.reservation.id)
-        .exec();
-      signalRemovalComplete();
-      return score;
-    });
-    const hgetSpy = vi.spyOn(redis, "hget").mockImplementation(async (key, field) => {
-      if (key === keys.pendingPersistenceRecords && field === input.reservation.id) {
-        await removalComplete;
-      }
-      return originalHget(key, field);
-    });
+    await redis.hdel(keys.pendingPersistenceRecords, input.reservation.id);
 
-    try {
-      await expect(
-        readPendingPersistenceRecord(redis, {
-          saleOfferId,
-          reservationId: input.reservation.id,
-        }),
-      ).resolves.toEqual({
-        record: null,
-        issue: { reservationId: input.reservation.id, reason: "missing_pending_record" },
-      });
-    } finally {
-      zscoreSpy.mockRestore();
-      hgetSpy.mockRestore();
-    }
+    await expect(
+      readPendingPersistenceRecord(redis, {
+        saleOfferId,
+        reservationId: input.reservation.id,
+      }),
+    ).resolves.toEqual({
+      record: null,
+      issue: { reservationId: input.reservation.id, reason: "missing_pending_record" },
+    });
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
+      Number.MAX_SAFE_INTEGER.toString(),
+    );
+  });
 
-    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBeNull();
-    expect(await redis.hget(keys.pendingPersistenceRecords, input.reservation.id)).toBeNull();
+  it("propagates a failed pending-persistence read instead of reporting missing metadata", async () => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000038";
+    const keys = inventoryKeys(saleOfferId);
+    const input = buildReservationInput({ saleOfferId, sequence: 38 });
+    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await reserveInventoryStock(redis, input);
+    await redis.del(keys.pendingPersistenceRecords);
+    await redis.set(keys.pendingPersistenceRecords, "not-a-hash");
+
+    await expect(
+      readPendingPersistencePage(redis, { saleOfferId, dueAt: new Date(reservationSecuredAt) }),
+    ).rejects.toThrow("WRONGTYPE");
+    await expect(
+      readPendingPersistenceRecord(redis, { saleOfferId, reservationId: input.reservation.id }),
+    ).rejects.toThrow("WRONGTYPE");
+    expect(await redis.zscore(keys.pendingPersistence, input.reservation.id)).toBe(
+      Date.parse(reservationSecuredAt).toString(),
+    );
   });
 
   it("reverses a pending hold atomically and is idempotent on repetition", async () => {

@@ -25,6 +25,29 @@ function parseZaddArguments(...args: (string | number)[]) {
   return { condition, score: Number(score), member: String(member) };
 }
 
+type FakeBatchCommand = (key: string, ...ids: string[]) => Promise<(string | null)[]>;
+
+/** Models the `MULTI` … `EXEC` batch the pending readers use over the fake's own commands. */
+function fakeMulti(commands: { zmscore: FakeBatchCommand; hmget: FakeBatchCommand }) {
+  const queued: Array<() => Promise<(string | null)[]>> = [];
+  const transaction = {
+    zmscore(key: string, ...ids: string[]) {
+      queued.push(() => commands.zmscore(key, ...ids));
+      return transaction;
+    },
+    hmget(key: string, ...ids: string[]) {
+      queued.push(() => commands.hmget(key, ...ids));
+      return transaction;
+    },
+    async exec() {
+      const results: Array<[null, (string | null)[]]> = [];
+      for (const command of queued) results.push([null, await command()]);
+      return results;
+    },
+  };
+  return transaction;
+}
+
 function pendingRedis() {
   const keys = inventoryKeys(hold.saleOfferId);
   const record = {
@@ -36,6 +59,19 @@ function pendingRedis() {
     recoveryDeadlineAt: undefined as string | undefined,
   };
   let score: number | null = Date.parse(hold.securedAt);
+  const zmscore = vi.fn(async (key: string, ...ids: string[]) =>
+    ids.map((id) =>
+      key === keys.pendingPersistence && id === hold.id && score !== null ? String(score) : null,
+    ),
+  );
+  const hmget = vi.fn(async (key: string, ...ids: string[]) =>
+    ids.map((id) => {
+      if (id !== hold.id) return null;
+      if (key === keys.pendingPersistenceRecords) return JSON.stringify(record);
+      if (key === keys.reservations) return JSON.stringify(hold);
+      return null;
+    }),
+  );
   return {
     record,
     removeCursor() {
@@ -51,9 +87,9 @@ function pendingRedis() {
       zrangebyscore: vi.fn(async (key: string, _minimum: string, maximum: number) =>
         key === keys.pendingPersistence && score !== null && score <= maximum ? [hold.id] : [],
       ),
-      zscore: vi.fn(async (key: string, id: string) =>
-        key === keys.pendingPersistence && id === hold.id && score !== null ? String(score) : null,
-      ),
+      zmscore,
+      hmget,
+      multi: vi.fn(() => fakeMulti({ zmscore, hmget })),
       zadd: vi.fn(async (_key: string, ...args: (string | number)[]) => {
         const command = parseZaddArguments(...args);
         if (command.member !== hold.id) return 0;
@@ -61,12 +97,6 @@ function pendingRedis() {
         if (command.condition === "XX" && !exists) return 0;
         score = command.score;
         return exists ? 0 : 1;
-      }),
-      hget: vi.fn(async (key: string, id: string) => {
-        if (id !== hold.id) return null;
-        if (key === keys.pendingPersistenceRecords) return JSON.stringify(record);
-        if (key === keys.reservations) return JSON.stringify(hold);
-        return null;
       }),
       eval: vi.fn(async (...args: unknown[]) => {
         if (score === null) return "removed";
@@ -104,6 +134,24 @@ function pendingRedisFor(reservations: SecuredReservationHold[]) {
       const keys = inventoryKeys(state.reservation.saleOfferId);
       return key === keys.pendingPersistence || key === keys.pendingPersistenceRecords;
     });
+  const zmscore = vi.fn(async (key: string, ...ids: string[]) =>
+    ids.map((id) => {
+      const state = states.get(id);
+      return state && key === inventoryKeys(state.reservation.saleOfferId).pendingPersistence
+        ? String(state.score)
+        : null;
+    }),
+  );
+  const hmget = vi.fn(async (key: string, ...ids: string[]) =>
+    ids.map((id) => {
+      const state = states.get(id);
+      if (!state) return null;
+      const keys = inventoryKeys(state.reservation.saleOfferId);
+      if (key === keys.pendingPersistenceRecords) return JSON.stringify(state.record);
+      if (key === keys.reservations) return JSON.stringify(state.reservation);
+      return null;
+    }),
+  );
   return {
     states,
     redis: {
@@ -111,20 +159,7 @@ function pendingRedisFor(reservations: SecuredReservationHold[]) {
         const state = stateForKey(key);
         return state && state.score <= maximum ? [state.reservation.id] : [];
       }),
-      zscore: vi.fn(async (key: string, id: string) => {
-        const state = states.get(id);
-        return state && key === inventoryKeys(state.reservation.saleOfferId).pendingPersistence
-          ? String(state.score)
-          : null;
-      }),
-      hget: vi.fn(async (key: string, id: string) => {
-        const state = states.get(id);
-        if (!state) return null;
-        const keys = inventoryKeys(state.reservation.saleOfferId);
-        if (key === keys.pendingPersistenceRecords) return JSON.stringify(state.record);
-        if (key === keys.reservations) return JSON.stringify(state.reservation);
-        return null;
-      }),
+      multi: vi.fn(() => fakeMulti({ zmscore, hmget })),
       zadd: vi.fn(async (_key: string, ...args: (string | number)[]) => {
         const command = parseZaddArguments(...args);
         const state = states.get(command.member);
@@ -393,7 +428,7 @@ describe("PendingPersistenceRecoveryService", () => {
       service.recoverReservation({ reservation: hold, idempotencyKey: "recovery-key" }),
     ).resolves.toEqual(durable);
     expect(pending.redis.zrange).not.toHaveBeenCalled();
-    expect(pending.redis.zscore).toHaveBeenCalledWith(expect.any(String), hold.id);
+    expect(pending.redis.zmscore).toHaveBeenCalledWith(expect.any(String), hold.id);
   });
 
   it("keeps Redis pending when attempt or resolution audit persistence fails", async () => {

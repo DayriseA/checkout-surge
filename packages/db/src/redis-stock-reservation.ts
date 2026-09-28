@@ -7,6 +7,7 @@ import {
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
 import {
+  type InventoryKeys,
   inventoryKeys,
   reservationThroughputWindowSeconds,
   runSaleEligibilityKey,
@@ -674,15 +675,16 @@ export async function readPendingPersistencePage(
     : await redis.zrange(keys.pendingPersistence, 0, limit - 1);
   if (ids.length === 0) return { records: [], issues: [] };
 
-  const [rawRecords, rawHolds] = await Promise.all([
-    Promise.all(ids.map((id) => redis.hget(keys.pendingPersistenceRecords, id))),
-    Promise.all(ids.map((id) => redis.hget(keys.reservations, id))),
-  ]);
+  const { scores, rawRecords, rawHolds } = await readPendingPersistenceEntries(redis, keys, ids);
+  const dueAtMs = input.dueAt?.getTime();
   const records: PendingPersistenceRecord[] = [];
   const issues: PendingPersistenceReadIssue[] = [];
   for (let index = 0; index < ids.length; index += 1) {
     const reservationId = ids[index];
-    if (!reservationId) continue;
+    const score = scores[index];
+    // A cursor resolved or rescheduled since the listing is no longer due work.
+    if (!reservationId || score == null) continue;
+    if (dueAtMs !== undefined && Number(score) > dueAtMs) continue;
     const parsed = parsePendingPersistenceRecord(
       reservationId,
       rawRecords[index] ?? null,
@@ -711,13 +713,17 @@ export async function readPendingPersistenceRecord(
   input: { saleOfferId: string; reservationId: string },
 ): Promise<{ record: PendingPersistenceRecord | null; issue?: PendingPersistenceReadIssue }> {
   const keys = inventoryKeys(input.saleOfferId);
-  const [score, rawRecord, rawHold] = await Promise.all([
-    redis.zscore(keys.pendingPersistence, input.reservationId),
-    redis.hget(keys.pendingPersistenceRecords, input.reservationId),
-    redis.hget(keys.reservations, input.reservationId),
-  ]);
-  if (score === null) return { record: null };
-  const parsed = parsePendingPersistenceRecord(input.reservationId, rawRecord, rawHold);
+  const {
+    scores: [score],
+    rawRecords: [rawRecord],
+    rawHolds: [rawHold],
+  } = await readPendingPersistenceEntries(redis, keys, [input.reservationId]);
+  if (score == null) return { record: null };
+  const parsed = parsePendingPersistenceRecord(
+    input.reservationId,
+    rawRecord ?? null,
+    rawHold ?? null,
+  );
   if ("issue" in parsed) {
     await redis.zadd(
       keys.pendingPersistence,
@@ -728,6 +734,30 @@ export async function readPendingPersistenceRecord(
     return { record: null, issue: parsed.issue };
   }
   return { record: parsed.record };
+}
+
+/** Reads the cursor scores, pending records and holds of `ids` at one Redis instant. */
+async function readPendingPersistenceEntries(
+  redis: CheckoutSurgeRedis,
+  keys: InventoryKeys,
+  ids: string[],
+): Promise<{
+  scores: Array<string | null>;
+  rawRecords: Array<string | null>;
+  rawHolds: Array<string | null>;
+}> {
+  const results = await redis
+    .multi()
+    .zmscore(keys.pendingPersistence, ...ids)
+    .hmget(keys.pendingPersistenceRecords, ...ids)
+    .hmget(keys.reservations, ...ids)
+    .exec();
+  if (!results) throw new Error("Redis aborted the pending-persistence read transaction.");
+  const [scores, rawRecords, rawHolds] = results.map(([error, values]) => {
+    if (error) throw error;
+    return values as Array<string | null>;
+  });
+  return { scores: scores ?? [], rawRecords: rawRecords ?? [], rawHolds: rawHolds ?? [] };
 }
 
 function parsePendingPersistenceRecord(
