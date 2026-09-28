@@ -19,7 +19,7 @@ export function ConfigGroup({
         {hint ? <FieldHint label={title} text={hint} /> : null}
       </h3>
       {caption ? <p className="m-0 mt-0.5 text-xs text-muted">{caption}</p> : null}
-      <dl className="m-0 mt-2 grid max-w-[30rem] grid-cols-[max-content_minmax(0,1fr)] gap-x-3 gap-y-1.5">
+      <dl className="m-0 mt-2 grid max-w-[30rem] grid-cols-[minmax(0,max-content)_minmax(8rem,1fr)] gap-x-3 gap-y-1.5">
         {children}
       </dl>
     </section>
