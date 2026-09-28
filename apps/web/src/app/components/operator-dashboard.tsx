@@ -93,8 +93,8 @@ export function OperatorDashboard({
   });
   const incompleteRunId = recovery.status === "available" ? recovery.data.resetRecoveryRunId : null;
   const [resetRunId, setResetRunId] = useState(incompleteRunId);
-  const currentRunId =
-    recovery.status === "available" ? recovery.data.currentRun?.runId : undefined;
+  const currentRun = recovery.status === "available" ? recovery.data.currentRun : null;
+  const currentRunId = currentRun?.runId;
   useEffect(() => {
     if (incompleteRunId) setResetRunId(incompleteRunId);
     else if (currentRunId)
@@ -102,7 +102,15 @@ export function OperatorDashboard({
   }, [incompleteRunId, currentRunId]);
   const resultContext =
     acceptedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
-  const accepted = useAcceptedRunResult(resultContext);
+  // The saved report cannot exist while the accepted run is still shown in progress.
+  const acceptedRunInProgress =
+    recovery.status === "available" &&
+    recovery.data.resetRecovery !== "incomplete" &&
+    currentRun?.runId === resultContext?.runId &&
+    (currentRun?.status === "starting" ||
+      currentRun?.status === "active" ||
+      currentRun?.status === "draining");
+  const accepted = useAcceptedRunResult(resultContext, { hold: acceptedRunInProgress });
   const firstOpenRef = useRef(true);
   const handleOpen = useCallback(() => {
     notifyRealtimeReopened();

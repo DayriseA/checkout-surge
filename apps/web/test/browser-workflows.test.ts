@@ -2536,6 +2536,54 @@ describe("watch composition", () => {
     expect(screen.getAllByText("Final result")).toHaveLength(1);
   });
 
+  it("holds the same-run report lookup while the run is live, then links once it finishes", async () => {
+    vi.useFakeTimers();
+    let projection = activeProjectionFixture();
+    const reportPath = publicRunHistoryDetailProxyPath(sharedRunId);
+    const fetchMock = vi.fn((input: string | URL | Request) => {
+      if (String(input) === reportPath) {
+        return Promise.resolve(
+          projection.currentRun?.status === "completed"
+            ? jsonResponse(runHistoryDetailFixtureFor(sharedRunId))
+            : resourceNotFoundResponse(sharedRunId),
+        );
+      }
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return Promise.resolve(jsonResponse(projection));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${String(input)}`));
+    });
+    const reportReads = () =>
+      fetchMock.mock.calls.filter(([input]) => String(input) === reportPath).length;
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", FakeEventSource);
+    render(
+      createElement(OperatorDashboard, {
+        acceptedResult: { status: "awaiting", runId: sharedRunId },
+        initialRecovery: available(projection),
+      }),
+    );
+    await act(async () => FakeEventSource.instances[0]?.emit("open", new Event("open")));
+
+    // Longer than the whole retry budget: no report can exist yet, so none is read.
+    await act(async () => vi.advanceTimersByTimeAsync(90_000));
+    expect(reportReads()).toBe(0);
+    expect(screen.getByText("The surge is under way")).toBeTruthy();
+
+    projection = terminalProjectionFixture(sharedRunId);
+    act(() =>
+      FakeEventSource.instances[0]?.emit(
+        "message",
+        new MessageEvent("message", { data: JSON.stringify(projection) }),
+      ),
+    );
+    await act(async () => vi.advanceTimersByTimeAsync(1_000));
+
+    expect(reportReads()).toBe(1);
+    expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+  });
+
   it("separates an ID-only accepted run from the shared demo run with UUIDs in technical details", () => {
     const idOnlyAcceptedRunId = "88888888-8888-4888-8888-888888888888";
     const { container } = render(

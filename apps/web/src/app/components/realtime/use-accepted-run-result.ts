@@ -20,11 +20,18 @@ const noScheduledRetry: DashboardRecoveryRetryState = {
   scheduled: false,
 };
 
-export function useAcceptedRunResult(initialResult?: AcceptedRunResult) {
+/**
+ * `hold` suspends reads while the run cannot have a saved report yet; releasing it starts a
+ * fresh retry budget.
+ */
+export function useAcceptedRunResult(
+  initialResult?: AcceptedRunResult,
+  { hold = false }: { hold?: boolean } = {},
+) {
   // Identity is only the lookup target, not the retained payload: re-rendering with the same
   // run's detail must not re-apply the initial result or restart scheduled retries.
   const initialIdentity = initialResult
-    ? `${initialResult.status}:${initialResult.runId}:${initialResult.status === "available" ? initialResult.endedAt : ""}`
+    ? `${initialResult.status}:${initialResult.runId}:${initialResult.status === "available" ? initialResult.endedAt : ""}:${hold}`
     : "none";
   const [result, setResult] = useState(initialResult);
   const [retryState, setRetryState] = useState(noScheduledRetry);
@@ -33,7 +40,8 @@ export function useAcceptedRunResult(initialResult?: AcceptedRunResult) {
   const appliedInitialIdentityRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
   const targetRef = useRef(initialResult?.runId);
-  targetRef.current = initialResult?.runId;
+  // A held lookup has no target, so refreshes are skipped and an in-flight read is dropped.
+  targetRef.current = hold ? undefined : initialResult?.runId;
   const requestRef = useRef<{
     runId: string;
     promise: ReturnType<typeof readAcceptedResult>;
@@ -83,7 +91,7 @@ export function useAcceptedRunResult(initialResult?: AcceptedRunResult) {
     const next = initialResultRef.current;
     schedulerRef.current?.reset();
     setResult(next);
-    if (next && next.status !== "available") {
+    if (next && next.status !== "available" && !hold) {
       schedulerRef.current?.schedule(next.status === "unavailable" ? next.retryAfterMs : 0);
     }
   });
