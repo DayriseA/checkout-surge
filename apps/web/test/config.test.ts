@@ -118,9 +118,9 @@ describe("web server secret configuration", () => {
     expect(String(thrown)).not.toContain(secret);
   });
 
-  it("enforces startup validation through instrumentation", () => {
-    process.env = { ...process.env, ...validSecrets };
-    expect(() => register()).not.toThrow();
+  it("enforces startup validation through instrumentation", async () => {
+    process.env = { ...process.env, ...validSecrets, NEXT_RUNTIME: "nodejs" };
+    await expect(register()).resolves.toBeUndefined();
 
     const initialized = webServerConfig();
     process.env.ADMIN_SESSION_SECRET = "";
@@ -128,7 +128,7 @@ describe("web server secret configuration", () => {
     expect(webServerConfig()).toBe(initialized);
     expect(webServerConfig().adminSessionSecret).toBe("session-secret");
     expect(webServerConfig().apiBaseUrl).toBe("http://localhost:4000");
-    expect(() => register()).toThrow(/already been initialized/);
+    await expect(register()).rejects.toThrow(/already been initialized/);
   });
 
   it("fails clearly before instrumentation initializes server config", () => {
