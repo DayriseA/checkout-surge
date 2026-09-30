@@ -81,5 +81,6 @@ build/
 .VSCodeCounter/
 .tmp/
 .claude/settings.local.json
+.playwright/cli.config.cloud.json
 .codex/
 devcontainer-lock.json

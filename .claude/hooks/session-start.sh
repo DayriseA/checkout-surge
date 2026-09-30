@@ -16,7 +16,12 @@ for key in CONTROL_SERVICE_TOKEN ADMIN_DASHBOARD_PASSPHRASE ADMIN_SESSION_SECRET
   grep -q "^$key=." .env || sed -i "s|^$key=.*|$key=$(openssl rand -hex 24)|" .env
 done
 
-pnpm install
+# stdout of a SessionStart hook is added to Claude's context: keep it for the note below.
+pnpm install >&2
+
+# Chromium refuses its sandbox when running as root, which is always the case here.
+sed 's/"chromiumSandbox": true/"chromiumSandbox": false/' .playwright/cli.config.json >.playwright/cli.config.cloud.json
 
 echo 'export NEXT_TELEMETRY_DISABLED=1' >>"${CLAUDE_ENV_FILE:-/dev/null}"
+echo "Cloud session: pass --config=.playwright/cli.config.cloud.json to 'playwright-cli open' (the default config enables the Chromium sandbox, which fails as root)."
 exit 0
