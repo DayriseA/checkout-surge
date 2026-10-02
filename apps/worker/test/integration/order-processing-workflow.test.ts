@@ -2266,6 +2266,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     5, 50,
   ])("drains %i orders at declared capacity from the first second with the production recovery timer", async (backlogSize) => {
     const declaredCapacity = 10;
+    const concurrency = 5;
+    const snapshot = configSnapshotFixture();
+    snapshot.backpressureConfig.orderProcessConcurrency = concurrency;
+    await connection.db
+      .update(demoRuns)
+      .set({ configSnapshot: snapshot })
+      .where(eq(demoRuns.id, ids.run));
     const jobs = [job];
     for (let index = 1; index < backlogSize; index += 1) {
       const additionalJob = {
@@ -2300,8 +2307,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     // Supply native pacing already: no application-level gate throttles it again.
     const rateLimit = erpDispatchRateLimit(declaredCapacity);
     await queue.setGlobalRateLimit(rateLimit.max, rateLimit.duration);
-    await queue.setGlobalConcurrency(5);
-    consumer = buildConsumer(connection, client, { concurrency: 5 });
+    await queue.setGlobalConcurrency(concurrency);
+    consumer = buildConsumer(connection, client, { concurrency });
     const publisher = createBullMqOrderProcessJobPublisher(
       {
         url: redisUrl,
