@@ -192,7 +192,7 @@ function persisted(reservation: SecuredReservationHold = hold) {
       saleOfferId: reservation.saleOfferId,
       reservationId: reservation.id,
       correlationId: reservation.correlationId,
-      ...(reservation.runId ? { runId: reservation.runId } : {}),
+      runId: reservation.runId,
       quantity: reservation.quantity,
       status: "queued" as const,
       queuedAt: reservation.securedAt,

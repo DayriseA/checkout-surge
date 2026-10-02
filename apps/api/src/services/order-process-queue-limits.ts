@@ -1,4 +1,4 @@
-import { catalogErpDispatchLimits, erpDispatchRateLimit } from "@checkout-surge/contracts";
+import { erpDispatchRateLimit, idleErpDispatchLimits } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import { inArray } from "drizzle-orm";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
@@ -12,7 +12,7 @@ export interface OrderProcessQueueLimitsWriter {
 }
 
 /** API-only owner. Read inside the serialized operation so an old terminal
- * callback cannot overwrite a newly accepted run's limits with catalog defaults. */
+ * callback cannot overwrite a newly accepted run's limits with idle queue defaults. */
 export class DemoRunQueueLimits implements OrderProcessQueueLimits {
   private pending: Promise<void> = Promise.resolve();
 
@@ -36,8 +36,8 @@ export class DemoRunQueueLimits implements OrderProcessQueueLimits {
         await this.queue.setLimits({
           concurrency:
             snapshot?.backpressureConfig.orderProcessConcurrency ??
-            catalogErpDispatchLimits.concurrency,
-          ...erpDispatchRateLimit(snapshot?.erpConfig.maxTps ?? catalogErpDispatchLimits.maxTps),
+            idleErpDispatchLimits.concurrency,
+          ...erpDispatchRateLimit(snapshot?.erpConfig.maxTps ?? idleErpDispatchLimits.maxTps),
         });
       });
     this.pending = operation;

@@ -263,7 +263,6 @@ async function seedRun(db: ReturnType<typeof createDatabaseConnection>["db"]) {
     allocatedStock: 5,
     saleStartsAt: anchoredAt,
     saleEndsAt: capturedAt,
-    purpose: "generated_run",
   });
   await db.insert(demoPresets).values({
     id: ids.preset,

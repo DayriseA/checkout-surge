@@ -30,7 +30,6 @@ import {
   orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
-  saleOfferPurposeValues,
   trafficCompletionEnrichmentStatusValues,
   trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
@@ -56,8 +55,6 @@ import {
 
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
-
-export const saleOfferPurposeEnum = pgEnum("sale_offer_purpose", saleOfferPurposeValues);
 
 export const orderStatusEnum = pgEnum("order_status", orderStatusValues);
 
@@ -132,7 +129,6 @@ export const saleOffers = pgTable(
     saleStartsAt: timestamp("sale_starts_at", { withTimezone: true }).notNull(),
     saleEndsAt: timestamp("sale_ends_at", { withTimezone: true }).notNull(),
     isActive: boolean("is_active").default(true).notNull(),
-    purpose: saleOfferPurposeEnum("purpose").default("catalog").notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -140,7 +136,6 @@ export const saleOffers = pgTable(
     check("sale_offers_allocated_stock_nonnegative", sql`${table.allocatedStock} >= 0`),
     check("sale_offers_valid_window", sql`${table.saleEndsAt} > ${table.saleStartsAt}`),
     index("sale_offers_product_id_idx").on(table.productId),
-    index("sale_offers_purpose_idx").on(table.purpose),
     index("sale_offers_active_window_idx").on(table.isActive, table.saleStartsAt, table.saleEndsAt),
   ],
 );
@@ -239,7 +234,7 @@ export const reservations = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     quantity: integer("quantity").default(1).notNull(),
     reservationToken: text("reservation_token").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
@@ -277,7 +272,7 @@ export const orders = pgTable(
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     reservationId: uuid("reservation_id").notNull(),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     quantity: integer("quantity").default(1).notNull(),
     status: orderStatusEnum("status").default("queued").notNull(),
     failureCode: text("failure_code"),
@@ -330,6 +325,7 @@ export const orders = pgTable(
       columns: [table.runId, table.saleOfferId],
       foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
     }).onDelete("restrict"),
+    uniqueIndex("orders_run_attribution_identity_unique").on(table.id, table.runId),
     index("orders_sale_offer_id_idx").on(table.saleOfferId),
     index("orders_run_id_idx").on(table.runId),
     index("orders_run_id_queued_at_created_at_idx").on(
@@ -359,7 +355,9 @@ export const erpDispatchCalls = pgTable(
     publicOrderId: text("public_order_id").notNull(),
     reservationId: uuid("reservation_id").notNull(),
     saleOfferId: uuid("sale_offer_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => demoRuns.id, { onDelete: "restrict" }),
     quantity: integer("quantity").notNull(),
     correlationId: text("correlation_id").notNull(),
     dispatchedAt: timestamp("dispatched_at", { withTimezone: true }).notNull(),
@@ -374,6 +372,11 @@ export const erpDispatchCalls = pgTable(
       name: "erp_dispatch_calls_order_correlation_fk",
       columns: [table.orderId, table.correlationId],
       foreignColumns: [orders.id, orders.correlationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "erp_dispatch_calls_order_run_fk",
+      columns: [table.orderId, table.runId],
+      foreignColumns: [orders.id, orders.runId],
     }).onDelete("cascade"),
     index("erp_dispatch_calls_order_id_idx").on(table.orderId),
     index("erp_dispatch_calls_run_id_idx").on(table.runId),
@@ -390,7 +393,7 @@ export const erpConfirmationLedger = pgTable(
     publicOrderId: text("public_order_id").notNull(),
     reservationId: uuid("reservation_id").notNull(),
     saleOfferId: uuid("sale_offer_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     quantity: integer("quantity").notNull(),
     terminalResult: jsonb("terminal_result")
       .$type<Extract<ErpConfirmationResponse, { status: "succeeded" }>>()
@@ -410,7 +413,9 @@ export const erpAttempts = pgTable(
     orderId: uuid("order_id").notNull(),
     deliveryId: text("delivery_id").notNull(),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id").references(() => demoRuns.id, { onDelete: "restrict" }),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => demoRuns.id, { onDelete: "restrict" }),
     erpCallId: uuid("erp_call_id").references(() => erpDispatchCalls.id, {
       onDelete: "restrict",
     }),
@@ -446,6 +451,11 @@ export const erpAttempts = pgTable(
       name: "erp_attempts_order_correlation_fk",
       columns: [table.orderId, table.correlationId],
       foreignColumns: [orders.id, orders.correlationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "erp_attempts_order_run_fk",
+      columns: [table.orderId, table.runId],
+      foreignColumns: [orders.id, orders.runId],
     }).onDelete("cascade"),
     index("erp_attempts_order_id_idx").on(table.orderId),
     index("erp_attempts_run_id_idx").on(table.runId),
@@ -506,7 +516,7 @@ export const orderRecoveryJobs = pgTable(
 );
 
 /**
- * Restart-safety state per downstream capacity scope (`catalog` or `run:<id>`).
+ * Restart-safety state per downstream capacity scope (`run:<id>`).
  * Learned rates and latency samples stay unpersisted; only the durable
  * cooldown and circuit-open expiries survive a restart.
  */
@@ -558,7 +568,7 @@ export const orderEvents = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     eventName: orderEventNameEnum("event_name").notNull(),
     payload: jsonb("payload").$type<JsonRecord>().default(sql`'{}'::jsonb`).notNull(),
     source: text("source").notNull(),
@@ -595,7 +605,7 @@ export const reservationPendingPersistence = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     status: reservationPendingPersistenceStatusEnum("status")
       .default("pending_reconciliation")
       .notNull(),
@@ -629,7 +639,7 @@ export const simulatedNotifications = pgTable(
       .notNull()
       .references(() => saleOffers.id, { onDelete: "restrict" }),
     correlationId: text("correlation_id").notNull(),
-    runId: uuid("run_id"),
+    runId: uuid("run_id").notNull(),
     recipientPlaceholder: text("recipient_placeholder").notNull(),
     recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull(),
     createdAt: createdAt(),

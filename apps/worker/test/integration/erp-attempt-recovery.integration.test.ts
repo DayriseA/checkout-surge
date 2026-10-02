@@ -6,6 +6,7 @@ import {
   erpConfirmationRequestSchema,
   type OrderProcessJob,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
   erpAttempts,
@@ -15,7 +16,11 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
+import {
+  createPurchaseRunFixture,
+  requireTestDatabaseUrl,
+  resetTestDatabase,
+} from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
@@ -46,6 +51,7 @@ const ids = {
   order: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
 } as const;
 const job: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: ids.order,
   publicOrderId: "ord_erp_attempt_recovery",
   reservationId: ids.reservation,
@@ -91,9 +97,15 @@ describe("PostgreSQL ERP attempt recovery", () => {
         saleStartsAt: new Date("2026-01-01"),
         saleEndsAt: new Date("2030-01-01"),
       });
+    await createPurchaseRunFixture(requireConnection().db, {
+      runId: "44444444-4444-4444-8444-444444444444",
+      saleOfferId: ids.offer,
+      status: "draining",
+    });
     await requireConnection()
       .db.insert(reservations)
       .values({
+        runId: "44444444-4444-4444-8444-444444444444",
         id: ids.reservation,
         saleOfferId: ids.offer,
         correlationId: job.correlationId,
@@ -105,6 +117,7 @@ describe("PostgreSQL ERP attempt recovery", () => {
     await requireConnection()
       .db.insert(orders)
       .values({
+        runId: "44444444-4444-4444-8444-444444444444",
         id: ids.order,
         publicOrderId: job.publicOrderId,
         saleOfferId: ids.offer,
@@ -340,6 +353,8 @@ describe("PostgreSQL ERP attempt recovery", () => {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
+            erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
+            runId: "44444444-4444-4444-8444-444444444444",
             orderId: job.orderId,
             publicOrderId: job.publicOrderId,
             reservationId: job.reservationId,
@@ -362,7 +377,10 @@ describe("PostgreSQL ERP attempt recovery", () => {
         job,
         delivery,
         call,
-        context: { scope: "catalog", configuredConcurrency: 1 },
+        context: {
+          scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
+          configuredConcurrency: 1,
+        },
       });
 
       expect(result.disposition).toBe("succeeded");
@@ -399,6 +417,7 @@ describe("PostgreSQL ERP attempt recovery", () => {
     const erp = await startInMemoryErpService("late-canonical", { latencyMs: 50 });
     try {
       const client = new HttpErpOrderConfirmation({
+        runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
         baseUrl: erp.baseUrl,
         lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -437,7 +456,10 @@ describe("PostgreSQL ERP attempt recovery", () => {
             processingGeneration: claim.processingGeneration,
           },
           call: unresolved,
-          context: { scope: "catalog", configuredConcurrency: 1 },
+          context: {
+            scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
+            configuredConcurrency: 1,
+          },
         }),
       ).resolves.toMatchObject({ operation: "status_lookup", disposition: "succeeded" });
       expect(erp.receivedRequests).toHaveLength(1);
@@ -457,6 +479,7 @@ function createHttpConfirmation(
 ): HttpErpOrderConfirmation {
   let now = new Date("2026-06-22T00:00:01.000Z");
   return new HttpErpOrderConfirmation({
+    runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
     baseUrl,
     lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
     retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -479,8 +502,8 @@ function testAdmission(now: () => number = Date.now): AdaptiveErpRuntimeAdmissio
       readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
       save: async () => undefined,
     },
-    runConfigReader: { read: async () => null },
-    fallbackConcurrency: 1,
+    runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+    reconciliationConcurrency: 1,
     now,
     random: () => 0,
   });
@@ -564,7 +587,7 @@ async function startInMemoryErpService(
               publicOrderId: existing.request.publicOrderId,
               reservationId: existing.request.reservationId,
               saleOfferId: existing.request.saleOfferId,
-              ...(existing.request.runId ? { runId: existing.request.runId } : {}),
+              runId: existing.request.runId,
               idempotencyKey,
               quantity: existing.request.quantity,
             },

@@ -3,18 +3,14 @@ import { normalizeCorrelationId } from "@checkout-surge/logger";
 import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { fastify } from "fastify";
 import { ZodError } from "zod";
-import type { ErpChaosConfigStore } from "./application/chaos-control-service.js";
 import type { ConfirmationService } from "./application/confirmation-service.js";
 import { ConfirmationIdempotencyConflictError } from "./application/confirmation-service.js";
-import { registerChaosRoutes } from "./routes/chaos-routes.js";
 import { registerConfirmationRoutes } from "./routes/confirmation-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
 import { createMockErpErrorPayload } from "./runtime/errors.js";
 
 export interface BuildMockErpServerOptions {
   confirmationService: ConfirmationService;
-  chaosConfigStore: ErpChaosConfigStore;
-  controlServiceToken: string;
   logger: CheckoutSurgeLogger;
   startedAt?: Date;
 }
@@ -66,10 +62,6 @@ export function buildMockErpServer(options: BuildMockErpServerOptions) {
 
   registerHealthRoutes(app, {
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
-  });
-  registerChaosRoutes(app, {
-    chaosConfigStore: options.chaosConfigStore,
-    controlServiceToken: options.controlServiceToken,
   });
   registerConfirmationRoutes(app, { confirmationService: options.confirmationService });
 

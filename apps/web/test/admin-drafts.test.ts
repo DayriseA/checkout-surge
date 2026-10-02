@@ -7,7 +7,6 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   buildEffectiveRunConfig,
-  buildErpChaosFromDraft,
   buildPolicyFromDraft,
   buildSortOrder,
   draftFromConfigSnapshot,
@@ -68,25 +67,6 @@ describe("admin drafts", () => {
     expect(draft.buyerCount).toBe("");
   });
 
-  it.each([
-    ["2.5", "not_an_integer"],
-    ["5001", "above_max"],
-  ] as const)("classifies ERP latency %s as %s", (latencyMs, code) => {
-    const result = buildErpChaosFromDraft(
-      { latencyMs, maxTps: "1", errorRate: "0", forcedOutage: false },
-      { maxLatencyMs: 5000, minMaxTps: 1, maxErrorRate: 0.5, allowForcedOutage: true },
-    );
-    expect(result.fieldErrors.latencyMs?.code).toBe(code);
-  });
-
-  it("accepts valid zero where the ERP contract permits it", () => {
-    const result = buildErpChaosFromDraft(
-      { latencyMs: "0", maxTps: "1", errorRate: "0", forcedOutage: false },
-      { maxLatencyMs: 5000, minMaxTps: 1, maxErrorRate: 0.5, allowForcedOutage: true },
-    );
-    expect(result.values).toMatchObject({ latencyMs: 0, maxTps: 1, errorRate: 0 });
-  });
-
   it("round-trips admin error-rate percentages to stored ratios", () => {
     const preset = presetFixture("buyer-spike");
     preset.erpConfig.errorRate = 0.25;
@@ -96,28 +76,6 @@ describe("admin drafts", () => {
     if (!built.values) throw new Error("Expected valid run config.");
     expect(built.values?.erpConfig.errorRate).toBe(0.25);
     expect(draftFromConfigSnapshot(built.values).erpErrorRate).toBe("25");
-  });
-
-  it("prefers effective ERP bounds unless the contract requires a whole number", () => {
-    const caps = {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 0.5,
-      allowForcedOutage: true,
-    };
-
-    expect(
-      buildErpChaosFromDraft(
-        { latencyMs: "0", maxTps: "0", errorRate: "0", forcedOutage: false },
-        caps,
-      ).fieldErrors.maxTps,
-    ).toEqual({ code: "below_min", message: "Maximum TPS must be at least 1." });
-    expect(
-      buildErpChaosFromDraft(
-        { latencyMs: "0", maxTps: "0.5", errorRate: "0", forcedOutage: false },
-        caps,
-      ).fieldErrors.maxTps,
-    ).toEqual({ code: "not_an_integer", message: "Maximum TPS must be a whole number." });
   });
 
   it("maps canonical intrinsic bounds while keeping sourced caps separate", () => {
@@ -143,13 +101,6 @@ describe("admin drafts", () => {
     expect(buildEffectiveRunConfig(draft, preset, policy).fieldErrors.buyerCount?.code).toBe(
       "above_max",
     );
-
-    expect(
-      buildErpChaosFromDraft(
-        { latencyMs: "0", maxTps: "4", errorRate: "0", forcedOutage: false },
-        { maxLatencyMs: 5000, minMaxTps: 5, maxErrorRate: 0.5, allowForcedOutage: true },
-      ).fieldErrors.maxTps?.code,
-    ).toBe("below_min");
   });
 
   it("reports both controls in VU relationship failures", () => {

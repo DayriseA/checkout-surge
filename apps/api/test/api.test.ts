@@ -90,7 +90,11 @@ import {
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
+import {
+  createPurchaseRunFixture,
+  requireTestDatabaseUrl,
+  resetTestDatabase,
+} from "@checkout-surge/db/testing";
 import {
   type CheckoutSurgeLogger,
   correlationIdHeaderName,
@@ -418,7 +422,7 @@ function createTestPendingPersistenceRecovery(input: {
   auditPersistence: PostgresBuyPersistence;
   stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
   orderProcessJobPublisher: OrderProcessJobPublisher;
-  listRunScopes?: () => Promise<Array<{ runId?: string; saleOfferId: string }>>;
+  listRunScopes?: () => Promise<Array<{ runId: string; saleOfferId: string }>>;
   now?: () => Date;
 }): PendingPersistenceRecoveryService {
   return new PendingPersistenceRecoveryService({
@@ -999,7 +1003,7 @@ class AcceptingPersistence implements BuyPersistence {
       saleOfferId: hold.saleOfferId,
       reservationId: reservation.id,
       correlationId: hold.correlationId,
-      ...(hold.runId ? { runId: hold.runId } : {}),
+      runId: hold.runId,
       quantity: hold.quantity,
       status: "queued",
       queuedAt: hold.securedAt,
@@ -2940,6 +2944,7 @@ describe("API gateway routes", () => {
         "x-correlation-id": "test-correlation",
       },
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "idem-1",
         quantity: 1,
@@ -2961,6 +2966,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/buy",
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "idem-2",
         quantity: 1,
@@ -2996,7 +3002,7 @@ describe("API gateway routes", () => {
     expect(payload.order?.runId).toBe(fixtureIds.run);
   });
 
-  it("uses the load-run header when the buy body omits run attribution", async () => {
+  it("accepts matching explicit body and load-run header attribution", async () => {
     const server = await trackedServer({ persistence: new AcceptingPersistence() });
 
     const response = await server.inject({
@@ -3006,6 +3012,7 @@ describe("API gateway routes", () => {
         [loadRunIdHeaderName]: fixtureIds.run,
       },
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "header-only-run-attribution",
         quantity: 1,
@@ -3079,6 +3086,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/buy",
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: `route-rejection-${decision}`,
         quantity: 1,
@@ -3104,7 +3112,7 @@ describe("API gateway routes", () => {
       persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
       stockReservations: {
         reserve: async () => {
-          throw new Error("Inventory scope must be catalog or generated_run");
+          throw new Error("Inventory scope must be generated_run");
         },
         markPendingPersistence: async () => undefined,
         promoteAccepted: async () => undefined,
@@ -3115,6 +3123,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/buy",
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "route-malformed-projection",
         quantity: 1,
@@ -3150,6 +3159,7 @@ describe("API gateway routes", () => {
       method: "POST" as const,
       url: "/buy",
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "header-replay",
         quantity: 1,
@@ -3179,6 +3189,7 @@ describe("API gateway routes", () => {
       url: "/buy",
       headers: { [correlationIdHeaderName]: "pending-header-correlation" },
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "pending-header",
         quantity: 1,
@@ -3211,6 +3222,7 @@ describe("API gateway routes", () => {
       method: "POST",
       url: "/buy",
       payload: {
+        runId: fixtureIds.run,
         saleOfferId: fixtureIds.saleOffer,
         idempotencyKey: "route-invalid-quantity",
         quantity: 0,
@@ -3254,9 +3266,16 @@ describe("API buy persistence", () => {
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
       isActive: true,
-      purpose: "catalog",
     });
-    await initializeInventory(redis, { saleOfferId: fixtureIds.saleOffer, allocatedStock: 5 });
+    await createPurchaseRunFixture(connection.db, {
+      runId: fixtureIds.run,
+      saleOfferId: fixtureIds.saleOffer,
+    });
+    await initializeInventory(redis, {
+      run: { runId: fixtureIds.run, status: "accepting" },
+      saleOfferId: fixtureIds.saleOffer,
+      allocatedStock: 5,
+    });
   });
 
   afterEach(async () => {
@@ -3270,7 +3289,7 @@ describe("API buy persistence", () => {
     redis?.disconnect();
   });
 
-  it("keeps fresh catalog persistence within the measured six-round-trip budget", async () => {
+  it("keeps run-owned persistence within the measured transaction budget", async () => {
     const wireQueries: string[] = [];
     const measuredConnection = createDatabaseConnection(requireTestDatabaseUrl(), {
       max: 1,
@@ -3281,6 +3300,7 @@ describe("API buy persistence", () => {
       wireQueries.length = 0;
       await new PostgresBuyPersistence(measuredConnection.db).persistSecuredReservation({
         reservation: {
+          runId: fixtureIds.run,
           id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000090",
           saleOfferId: fixtureIds.saleOffer,
           correlationId: "persistence-budget-correlation",
@@ -3294,7 +3314,7 @@ describe("API buy persistence", () => {
       const operationQueries = wireQueries.map((query) =>
         query.trim().split(/\s+/u)[0]?.toLowerCase(),
       );
-      expect(operationQueries).toEqual(["begin", "insert", "insert", "insert", "commit"]);
+      expect(operationQueries).toEqual(["begin", "select", "insert", "insert", "insert", "commit"]);
     } finally {
       await measuredConnection.close();
     }
@@ -3321,6 +3341,7 @@ describe("API buy persistence", () => {
           "x-correlation-id": "persist-correlation",
         },
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "persist-idem-1",
           quantity: 1,
@@ -3371,6 +3392,7 @@ describe("API buy persistence", () => {
       idempotencyKey,
       idempotencyTtlSeconds: 1800,
       reservation: {
+        runId: fixtureIds.run,
         id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000077",
         saleOfferId: fixtureIds.saleOffer,
         correlationId: "reconciler-full-convergence-correlation",
@@ -3447,6 +3469,7 @@ describe("API buy persistence", () => {
       idempotencyKey,
       idempotencyTtlSeconds: 1_800,
       reservation: {
+        runId: fixtureIds.run,
         id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000078",
         saleOfferId: fixtureIds.saleOffer,
         correlationId: "promotion-response-lost-correlation",
@@ -3524,6 +3547,7 @@ describe("API buy persistence", () => {
         url: "/buy",
         headers: { "x-correlation-id": "queued-api-correlation" },
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "queued-api-idempotency",
           quantity: 2,
@@ -3548,6 +3572,7 @@ describe("API buy persistence", () => {
       expect(replayResponses.every((response) => response.statusCode === 202)).toBe(true);
       expect(job?.id).toBe(firstPayload.order.id);
       expect(job?.data).toEqual({
+        runId: fixtureIds.run,
         orderId: firstPayload.order.id,
         publicOrderId: firstPayload.order.publicOrderId,
         reservationId: firstPayload.reservation.id,
@@ -3597,6 +3622,7 @@ describe("API buy persistence", () => {
       failedJobInspectionLimit: 1,
     });
     const queueJob = (orderId: string): OrderProcessJob => ({
+      runId: fixtureIds.run,
       orderId,
       publicOrderId: `ord_${orderId.slice(0, 8)}`,
       reservationId: randomUUID(),
@@ -3716,6 +3742,7 @@ describe("API buy persistence", () => {
         method: "POST" as const,
         url: "/buy",
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "queue-handoff-healing",
           quantity: 1,
@@ -3764,64 +3791,32 @@ describe("API buy persistence", () => {
   });
 
   it.each([
-    {
-      name: "generated-run inventory when runId is omitted",
-      inventoryRunId: "11111111-1111-4111-8111-111111111111",
-      inventoryStatus: "accepting" as const,
-      requestRunId: undefined,
-    },
-    {
-      name: "catalog inventory when runId is supplied",
-      inventoryRunId: undefined,
-      inventoryStatus: undefined,
-      requestRunId: "11111111-1111-4111-8111-111111111111",
-    },
-  ])("rejects $name without changing stock", async (testCase) => {
-    if (!redis) {
-      throw new Error("Test Redis connection was not initialized.");
-    }
-
-    await initializeInventory(redis, {
-      saleOfferId: fixtureIds.saleOffer,
-      allocatedStock: 5,
-      ...(testCase.inventoryRunId && testCase.inventoryStatus
-        ? {
-            run: {
-              runId: testCase.inventoryRunId,
-              status: testCase.inventoryStatus,
-            },
-          }
-        : {}),
-    });
+    { headerRunId: undefined, bodyRunId: undefined },
+    { headerRunId: fixtureIds.run, bodyRunId: undefined },
+    { headerRunId: fixtureIds.run, bodyRunId: "not-a-run" },
+  ])("rejects invalid body identity %s before reservation", async ({ headerRunId, bodyRunId }) => {
+    const reserve = vi.fn();
+    const persistSecuredReservation = vi.fn();
     const server = await buildTestServer({
-      persistence: new AcceptingPersistence(),
-      stockReservations: createRedisStockReservations(redis),
+      persistence: { persistSecuredReservation, getPersistedBuyByReservationId: vi.fn() },
+      stockReservations: { reserve, markPendingPersistence: vi.fn(), promoteAccepted: vi.fn() },
     });
-
     try {
       const response = await server.inject({
         method: "POST",
         url: "/buy",
+        headers: headerRunId ? { [loadRunIdHeaderName]: headerRunId } : {},
         payload: {
+          runId: bodyRunId,
           saleOfferId: fixtureIds.saleOffer,
-          ...(testCase.requestRunId ? { runId: testCase.requestRunId } : {}),
-          idempotencyKey: `atomic-run-rejection-${testCase.name}`,
+          idempotencyKey: "missing-body-run",
           quantity: 1,
         },
       });
-      const payload = buyResponseSchema.parse(response.json());
-
-      expect(response.statusCode).toBe(409);
-      expect(payload).toMatchObject({
-        outcome: "run_not_accepting_traffic",
-        reservation: null,
-        order: null,
-      });
-      expect(await getInventoryStatus(redis, fixtureIds.saleOffer)).toMatchObject({
-        remainingStock: 5,
-        reservedStock: 0,
-        pendingPersistenceCount: 0,
-      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().code).toBe("invalid_request");
+      expect(reserve).not.toHaveBeenCalled();
+      expect(persistSecuredReservation).not.toHaveBeenCalled();
     } finally {
       await server.close();
     }
@@ -3875,6 +3870,7 @@ describe("API buy persistence", () => {
             method: "POST",
             url: "/buy",
             payload: {
+              runId: fixtureIds.run,
               saleOfferId: fixtureIds.saleOffer,
               idempotencyKey: "concurrent-shared-idempotency-key",
               quantity: 1,
@@ -3975,6 +3971,7 @@ describe("API buy persistence", () => {
         method: "POST",
         url: "/buy",
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "real-postgres-transaction-failure",
           quantity: 2,
@@ -4062,7 +4059,6 @@ describe("API buy persistence", () => {
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
       isActive: true,
-      purpose: "generated_run",
     });
     await connection.db.insert(demoPresets).values({
       id: presetId,
@@ -4077,6 +4073,10 @@ describe("API buy persistence", () => {
       },
       ...acceptedRunConfigSnapshotFixture(),
     });
+    await connection.db
+      .delete(demoRunSaleContexts)
+      .where(eq(demoRunSaleContexts.runId, fixtureIds.run));
+    await connection.db.delete(demoRuns).where(eq(demoRuns.id, fixtureIds.run));
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
       id: fixtureIds.run,
@@ -4264,7 +4264,6 @@ describe("API buy persistence", () => {
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
       isActive: true,
-      purpose: "generated_run",
     });
     await connection.db.insert(demoPresets).values({
       id: presetId,
@@ -4279,6 +4278,10 @@ describe("API buy persistence", () => {
       },
       ...acceptedRunConfigSnapshotFixture(),
     });
+    await connection.db
+      .delete(demoRunSaleContexts)
+      .where(eq(demoRunSaleContexts.runId, fixtureIds.run));
+    await connection.db.delete(demoRuns).where(eq(demoRuns.id, fixtureIds.run));
     await connection.db.insert(demoRuns).values({
       correlationId: "corr-test-run",
       id: fixtureIds.run,
@@ -4385,6 +4388,7 @@ describe("API buy persistence", () => {
           "x-correlation-id": "inactive-offer-correlation",
         },
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "inactive-offer-idem-1",
           quantity: 1,
@@ -4437,6 +4441,7 @@ describe("API buy persistence", () => {
         method: "POST" as const,
         url: "/buy",
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "pending-persistence-idem",
           quantity: 2,
@@ -4500,6 +4505,7 @@ describe("API buy persistence", () => {
         method: "POST" as const,
         url: "/buy",
         payload: {
+          runId: fixtureIds.run,
           saleOfferId: fixtureIds.saleOffer,
           idempotencyKey: "promotion-recovery-idem",
           quantity: 1,

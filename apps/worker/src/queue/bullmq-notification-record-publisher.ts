@@ -45,7 +45,7 @@ export function createNotificationRecordPublisher(
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,
         correlationId: job.correlationId,
-        ...(job.runId ? { runId: job.runId } : {}),
+        runId: job.runId,
         recipientPlaceholder: `simulated-buyer:${job.publicOrderId}`,
         confirmedAt,
       };
@@ -60,10 +60,6 @@ export function createNotificationRecordPublisher(
         });
       };
 
-      if (!job.runId) {
-        await add();
-        return;
-      }
       if (!options.publicationFence) {
         throw new Error(
           "Generated-run notification publication requires a PostgreSQL publication fence.",

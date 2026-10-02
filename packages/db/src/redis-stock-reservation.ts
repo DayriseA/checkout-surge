@@ -4,6 +4,7 @@ import {
   type StockReservationDecision,
   securedReservationHoldSchema,
   stockReservationDecisionSchema,
+  uuidSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
 import {
@@ -59,7 +60,7 @@ local pendingRecord = {
   id = ARGV[1],
   saleOfferId = ARGV[3],
   correlationId = ARGV[5],
-  runId = (ARGV[6] ~= "" and ARGV[6] or cjson.null),
+  runId = ARGV[6],
   idempotencyKey = ARGV[10],
   quantity = tonumber(ARGV[2]),
   reservationToken = ARGV[4],
@@ -303,11 +304,7 @@ if redis.call("HGET", KEYS[1], "saleOfferId") ~= reservation.saleOfferId then
   return redis.error_reply("Inventory state sale offer ID must match the reservation")
 end
 local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope")
-if inventoryScope == "catalog" then
-  if reservation.runId then
-    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
-  end
-elseif inventoryScope == "generated_run" then
+if inventoryScope == "generated_run" then
   local inventoryRunId = redis.call("HGET", KEYS[1], "runId")
   local runSaleStatus = redis.call("HGET", KEYS[1], "runSaleStatus")
   if not reservation.runId
@@ -328,7 +325,7 @@ elseif inventoryScope == "generated_run" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
 else
-  return redis.error_reply("Inventory scope must be catalog or generated_run")
+  return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
 end
 
 -- Eligibility precedes idempotency replay so closure always fails closed, including retries.
@@ -448,7 +445,7 @@ local pendingRecord = {
   id = reservation.id,
   saleOfferId = reservation.saleOfferId,
   correlationId = reservation.correlationId,
-  runId = (reservation.runId or cjson.null),
+  runId = reservation.runId,
   idempotencyKey = ARGV[10],
   quantity = quantity,
   reservationToken = reservation.reservationToken,
@@ -520,7 +517,7 @@ export async function reserveInventoryStock(
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
     keys.idempotency(idempotencyKey),
-    runSaleEligibilityKey(reservation.runId ?? "none"),
+    runSaleEligibilityKey(reservation.runId),
     reservation.quantity.toString(),
     JSON.stringify(reservation),
     new Date(reservation.expiresAt).getTime().toString(),
@@ -575,7 +572,7 @@ export async function markReservationPendingPersistence(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     new Date(reservation.securedAt).getTime().toString(),
@@ -611,7 +608,7 @@ export async function promoteReservationIdempotencyToAccepted(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     idempotencyTtlSeconds.toString(),
@@ -628,7 +625,7 @@ export interface PendingPersistenceRecord {
   id: string;
   saleOfferId: string;
   correlationId: string;
-  runId?: string;
+  runId: string;
   idempotencyKey: string;
   quantity: number;
   reservationToken: string;
@@ -800,7 +797,7 @@ function parsePendingPersistenceRecord(
       hold.quantity !== parsed.quantity ||
       hold.reservationToken !== parsed.reservationToken ||
       hold.correlationId !== parsed.correlationId ||
-      (hold.runId ?? "") !== (parsed.runId ?? "") ||
+      hold.runId !== parsed.runId ||
       hold.securedAt !== parsed.securedAt ||
       hold.expiresAt !== parsed.expiresAt
     ) {
@@ -811,7 +808,7 @@ function parsePendingPersistenceRecord(
         id: parsed.id,
         saleOfferId: parsed.saleOfferId,
         correlationId: parsed.correlationId,
-        ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
+        runId: uuidSchema.parse(parsed.runId),
         idempotencyKey: parsedIdempotencyKey.data,
         quantity: parsed.quantity,
         reservationToken: parsed.reservationToken,
@@ -918,7 +915,7 @@ export async function reverseReservation(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     (input.occurredAt ?? new Date()).toISOString(),

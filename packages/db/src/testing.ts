@@ -88,3 +88,56 @@ async function createTestDatabaseIfMissing(sql: SqlClient, databaseName: string)
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
 }
+
+/** Create the durable ownership and frozen configuration for purchase-boundary tests. */
+export async function createPurchaseRunFixture(
+  db: import("./client.js").CheckoutSurgeDatabase,
+  input: { runId: string; saleOfferId: string; status?: "active" | "draining" | "completed" },
+): Promise<void> {
+  const { previewRunConfigSnapshotFixture } = await import("@checkout-surge/contracts/testing");
+  const { demoPresets, demoRuns, demoRunSaleContexts, saleOffers } = await import("./schema.js");
+  const { eq } = await import("drizzle-orm");
+  const [offer] = await db
+    .select({ stock: saleOffers.allocatedStock })
+    .from(saleOffers)
+    .where(eq(saleOffers.id, input.saleOfferId));
+  if (!offer) throw new Error("Purchase fixture requires its existing sale offer.");
+  const configSnapshot = previewRunConfigSnapshotFixture();
+  configSnapshot.inventoryConfig.startingStock = offer.stock;
+  await db
+    .insert(demoPresets)
+    .values({
+      id: input.runId,
+      slug: `purchase-test-${input.runId}`,
+      visibility: "admin",
+      isEditable: true,
+      isCustom: true,
+      display: {
+        name: "Purchase test",
+        description: "Run-owned purchase fixture",
+        sortOrder: 1,
+        outcomeFocus: [],
+      },
+      ...configSnapshot,
+    })
+    .onConflictDoNothing();
+  await db
+    .insert(demoRuns)
+    .values({
+      id: input.runId,
+      correlationId: `run-${input.runId}`,
+      presetId: input.runId,
+      presetName: "Purchase test",
+      operatorMode: "admin",
+      status: input.status ?? "active",
+      trafficStatus:
+        input.status === "draining" || input.status === "completed" ? "succeeded" : "active",
+      configSnapshot,
+      saleOfferId: input.saleOfferId,
+    })
+    .onConflictDoNothing({ target: demoRuns.id });
+  await db
+    .insert(demoRunSaleContexts)
+    .values({ runId: input.runId, saleOfferId: input.saleOfferId })
+    .onConflictDoNothing();
+}

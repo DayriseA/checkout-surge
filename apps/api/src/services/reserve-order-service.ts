@@ -137,7 +137,7 @@ export interface ReservationPartialFailureReport {
   error: unknown;
   reservationId: string;
   saleOfferId: string;
-  runId?: string;
+  runId: string;
   correlationId: string;
   idempotencyKey: string;
 }
@@ -149,14 +149,14 @@ export interface OrderEnqueueFailureReport extends ReservationPartialFailureRepo
 export interface BusinessOutcomeUpdateFailureReport {
   error: unknown;
   saleOfferId: string;
-  runId?: string;
+  runId: string;
   correlationId: string;
 }
 
 type ReservationPartialFailureReporter = (report: ReservationPartialFailureReport) => void;
 type BusinessOutcomeUpdatePublisher = (input: {
   saleOfferId: string;
-  runId?: string;
+  runId: string;
   correlationId: string;
 }) => Promise<void>;
 type BusinessOutcomeUpdateScheduler = (task: () => void) => void;
@@ -267,16 +267,14 @@ export class ReserveOrderService {
         redisAtomicReservationMs = durationMs;
       });
     } finally {
-      if (input.request.runId) {
-        try {
-          this.reservationTimingObservations.observe({
-            runId: input.request.runId,
-            reserveOrderServiceMs: elapsedMilliseconds(serviceStartedAt, this.monotonicNow()),
-            ...(redisAtomicReservationMs === undefined ? {} : { redisAtomicReservationMs }),
-          });
-        } catch {
-          // Timing observability is advisory and cannot alter the reservation outcome.
-        }
+      try {
+        this.reservationTimingObservations.observe({
+          runId: input.request.runId,
+          reserveOrderServiceMs: elapsedMilliseconds(serviceStartedAt, this.monotonicNow()),
+          ...(redisAtomicReservationMs === undefined ? {} : { redisAtomicReservationMs }),
+        });
+      } catch {
+        // Timing observability is advisory and cannot alter the reservation outcome.
       }
     }
   }
@@ -308,7 +306,7 @@ export class ReserveOrderService {
       try {
         this.soldOutObservations.observeSoldOut({
           saleOfferId: input.request.saleOfferId,
-          ...(input.request.runId ? { runId: input.request.runId } : {}),
+          runId: input.request.runId,
           correlationId: input.correlationId,
         });
       } catch {
@@ -493,7 +491,7 @@ export class ReserveOrderService {
     try {
       await this.publishBusinessOutcomeUpdate({
         saleOfferId: reservation.saleOfferId,
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch (error) {
@@ -509,7 +507,7 @@ export class ReserveOrderService {
       this.reportBusinessOutcomeUpdateFailure({
         error,
         saleOfferId: reservation.saleOfferId,
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch {
@@ -521,7 +519,7 @@ export class ReserveOrderService {
     reservation: SecuredReservationHold,
     operation: (persistence: BuyPersistenceOperations) => Promise<T>,
   ): Promise<T> {
-    if (reservation.runId && this.persistence.withRunAdmissionLock) {
+    if (this.persistence.withRunAdmissionLock) {
       return this.persistence.withRunAdmissionLock({ reservation, operation });
     }
 
@@ -583,7 +581,7 @@ export class ReserveOrderService {
     try {
       this.dashboardSourceDirtyScheduler.scheduleInventory({
         saleOfferId: reservation.saleOfferId,
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch {
@@ -594,7 +592,7 @@ export class ReserveOrderService {
   private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
     try {
       this.dashboardSourceDirtyScheduler.scheduleQueue({
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch {
@@ -609,7 +607,7 @@ export class ReserveOrderService {
       reservationId: persisted.order.reservationId,
       saleOfferId: persisted.order.saleOfferId,
       correlationId: persisted.order.correlationId,
-      ...(persisted.order.runId ? { runId: persisted.order.runId } : {}),
+      runId: persisted.order.runId,
       quantity: persisted.order.quantity,
       queuedAt: persisted.order.queuedAt,
       processingGeneration: 0,
@@ -657,7 +655,7 @@ export class ReserveOrderService {
       error,
       reservationId: reservation.id,
       saleOfferId: reservation.saleOfferId,
-      ...(reservation.runId ? { runId: reservation.runId } : {}),
+      runId: reservation.runId,
       correlationId: reservation.correlationId,
       idempotencyKey,
     };
@@ -673,7 +671,7 @@ export class ReserveOrderService {
       id: this.generateId(),
       saleOfferId: request.saleOfferId,
       correlationId,
-      ...(request.runId ? { runId: request.runId } : {}),
+      runId: request.runId,
       quantity: request.quantity,
       reservationToken: `res_${tokenId}`,
       securedAt: securedAt.toISOString(),

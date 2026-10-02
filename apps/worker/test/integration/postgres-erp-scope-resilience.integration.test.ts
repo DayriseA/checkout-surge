@@ -26,7 +26,7 @@ describe("PostgreSQL ERP scope resilience state", () => {
 
   it("round-trips the complete adaptive restart-safety boundary", async () => {
     await persistence.save({
-      scope: "catalog",
+      scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
       cooldownUntilMs: Date.parse("2026-06-22T00:01:00.000Z"),
       availabilityRetryAtMs: Date.parse("2026-06-22T00:01:30.000Z"),
       availabilityCircuitOpen: true,
@@ -36,7 +36,7 @@ describe("PostgreSQL ERP scope resilience state", () => {
 
     await expect(persistence.listActive(Date.parse("2026-06-22T00:00:00.000Z"))).resolves.toEqual([
       {
-        scope: "catalog",
+        scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
         cooldownUntilMs: Date.parse("2026-06-22T00:01:00.000Z"),
         availabilityRetryAtMs: Date.parse("2026-06-22T00:01:30.000Z"),
         availabilityCircuitOpen: true,
@@ -49,7 +49,7 @@ describe("PostgreSQL ERP scope resilience state", () => {
   it("restores cooldown before a restarted runtime can admit traffic", async () => {
     let now = Date.parse("2026-06-22T00:00:00.000Z");
     await persistence.save({
-      scope: "catalog",
+      scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
       cooldownUntilMs: now + 30_000,
       availabilityRetryAtMs: 0,
       availabilityCircuitOpen: false,
@@ -60,11 +60,14 @@ describe("PostgreSQL ERP scope resilience state", () => {
       pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => now,
       random: () => 0,
     });
-    const context = { scope: "catalog" as const, configuredConcurrency: 10 };
+    const context = {
+      scope: `run:${"44444444-4444-4444-8444-444444444444"}` as const,
+      configuredConcurrency: 10,
+    };
 
     await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
       admitted: false,
@@ -87,7 +90,7 @@ describe("PostgreSQL ERP scope resilience state", () => {
         })),
       );
     await persistence.save({
-      scope: "catalog",
+      scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
       cooldownUntilMs: now + 30_000,
       availabilityRetryAtMs: 0,
       availabilityCircuitOpen: false,
@@ -99,12 +102,15 @@ describe("PostgreSQL ERP scope resilience state", () => {
       pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => now,
     });
 
     await expect(
-      admission.tryAcquire({ scope: "catalog", configuredConcurrency: 10 }, "confirmation"),
+      admission.tryAcquire(
+        { scope: `run:${"44444444-4444-4444-8444-444444444444"}`, configuredConcurrency: 10 },
+        "confirmation",
+      ),
     ).resolves.toMatchObject({
       admitted: false,
       decision: { reason: "capacity_cooldown", nextEligibleAtMs: now + 30_000 },
@@ -117,11 +123,11 @@ describe("PostgreSQL ERP scope resilience state", () => {
       pauseDelivery: async () => {},
       persistence,
       runConfigReader: { read: async () => null },
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => now,
     });
     await persistence.save({
-      scope: "catalog",
+      scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
       cooldownUntilMs: now + 30_000,
       availabilityRetryAtMs: 0,
       availabilityCircuitOpen: false,
@@ -130,7 +136,10 @@ describe("PostgreSQL ERP scope resilience state", () => {
     });
 
     await expect(
-      admission.tryAcquire({ scope: "catalog", configuredConcurrency: 10 }, "confirmation"),
+      admission.tryAcquire(
+        { scope: `run:${"44444444-4444-4444-8444-444444444444"}`, configuredConcurrency: 10 },
+        "confirmation",
+      ),
     ).resolves.toMatchObject({
       admitted: false,
       decision: { reason: "capacity_cooldown" },

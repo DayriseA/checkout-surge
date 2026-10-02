@@ -5,11 +5,11 @@ import type {
   TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import {
-  catalogErpDispatchLimits,
   destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpDispatchRateLimit,
+  idleErpDispatchLimits,
   orderProcessBullMqQueueName,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
@@ -566,7 +566,7 @@ describe("demo-run lifecycle start gating", () => {
     expect(await activeConnection.db.select().from(demoRuns)).toHaveLength(0);
   });
 
-  it("applies accepted limits before traffic, restores on API restart, and returns to catalog at terminality and reset", async () => {
+  it("applies accepted limits before traffic, restores on API restart, and returns to idle coordination limits at terminality and reset", async () => {
     const db = requireConnection(connection).db;
     const redisUrl = requireTestRedisUrl();
     const queue = new Queue(orderProcessBullMqQueueName, { connection: { url: redisUrl } });
@@ -574,9 +574,9 @@ describe("demo-run lifecycle start gating", () => {
     const writer = createOrderProcessJobPublisher(queue);
     const limits = new DemoRunQueueLimits(db, writer);
     const expectCatalog = async () => {
-      expect(await queue.getGlobalConcurrency()).toBe(catalogErpDispatchLimits.concurrency);
+      expect(await queue.getGlobalConcurrency()).toBe(idleErpDispatchLimits.concurrency);
       expect(await queue.getGlobalRateLimit()).toEqual(
-        erpDispatchRateLimit(catalogErpDispatchLimits.maxTps),
+        erpDispatchRateLimit(idleErpDispatchLimits.maxTps),
       );
     };
     try {
@@ -846,7 +846,7 @@ describe("demo-run lifecycle start gating", () => {
       productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       name: "Reset retry offer",
       allocatedStock: 1,
-      purpose: "generated_run",
+
       saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
       saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
     });

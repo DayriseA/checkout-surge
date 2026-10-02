@@ -868,7 +868,7 @@ async function seedHistory(db: ReturnType<typeof createDatabaseConnection>["db"]
     saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
     saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
     isActive: true,
-    purpose: "generated_run",
+
     createdAt: new Date("2026-06-20T00:00:00.000Z"),
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });

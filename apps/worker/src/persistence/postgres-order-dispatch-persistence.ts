@@ -27,8 +27,7 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
           eq(orders.status, "queued"),
           lte(orders.queuedAt, input.queuedBefore),
           sql`(
-            ${orders.runId} is null
-            or exists (
+            exists (
               select 1 from demo_runs eligible_run
               where eligible_run.id = ${orders.runId}
                 and eligible_run.status in ('starting', 'active', 'draining')
@@ -49,7 +48,7 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
       reservationId: order.reservationId,
       saleOfferId: order.saleOfferId,
       correlationId: order.correlationId,
-      ...(order.runId ? { runId: order.runId } : {}),
+      runId: order.runId,
       quantity: order.quantity,
       queuedAt: order.queuedAt.toISOString(),
       processingGeneration: 0,

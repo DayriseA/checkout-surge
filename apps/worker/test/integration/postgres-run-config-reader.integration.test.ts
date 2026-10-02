@@ -258,7 +258,6 @@ async function seedRun(connection: ReturnType<typeof createDatabaseConnection>):
     allocatedStock: 10,
     saleStartsAt: new Date("2026-06-21T00:00:00.000Z"),
     saleEndsAt: new Date("2026-06-21T01:00:00.000Z"),
-    purpose: "generated_run",
   });
   await connection.db.insert(demoRuns).values({
     correlationId: "corr-test-run",

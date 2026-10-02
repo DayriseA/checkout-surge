@@ -46,10 +46,10 @@ The project is a realistic systems simulation: external actors such as buyers, t
 
 ### C. The Mock ERP & Backpressure
 
-- **Configuration:** The ERP service has "Chaos Knobs":
-  - `LATENCY_MS`: Artificial delay (e.g., 500ms).
-  - `MAX_TPS`: Max transactions per second before it returns `429 erp_capacity_exceeded` with `Retry-After: 1`. A forced outage or an injected error returns 503 instead.
-- **Snapshot precedence (implemented):** An accepted run always follows the ERP configuration frozen in its snapshot. The global chaos knobs above are the fallback for catalog and other non-run calls only, so changing them cannot alter an active run.
+- **Configuration:** Each accepted run freezes its ERP settings:
+  - `erpConfig.latencyMs`: Artificial delay (e.g., 500ms).
+  - `erpConfig.maxTps`: Max transactions per second before it returns `429 erp_capacity_exceeded` with `Retry-After: 1`. A forced outage or an injected error returns 503 instead.
+- **Run configuration (implemented):** Every purchase uses the ERP configuration frozen in its accepted run. There are no global purchase fallback controls.
 - **Worker Strategy (implemented):** Dispatch is paced at the ERP's *declared* capacity through the order-process queue's native BullMQ rate limit and global concurrency, configured by the API from the accepted snapshot — not by a learned or additively-increasing rate. On top of that, the worker keeps durable per-scope capacity cooldowns (honouring the ERP's `Retry-After`), a **separate availability circuit** with at most one probe per scope per five seconds, worker-wide and per-scope in-flight ceilings, and request deadlines derived from observed latency. Capacity feedback and availability feedback are deliberately distinct signals. Adaptive limiters would only be needed if the downstream capacity were unknown; here it is declared.
 
 ### D. The Load Generator (Orchestrated k6)

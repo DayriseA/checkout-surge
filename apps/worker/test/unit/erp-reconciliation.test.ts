@@ -1,4 +1,5 @@
 import type { ErpCallReference, ErpLookupResponse } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ErpConfirmationOutcome,
@@ -11,6 +12,7 @@ import {
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 
 const job = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_reconcile",
   reservationId: "22222222-2222-4222-8222-222222222222",
@@ -32,7 +34,10 @@ const call: ErpCallReference = {
   processingGeneration: 3,
   dispatchedAt: "2026-06-22T00:00:00.000Z",
 };
-const context = { scope: "catalog" as const, configuredConcurrency: 2 };
+const context = {
+  scope: `run:${"44444444-4444-4444-8444-444444444444"}` as const,
+  configuredConcurrency: 2,
+};
 
 describe("adaptive ERP reconciliation", () => {
   it("adopts lookup success without a confirmation permit or POST", async () => {
@@ -154,7 +159,7 @@ describe("adaptive ERP reconciliation", () => {
         findUnresolvedCall: vi.fn().mockResolvedValue(null),
       },
       reconciler: { reconcile: vi.fn() } as never,
-      admission: runtimeAdmission(),
+      admission: runtimeAdmission(() => 0, true),
       control: { defer: vi.fn() },
     });
 
@@ -205,12 +210,12 @@ describe("adaptive ERP reconciliation", () => {
       persistence: {
         listActive: async () => [],
         readActive: async () => null,
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate,
         save: async () => undefined,
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => 0,
     });
     const scheduled = new ScheduledErpOrderConfirmation({
@@ -236,7 +241,9 @@ describe("adaptive ERP reconciliation", () => {
       disposition: "technical_failure",
       errorCode: "erp_lookup_identity_contradiction",
     });
-    expect(readReconciliationGate).toHaveBeenCalledWith("catalog");
+    expect(readReconciliationGate).toHaveBeenCalledWith(
+      `run:${"44444444-4444-4444-8444-444444444444"}`,
+    );
     await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
       admitted: true,
     });
@@ -252,12 +259,12 @@ describe("adaptive ERP reconciliation", () => {
       persistence: {
         listActive: async () => [],
         readActive: async () => null,
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate,
         save: async () => undefined,
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => 0,
     });
     const client = {
@@ -284,7 +291,10 @@ describe("adaptive ERP reconciliation", () => {
   });
 });
 
-function runtimeAdmission(now: () => number = () => 0): AdaptiveErpRuntimeAdmission {
+function runtimeAdmission(
+  now: () => number = () => 0,
+  missingSnapshot = false,
+): AdaptiveErpRuntimeAdmission {
   return AdaptiveErpRuntimeAdmission.create({
     pauseDelivery: async () => {},
     persistence: {
@@ -294,8 +304,10 @@ function runtimeAdmission(now: () => number = () => 0): AdaptiveErpRuntimeAdmiss
       readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
       save: async () => undefined,
     },
-    runConfigReader: { read: async () => null },
-    fallbackConcurrency: 2,
+    runConfigReader: {
+      read: async () => (missingSnapshot ? null : previewRunConfigSnapshotFixture()),
+    },
+    reconciliationConcurrency: 2,
     now,
     random: () => 0,
   });
@@ -316,6 +328,7 @@ function lookupSucceeded(): ErpLookupOutcome {
     lookup: {
       status: "succeeded",
       identity: {
+        runId: "44444444-4444-4444-8444-444444444444",
         orderId: job.orderId,
         publicOrderId: job.publicOrderId,
         reservationId: job.reservationId,

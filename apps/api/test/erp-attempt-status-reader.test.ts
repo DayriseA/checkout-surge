@@ -23,11 +23,13 @@ const ids = {
   order: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
   preset: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
   runA: "11111111-1111-4111-8111-111111111111",
+  runC: "99999999-9999-4999-8999-999999999999",
+  saleOfferC: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbd",
   runB: "22222222-2222-4222-8222-222222222222",
   reservationB: "33333333-3333-4333-8333-333333333333",
-  reservationUnscoped: "44444444-4444-4444-8444-444444444444",
+  reservationOtherRun: "44444444-4444-4444-8444-444444444444",
   orderB: "55555555-5555-4555-8555-555555555555",
-  orderUnscoped: "66666666-6666-4666-8666-666666666666",
+  orderOtherRun: "66666666-6666-4666-8666-666666666666",
 } as const;
 
 describe("PostgresErpAttemptStatusReader", () => {
@@ -118,13 +120,13 @@ describe("PostgresErpAttemptStatusReader", () => {
   it.each([
     {
       ordering: "sequential",
-      finishedSeconds: { runAFirst: 1, runASecond: 2, runBFirst: 3, runBSecond: 4, unscoped: 5 },
+      finishedSeconds: { runAFirst: 1, runASecond: 2, runBFirst: 3, runBSecond: 4, otherRun: 5 },
     },
     {
       ordering: "interleaved",
-      finishedSeconds: { runAFirst: 1, runASecond: 3, runBFirst: 2, runBSecond: 5, unscoped: 4 },
+      finishedSeconds: { runAFirst: 1, runASecond: 3, runBFirst: 2, runBSecond: 5, otherRun: 4 },
     },
-  ])("isolates $ordering finishedAt ordering from nullable-unscoped data", async ({
+  ])("isolates $ordering finishedAt ordering from another attributed run", async ({
     finishedSeconds,
   }) => {
     if (!connection) throw new Error("Test database connection was not initialized.");
@@ -135,7 +137,7 @@ describe("PostgresErpAttemptStatusReader", () => {
         attempt(ids.order, ids.runA, 1, "failed", finishedSeconds.runAFirst),
         attempt(ids.orderB, ids.runB, 1, "succeeded", finishedSeconds.runBFirst),
         attempt(ids.order, ids.runA, 2, "timed_out", finishedSeconds.runASecond),
-        attempt(ids.orderUnscoped, null, 1, "failed", finishedSeconds.unscoped),
+        attempt(ids.orderOtherRun, ids.runC, 1, "failed", finishedSeconds.otherRun),
         attempt(ids.orderB, ids.runB, 2, "failed", finishedSeconds.runBSecond),
       ]);
     const reader = new PostgresErpAttemptStatusReader(connection.db);
@@ -179,7 +181,7 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
     isActive: true,
   });
   await connection.db.insert(saleOffers).values(
-    [ids.saleOffer, ids.saleOfferB].map((id, index) => ({
+    [ids.saleOffer, ids.saleOfferB, ids.saleOfferC].map((id, index) => ({
       id,
       productId: ids.product,
       name: `ERP Status Reader Sale Offer ${index}`,
@@ -187,7 +189,6 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
       isActive: true,
-      purpose: "catalog" as const,
     })),
   );
   await connection.db.insert(demoPresets).values({
@@ -205,7 +206,7 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
   });
   const completedAt = new Date("2026-06-22T00:10:00.000Z");
   await connection.db.insert(demoRuns).values(
-    [ids.runA, ids.runB].map((id, index) => ({
+    [ids.runA, ids.runB, ids.runC].map((id, index) => ({
       id,
       correlationId: "corr-erp-status-reader",
       presetId: ids.preset,
@@ -213,7 +214,7 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
       operatorMode: "admin" as const,
       status: "completed" as const,
       trafficStatus: "succeeded" as const,
-      saleOfferId: index === 0 ? ids.saleOffer : ids.saleOfferB,
+      saleOfferId: index === 0 ? ids.saleOffer : index === 1 ? ids.saleOfferB : ids.saleOfferC,
       configSnapshot: previewRunConfigSnapshotFixture(),
       startedAt: new Date(completedAt.getTime() - (index + 1) * 60_000),
       trafficStartedAt: new Date(completedAt.getTime() - (index + 1) * 60_000),
@@ -224,16 +225,17 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
   await connection.db.insert(demoRunSaleContexts).values([
     { runId: ids.runA, saleOfferId: ids.saleOffer },
     { runId: ids.runB, saleOfferId: ids.saleOfferB },
+    { runId: ids.runC, saleOfferId: ids.saleOfferC },
   ]);
   await connection.db.insert(reservations).values(
     [
       [ids.reservation, ids.runA, ids.saleOffer, "a"],
       [ids.reservationB, ids.runB, ids.saleOfferB, "b"],
-      [ids.reservationUnscoped, null, ids.saleOffer, "unscoped"],
+      [ids.reservationOtherRun, ids.runC, ids.saleOfferC, "otherRun"],
     ].map(([id, runId, saleOfferId], index) => ({
       id: id as string,
       saleOfferId: saleOfferId as string,
-      runId: runId as string | null,
+      runId: runId as string,
       correlationId: "corr-erp-status-reader",
       quantity: 1,
       reservationToken: `erp-status-reader-token-${index}`,
@@ -246,14 +248,14 @@ async function seedOrder(connection: ReturnType<typeof createDatabaseConnection>
     .values([
       order(ids.order, ids.reservation, ids.runA, ids.saleOffer, "a"),
       order(ids.orderB, ids.reservationB, ids.runB, ids.saleOfferB, "b"),
-      order(ids.orderUnscoped, ids.reservationUnscoped, null, ids.saleOffer, "unscoped"),
+      order(ids.orderOtherRun, ids.reservationOtherRun, ids.runC, ids.saleOfferC, "otherRun"),
     ]);
 }
 
 function order(
   id: string,
   reservationId: string,
-  runId: string | null,
+  runId: string,
   saleOfferId: string,
   suffix: string,
 ) {
@@ -272,7 +274,7 @@ function order(
 
 function attempt(
   orderId: string,
-  runId: string | null,
+  runId: string,
   attemptNumber: number,
   status: "succeeded" | "failed" | "timed_out",
   finishedSecond: number,

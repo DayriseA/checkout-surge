@@ -12,6 +12,7 @@ import {
 } from "../../src/application/order-process-job-handler.js";
 
 const job: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test",
   reservationId: "33333333-3333-4333-8333-333333333333",
@@ -190,6 +191,7 @@ describe("order-process application workflow", () => {
     expect(transitionToConfirmed).toHaveBeenCalledOnce();
     expect(logError).toHaveBeenCalledWith(
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         err: publishError,
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,
@@ -260,6 +262,7 @@ describe("order-process application workflow", () => {
 
     expect(logError).toHaveBeenCalledWith(
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         err: publishError,
         orderId: job.orderId,
         saleOfferId: job.saleOfferId,

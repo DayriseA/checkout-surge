@@ -16,7 +16,11 @@ import {
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
-import { type RunConfigReader, toErpRequestConfig } from "./run-config.js";
+import {
+  MissingAcceptedRunSnapshotError,
+  type RunConfigReader,
+  toErpRequestConfig,
+} from "./run-config.js";
 
 export type ErpOperationKind = "dispatched_confirmation" | "status_lookup" | "non_call_deferral";
 
@@ -179,7 +183,7 @@ export interface HttpErpOrderConfirmationOptions {
   attemptPersistence: ErpAttemptPersistence;
   fetch?: typeof fetch;
   now?: () => Date;
-  runConfigReader?: RunConfigReader;
+  runConfigReader: RunConfigReader;
   logger?: Pick<CheckoutSurgeLogger, "warn"> & Partial<Pick<CheckoutSurgeLogger, "info">>;
 }
 
@@ -204,7 +208,8 @@ export class HttpErpOrderConfirmation {
     if (!Number.isFinite(requestDeadlineMs) || requestDeadlineMs <= 0) {
       throw new Error("ERP request deadline must be a positive finite number.");
     }
-    const runConfig = job.runId ? await this.options.runConfigReader?.read(job.runId) : null;
+    const runConfig = await this.options.runConfigReader.read(job.runId);
+    if (!runConfig) throw new MissingAcceptedRunSnapshotError(job.runId);
     const timeoutMs = requestDeadlineMs;
     const startedAt = this.now();
     const call = await this.recordDispatchIntent({
@@ -381,7 +386,7 @@ export class HttpErpOrderConfirmation {
     this.options.logger?.info?.(
       {
         orderId: job.orderId,
-        ...(job.runId ? { runId: job.runId } : {}),
+        runId: job.runId,
         operation: outcome.operation,
         disposition: outcome.disposition,
         replayed: outcome.replayed,
@@ -641,16 +646,16 @@ function requireProcessingGeneration(delivery: OrderProcessDeliveryMetadata): nu
 
 function toConfirmationRequest(
   job: OrderProcessJob,
-  runConfig: Awaited<ReturnType<RunConfigReader["read"]>> | null | undefined,
+  runConfig: NonNullable<Awaited<ReturnType<RunConfigReader["read"]>>>,
 ) {
   return erpConfirmationRequestSchema.parse({
     orderId: job.orderId,
     publicOrderId: job.publicOrderId,
     reservationId: job.reservationId,
     saleOfferId: job.saleOfferId,
-    ...(job.runId ? { runId: job.runId } : {}),
+    runId: job.runId,
     idempotencyKey: toConfirmationIdempotencyKey(job),
-    ...(runConfig ? { erpConfig: toErpRequestConfig(runConfig) } : {}),
+    erpConfig: toErpRequestConfig(runConfig),
     correlationId: job.correlationId,
     quantity: job.quantity,
   });

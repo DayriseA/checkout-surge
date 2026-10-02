@@ -1,4 +1,5 @@
 import type { ErpCallReference } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { type CheckoutSurgeLogger, correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -409,6 +410,7 @@ function createClient(
   } = {},
 ): HttpErpOrderConfirmation {
   return new HttpErpOrderConfirmation({
+    runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
     baseUrl: "http://mock-erp:4100",
     lookupTimeoutMs: options.lookupTimeoutMs ?? 1_000,
     retryAfterPolicy: { fallbackDelayMs: 750, maximumDelayMs: 5_000 },

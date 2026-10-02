@@ -54,7 +54,7 @@ function applyRunAttribution(
     return request;
   }
 
-  if (request.runId && request.runId !== headerRunId) {
+  if (request.runId !== headerRunId) {
     throw new ApiHttpError({
       statusCode: 400,
       code: "invalid_request",
@@ -67,7 +67,7 @@ function applyRunAttribution(
     });
   }
 
-  return { ...request, runId: headerRunId };
+  return request;
 }
 
 function parseLoadRunIdHeader(headerValue: string | string[] | undefined): string | undefined {

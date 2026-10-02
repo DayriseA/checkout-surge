@@ -10,16 +10,13 @@ import {
   publicRuntimePolicyPersistedSchema,
   type TrafficConfig,
 } from "@checkout-surge/contracts";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { createDatabaseConnection } from "../client.js";
-import { createRedisClient } from "../redis.js";
-import { initializeInventory } from "../redis-inventory.js";
-import { demoPresets, products, publicRuntimePolicies, saleOffers } from "../schema.js";
+import { demoPresets, products, publicRuntimePolicies } from "../schema.js";
 import { optionalIntegerEnv, optionalNumberEnv, requireEnv } from "./env.js";
 
 const seedIds = {
   product: "11111111-1111-4111-8111-111111111111",
-  baselineSaleOffer: "22222222-2222-4222-8222-222222222222",
   previewPreset: "33333333-3333-4333-8333-333333333331",
   surge5kPreset: "33333333-3333-4333-8333-333333333332",
   surge10kPreset: "33333333-3333-4333-8333-333333333333",
@@ -31,10 +28,6 @@ const seedIds = {
   adminFailurePreset: "44444444-4444-4444-8444-444444444442",
   adminCustomPreset: "44444444-4444-4444-8444-444444444443",
 } as const;
-
-const baselineAllocatedStock = 1000;
-const saleStartsAt = new Date("2026-01-01T00:00:00.000Z");
-const saleEndsAt = new Date("2035-01-01T00:00:00.000Z");
 
 interface SeedPreset {
   id: string;
@@ -52,7 +45,6 @@ interface SeedPreset {
 }
 
 const databaseUrl = requireEnv("DATABASE_URL");
-const redisUrl = requireEnv("REDIS_URL");
 const now = new Date();
 const seededPublicRuntimePolicy = buildPublicRuntimePolicy();
 
@@ -78,34 +70,6 @@ try {
           slug: "launch-pass",
           name: "Checkout Surge Launch Pass",
           isActive: true,
-          updatedAt: now,
-        },
-      });
-
-    await tx
-      .insert(saleOffers)
-      .values({
-        id: seedIds.baselineSaleOffer,
-        productId: seedIds.product,
-        name: "Launch Pass Baseline Catalog Offer",
-        allocatedStock: baselineAllocatedStock,
-        saleStartsAt,
-        saleEndsAt,
-        isActive: true,
-        purpose: "catalog",
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: saleOffers.id,
-        set: {
-          productId: seedIds.product,
-          name: "Launch Pass Baseline Catalog Offer",
-          allocatedStock: baselineAllocatedStock,
-          saleStartsAt,
-          saleEndsAt,
-          isActive: true,
-          purpose: "catalog",
           updatedAt: now,
         },
       });
@@ -181,29 +145,11 @@ try {
         target: publicRuntimePolicies.id,
       });
   });
-
-  const [activeOffer] = await connection.db
-    .select({
-      id: saleOffers.id,
-      allocatedStock: saleOffers.allocatedStock,
-    })
-    .from(saleOffers)
-    .where(eq(saleOffers.id, seedIds.baselineSaleOffer))
-    .limit(1);
-
-  if (!activeOffer) {
-    throw new Error("Seeded baseline sale offer was not found after PostgreSQL seed.");
-  }
-
-  await seedRedisInventory(redisUrl, {
-    saleOfferId: activeOffer.id,
-    allocatedStock: activeOffer.allocatedStock,
-  });
 } finally {
   await connection.close();
 }
 
-console.log("Seeded PostgreSQL demo baseline and Redis inventory.");
+console.log("Seeded product, demo presets, and public runtime policy.");
 
 function buildSeedPresets(): SeedPreset[] {
   return [
@@ -521,21 +467,4 @@ function buildPublicRuntimePolicy(): PublicRuntimePolicyMutable {
     },
   });
   return publicRuntimePolicyPersistedSchema.parse(policy);
-}
-
-async function seedRedisInventory(
-  redisUrl: string,
-  offer: { saleOfferId: string; allocatedStock: number },
-): Promise<void> {
-  const redis = createRedisClient(redisUrl, {
-    lazyConnect: true,
-    maxRetriesPerRequest: 3,
-  });
-
-  try {
-    await redis.connect();
-    await initializeInventory(redis, { ...offer, source: "seed" });
-  } finally {
-    redis.disconnect();
-  }
 }

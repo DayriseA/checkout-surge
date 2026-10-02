@@ -1,9 +1,6 @@
 import { createDatabaseConnection } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
-import {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigStore,
-} from "./application/chaos-control-service.js";
+import { ChaosConfirmationDecisionProvider } from "./application/chaos-control-service.js";
 import { ConfirmationService } from "./application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "./application/tps-limiter.js";
 import { PostgresConfirmationLedger } from "./persistence/postgres-confirmation-ledger.js";
@@ -14,20 +11,13 @@ export async function startMockErp(): Promise<void> {
   const config = loadMockErpConfig(process.env);
   const logger = createServiceLogger({ service: "mock-erp" });
   const database = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
-  const chaosConfigStore = new ErpChaosConfigStore(
-    config.defaultChaosConfig,
-    config.chaosSafetyCaps,
-  );
   const server = buildMockErpServer({
     confirmationService: new ConfirmationService({
       decisionProvider: new ChaosConfirmationDecisionProvider({
-        configStore: chaosConfigStore,
         tpsLimiter: new SlidingWindowTpsLimiter(),
       }),
       ledger: new PostgresConfirmationLedger(database.sql),
     }),
-    chaosConfigStore,
-    controlServiceToken: config.controlServiceToken,
     logger,
     startedAt: new Date(),
   });

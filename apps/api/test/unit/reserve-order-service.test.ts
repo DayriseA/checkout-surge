@@ -123,7 +123,7 @@ function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
       saleOfferId: hold.saleOfferId,
       reservationId: hold.id,
       correlationId: hold.correlationId,
-      ...(hold.runId ? { runId: hold.runId } : {}),
+      runId: hold.runId,
       quantity: hold.quantity,
       status: "queued",
       queuedAt: hold.securedAt,

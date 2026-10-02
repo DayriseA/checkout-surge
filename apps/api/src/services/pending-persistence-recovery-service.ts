@@ -48,11 +48,11 @@ export interface PendingPersistenceRecoveryAudit {
 }
 
 export interface BusinessOutcomeDirtyMarker {
-  markDirty(input: { saleOfferId: string; runId?: string; correlationId?: string }): void;
+  markDirty(input: { saleOfferId: string; runId: string; correlationId?: string }): void;
 }
 
 interface RunScope {
-  runId?: string;
+  runId: string;
   saleOfferId: string;
 }
 
@@ -292,9 +292,7 @@ export class PendingPersistenceRecoveryService {
         dueAt: pageNow,
       });
       for (const issue of page.issues) this.logReadIssue(issue, scope.saleOfferId);
-      const candidates = page.records.filter((record) =>
-        scope.runId ? record.runId === scope.runId : record.runId === undefined,
-      );
+      const candidates = page.records.filter((record) => record.runId === scope.runId);
       records.push(...candidates);
     }
     return records;
@@ -603,10 +601,10 @@ export class PendingPersistenceRecoveryService {
       runDisposition: "admissible" | "terminal" | "invalid",
     ) => Promise<T>,
   ): Promise<T> {
-    if (reservation.runId && ownerPersistence.withRunPendingPersistenceLock) {
+    if (ownerPersistence.withRunPendingPersistenceLock) {
       return ownerPersistence.withRunPendingPersistenceLock({ reservation, operation });
     }
-    if (reservation.runId && ownerPersistence.withRunAdmissionLock) {
+    if (ownerPersistence.withRunAdmissionLock) {
       return ownerPersistence.withRunAdmissionLock({
         reservation,
         operation: (persistence) => operation(persistence, "admissible"),
@@ -730,7 +728,7 @@ export class PendingPersistenceRecoveryService {
   private scheduleQueueSnapshot(reservation: SecuredReservationHold): void {
     try {
       this.options.dashboardSourceDirtyScheduler?.scheduleQueue({
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch {}
@@ -740,7 +738,7 @@ export class PendingPersistenceRecoveryService {
     try {
       this.options.businessOutcomeUpdates?.markDirty({
         saleOfferId: reservation.saleOfferId,
-        ...(reservation.runId ? { runId: reservation.runId } : {}),
+        runId: reservation.runId,
         correlationId: reservation.correlationId,
       });
     } catch {}
@@ -780,7 +778,7 @@ function toReservation(record: PendingPersistenceRecord): SecuredReservationHold
     id: record.id,
     saleOfferId: record.saleOfferId,
     correlationId: record.correlationId,
-    ...(record.runId ? { runId: record.runId } : {}),
+    runId: record.runId,
     quantity: record.quantity,
     reservationToken: record.reservationToken,
     securedAt: record.securedAt,
@@ -795,7 +793,7 @@ function toOrderProcessJob(persisted: PersistedBuyAcceptance): OrderProcessJob {
     reservationId: persisted.order.reservationId,
     saleOfferId: persisted.order.saleOfferId,
     correlationId: persisted.order.correlationId,
-    ...(persisted.order.runId ? { runId: persisted.order.runId } : {}),
+    runId: persisted.order.runId,
     quantity: persisted.order.quantity,
     queuedAt: persisted.order.queuedAt,
     processingGeneration: 0,

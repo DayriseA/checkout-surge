@@ -4,7 +4,6 @@ import { AdminSignIn } from "../components/admin/admin-sign-in";
 import { pendingDashboardRecovery } from "../lib/api";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 import {
-  readAdminErpChaos,
   readAdminPresets,
   readAdminReadiness,
   readAdminRuntimePolicy,
@@ -16,12 +15,7 @@ export const dynamic = "force-dynamic";
 export default async function AdminPage() {
   const authenticated = await hasValidAdminPageSession();
   const reads = authenticated
-    ? await Promise.all([
-        readAdminErpChaos(),
-        readAdminPresets(),
-        readAdminRuntimePolicy(),
-        readAdminReadiness(),
-      ])
+    ? await Promise.all([readAdminPresets(), readAdminRuntimePolicy(), readAdminReadiness()])
     : null;
   return (
     <>
@@ -35,11 +29,10 @@ export default async function AdminPage() {
       </header>
       {reads ? (
         <AdminAuthenticatedSurface
-          initialErpChaos={reads[0]}
-          initialPresets={reads[1]}
+          initialPresets={reads[0]}
           initialRecovery={pendingDashboardRecovery()}
-          initialReadiness={reads[3]}
-          initialRuntimePolicy={reads[2]}
+          initialReadiness={reads[2]}
+          initialRuntimePolicy={reads[1]}
         />
       ) : (
         <AdminSignIn />

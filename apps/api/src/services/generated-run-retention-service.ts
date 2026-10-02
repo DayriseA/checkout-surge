@@ -72,7 +72,7 @@ export class GeneratedRunRetentionService implements GeneratedRunRetentionWorkfl
         ),
       )
       .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-      .where(and(...filters, eq(saleOffers.purpose, "generated_run")))
+      .where(and(...filters))
       .orderBy(asc(demoRuns.createdAt));
 
     let deletedRunCount = 0;

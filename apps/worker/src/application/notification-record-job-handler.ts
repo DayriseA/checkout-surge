@@ -25,7 +25,6 @@ export function createNotificationRecordJobHandler(dependencies: {
         if (
           error instanceof Error &&
           error.name === "NotificationOrderNotFoundError" &&
-          job.runId &&
           (await dependencies.persistence.isTerminalResetRun?.(job.runId)) === true
         ) {
           return;
@@ -37,7 +36,7 @@ export function createNotificationRecordJobHandler(dependencies: {
         {
           orderId: job.orderId,
           saleOfferId: job.saleOfferId,
-          ...(job.runId ? { runId: job.runId } : {}),
+          runId: job.runId,
           recorded: result.recorded,
         },
         result.recorded
@@ -68,7 +67,7 @@ async function publishBusinessOutcomeUpdateWithoutFailingJob(
           err: error,
           orderId: job.orderId,
           saleOfferId: job.saleOfferId,
-          ...(job.runId ? { runId: job.runId } : {}),
+          runId: job.runId,
           correlationId: job.correlationId,
         },
         "Notification record succeeded but dashboard business outcome publication failed.",

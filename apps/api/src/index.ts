@@ -152,14 +152,14 @@ export async function startApiServer(): Promise<void> {
         {
           err: error,
           saleOfferId: input.saleOfferId,
-          ...(input.runId ? { runId: input.runId } : {}),
+          runId: input.runId,
         },
         "Dashboard business outcome projection failed.",
       );
     },
     onDrop: (input) => {
       logger.warn(
-        { saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        { saleOfferId: input.saleOfferId, runId: input.runId },
         "Business outcome dashboard scope limit reached; dropped the oldest dirty scope.",
       );
     },
@@ -550,7 +550,7 @@ function partialFailureLogContext(report: ReservationPartialFailureReport) {
     err: report.error,
     reservationId: report.reservationId,
     saleOfferId: report.saleOfferId,
-    ...(report.runId ? { runId: report.runId } : {}),
+    runId: report.runId,
     correlationId: report.correlationId,
     idempotencyKey: report.idempotencyKey,
   };
@@ -560,7 +560,7 @@ function businessOutcomeUpdateFailureLogContext(report: BusinessOutcomeUpdateFai
   return {
     err: report.error,
     saleOfferId: report.saleOfferId,
-    ...(report.runId ? { runId: report.runId } : {}),
+    runId: report.runId,
     correlationId: report.correlationId,
   };
 }

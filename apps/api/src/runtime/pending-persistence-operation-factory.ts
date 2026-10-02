@@ -5,9 +5,8 @@ import {
   createRedisClient,
   demoRuns,
   promoteReservationIdempotencyToAccepted,
-  saleOffers,
 } from "@checkout-surge/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import {
   type BullMqOrderProcessJobPublisher,
   createBullMqOrderProcessJobPublisher,
@@ -31,7 +30,7 @@ export interface PendingPersistenceOperationConfig {
 }
 
 export interface PendingPersistenceRunScope {
-  runId?: string;
+  runId: string;
   saleOfferId: string;
 }
 
@@ -113,22 +112,13 @@ export function createPendingPersistenceRecoveryOperations(
       });
       return await runWithResourceCleanup(
         async () => {
-          const [runRows, catalogRows] = await Promise.all([
-            database.db
-              .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
-              .from(demoRuns)
-              .where(inArray(demoRuns.status, ["starting", "active", "draining"])),
-            database.db
-              .select({ saleOfferId: saleOffers.id })
-              .from(saleOffers)
-              .where(and(eq(saleOffers.purpose, "catalog"), eq(saleOffers.isActive, true))),
-          ]);
-          return [
-            ...runRows.flatMap((row) =>
-              row.saleOfferId ? [{ runId: row.runId, saleOfferId: row.saleOfferId }] : [],
-            ),
-            ...catalogRows,
-          ];
+          const runRows = await database.db
+            .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+            .from(demoRuns)
+            .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
+          return runRows.flatMap((row) =>
+            row.saleOfferId ? [{ runId: row.runId, saleOfferId: row.saleOfferId }] : [],
+          );
         },
         close,
         "Pending-persistence discovery query and cleanup failed.",

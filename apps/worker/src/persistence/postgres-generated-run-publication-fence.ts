@@ -40,13 +40,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
             eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
           ),
         )
-        .innerJoin(
-          saleOffers,
-          and(
-            eq(saleOffers.id, demoRunSaleContexts.saleOfferId),
-            eq(saleOffers.purpose, "generated_run"),
-          ),
-        )
+        .innerJoin(saleOffers, and(eq(saleOffers.id, demoRunSaleContexts.saleOfferId)))
         .where(
           and(
             eq(demoRuns.id, input.runId),

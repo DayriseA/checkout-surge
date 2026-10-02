@@ -19,7 +19,11 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
+import {
+  createPurchaseRunFixture,
+  requireTestDatabaseUrl,
+  resetTestDatabase,
+} from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -80,6 +84,11 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       saleStartsAt: new Date("2026-01-01"),
       saleEndsAt: new Date("2030-01-01"),
     });
+    await createPurchaseRunFixture(db, {
+      runId: "44444444-4444-4444-8444-444444444444",
+      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      status: "draining",
+    });
     attemptPersistence = new PostgresErpAttemptPersistence(db, () => now);
     controlPersistence = new PostgresOrderRecoveryPersistence(db, () => now);
     transitionPersistence = new PostgresOrderTransitionPersistence(db, () => now);
@@ -91,6 +100,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     status?: "queued" | "processing" | "failed";
     runId?: string;
   }): Promise<SeededOrder> {
+    const offerId = input.runId ?? "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     const suffix = (sequence * 100 + ++seedOrderCounter).toString().padStart(12, "0");
     const orderId = `dddddddd-dddd-4ddd-8ddd-${suffix}`;
     const reservationId = `cccccccc-cccc-4ccc-8ccc-${suffix}`;
@@ -99,9 +109,9 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       orderId,
       publicOrderId: `ord_processing_control_${suffix}`,
       reservationId,
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      saleOfferId: offerId,
       correlationId,
-      ...(input.runId ? { runId: input.runId } : {}),
+      runId: input.runId ?? "44444444-4444-4444-8444-444444444444",
       quantity: 1,
       queuedAt: input.createdAt.toISOString(),
       processingGeneration: 0,
@@ -109,11 +119,11 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     const db = requireConnection().db;
     await db.insert(reservations).values({
       id: reservationId,
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      saleOfferId: offerId,
       correlationId,
       quantity: 1,
       reservationToken: `token-${reservationId}`,
-      ...(input.runId ? { runId: input.runId } : {}),
+      runId: input.runId ?? "44444444-4444-4444-8444-444444444444",
       securedAt: input.createdAt,
       expiresAt: new Date(input.createdAt.getTime() + 900_000),
       createdAt: input.createdAt,
@@ -121,9 +131,9 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     await db.insert(orders).values({
       id: orderId,
       publicOrderId: job.publicOrderId,
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      saleOfferId: offerId,
       reservationId,
-      ...(input.runId ? { runId: input.runId } : {}),
+      runId: input.runId ?? "44444444-4444-4444-8444-444444444444",
       correlationId,
       quantity: 1,
       status: input.status ?? "queued",
@@ -203,6 +213,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
         }),
     );
     const confirmation = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://erp.test",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -676,6 +687,16 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
         },
         ...snapshot,
       });
+    await requireConnection()
+      .db.insert(saleOffers)
+      .values({
+        id: terminalRunId,
+        productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        name: "Terminal offer",
+        allocatedStock: 10,
+        saleStartsAt: baseTime,
+        saleEndsAt: new Date(baseTime.getTime() + 1000),
+      });
     await requireConnection().db.insert(demoRuns).values({
       correlationId: "corr-test-run",
       id: terminalRunId,
@@ -685,12 +706,12 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       status: "completed",
       trafficStatus: "succeeded",
       configSnapshot: snapshot,
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      saleOfferId: terminalRunId,
       finalizedAt: baseTime,
     });
     await requireConnection().db.insert(demoRunSaleContexts).values({
       runId: terminalRunId,
-      saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      saleOfferId: terminalRunId,
     });
     const eligibleOld = await seedOrder({ createdAt: new Date(baseTime.getTime() - 40_000) });
     const eligibleNew = await seedOrder({ createdAt: new Date(baseTime.getTime() - 20_000) });
@@ -805,6 +826,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       .from(erpDispatchCalls)
       .where(eq(erpDispatchCalls.orderId, seeded.orderId));
     expect(intentRow).toMatchObject({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: call.erpCallId,
       processingGeneration: 1,
       publicOrderId: seeded.job.publicOrderId,
@@ -1156,6 +1178,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       const id = randomUUID();
       orphanCallIds.push(id);
       await requireConnection().db.insert(erpDispatchCalls).values({
+        runId: "44444444-4444-4444-8444-444444444444",
         id,
         orderId: seeded.orderId,
         processingGeneration: 0,
@@ -1174,6 +1197,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       const startedAt = new Date(now.getTime() + 100 + index * 10);
       const erpCallId = randomUUID();
       await requireConnection().db.insert(erpDispatchCalls).values({
+        runId: "44444444-4444-4444-8444-444444444444",
         id: erpCallId,
         orderId: seeded.orderId,
         processingGeneration: 0,
@@ -1375,6 +1399,7 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
       vi.spyOn(response, "json").mockRejectedValue(new TypeError("terminated"));
     }
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://erp.test",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },

@@ -18,7 +18,7 @@ export const buyOutcomeHeaderName = "x-checkout-outcome" as const;
 export const buyRequestSchema = z
   .object({
     saleOfferId: uuidSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     idempotencyKey: idempotencyKeySchema,
     quantity: positiveIntegerSchema.default(1),
     correlationId: correlationIdSchema.optional(),

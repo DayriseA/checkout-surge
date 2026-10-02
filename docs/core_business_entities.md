@@ -12,7 +12,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | :-- | :-- | :-- |
 | Product model | Keep products as durable catalog records in PostgreSQL | Product identity and merchandising data should remain stable and sale-agnostic. |
 | Sale configuration model | Separate `SaleOffer` from `Product` | Event-specific pricing, allocated stock, and sale windows describe how a product is being sold in a specific limited-inventory event, not what the product is. |
-| Sale ownership model | Mark sale offers by purpose and bind generated run offers through `DemoRunSaleContext` | Catalog offers remain reusable business definitions, while generated run offers must be owned by exactly one demo run and cannot be mixed across run-attributed records. |
+| Sale ownership model | Bind every generated offer through `DemoRunSaleContext` | Every purchase carries its run and sale identity; composite constraints reject cross-run ownership. |
 | Inventory model | Treat inventory as a split object: durable baseline in PostgreSQL, hot-path counters and holds in Redis | This preserves a fast reservation path without losing a durable source for resets, seeding, and reconciliation. |
 | Reservation model | Model reservations as first-class stock holds separate from orders | The project's core workflow depends on "reservation secured" not meaning "order confirmed." |
 | Rejected reservation persistence | Do not create a PostgreSQL row for every immediate sold-out rejection in the current model | At surge scale, persisting every reject would create noise without improving business recovery or operator understanding. |
@@ -115,7 +115,6 @@ Recommended fields:
 - `saleStartsAt`
 - `saleEndsAt`
 - `isActive`
-- `purpose`
 - `createdAt`
 - `updatedAt`
 
@@ -123,7 +122,7 @@ Notes:
 
 - `allocatedStock` is the durable quantity committed to this sale event, not the live remaining counter.
 - A single product can have multiple sale offers over time without changing the product identity.
-- `purpose` distinguishes reusable `catalog` offers from generated `generated_run` offers created for isolated demo-run traffic.
+- Every offer is created for one run; `DemoRunSaleContext` binds that ownership without a purpose discriminator.
 
 ### 3. Inventory Ownership Projection
 
@@ -286,7 +285,7 @@ Notes:
 - `terminal` records a definitive result at observation time: canonical success or a non-transient technical failure. Capacity, recognized unavailability, and timeout uncertainty remain nonterminal regardless of the queue delivery count. The marker is mirrored into the attempt event payload for internal diagnostics; Run History exposes aggregate attempt status counts and nullable aggregate latency metrics.
 - Attempt event diagnostics distinguish dispatched confirmations from status lookups and capture the replay response header separately from canonical JSON. Local, lookup-adopted, and replayed successes do not provide controller health or latency-learning evidence.
 - The attempt record should be durable even when the final order eventually succeeds, because the retry history is part of the portfolio story.
-- PostgreSQL requires `finishedAt >= startedAt` and uses a composite foreign key to bind `orderId` and `correlationId` to the referenced order. The worker validates the complete delivered order identity, including nullable `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
+- PostgreSQL requires `finishedAt >= startedAt` and uses composite foreign keys to bind `orderId`, `correlationId`, and mandatory `runId` to the referenced order. The worker validates the complete delivered order identity, including mandatory `runId`, against the locked durable order before processing; the database does not duplicate that workflow check procedurally.
 
 ### 7. OrderRecoveryJob
 
@@ -452,7 +451,7 @@ Primary responsibilities:
 
 - enforce that generated run sale offers belong to exactly one demo run,
 - provide the `(runId, saleOfferId)` ownership pair used by run-attributed business records,
-- prevent catalog offers or another run's generated offer from being written into run-scoped rows.
+- prevent another run's offer from being written into run-scoped rows.
 
 Logical fields:
 
@@ -463,17 +462,17 @@ Logical fields:
 
 Notes:
 
-- The run-creation service creates the referenced `SaleOffer` with `purpose = generated_run` and inserts the context in the same transaction.
+- The run-creation service creates the referenced `SaleOffer` and inserts the context in the same transaction.
 - The non-null context pair `(runId, saleOfferId)` has a composite foreign key to the unique `DemoRun.(id, saleOfferId)` pair. This prevents contradictory context inserts and updates as well as later changes to either ownership column on the run.
-- `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records with non-null run attribution must match the owning run context through composite foreign keys.
+- `Reservation`, `Order`, `ReservationPendingPersistence`, `OrderEvent`, and `SimulatedNotification` records require run attribution and must match the owning run context through composite foreign keys.
 - The context is deleted with its demo run, while the generated sale offer is cleaned up after dependent run records are removed.
 
 Enforcement note:
 
 - These ownership invariants are guarded at two layers. Redis validates generated-run ownership and accepting state before any PostgreSQL operation. Once Redis secures a hold, the normal write path acquires shared PostgreSQL run admission and validates the durable `(runId, saleOfferId)` pairing plus non-terminal lifecycle state before committing run-attributed rows and publishing the deterministic job. Terminal/reset transitions use the corresponding exclusive lock. Admission callbacks use their reserved session and never perform a nested checkout from the bounded base pool. A terminal-race rejection reverses the Redis hold after admission is released.
-- PostgreSQL enforces the context-to-run ownership pair and every non-null business-row `(runId, saleOfferId)` pair declaratively with composite foreign keys in `schema.ts`. With the default `MATCH SIMPLE`, a null `runId` skips that structural check for any sale purpose, not only catalog offers. The API therefore owns nullable catalog selection and prevents a generated offer from losing run attribution by validating run/sale under the run lock and constructing the durable rows from the same secured hold. Run creation separately owns generated-offer purpose when it creates the offer and context in one transaction.
+- PostgreSQL enforces the context-to-run ownership pair and mandatory purchase-row `(runId, saleOfferId)` pairs with composite foreign keys. API persistence verifies the same identity under the shared run lock after Redis admission. Terminal and reset transitions retain the exclusive lock.
 - Order-to-reservation offer/correlation/quantity identity, ERP-attempt correlation, and notification-to-order attribution also use composite foreign keys. Row-local quantity, window, lifecycle, timestamp, and terminal-summary checks remain declarative.
-- The API and worker own workflow checks that keys cannot express cleanly: generated-offer purpose at context construction, nullable job/run identity, legal order transitions, and event construction from a locked or freshly inserted parent. Worker sequencing validates an order-processing job through locked transition persistence before ERP-attempt persistence consumes it; notification persistence performs its own lock and identity validation. There is no generalized database validation framework and the baseline installs no trigger functions or non-internal triggers.
+- The API and worker own workflow checks that keys cannot express cleanly: ownership at context construction, mandatory job/run identity, legal order transitions, and event construction from a locked or freshly inserted parent. Worker sequencing validates an order-processing job through locked transition persistence before ERP-attempt persistence consumes it; notification persistence performs its own lock and identity validation. There is no generalized database validation framework and the baseline installs no trigger functions or non-internal triggers.
 
 ### 13. ReservationPendingPersistence
 

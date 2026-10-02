@@ -7,6 +7,7 @@ import {
   type DashboardProjectionDirtySignal,
   publicRuntimePolicyPersistedSchema,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
@@ -61,7 +62,6 @@ const dashboardDirtySignal: DashboardProjectionDirtySignal = {
 
 type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];
 type OrderStatusForTest = "queued" | "processing" | "confirmed" | "failed";
-type SaleOfferPurposeForTest = "catalog" | "generated_run";
 
 function buildReservationInput(options: {
   saleOfferId: string;
@@ -79,7 +79,7 @@ function buildReservationInput(options: {
       id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
       saleOfferId: options.saleOfferId,
       correlationId: `corr-reservation-${options.sequence}`,
-      ...(options.runId ? { runId: options.runId } : {}),
+      runId: options.runId ?? options.saleOfferId,
       quantity: options.quantity ?? 1,
       reservationToken: `reservation-token-${options.sequence}`,
       securedAt: reservationSecuredAt,
@@ -143,9 +143,9 @@ async function readMigrationCount(folder: string): Promise<number> {
   return journal.entries.length;
 }
 
-async function insertCatalogSaleOffer(
+async function insertRunSaleOffer(
   sql: TestSql,
-  input: { productId: string; saleOfferId: string; purpose?: SaleOfferPurposeForTest },
+  input: { productId: string; saleOfferId: string },
 ): Promise<void> {
   const slug = input.saleOfferId.replaceAll("-", "");
 
@@ -160,8 +160,7 @@ async function insertCatalogSaleOffer(
       "name",
       "allocated_stock",
       "sale_starts_at",
-      "sale_ends_at",
-      "purpose"
+      "sale_ends_at"
     )
     VALUES (
       ${input.saleOfferId},
@@ -169,8 +168,7 @@ async function insertCatalogSaleOffer(
       ${`Offer ${slug}`},
       ${10},
       ${saleStartsAt}::timestamptz,
-      ${saleEndsAt}::timestamptz,
-      ${input.purpose ?? "catalog"}::"sale_offer_purpose"
+      ${saleEndsAt}::timestamptz
     )
   `;
 }
@@ -179,6 +177,12 @@ async function insertGeneratedRunContext(
   sql: TestSql,
   input: { presetId: string; runId: string; saleOfferId: string },
 ): Promise<void> {
+  const snapshot = previewRunConfigSnapshotFixture();
+  const [offer] = await sql<
+    { allocated_stock: number }[]
+  >`select allocated_stock from sale_offers where id = ${input.saleOfferId}`;
+  if (!offer) throw new Error("Run context fixture requires its sale offer.");
+  snapshot.inventoryConfig.startingStock = offer.allocated_stock;
   await sql`
     INSERT INTO "demo_presets" (
       "id",
@@ -197,10 +201,10 @@ async function insertGeneratedRunContext(
       'admin'::"demo_preset_visibility",
       true,
       ${JSON.stringify({ name: "Order Reservation Guard" })}::jsonb,
-      '{}'::jsonb,
-      '{}'::jsonb,
-      '{}'::jsonb,
-      '{}'::jsonb
+      ${JSON.stringify(snapshot.trafficConfig)}::jsonb,
+      ${JSON.stringify(snapshot.inventoryConfig)}::jsonb,
+      ${JSON.stringify(snapshot.erpConfig)}::jsonb,
+      ${JSON.stringify(snapshot.backpressureConfig)}::jsonb
     )
   `;
   await sql`
@@ -223,7 +227,7 @@ async function insertGeneratedRunContext(
       'admin'::"demo_run_operator_mode",
       'completed'::"demo_run_status",
       'succeeded'::"demo_run_traffic_status",
-      '{}'::jsonb,
+      ${JSON.stringify(snapshot)}::jsonb,
       ${input.saleOfferId},
       ${saleStartsAt}::timestamptz,
       'corr-db-test'
@@ -245,6 +249,20 @@ async function insertReservation(
     quantity?: number;
   },
 ): Promise<void> {
+  if (input.runId === undefined) {
+    const [scope] = await sql<
+      { run_id: string }[]
+    >`select run_id from demo_run_sale_contexts where sale_offer_id = ${input.saleOfferId}`;
+    if (scope) input.runId = scope.run_id;
+    else {
+      input.runId = input.saleOfferId;
+      await insertGeneratedRunContext(sql, {
+        runId: input.runId,
+        presetId: input.runId,
+        saleOfferId: input.saleOfferId,
+      });
+    }
+  }
   await sql`
     INSERT INTO "reservations" (
       "id",
@@ -284,6 +302,13 @@ async function insertOrder(
     failedAt?: string | null;
   },
 ): Promise<void> {
+  if (input.runId === undefined) {
+    const [scope] = await sql<
+      { run_id: string }[]
+    >`select run_id from reservations where id = ${input.reservationId}`;
+    if (!scope) throw new Error("Reservation fixture missing run attribution.");
+    input.runId = scope.run_id;
+  }
   await sql`
     INSERT INTO "orders" (
       "id",
@@ -654,7 +679,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         ["38000000-0000-4000-8000-000000000018", saleOfferBId],
         ["38000000-0000-4000-8000-000000000019", unownedSaleOfferId],
       ] as const) {
-        await insertCatalogSaleOffer(sql, { productId, saleOfferId, purpose: "generated_run" });
+        await insertRunSaleOffer(sql, { productId, saleOfferId });
       }
       await sql`
         INSERT INTO demo_presets (
@@ -873,7 +898,7 @@ describe("database migrations, seed data, and reset behavior", () => {
 
     expect(counts).toEqual({
       products: 1,
-      sale_offers: 1,
+      sale_offers: 0,
       demo_presets: 10,
       public_runtime_policies: 1,
     });
@@ -893,13 +918,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         description: "200 buyers, every buyer clicks Buy twice.",
       },
     });
-    expect(inventoryState).toMatchObject({
-      saleOfferId: seededSaleOfferId,
-      inventoryScope: "catalog",
-      allocatedStock: "1000",
-      remainingStock: "1000",
-      reservedStock: "0",
-    });
+    expect(inventoryState).toEqual({});
   });
 
   it("reseeds an already-system mutable admin preset as a true no-op", async () => {
@@ -984,6 +1003,40 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
     expect(afterReseed?.is_system).toBe(true);
     expect(afterReseed?.backpressure_config).toMatchObject({ orderProcessConcurrency: 3 });
+  });
+
+  it("reseeding preserves an owned sale allocation and reserved Redis stock", async () => {
+    const ids = buildOrderReservationIds(990);
+    await withDatabase(async (sql) => {
+      await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
+    });
+    await initializeInventory(redis, {
+      saleOfferId: ids.saleOfferId,
+      allocatedStock: 10,
+      run: { runId: ids.runId, status: "accepting" },
+    });
+    await expect(
+      reserveInventoryStock(
+        redis,
+        buildReservationInput({
+          saleOfferId: ids.saleOfferId,
+          runId: ids.runId,
+          sequence: 990,
+        }),
+      ),
+    ).resolves.toMatchObject({ outcome: "reservation_secured" });
+    await runSeedScript();
+    const [offer] = await withDatabase(
+      (sql) => sql<{ allocated_stock: number }[]>`
+      select allocated_stock from sale_offers where id = ${ids.saleOfferId}
+    `,
+    );
+    expect(offer?.allocated_stock).toBe(10);
+    expect(await getInventoryStatus(redis, ids.saleOfferId)).toMatchObject({
+      remainingStock: 9,
+      reservedStock: 1,
+    });
   });
 
   it("rejects invalid seed environment without changing the active runtime policy", async () => {
@@ -1074,7 +1127,7 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("enforces lifecycle timestamp constraints while preserving one-way and equality semantics", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(921);
-      await insertCatalogSaleOffer(sql, ids);
+      await insertRunSaleOffer(sql, ids);
       await insertReservation(sql, {
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
@@ -1120,10 +1173,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       await expectConstraintViolation(
         sql`
           INSERT INTO "erp_attempts" (
-            "order_id", "delivery_id", "correlation_id", "attempt_number", "status", "disposition",
+            "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
             "latency_ms", "started_at", "finished_at"
           ) VALUES (
-            ${ids.orderId}, 'lifecycle-invalid', 'corr-lifecycle-checks', 1, 'failed', 'temporarily_unavailable',
+            ${ids.orderId}, 'lifecycle-invalid', 'corr-lifecycle-checks', ${ids.saleOfferId}, 1, 'failed', 'temporarily_unavailable',
             1, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz - interval '1 millisecond'
           )
         `,
@@ -1131,10 +1184,10 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
       await sql`
         INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status", "disposition",
+          "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${ids.orderId}, 'lifecycle-equal', 'corr-lifecycle-checks', 1, 'succeeded', 'succeeded',
+          ${ids.orderId}, 'lifecycle-equal', 'corr-lifecycle-checks', ${ids.saleOfferId}, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `;
@@ -1144,9 +1197,9 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("enforces ERP attempt correlation attribution declaratively", async () => {
     await withDatabase(async (sql) => {
       const generatedIds = buildOrderReservationIds(922);
-      const catalogIds = buildOrderReservationIds(924);
-      await insertCatalogSaleOffer(sql, { ...generatedIds, purpose: "generated_run" });
-      await insertCatalogSaleOffer(sql, catalogIds);
+      const otherRunIds = buildOrderReservationIds(924);
+      await insertRunSaleOffer(sql, { ...generatedIds });
+      await insertRunSaleOffer(sql, otherRunIds);
       await insertGeneratedRunContext(sql, generatedIds);
       await insertReservation(sql, {
         reservationId: generatedIds.reservationId,
@@ -1191,25 +1244,25 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
 
       await insertReservation(sql, {
-        reservationId: catalogIds.reservationId,
-        saleOfferId: catalogIds.saleOfferId,
+        reservationId: otherRunIds.reservationId,
+        saleOfferId: otherRunIds.saleOfferId,
         correlationId: "corr-erp-null-run",
       });
       await insertOrder(sql, {
-        orderId: catalogIds.orderId,
-        saleOfferId: catalogIds.saleOfferId,
-        reservationId: catalogIds.reservationId,
+        orderId: otherRunIds.orderId,
+        saleOfferId: otherRunIds.saleOfferId,
+        reservationId: otherRunIds.reservationId,
         correlationId: "corr-erp-null-run",
       });
-      await sql`
+      await expect(sql`
         INSERT INTO "erp_attempts" (
           "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${catalogIds.orderId}, 'erp-null-run-valid', 'corr-erp-null-run', NULL, 1, 'succeeded', 'succeeded',
+          ${otherRunIds.orderId}, 'erp-null-run-valid', 'corr-erp-null-run', NULL, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
-      `;
+      `).rejects.toMatchObject({ code: "23502" });
     });
   });
 
@@ -1217,7 +1270,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(931);
       const eventId = "93000000-0000-4000-8000-000000000011";
-      await insertCatalogSaleOffer(sql, ids);
+      await insertRunSaleOffer(sql, ids);
       await insertReservation(sql, {
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
@@ -1232,18 +1285,18 @@ describe("database migrations, seed data, and reset behavior", () => {
       await sql`
         INSERT INTO "order_events" (
           "id", "order_id", "reservation_id", "sale_offer_id", "correlation_id",
-          "event_name", "source", "occurred_at"
+          "event_name", "source", "occurred_at", "run_id"
         ) VALUES (
           ${eventId}, ${ids.orderId}, ${ids.reservationId}, ${ids.saleOfferId},
-          'corr-event-delete-actions', 'order.queued', 'test', ${orderQueuedAt}::timestamptz
+          'corr-event-delete-actions', 'order.queued', 'test', ${orderQueuedAt}::timestamptz, ${ids.saleOfferId}
         )
       `;
       await sql`
         INSERT INTO "erp_attempts" (
-          "order_id", "delivery_id", "correlation_id", "attempt_number", "status", "disposition",
+          "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${ids.orderId}, 'event-delete-actions', 'corr-event-delete-actions', 1, 'succeeded', 'succeeded',
+          ${ids.orderId}, 'event-delete-actions', 'corr-event-delete-actions', ${ids.saleOfferId}, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `;
@@ -1273,13 +1326,42 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
+  it("rejects absent reservation and order run attribution at the durable boundary", async () => {
+    const ids = buildOrderReservationIds(991);
+    await withDatabase(async (sql) => {
+      await insertRunSaleOffer(sql, ids);
+      await expect(
+        insertReservation(sql, {
+          reservationId: ids.reservationId,
+          saleOfferId: ids.saleOfferId,
+          correlationId: "corr-mandatory-run",
+          runId: null,
+        }),
+      ).rejects.toMatchObject({ code: "23502" });
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        correlationId: "corr-mandatory-run",
+      });
+      await expect(
+        insertOrder(sql, {
+          orderId: ids.orderId,
+          reservationId: ids.reservationId,
+          saleOfferId: ids.saleOfferId,
+          correlationId: "corr-mandatory-run",
+          runId: null,
+        }),
+      ).rejects.toMatchObject({ code: "23502" });
+    });
+  });
+
   it("rejects orders whose offer, correlation ID, or quantity differs from the reservation", async () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(20);
       const correlationId = "corr-order-reservation-mismatch";
 
-      await insertCatalogSaleOffer(sql, ids);
-      await insertCatalogSaleOffer(sql, {
+      await insertRunSaleOffer(sql, ids);
+      await insertRunSaleOffer(sql, {
         productId: ids.alternateProductId,
         saleOfferId: ids.alternateSaleOfferId,
       });
@@ -1332,16 +1414,14 @@ describe("database migrations, seed data, and reset behavior", () => {
       const alternateIds = buildOrderReservationIds(31);
       const correlationId = "corr-order-reservation-run";
 
-      await insertCatalogSaleOffer(sql, {
+      await insertRunSaleOffer(sql, {
         productId: ids.productId,
         saleOfferId: ids.saleOfferId,
-        purpose: "generated_run",
       });
       await insertGeneratedRunContext(sql, ids);
-      await insertCatalogSaleOffer(sql, {
+      await insertRunSaleOffer(sql, {
         productId: alternateIds.productId,
         saleOfferId: alternateIds.saleOfferId,
-        purpose: "generated_run",
       });
       await insertGeneratedRunContext(sql, alternateIds);
       await insertReservation(sql, {
@@ -1370,7 +1450,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       const ids = buildOrderReservationIds(40);
       const correlationId = "corr-order-reservation-preserve";
 
-      await insertCatalogSaleOffer(sql, ids);
+      await insertRunSaleOffer(sql, ids);
       await insertReservation(sql, {
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
@@ -1482,6 +1562,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
 
     await initializeInventory(redis, {
+      run: { runId: targetOfferId, status: "accepting" },
       saleOfferId: targetOfferId,
       allocatedStock: 12,
       source: "integration-test",
@@ -1498,6 +1579,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     await redis.hset(targetKeys.reservations, "old-reservation", "stale");
 
     const status = await initializeInventory(redis, {
+      run: { runId: targetOfferId, status: "accepting" },
       saleOfferId: targetOfferId,
       allocatedStock: 8,
       source: "generated-run",
@@ -1526,6 +1608,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const now = new Date("2026-06-20T12:00:00.000Z");
 
     await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
       saleOfferId,
       allocatedStock: 20,
       initializedAt: new Date("2026-06-20T11:59:00.000Z"),
@@ -1579,7 +1662,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000001";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 1, quantity: 2 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 5,
+    });
 
     const result = await reserveInventoryStock(redis, input);
 
@@ -1635,7 +1722,11 @@ describe("database migrations, seed data, and reset behavior", () => {
 
   it("recovers the connection-scoped reservation command after SCRIPT FLUSH", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000091";
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
 
     await expect(
       reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 91 })),
@@ -1657,6 +1748,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const first = buildReservationInput({ saleOfferId, sequence: 91, quantity: 2 });
     const second = buildReservationInput({ saleOfferId, sequence: 92, quantity: 1 });
     await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
       saleOfferId,
       allocatedStock: 3,
       initializedAt: new Date("2026-06-20T11:59:00.000Z"),
@@ -1705,7 +1797,11 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("rejects contradictory stock counters from inventory status", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000016";
     const keys = inventoryKeys(saleOfferId);
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 5,
+    });
     await redis.hset(keys.state, { remainingStock: "3", reservedStock: "1" });
 
     await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
@@ -1716,7 +1812,11 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("rejects a half-populated reservation-throughput slot as malformed state", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000010";
     const keys = inventoryKeys(saleOfferId);
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 3 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 3,
+    });
 
     await redis.hset(keys.reservationThroughput, "0:second", "1781956800");
     await expect(getInventoryStatus(redis, saleOfferId)).rejects.toThrow(
@@ -1728,7 +1828,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000002";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 2, quantity: 3 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
 
     const result = await reserveInventoryStock(redis, input);
 
@@ -1767,7 +1871,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 4,
       idempotencyKey: "replay-key",
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     const firstDecision = await reserveInventoryStock(redis, firstInput);
     expect(firstDecision).toEqual({
       outcome: "reservation_secured",
@@ -1837,7 +1945,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 17,
       idempotencyKey: "expired-before-promotion",
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
     await reserveInventoryStock(redis, input);
     await markReservationPendingPersistence(redis, input);
     const stateBefore = await redis.hgetall(keys.state);
@@ -1880,7 +1992,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 20,
       idempotencyKey: "persistent-before-promotion",
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     const idempotencyKey = keys.idempotency(input.idempotencyKey);
     await redis.persist(idempotencyKey);
@@ -1932,7 +2048,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 118,
       idempotencyKey: original.idempotencyKey,
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
     await reserveInventoryStock(redis, original);
     await markReservationPendingPersistence(redis, original);
     await redis.del(keys.idempotency(original.idempotencyKey));
@@ -1967,7 +2087,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000019";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 19 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     const recordBefore = await redis.get(keys.idempotency(input.idempotencyKey));
     const evalSpy = vi.spyOn(redis, "eval");
@@ -1994,7 +2118,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 29 });
     const deferredAt = new Date("2026-06-20T13:00:00.000Z");
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
 
     await expect(
@@ -2019,7 +2147,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 34 });
     const deadline = new Date("2026-06-20T13:05:00.000Z");
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     await promoteReservationIdempotencyToAccepted(redis, input);
 
@@ -2052,7 +2184,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: state.status === "pending" ? 30 : 31,
     });
     const deadline = new Date("2026-06-20T13:10:00.000Z");
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     await deferPendingPersistenceRecord(redis, {
       saleOfferId,
@@ -2083,7 +2219,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const keys = inventoryKeys(saleOfferId);
     const first = buildReservationInput({ saleOfferId, sequence: 32 });
     const second = buildReservationInput({ saleOfferId, sequence: 33 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
     await reserveInventoryStock(redis, first);
     await reserveInventoryStock(redis, second);
     const malformedMetadata = JSON.parse(
@@ -2148,7 +2288,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = `10000000-0000-4000-8000-0000000000${scenario.sequence}`;
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: scenario.sequence });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     const originalZrangebyscore = redis.zrangebyscore.bind(redis) as (
       ...args: unknown[]
@@ -2182,7 +2326,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000036";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 36 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     await redis.hdel(keys.pendingPersistenceRecords, input.reservation.id);
 
@@ -2204,7 +2352,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000038";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 38 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, input);
     await redis.del(keys.pendingPersistenceRecords);
     await redis.set(keys.pendingPersistenceRecords, "not-a-hash");
@@ -2224,7 +2376,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 9, quantity: 2 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 5,
+    });
     await reserveInventoryStock(redis, input);
     await markReservationPendingPersistence(redis, input);
 
@@ -2252,7 +2408,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000010";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({ saleOfferId, sequence: 10 });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
     await reserveInventoryStock(redis, input);
     await markReservationPendingPersistence(redis, input);
 
@@ -2285,7 +2445,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 8,
       idempotencyKey: "verified-transition",
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
     await reserveInventoryStock(redis, input);
     const mismatched = {
       ...input,
@@ -2426,22 +2590,22 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.exists(keys.idempotency(fresh.idempotencyKey))).toBe(0);
   });
 
-  it("rejects omitted and mismatched run IDs and catalog requests with a run ID", async () => {
+  it("rejects mismatched run and offer identities without changing either inventory", async () => {
     const runId = "20000000-0000-4000-8000-000000000011";
     const generatedOfferId = "20000000-0000-4000-8000-000000000012";
-    const catalogOfferId = "20000000-0000-4000-8000-000000000013";
+    const otherRunOfferId = "20000000-0000-4000-8000-000000000013";
     const mismatchedRunId = "20000000-0000-4000-8000-000000000014";
     await initializeInventory(redis, {
       saleOfferId: generatedOfferId,
       allocatedStock: 3,
       run: { runId, status: "accepting" },
     });
-    await initializeInventory(redis, { saleOfferId: catalogOfferId, allocatedStock: 3 });
+    await initializeInventory(redis, {
+      run: { runId: otherRunOfferId, status: "accepting" },
+      saleOfferId: otherRunOfferId,
+      allocatedStock: 3,
+    });
 
-    const omitted = await reserveInventoryStock(
-      redis,
-      buildReservationInput({ saleOfferId: generatedOfferId, sequence: 21 }),
-    );
     const mismatched = await reserveInventoryStock(
       redis,
       buildReservationInput({
@@ -2450,20 +2614,19 @@ describe("database migrations, seed data, and reset behavior", () => {
         runId: mismatchedRunId,
       }),
     );
-    const catalogWithRun = await reserveInventoryStock(
+    const otherOfferWithRun = await reserveInventoryStock(
       redis,
-      buildReservationInput({ saleOfferId: catalogOfferId, sequence: 23, runId }),
+      buildReservationInput({ saleOfferId: otherRunOfferId, sequence: 23, runId }),
     );
 
-    expect(omitted).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
     expect(mismatched).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
-    expect(catalogWithRun).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
+    expect(otherOfferWithRun).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
     expect(await getInventoryStatus(redis, generatedOfferId)).toMatchObject({
       remainingStock: 3,
       reservedStock: 0,
       pendingPersistenceCount: 0,
     });
-    expect(await getInventoryStatus(redis, catalogOfferId)).toMatchObject({
+    expect(await getInventoryStatus(redis, otherRunOfferId)).toMatchObject({
       remainingStock: 3,
       reservedStock: 0,
       pendingPersistenceCount: 0,
@@ -2518,7 +2681,11 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("rejects an idempotency quantity conflict without changing stock", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000005";
     const keys = inventoryKeys(saleOfferId);
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 5 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 5,
+    });
     await reserveInventoryStock(
       redis,
       buildReservationInput({ saleOfferId, sequence: 5, idempotencyKey: "conflict-key" }),
@@ -2556,7 +2723,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       sequence: 111,
       idempotencyKey: "late-retry-key",
     });
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 2 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 2,
+    });
 
     await reserveInventoryStock(redis, first);
     await redis.del(keys.idempotency(first.idempotencyKey));
@@ -2586,7 +2757,11 @@ describe("database migrations, seed data, and reset behavior", () => {
         idempotencyKey,
       }),
     );
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 10 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 10,
+    });
 
     const decisions = await Promise.all(
       candidates.map((candidate) => reserveInventoryStock(redis, candidate)),
@@ -2650,8 +2825,16 @@ describe("database migrations, seed data, and reset behavior", () => {
     const pending = buildReservationInput({ saleOfferId: pendingOfferId, sequence: 13 });
     const immediatelyBeforeExpiry = new Date(new Date(reservationExpiresAt).getTime() - 1);
     const atExpiry = new Date(reservationExpiresAt);
-    await initializeInventory(redis, { saleOfferId: acceptedOfferId, allocatedStock: 1 });
-    await initializeInventory(redis, { saleOfferId: pendingOfferId, allocatedStock: 1 });
+    await initializeInventory(redis, {
+      run: { runId: acceptedOfferId, status: "accepting" },
+      saleOfferId: acceptedOfferId,
+      allocatedStock: 1,
+    });
+    await initializeInventory(redis, {
+      run: { runId: pendingOfferId, status: "accepting" },
+      saleOfferId: pendingOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(redis, accepted);
     await promoteReservationIdempotencyToAccepted(redis, accepted);
     await reserveInventoryStock(redis, pending);
@@ -2696,8 +2879,13 @@ describe("database migrations, seed data, and reset behavior", () => {
       saleOfferId: malformedCollectionOfferId,
       sequence: 15,
     });
-    await initializeInventory(redis, { saleOfferId: malformedCounterOfferId, allocatedStock: 2 });
     await initializeInventory(redis, {
+      run: { runId: malformedCounterOfferId, status: "accepting" },
+      saleOfferId: malformedCounterOfferId,
+      allocatedStock: 2,
+    });
+    await initializeInventory(redis, {
+      run: { runId: malformedCollectionOfferId, status: "accepting" },
       saleOfferId: malformedCollectionOfferId,
       allocatedStock: 2,
     });
@@ -2726,7 +2914,11 @@ describe("database migrations, seed data, and reset behavior", () => {
       { length: 8 },
       () => new Redis(requireTestEnv("TEST_REDIS_URL"), { maxRetriesPerRequest: 3 }),
     );
-    await initializeInventory(redis, { saleOfferId, allocatedStock: 100 });
+    await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
+      saleOfferId,
+      allocatedStock: 100,
+    });
 
     try {
       const decisions = await Promise.all(
@@ -2769,6 +2961,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const allocatedStock = 501;
     let latestInput = buildReservationInput({ saleOfferId, sequence: 2000 });
     await initializeInventory(redis, {
+      run: { runId: saleOfferId, status: "accepting" },
       saleOfferId,
       allocatedStock,
       source: "retention-test",

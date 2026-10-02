@@ -100,7 +100,7 @@ export const securedReservationHoldSchema = z
     id: uuidSchema,
     saleOfferId: uuidSchema,
     correlationId: correlationIdSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     quantity: positiveIntegerSchema,
     reservationToken: z.string().trim().min(1),
     expiresAt: isoTimestampSchema,

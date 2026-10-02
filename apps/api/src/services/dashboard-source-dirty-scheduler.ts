@@ -202,7 +202,7 @@ export class DashboardSourceDirtyScheduler implements DashboardSourceDirtySchedu
             err: error,
             signal: signal.kind,
             ...(signal.kind === "inventory" ? { saleOfferId: signal.request.saleOfferId } : {}),
-            ...(signal.request.runId ? { runId: signal.request.runId } : {}),
+            runId: signal.request.runId,
             correlationId: signal.request.correlationId,
           },
           "Dashboard projection dirty publication failed.",

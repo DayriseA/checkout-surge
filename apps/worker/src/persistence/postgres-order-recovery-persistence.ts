@@ -113,8 +113,7 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
         and(
           inArray(orderRecoveryJobs.status, ["pending", "enqueued"]),
           sql`(
-            ${orders.runId} is null
-            or exists (
+            exists (
               select 1 from demo_runs eligible_run
               where eligible_run.id = ${orders.runId}
                 and eligible_run.status in ('starting', 'active', 'draining')

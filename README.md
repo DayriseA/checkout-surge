@@ -65,7 +65,7 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 
 - Redis-backed atomic inventory reservation with idempotency protection
 - Async order processing through BullMQ workers, with autonomous order-dispatch, ERP-result, pending-hold, and notification recovery
-- Mock ERP / downstream latency, TPS, error-rate, and outage controls, plus a PostgreSQL-backed terminal confirmation ledger with status lookup and idempotent replay. An accepted run always follows its frozen snapshot, so the global controls affect only catalog and other non-run calls
+- Mock ERP uses each accepted run's frozen latency, TPS, error-rate, and outage configuration, with a PostgreSQL terminal confirmation ledger for status lookup and idempotent replay.
 - Declared-capacity ERP dispatch through the queue's native rate limit and global concurrency, with durable capacity cooldowns, a separate availability circuit, sparse outage probes, and bounded observed-latency deadlines
 - API-owned conservative duration admission: a run is accepted only when its estimated occupancy stays within the effective ceiling (600 seconds by default, no admin bypass), and any run still nonterminal 900 seconds after acceptance is reset automatically
 - Real-time live spectator view with bounded SSE admission and rate-limited recovery reads
@@ -99,7 +99,7 @@ Build and start the full containerized reference runtime. This starts or recreat
 pnpm runtime:up
 ```
 
-Run migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory inside the Compose network. This mutates PostgreSQL and Redis; reruns preserve an existing active public runtime policy and its admin edits:
+Run migrations and seed the demo product, durable presets, and initial public runtime policy inside the Compose network. This mutates PostgreSQL; reruns preserve an existing active public runtime policy and its admin edits:
 
 ```bash
 pnpm runtime:setup
@@ -123,7 +123,7 @@ For focused host-native development, use the infra-only and `dev:*` commands doc
 
 Run API/web/load flows from the dashboard or call the owning services directly while developing. The public start path also uses the private control-service channel plus the server-issued visitor credential; public mode is not trusted from a browser-supplied header or body.
 
-While the API and Mock ERP are still running, optional local recovery and maintenance commands are available. `runtime:reset` terminalizes a recoverable current run as failed, removes only its exactly attributed queue jobs, writes its immutable summary, clears only its live traffic projection, and restores Mock ERP chaos defaults; it does not delete history or flush Redis. `maintenance:cleanup-runs` defaults to selecting eligible terminal generated runs created at least seven days ago while preserving active runs, catalog-backed runs, and the latest 15 runs across the full run population; each selected run uses strict exact queue/Redis cleanup before transactional durable deletion:
+While the API and Mock ERP are still running, optional local recovery and maintenance commands are available. `runtime:reset` terminalizes a recoverable current run as failed, removes only its exactly attributed queue jobs, writes its immutable summary, clears only its live traffic projection; it does not delete history or flush Redis. `maintenance:cleanup-runs` defaults to selecting eligible terminal generated runs created at least seven days ago while preserving active runs, the latest 15 runs across the full run population; each selected run uses strict exact queue/Redis cleanup before transactional durable deletion:
 
 ```bash
 pnpm runtime:reset

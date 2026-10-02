@@ -25,7 +25,6 @@ import {
   collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyMutableViolations,
   collectPublicRuntimePolicyViolations,
-  controlServiceTokenHeaderName,
   countUnavailableLoadRunDiagnosticProbes,
   dashboardLiveUpdateExpectedIntervalMs,
   dashboardProjectionDirtySignalSchema,
@@ -42,8 +41,6 @@ import {
   destructiveResetReasonValues,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
-  erpChaosResetPath,
-  erpChaosStatusSchema,
   erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationRequestSchema,
@@ -1316,38 +1313,6 @@ describe("ERP contracts", () => {
     }
   });
 
-  it("defines chaos control paths and service-token header", () => {
-    expect(erpChaosResetPath).toBe("/chaos/reset");
-    expect(controlServiceTokenHeaderName).toBe("x-control-service-token");
-  });
-
-  it("requires effective public-safe caps on chaos status", () => {
-    const status = {
-      latencyMs: 0,
-      maxTps: 100,
-      errorRate: 0,
-      forcedOutage: false,
-      defaultConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
-      updatedAt: timestamp,
-      effectiveSafetyCaps: {
-        maxLatencyMs: 5000,
-        minMaxTps: 1,
-        maxErrorRate: 0.5,
-        allowForcedOutage: true,
-      },
-    };
-    expect(erpChaosStatusSchema.parse(status)).toEqual(status);
-    expect(
-      erpChaosStatusSchema.safeParse({
-        latencyMs: 0,
-        maxTps: 100,
-        errorRate: 0,
-        forcedOutage: false,
-        updatedAt: timestamp,
-      }).success,
-    ).toBe(false);
-  });
-
   it("validates run ERP outcomes", () => {
     const runOutcome = runErpOutcomeSummarySchema.parse({
       runId,
@@ -1462,6 +1427,17 @@ describe("buy and dashboard contracts", () => {
     ).toThrow();
   });
 
+  it.each([
+    undefined,
+    null,
+    "not-a-run",
+  ])("requires explicit valid buy run identity: %s", (runId) => {
+    expect(
+      buyRequestSchema.safeParse({ saleOfferId, runId, idempotencyKey: "identity-required" })
+        .success,
+    ).toBe(false);
+  });
+
   it("defaults buy quantity while preserving caller identifiers", () => {
     const request = buyRequestSchema.parse({
       saleOfferId,
@@ -1481,6 +1457,7 @@ describe("buy and dashboard contracts", () => {
       correlationId,
       timestamp,
       reservation: {
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         saleOfferId,
         correlationId: "original-correlation",
@@ -1490,6 +1467,7 @@ describe("buy and dashboard contracts", () => {
         expiresAt: "2026-06-20T12:15:00.000Z",
       },
       order: {
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
         publicOrderId: "ord_contract",
         saleOfferId,

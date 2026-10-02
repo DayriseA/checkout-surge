@@ -161,17 +161,8 @@ services:
         SERVICE_NAME: mock-erp
     environment:
       <<: [*app-env, *data-env]
-      CONTROL_SERVICE_TOKEN: ${CONTROL_SERVICE_TOKEN}
       PORT: 4100
       HOST: 0.0.0.0
-      LATENCY_MS: ${LATENCY_MS:-0}
-      MAX_TPS: ${MAX_TPS:-100}
-      ERROR_RATE: ${ERROR_RATE:-0}
-      FORCED_OUTAGE: ${FORCED_OUTAGE:-false}
-      ADMIN_MAX_LATENCY_MS: ${ADMIN_MAX_LATENCY_MS:-5000}
-      ADMIN_MIN_MAX_TPS: ${ADMIN_MIN_MAX_TPS:-1}
-      ADMIN_MAX_ERROR_RATE: ${ADMIN_MAX_ERROR_RATE:-1}
-      ADMIN_ALLOW_FORCED_OUTAGE: ${ADMIN_ALLOW_FORCED_OUTAGE:-true}
       MOCK_ERP_POSTGRES_POOL_MAX: ${MOCK_ERP_POSTGRES_POOL_MAX:-5}
     depends_on:
       postgres:
@@ -282,7 +273,8 @@ services:
       dockerfile: packages/db/Dockerfile
       target: runtime
     environment:
-      <<: [*app-env, *data-env]
+      <<: *app-env
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
       PUBLIC_RUN_BUDGET_WINDOW_SECONDS: ${PUBLIC_RUN_BUDGET_WINDOW_SECONDS:-300}
       PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: ${PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS:-2}
       PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: ${PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS:-6}
@@ -300,8 +292,6 @@ services:
       PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE: ${PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE:-0.25}
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
 
   runtime-tools:

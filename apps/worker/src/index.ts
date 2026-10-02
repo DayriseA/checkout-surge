@@ -60,14 +60,14 @@ export async function startWorker(): Promise<void> {
         {
           err: error,
           saleOfferId: input.saleOfferId,
-          ...(input.runId ? { runId: input.runId } : {}),
+          runId: input.runId,
         },
         "Dashboard business outcome projection failed.",
       );
     },
     onDrop: (input) => {
       logger.warn(
-        { saleOfferId: input.saleOfferId, ...(input.runId ? { runId: input.runId } : {}) },
+        { saleOfferId: input.saleOfferId, runId: input.runId },
         "Business outcome dashboard scope limit reached; dropped the oldest dirty scope.",
       );
     },
@@ -112,7 +112,7 @@ export async function startWorker(): Promise<void> {
     pauseDelivery: (durationMs) => orderProcessJobPublisher.pauseDelivery(durationMs),
     persistence: erpScopeState,
     runConfigReader,
-    fallbackConcurrency: config.orderProcessConcurrency,
+    reconciliationConcurrency: config.orderProcessConcurrency,
   });
   const erpClient = new HttpErpOrderConfirmation({
     baseUrl: config.mockErpBaseUrl,
@@ -145,7 +145,7 @@ export async function startWorker(): Promise<void> {
     publishBusinessOutcomeUpdate: async (job) => {
       businessOutcomePublications.markDirty({
         saleOfferId: job.saleOfferId,
-        ...(job.runId ? { runId: job.runId } : {}),
+        runId: job.runId,
         correlationId: job.correlationId,
       });
     },
@@ -183,7 +183,7 @@ export async function startWorker(): Promise<void> {
       publishBusinessOutcomeUpdate: async (job) => {
         businessOutcomePublications.markDirty({
           saleOfferId: job.saleOfferId,
-          ...(job.runId ? { runId: job.runId } : {}),
+          runId: job.runId,
           correlationId: job.correlationId,
         });
       },

@@ -7,10 +7,8 @@ import {
   type DashboardProjection,
   dashboardProjectionSchemaName,
   dashboardProjectionScopeId,
-  type ErpChaosStatus,
   type ErrorPayloadCode,
   errorPayloadSchema,
-  nonnegativeNumberMinimum,
   orderProcessConcurrencyHardCap,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
@@ -20,7 +18,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminAuthenticatedSurface,
   AdminCurrentRunPanel,
-  AdminErpDiagnosticsController,
   AdminMaintenancePanel,
   AdminPresetController,
   AdminRuntimePolicyController,
@@ -32,8 +29,6 @@ import type { BackendRead } from "../src/app/lib/api.js";
 import {
   adminDemoResetProxyPath,
   adminDemoRunStartProxyPath,
-  adminErpChaosProxyPath,
-  adminErpChaosResetProxyPath,
   adminMaintenanceCleanupRunsProxyPath,
   adminPresetCopyToCustomProxyPath,
   adminPresetDuplicateProxyPath,
@@ -105,14 +100,6 @@ describe("admin feature controllers", () => {
       "Budget window seconds",
       "301",
     ],
-    [
-      "ERP apply",
-      "Apply ERP controls",
-      "Apply ERP controls",
-      adminErpChaosProxyPath,
-      "Latency ms",
-      "123",
-    ],
     ["preset archive", "Archive preset", "Archive preset", adminPresetListProxyPath, null, null],
     [
       "admin start",
@@ -149,8 +136,6 @@ describe("admin feature controllers", () => {
             initialRuntimePolicy={available(runtimePolicyFixture(10_000, 300))}
           />,
         );
-      } else if (kind === "ERP apply") {
-        render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
       } else if (kind === "cleanup") {
         render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
       } else {
@@ -183,9 +168,7 @@ describe("admin feature controllers", () => {
       });
       expect(fetchMock.mock.calls.filter(([input]) => String(input) === path)).toHaveLength(1);
       expect(
-        screen.queryByText(
-          /Preset saved\.|Admin run accepted\.|Global ERP fault injection updated\.|Cleanup complete:/,
-        ),
+        screen.queryByText(/Preset saved\.|Admin run accepted\.|Cleanup complete:/),
       ).toBeNull();
       if (field) expect((screen.getByLabelText(field) as HTMLInputElement).value).toBe(value);
       if (kind === "preset save") expect(screen.getByText("Unsaved")).toBeTruthy();
@@ -225,121 +208,6 @@ describe("admin feature controllers", () => {
     });
   });
 
-  it("confirms shared ERP reset before sending the reset request", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      jsonResponse(erpFixture()),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-
-    await user.click(screen.getByRole("button", { name: "Reset ERP controls" }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    await user.click(confirmationButton("Reset ERP controls"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(adminErpChaosResetProxyPath);
-    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("POST");
-  });
-
-  it("summarizes global ERP scope and sends no apply when confirmation is cancelled", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(
-      <AdminErpDiagnosticsController
-        initialErpChaos={available(erpFixture())}
-        runErpConfig={presetFixture().erpConfig}
-        runState="active"
-      />,
-    );
-    await user.clear(screen.getByLabelText("Latency ms"));
-    await user.type(screen.getByLabelText("Latency ms"), "250");
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-
-    const dialog = screen.getByRole("alertdialog");
-    expect(within(dialog).getByText("Latency ms")).toBeTruthy();
-    expect(within(dialog).getByText("250")).toBeTruthy();
-    expect(dialog.textContent).toContain(
-      "This does not change the active run — frozen in the accepted run snapshot; affects fallback and future non-snapshot calls.",
-    );
-    expect(dialog.textContent).toContain("reset when Mock ERP restarts.");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
-  });
-
-  it("shows run-snapshot and global ERP configuration without claiming health", () => {
-    render(<AdminAuthenticatedSurface {...surfaceProps(runFixture())} />);
-    const panel = document.querySelector("#erp-fault-injection");
-    if (!panel) throw new Error("Expected ERP fault-injection panel.");
-    expect(
-      within(panel as HTMLElement).getByRole("heading", {
-        name: "Accepted run snapshot (per-run)",
-      }),
-    ).toBeTruthy();
-    expect(
-      within(panel as HTMLElement).getByRole("heading", { name: "Configured global fallback" }),
-    ).toBeTruthy();
-    expect(panel.textContent).toContain("forced outage off");
-    expect(panel.textContent).not.toContain("ready");
-  });
-
-  it("keeps ERP fault hints reachable while the error-rate constraint stays concise", async () => {
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-    const panel = document.querySelector("#erp-fault-injection") as HTMLElement;
-    const user = userEvent.setup();
-    await user.click(within(panel).getByRole("button", { name: "About Error rate" }));
-    expect(within(panel).getByRole("tooltip").textContent).toContain("confirmation calls");
-    expect(panel.querySelector("#erp-chaos-errorRate-help")?.textContent).toContain(
-      "Enter 25 for 25%.",
-    );
-    expect(panel.querySelector("#erp-chaos-errorRate-help")?.textContent).not.toContain(
-      "confirmation calls",
-    );
-  });
-
-  it("does not invent forced-outage configuration when ERP status is unavailable", () => {
-    render(
-      <AdminErpDiagnosticsController
-        initialErpChaos={{ status: "unavailable", reason: "ERP not loaded" }}
-      />,
-    );
-
-    expect(screen.getByText("forced outage unavailable")).toBeTruthy();
-    expect(screen.queryByText("forced outage off")).toBeNull();
-  });
-
-  it("describes global ERP scope without implying a terminal run is active", async () => {
-    const user = userEvent.setup();
-    render(<AdminAuthenticatedSurface {...surfaceProps(completedRunFixture())} />);
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-
-    const dialog = screen.getByRole("alertdialog");
-    expect(dialog.textContent).toContain(
-      "There is no active run; these values govern fallback and future non-snapshot calls.",
-    );
-    expect(dialog.textContent).not.toContain("does not change the active run");
-  });
-
-  it("does not claim there is no active run when current-run state is unavailable", async () => {
-    const user = userEvent.setup();
-    render(
-      <AdminAuthenticatedSurface
-        {...surfaceProps(null)}
-        initialRecovery={{ status: "unavailable", reason: "Recovery unavailable" }}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-
-    const dialog = screen.getByRole("alertdialog");
-    expect(dialog.textContent).toContain(
-      "Current run state is unavailable — a currently active run keeps its frozen snapshot",
-    );
-    expect(dialog.textContent).not.toContain("There is no active run");
-  });
-
   it("renders protected readiness probes in an expanded operator block", () => {
     render(
       <AdminAuthenticatedSurface
@@ -371,7 +239,7 @@ describe("admin feature controllers", () => {
     expect(screen.getByText(/PostgreSQL readiness check failed/)).toBeTruthy();
   });
 
-  it("renders the eight admin sections in operational DOM order", () => {
+  it("renders the seven admin sections in operational DOM order", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
     const sectionIds = [
@@ -379,7 +247,6 @@ describe("admin feature controllers", () => {
       "readiness",
       "routine-actions",
       "presets",
-      "erp-fault-injection",
       "maintenance",
       "public-runtime-policy",
       "diagnostics-links",
@@ -862,47 +729,6 @@ describe("admin feature controllers", () => {
     ]);
   });
 
-  it("keeps unrelated controls enabled while an ERP mutation is pending", async () => {
-    const pending = deferred<Response>();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        if (String(input) === adminErpChaosProxyPath) return pending.promise;
-        throw new Error(`Unexpected fetch: ${String(input)}`);
-      }),
-    );
-    const user = userEvent.setup();
-    render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await user.click(confirmationButton("Apply ERP controls"));
-    const erpPanel = document.querySelector("#erp-fault-injection");
-    if (!erpPanel) throw new Error("Expected ERP fault-injection panel.");
-    for (const control of [
-      within(erpPanel as HTMLElement).getByRole("button", { name: "Apply ERP controls" }),
-      within(erpPanel as HTMLElement).getByRole("button", { name: "Reset ERP controls" }),
-    ]) {
-      expect((control as HTMLButtonElement).disabled).toBe(true);
-      expectControlDescription(
-        control,
-        "A change is being applied — wait before applying or resetting ERP controls.",
-      );
-    }
-    expect((screen.getByRole("button", { name: "Reset demo" }) as HTMLButtonElement).disabled).toBe(
-      false,
-    );
-    expect(
-      (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
-    pending.resolve(jsonResponse(erpFixture()));
-    await waitFor(() =>
-      expect(
-        (document.querySelector("#erp-fault-injection button") as HTMLButtonElement).disabled,
-      ).toBe(false),
-    );
-  });
-
   it("renders the canonical worker concurrency cap", () => {
     render(
       <AdminPresetController
@@ -917,132 +743,6 @@ describe("admin feature controllers", () => {
     ).toBeTruthy();
   });
 
-  it("describes canonical ERP bounds", () => {
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-    expect(
-      screen.getByText(`Unit: milliseconds. Minimum: ${nonnegativeNumberMinimum}. Maximum: 5000.`),
-    ).toBeTruthy();
-    expect(
-      screen.getByText("Unit: percent. Minimum: 0. Maximum: 100. Enter 25 for 25%."),
-    ).toBeTruthy();
-    for (const control of [
-      screen.getByRole("button", { name: "Apply ERP controls" }),
-      screen.getByRole("button", { name: "Reset ERP controls" }),
-    ]) {
-      expect((control as HTMLButtonElement).disabled).toBe(false);
-      expect(control.getAttribute("aria-describedby")).toBeNull();
-    }
-  });
-
-  it("keeps a dirty ERP draft across props and submits its exact values", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(
-      <AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />,
-    );
-    const latency = screen.getByLabelText("Latency ms");
-    await user.clear(latency);
-    await user.type(latency, "250");
-    const maxTps = screen.getByLabelText("Max TPS");
-    await user.clear(maxTps);
-    await user.type(maxTps, "20");
-    const errorRate = screen.getByLabelText("Error rate");
-    await user.clear(errorRate);
-    await user.type(errorRate, "25");
-    await user.click(screen.getByLabelText("Forced outage"));
-    rerender(
-      <AdminErpDiagnosticsController
-        initialErpChaos={available({ ...erpFixture(), latencyMs: 75 })}
-      />,
-    );
-    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
-    expect((screen.getByLabelText("Max TPS") as HTMLInputElement).value).toBe("20");
-    expect((screen.getByLabelText("Error rate") as HTMLInputElement).value).toBe("25");
-    expect((screen.getByLabelText("Forced outage") as HTMLInputElement).checked).toBe(true);
-
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      jsonResponse({
-        ...erpFixture(),
-        latencyMs: 250,
-        maxTps: 20,
-        errorRate: 0.25,
-        forcedOutage: true,
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await user.click(confirmationButton("Apply ERP controls"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-    expect(fetchMock.mock.calls[0]?.[1]?.method).toBe("PUT");
-    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
-      latencyMs: 250,
-      maxTps: 20,
-      errorRate: 0.25,
-      forcedOutage: true,
-    });
-  });
-
-  it("retains ERP controls while reporting a newer unavailable read", async () => {
-    const user = userEvent.setup();
-    const { rerender } = render(
-      <AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />,
-    );
-    await user.clear(screen.getByLabelText("Latency ms"));
-    await user.type(screen.getByLabelText("Latency ms"), "250");
-
-    rerender(
-      <AdminErpDiagnosticsController
-        initialErpChaos={{ status: "unavailable", reason: "Latest ERP read failed" }}
-      />,
-    );
-
-    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
-    expect(screen.getByText("Latest ERP read failed")).toBeTruthy();
-    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
-    expect(
-      (screen.getByRole("button", { name: "Apply ERP controls" }) as HTMLButtonElement).disabled,
-    ).toBe(false);
-  });
-
-  it("explains disabled ERP controls when no authoritative caps are available", () => {
-    render(
-      <AdminErpDiagnosticsController
-        initialErpChaos={{ status: "unavailable", reason: "ERP not loaded" }}
-      />,
-    );
-
-    for (const control of [
-      screen.getByRole("button", { name: "Apply ERP controls" }),
-      screen.getByRole("button", { name: "Reset ERP controls" }),
-    ]) {
-      expect((control as HTMLButtonElement).disabled).toBe(true);
-      expectControlDescription(
-        control,
-        "Diagnostics status is unavailable — refresh before applying or resetting ERP controls.",
-      );
-    }
-    expect(screen.getByRole("alert")).toBeTruthy();
-  });
-
-  it("keeps an empty operation status mounted until a success message arrives", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(erpFixture())),
-    );
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-    const status = screen.getByRole("status");
-    expect(status.textContent).toBe("");
-
-    await user.type(screen.getByLabelText("Latency ms"), "0");
-    expect(screen.getByRole("status")).toBe(status);
-    expect(status.textContent).toBe("");
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await user.click(confirmationButton("Apply ERP controls"));
-    await waitFor(() => expect(status.textContent).toBe("Global ERP fault injection updated."));
-    expect(screen.getByRole("status")).toBe(status);
-  });
-
   it("classifies authoritative field rejections separately from parse failures", () => {
     expect(
       serverFieldErrors(
@@ -1050,111 +750,6 @@ describe("admin feature controllers", () => {
         "policy",
       ).maxBuyers?.code,
     ).toBe("server_rejected");
-  });
-
-  it("keeps a blank ERP draft, validates it on blur, and sends no fallback request", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-
-    const latency = screen.getByLabelText("Latency ms");
-    await user.clear(latency);
-    await user.tab();
-    expect((latency as HTMLInputElement).value).toBe("");
-    expect(latency.getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByText("Latency is required.")).toBeTruthy();
-    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(screen.getByText("Correct the highlighted fields.").parentElement).toBe(
-      document.activeElement,
-    );
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    expect(screen.getByText("Correct the highlighted fields.").parentElement).toBe(
-      document.activeElement,
-    );
-  });
-
-  it("preserves malformed ERP text through blur and submit", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-
-    const latency = screen.getByLabelText("Latency ms");
-    expect(latency.getAttribute("inputmode")).toBe("numeric");
-    await user.clear(latency);
-    await user.type(latency, "Infinity");
-    await user.tab();
-    expect((latency as HTMLInputElement).value).toBe("Infinity");
-    expect(
-      screen.getByText("Latency must be a finite number.", {
-        selector: "#erp-chaos-latencyMs-error",
-      }),
-    ).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect((latency as HTMLInputElement).value).toBe("Infinity");
-  });
-
-  it("keeps ERP controls usable after a structured server rejection and retries exactly", async () => {
-    let attempts = 0;
-    const fetchMock = vi.fn(async () =>
-      attempts++ === 0
-        ? canonicalErrorResponse("Rejected", 400, "invalid_chaos_configuration", {
-            forcedOutage: { allowed: false, actual: true },
-          })
-        : jsonResponse({ ...erpFixture(), forcedOutage: true }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-    await user.click(screen.getByLabelText("Forced outage"));
-
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    await user.click(confirmationButton("Apply ERP controls"));
-    const forcedOutage = screen.getByLabelText("Forced outage");
-    expect(
-      await screen.findByText(
-        "The service rejected this value. Review its permitted range and try again.",
-        { selector: "#erp-chaos-forcedOutage-error" },
-      ),
-    ).toBeTruthy();
-    expect(forcedOutage.getAttribute("aria-invalid")).toBe("true");
-    expect(forcedOutage.getAttribute("aria-describedby")).toBe("erp-chaos-forcedOutage-error");
-    expect(document.querySelector("#erp-chaos-forcedOutage-error")).toBeTruthy();
-    expect((forcedOutage as HTMLInputElement).checked).toBe(true);
-    expect(screen.queryByText("ERP diagnostics are unavailable.")).toBeNull();
-
-    await user.click(confirmationButton("Apply ERP controls"));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText("Global ERP fault injection updated.")).toBeTruthy();
-    expect(screen.getByLabelText("Forced outage").getAttribute("aria-invalid")).toBeNull();
-  });
-
-  it("clears stale ERP validation after a successful authoritative reset", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => jsonResponse(erpFixture())),
-    );
-    const user = userEvent.setup();
-    render(<AdminErpDiagnosticsController initialErpChaos={available(erpFixture())} />);
-    await user.clear(screen.getByLabelText("Latency ms"));
-    await user.click(screen.getByRole("button", { name: "Apply ERP controls" }));
-    expect(
-      screen.getByText("Latency is required.", {
-        selector: "#erp-chaos-latencyMs-error",
-      }),
-    ).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "Reset ERP controls" }));
-    await user.click(confirmationButton("Reset ERP controls"));
-    await waitFor(() => expect(screen.queryByText("Latency is required.")).toBeNull());
-    expect(screen.queryByText("Correct the highlighted fields.")).toBeNull();
-    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("50");
   });
 
   it("reconciles reset recovery into current-run and preset start gating", async () => {
@@ -1182,8 +777,6 @@ describe("admin feature controllers", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
     const props = surfaceProps(runFixture());
-    if (props.initialErpChaos.status !== "available") throw new Error("Expected ERP status.");
-    props.initialErpChaos = available({ ...props.initialErpChaos.data, latencyMs: 250 });
     render(<AdminAuthenticatedSurface {...props} />);
     expect(
       (screen.getByRole("button", { name: "Run once with these values" }) as HTMLButtonElement)
@@ -1201,12 +794,11 @@ describe("admin feature controllers", () => {
       adminDemoResetProxyPath,
       knownRecoveryPath,
     ]);
-    expect((screen.getByLabelText("Latency ms") as HTMLInputElement).value).toBe("250");
     const maintenance = screen
       .getByRole("heading", { name: "Recovery and cleanup" })
       .closest("section");
     expect(maintenance?.textContent).toContain(
-      "1 runs failed, 1 sale offers closed, 1 queues cleaned, 2 jobs cleaned. Global ERP fault injection is not changed by this reset.",
+      "1 runs failed, 1 sale offers closed, 1 queues cleaned, 2 jobs cleaned.",
     );
   });
 
@@ -3215,7 +2807,6 @@ describe("admin realtime stream recovery", () => {
 
 function surfaceProps(currentRun: DashboardProjection["currentRun"]) {
   return {
-    initialErpChaos: available(erpFixture()),
     initialPresets: available<AdminPresetListResponse>({
       presets: [presetFixture()],
       timestamp: "2026-06-20T00:00:10.000Z",
@@ -3269,23 +2860,6 @@ function canonicalErrorResponse(
     }),
     status,
   );
-}
-
-function erpFixture(): ErpChaosStatus {
-  return {
-    latencyMs: 50,
-    maxTps: 100,
-    errorRate: 0,
-    forcedOutage: false,
-    defaultConfig: { latencyMs: 50, maxTps: 100, errorRate: 0, forcedOutage: false },
-    updatedAt: "2026-06-20T00:00:10.000Z",
-    effectiveSafetyCaps: {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
-    },
-  };
 }
 
 function recoveryFixture(currentRun: DashboardProjection["currentRun"]): DashboardProjection {

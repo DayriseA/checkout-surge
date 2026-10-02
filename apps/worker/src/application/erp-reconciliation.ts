@@ -424,7 +424,7 @@ function sameIdentity(
     identity.publicOrderId === job.publicOrderId &&
     identity.reservationId === job.reservationId &&
     identity.saleOfferId === job.saleOfferId &&
-    (identity.runId ?? null) === (job.runId ?? null) &&
+    identity.runId === job.runId &&
     identity.idempotencyKey === idempotencyKey &&
     identity.quantity === job.quantity
   );

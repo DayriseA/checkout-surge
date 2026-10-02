@@ -1,20 +1,11 @@
 import { type ErpConfirmationRequest, erpConfirmationPath } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createServiceLogger } from "@checkout-surge/logger";
 import { describe, expect, it } from "vitest";
-import { ErpChaosConfigStore } from "../../src/application/chaos-control-service.js";
 import { ConfirmationService } from "../../src/application/confirmation-service.js";
 import { buildMockErpServer } from "../../src/server.js";
 
-const defaultChaosConfig = { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false };
-const testSafetyCaps = {
-  maxLatencyMs: 5000,
-  minMaxTps: 1,
-  maxErrorRate: 1,
-  allowForcedOutage: true,
-};
-const controlServiceToken = "test-control-token";
-
 const confirmationRequest: ErpConfirmationRequest = {
+  erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_corr_1",
   reservationId: "22222222-2222-4222-8222-222222222222",
@@ -33,12 +24,7 @@ describe("Mock ERP correlation boundary", () => {
       level: "info",
       destination: { write: (line) => void lines.push(line) },
     });
-    const server = buildMockErpServer({
-      confirmationService: new ConfirmationService(),
-      chaosConfigStore: new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps),
-      controlServiceToken,
-      logger,
-    });
+    const server = buildMockErpServer({ confirmationService: new ConfirmationService(), logger });
     try {
       const confirmation = await server.inject({
         method: "POST",

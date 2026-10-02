@@ -35,7 +35,7 @@ export class PostgresNotificationRecoveryPersistence implements NotificationReco
         reservationId: order.reservationId,
         saleOfferId: order.saleOfferId,
         correlationId: order.correlationId,
-        ...(order.runId ? { runId: order.runId } : {}),
+        runId: order.runId,
         quantity: order.quantity,
         queuedAt: order.queuedAt.toISOString(),
         processingGeneration: 0,

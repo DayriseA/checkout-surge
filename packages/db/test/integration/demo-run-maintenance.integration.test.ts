@@ -38,10 +38,10 @@ async function seedGeneratedRunWithTerminalOrder(sql: TestSql): Promise<void> {
   `;
   await sql`
     INSERT INTO "sale_offers" (
-      "id", "product_id", "name", "allocated_stock", "sale_starts_at", "sale_ends_at", "purpose"
+      "id", "product_id", "name", "allocated_stock", "sale_starts_at", "sale_ends_at"
     ) VALUES (
       ${ids.saleOffer}, ${ids.product}, 'Maintenance Offer', 10,
-      '2026-01-01'::timestamptz, '2030-01-01'::timestamptz, 'generated_run'
+      '2026-01-01'::timestamptz, '2030-01-01'::timestamptz
     )
   `;
   await sql`
@@ -147,7 +147,7 @@ describe("generated-run durable maintenance with processing-control data", () =>
       .db.insert(erpScopeResilienceState)
       .values([
         { scope: `run:${ids.run}` },
-        { scope: "catalog" },
+        { scope: "run:71000000-0000-4000-8000-000000000098" },
         { scope: "run:71000000-0000-4000-8000-000000000099" },
       ]);
     await requireConnection()
@@ -189,7 +189,8 @@ describe("generated-run durable maintenance with processing-control data", () =>
           },
         },
         {
-          idempotencyKey: "erp-confirmation:catalog-order",
+          runId: "71000000-0000-4000-8000-000000000099",
+          idempotencyKey: "erp-confirmation:other-run-order",
           orderId: "71000000-0000-4000-8000-000000000099",
           publicOrderId: "ord-catalog",
           reservationId: "71000000-0000-4000-8000-000000000098",
@@ -216,12 +217,15 @@ describe("generated-run durable maintenance with processing-control data", () =>
     await expect(db.select().from(erpDispatchCalls)).resolves.toHaveLength(0);
     await expect(db.select().from(erpAttempts)).resolves.toHaveLength(0);
     await expect(db.select().from(erpConfirmationLedger)).resolves.toMatchObject([
-      { idempotencyKey: "erp-confirmation:catalog-order", runId: null },
+      {
+        idempotencyKey: "erp-confirmation:other-run-order",
+        runId: "71000000-0000-4000-8000-000000000099",
+      },
     ]);
     await expect(db.select().from(orderRecoveryJobs)).resolves.toHaveLength(0);
     const remainingScopes = await db.select().from(erpScopeResilienceState);
     expect(remainingScopes.map((row) => row.scope).sort()).toEqual([
-      "catalog",
+      "run:71000000-0000-4000-8000-000000000098",
       "run:71000000-0000-4000-8000-000000000099",
     ]);
     await expect(db.select().from(demoRuns).where(eq(demoRuns.id, ids.run))).resolves.toHaveLength(

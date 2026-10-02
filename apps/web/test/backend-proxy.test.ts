@@ -25,7 +25,6 @@ function injectConfig(): void {
   process.env.CONTROL_SERVICE_TOKEN = "control-token";
   process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
   process.env.API_BASE_URL = "http://api.internal";
-  process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
   initializeWebServerConfig(process.env);
 }
 

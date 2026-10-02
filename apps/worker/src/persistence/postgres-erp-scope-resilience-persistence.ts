@@ -12,7 +12,7 @@ import type {
 
 /**
  * Durable per-scope restart-safety state: cooldown and circuit-open
- * expiries for one downstream capacity scope (`catalog` or `run:<id>`). The
+ * expiries for one downstream capacity scope (`run:<id>`). The
  * adaptive controller reads and writes this state during operation; learned
  * rate and latency state remain process-local.
  */
@@ -96,7 +96,7 @@ function activeObligation(now: Date) {
 }
 
 function scopeExpression() {
-  return sql<string>`case when ${orders.runId} is null then 'catalog' else 'run:' || ${orders.runId}::text end`;
+  return sql<string>`'run:' || ${orders.runId}::text`;
 }
 
 function runnableReconciliationObligation() {
@@ -128,5 +128,5 @@ function toDate(timestampMs: number): Date | null {
 }
 
 function isAdmissionScope(scope: string): scope is AdaptiveErpSafetyRecord["scope"] {
-  return scope === "catalog" || scope.startsWith("run:");
+  return scope.startsWith("run:");
 }

@@ -33,11 +33,6 @@ export const adminFieldHints = {
     "Health checks of the services a run needs: database, Redis, queue, load generator, simulated ERP. Runs cannot start while a required dependency is not ready.",
   presets:
     "A preset is a saved scenario: traffic, stock, simulated ERP and worker settings. Public presets are the cards visitors see. Admin presets exist only here. You can also start a one-off run with edited values without saving them.",
-  erpFallback:
-    "Live controls of the simulated ERP service itself. Each run carries its own frozen ERP settings, so changes here never affect a running run. They apply only to ERP calls that carry no run settings, and reset when the Mock ERP restarts.",
-  fallbackLatency: `${fieldHints.erpDelay} Applies to calls that carry no run settings.`,
-  fallbackCapacity: `${fieldHints.erpCapacity} Applies to calls that carry no run settings.`,
-  fallbackErrorRate: `${fieldHints.erpFailureRate} Applies to calls that carry no run settings.`,
   recovery:
     "Operator tools. Reset stops all demo work immediately and frees the demo. Cleanup permanently deletes old generated runs from the history.",
   publicPolicy:
@@ -74,7 +69,7 @@ export const adminFieldHints = {
   allowTrafficModes:
     'Which traffic patterns visitors may pick ("Everyone at once" / "Steady stream"). At least one must stay allowed.',
   perRunErp:
-    'Simulated ERP behaviour frozen into every run started from this preset. It takes precedence over the global "ERP fault injection" values.',
+    "Simulated ERP behaviour frozen into every run started from this preset. Accepted runs retain these values until completion.",
   workerBackpressure:
     "How the background worker pulls orders from the queue. Backpressure means the queue absorbs the surge so the slow ERP only receives what it can handle.",
   effectiveRunPreview:

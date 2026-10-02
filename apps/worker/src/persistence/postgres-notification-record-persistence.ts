@@ -78,7 +78,7 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
           orderId: order.id,
           saleOfferId: order.saleOfferId,
           correlationId: order.correlationId,
-          ...(order.runId ? { runId: order.runId } : {}),
+          runId: order.runId,
           recipientPlaceholder: job.recipientPlaceholder,
           recordedAt,
           createdAt: recordedAt,
@@ -96,7 +96,7 @@ export class PostgresNotificationRecordPersistence implements NotificationRecord
         orderId: order.id,
         reservationId: order.reservationId,
         saleOfferId: order.saleOfferId,
-        ...(order.runId ? { runId: order.runId } : {}),
+        runId: order.runId,
         correlationId: order.correlationId,
         eventName: "notification.recorded",
         payload: {
@@ -144,6 +144,6 @@ function findMismatchedIdentityFields(order: DurableOrder, job: NotificationReco
 
   compare("saleOfferId", order.saleOfferId, job.saleOfferId);
   compare("correlationId", order.correlationId, job.correlationId);
-  compare("runId", order.runId ?? undefined, job.runId);
+  compare("runId", order.runId, job.runId);
   return mismatches;
 }

@@ -223,7 +223,6 @@ export async function processJob(
   } catch (error) {
     if (
       error instanceof OrderNotFoundError &&
-      job.data.runId &&
       (await options.recovery.isTerminalResetRun?.(job.data.runId)) === true
     ) {
       return;

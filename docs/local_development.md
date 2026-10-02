@@ -89,7 +89,7 @@ docker compose -f docker-compose.yml -f docker-compose.no-sysctls.yml up -d
 
 The override uses Compose's `!reset` tag to clear both the API and load-orchestrator blocks and was verified with Docker Compose v2.40.3. If another Compose implementation does not support the tag, deploy from a copy of `docker-compose.yml` with the `sysctls:` blocks removed. See [Reference Runtime Measurements](reference_runtime_measurements.md#reference-runtime-network-namespace) for the measurement and portability rationale.
 
-Run migrations and seed the demo product, baseline sale offer, durable demo presets, PostgreSQL records, and Redis inventory:
+Run migrations and seed the demo product, durable demo presets, and initial public runtime policy:
 
 ```bash
 pnpm runtime:setup
@@ -100,6 +100,8 @@ pnpm runtime:setup
 Setup strictly validates the environment-backed public-policy bootstrap before database mutations and inserts it only when `active` is absent. After applying the baseline, the migration runner also validates any existing active policy with the current shared schema and reports field-level diagnostics for malformed current data. Rerunning setup preserves the existing PostgreSQL policy, including admin edits, and a valid current policy is a semantic no-op. Use the intentional wipe below when the pre-release data shape is incompatible or a new environment bootstrap is intended.
 
 ### Intentional pre-release wipe and rebuild
+
+The run-required purchase version changes PostgreSQL nullability and offer shape plus Redis hold/idempotency/pending formats. Stop all services and intentionally rebuild PostgreSQL, Redis inventory, queues, and the load journal together before running it. Do not mix old and new producers. There is no compatibility layer, synthetic historical run, automatic startup repair, or automatic wipe. Seed creates no sale offer or inventory; run acceptance initializes independent stock from the frozen configuration.
 
 Pre-release reference-runtime data is disposable. When a repository change is incompatible with existing local PostgreSQL, Redis, or load-journal state, confirm that `COMPOSE_PROJECT_NAME` selects the intended Compose project, then use this one rebuild workflow instead of translating the legacy state:
 
@@ -117,9 +119,9 @@ Reset the running demo only when you need explicit admin recovery or a refreshed
 pnpm runtime:reset
 ```
 
-`runtime:reset` executes inside the API container when the Compose runtime is running, so it works without publishing the API port. When no API container is running, it defaults to `http://localhost:4000` for the API and `http://localhost:4100` for Mock ERP. It requires `CONTROL_SERVICE_TOKEN`, generates one correlation ID, calls bodyless `POST /admin/demo/reset` first, and then attempts bodyless `POST /chaos/reset` even if the API call failed. Each complete request and response-body read has a timeout with a 30-second default, and both requests carry the same token and correlation headers. The CLI removes the exact token from bounded diagnostics and response-correlation output, reports each service outcome, and exits nonzero when either failed, so a partial result can be retried safely. The API-to-load-orchestrator abort uses its own 20-second default complete-response deadline; the orchestrator's `K6_CANCELLATION_TIMEOUT_MS` stop-and-reap bound defaults to 10 seconds and cannot exceed 15 seconds, and the existing 5-second traffic-start deadline is unchanged.
+`runtime:reset` executes inside the API container when Compose is running; otherwise it defaults to `http://localhost:4000`. It requires `CONTROL_SERVICE_TOKEN`, generates one correlation ID, and calls bodyless `POST /admin/demo/reset`. The complete response has a 30-second default deadline; diagnostics are sanitized and failures return nonzero. Exact load-orchestrator cancellation retains its existing bounded deadline.
 
-For a starting, active, or draining demo run, the API fences the durable run and Redis admission, confirms exact-run k6 termination, performs bounded exact queue cleanup, writes one failed immutable summary, and destructively purges that run's internal PostgreSQL and Redis state without waiting on the ERP. It retains the run row, summary, closed generated sale offer, and ownership context. Other generated runs and catalog/unscoped state remain intact. Mock ERP then restores all four global chaos controls to configured startup defaults. A retry after partial purge is idempotent and finishes before a successor is admitted.
+For a starting, active, or draining demo run, the API fences the durable run and Redis admission, confirms exact-run k6 termination, performs bounded exact queue cleanup, writes one failed immutable summary, and destructively purges that run's internal PostgreSQL and Redis state without waiting on the ERP. It retains the run row, summary, closed generated sale offer, and ownership context. Other runs remain intact. A retry after partial purge is idempotent and finishes before a successor is admitted.
 
 Open the dashboard:
 
@@ -139,7 +141,7 @@ pnpm runtime:smoke
 
 The smoke requires the already-started, seeded runtime and a valid `CONTROL_SERVICE_TOKEN`. It verifies every service's required readiness checks, including the load orchestrator's k6 executable; dashboard health and page reachability; a schema-valid same-origin recovery read; a complete SSE connection control frame and timestamped heartbeat; one nonterminal and one completed projection for the generated run; and the completed business, Redis inventory, and notification evidence for one zero-chaos 32-buyer accepted burst. It then performs protected exact-run teardown.
 
-The smoke is intentionally mutating. Its preflight protected API reset can terminalize an existing recoverable run and clear that run's live projection, but it does not invoke the operational `runtime:reset` client's separate Mock ERP chaos reset. The smoke starts its bounded scenario as an authorized admin operation so routine reruns do not consume public visitor/global start budgets. HTTP requests have 10-second deadlines; SSE connection, heartbeat, and close waits are 5, 20, and 5 seconds. One absolute run-evidence deadline begins immediately before the start request and is shared by nonterminal projection, terminal Run History, and completed-projection waits. It defaults to 330 seconds (`5` seconds traffic + `300` seconds drain + three `5`-second finalization intervals + `10` seconds allowance), and `RUNTIME_SMOKE_RUN_TIMEOUT_MS` can override it positively. If the start response is ambiguous, the already-open stream has 5 seconds to recover only a projection carrying the smoke's unique correlation lineage. Exact cleanup then has its own fresh 30-second absolute budget, including terminality preparation, any exact reset, teardown retries, and retry delays. A teardown refused with `run_cleanup_conflict` / `active_job` (queue jobs still `active` for the run, typically orphaned by a killed worker until BullMQ stalled-job detection settles them) is polled about once per second within that budget instead of counting against the three ordinary retry attempts; the wait is logged once when it starts. Every failure names its stage, such as `health/worker`, `sse/terminal_projection`, or `cleanup/delete_exact_run`.
+The smoke is intentionally mutating. Its preflight protected API reset can terminalize an existing recoverable run and clear that run's live projection, and the operational `runtime:reset` client invokes the same API-owned endpoint. The smoke starts its bounded scenario as an authorized admin operation so routine reruns do not consume public visitor/global start budgets. HTTP requests have 10-second deadlines; SSE connection, heartbeat, and close waits are 5, 20, and 5 seconds. One absolute run-evidence deadline begins immediately before the start request and is shared by nonterminal projection, terminal Run History, and completed-projection waits. It defaults to 330 seconds (`5` seconds traffic + `300` seconds drain + three `5`-second finalization intervals + `10` seconds allowance), and `RUNTIME_SMOKE_RUN_TIMEOUT_MS` can override it positively. If the start response is ambiguous, the already-open stream has 5 seconds to recover only a projection carrying the smoke's unique correlation lineage. Exact cleanup then has its own fresh 30-second absolute budget, including terminality preparation, any exact reset, teardown retries, and retry delays. A teardown refused with `run_cleanup_conflict` / `active_job` (queue jobs still `active` for the run, typically orphaned by a killed worker until BullMQ stalled-job detection settles them) is polled about once per second within that budget instead of counting against the three ordinary retry attempts; the wait is logged once when it starts. Every failure names its stage, such as `health/worker`, `sse/terminal_projection`, or `cleanup/delete_exact_run`.
 
 The dedicated idle recovery regression remains a distinct opt-in multi-minute lane:
 
@@ -201,7 +203,7 @@ Start local infrastructure:
 pnpm infra:up
 ```
 
-Run database migrations and seed the demo product, baseline sale offer, durable presets, PostgreSQL records, and Redis inventory:
+Run database migrations and seed the demo product, durable presets, and initial public runtime policy:
 
 ```bash
 pnpm --filter @checkout-surge/db db:migrate
@@ -309,12 +311,12 @@ The worker-facing Mock ERP confirmation contract is `POST http://localhost:4100/
 | `pnpm runtime:up` | Build and start the full local reference runtime |
 | `pnpm runtime:up:debug` | Build and start the full runtime with loopback-only direct service ports for host-native debugging |
 | `pnpm runtime:down` | Stop the full local reference runtime while preserving named-volume PostgreSQL, Redis, and load-orchestrator journal state |
-| `pnpm runtime:setup` | Run migrations and seed demo baseline data, durable presets, and Redis inventory inside the compose network |
+| `pnpm runtime:setup` | Run migrations and seed the demo product, durable presets, and initial public runtime policy inside the compose network; sale inventory is initialized when a run starts |
 | `pnpm runtime:wipe` | Stop the selected Compose project and delete its named PostgreSQL, Redis, and load-orchestrator journal volumes plus its orphan containers; it does not delete the host-native journal |
-| `pnpm runtime:reset` | Reset the running demo through the API and Mock ERP admin reset endpoints for recovery/local maintenance |
+| `pnpm runtime:reset` | Reset the running demo through the API-owned admin reset endpoint for recovery/local maintenance |
 | `pnpm runtime:smoke` | Routine verification of service readiness, dashboard HTTP/recovery/SSE, one zero-chaos 32-buyer accepted burst, terminal business/inventory/notification/projection evidence, and exact generated-run cleanup; its preflight API reset may terminalize an existing recoverable run |
 | `pnpm runtime:soak:recovery` | On an idle runtime, probe direct-web and proxy-to-web health for more than two recovery budget windows, verify `/demo` remains reachable, then verify two independently signed BFF recovery identities receive authoritative idle state; deterministic component tests separately prove Start controls become enabled after hydration; intentionally opt-in and multi-minute |
-| `pnpm maintenance:cleanup-runs` | Select terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, catalog-backed runs, and the latest 15 runs across the full population; for each selection, perform strict exact queue/Redis cleanup before transactional durable deletion. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
+| `pnpm maintenance:cleanup-runs` | Select terminal generated demo runs whose `demo_runs.created_at` is at least seven days old by default, preserving active runs, the latest 15 runs across the full population; for each selection, perform strict exact queue/Redis cleanup before transactional durable deletion. Override with `-- --older-than-days <days>` and/or `-- --keep-latest <count>` |
 | `pnpm dev` | Build shared packages, then run all app `dev` tasks through Turbo |
 | `pnpm dev:dashboard` | Build shared packages, then start the Next.js operator dashboard |
 | `pnpm dev:api` | Build and start the API gateway |
@@ -448,7 +450,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ADMIN_LOGIN_WINDOW_SECONDS` | `60` | Web admin login refill/window duration |
 | `PUBLIC_CLIENT_COOKIE_SECRET` | Required; generate a private HMAC secret distinct from `ADMIN_SESSION_SECRET` | Web issuance/verification and API verification of anonymous public visitor credentials |
 | `API_BASE_URL` | `http://localhost:4000` | Web, load orchestrator |
-| `MOCK_ERP_BASE_URL` | `http://localhost:4100` | Web, worker |
+| `MOCK_ERP_BASE_URL` | `http://localhost:4100` | API readiness, worker, runtime tooling |
 | `LOAD_ORCHESTRATOR_BASE_URL` | `http://localhost:4200` | API traffic-execution gateway |
 | `WORKER_HEALTH_BASE_URL` | `http://localhost:4300` | Runtime smoke checks |
 | `WEB_BASE_URL` | `http://localhost:8080` | Routine runtime smoke and recovery-soak dashboard checks |
@@ -478,14 +480,6 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ORDER_DISPATCH_MINIMUM_QUEUED_AGE_MS` | `1000` | Minimum queued age before dispatch recovery reasserts a deterministic job; `0` is allowed |
 | `ORDER_RECOVERY_SCAN_INTERVAL_MS` / `ORDER_RECOVERY_BATCH_SIZE` | `1000` / `100` | Worker durable ERP/order-recovery scan cadence and batch |
 | `ORDER_RECOVERY_LEASE_MS` | `30000` | Worker recovery claim lease; must cover the adaptive ERP maximum request deadline plus ownership headroom (currently 11000 ms). A publication still pending in the queue at expiry is renewed, not re-claimed |
-| `LATENCY_MS` | `0` | Mock ERP global fallback/diagnostic chaos behavior when no run-scoped ERP behavior is supplied |
-| `MAX_TPS` | `100` | Mock ERP global fallback/diagnostic chaos behavior |
-| `ERROR_RATE` | `0` | Mock ERP global fallback/diagnostic chaos behavior, from `0` to `1` |
-| `FORCED_OUTAGE` | `false` | Mock ERP global fallback/diagnostic chaos behavior |
-| `ADMIN_MAX_LATENCY_MS` | `5000` | Mock ERP admin chaos cap |
-| `ADMIN_MIN_MAX_TPS` | `1` | Mock ERP admin chaos cap |
-| `ADMIN_MAX_ERROR_RATE` | `1` | Mock ERP admin chaos cap |
-| `ADMIN_ALLOW_FORCED_OUTAGE` | `true` | Mock ERP admin chaos cap |
 | `DEMO_MAX_BUYERS` | `100000` | API safety cap for buyer-spike preset buyer count |
 | `DEMO_MAX_TOTAL_REQUESTS` | `100000` | API safety cap for total emitted buy attempts |
 | `DEMO_MAX_REQUESTS_PER_SECOND` | `10000` | API safety cap for constant-arrival preset request rate |

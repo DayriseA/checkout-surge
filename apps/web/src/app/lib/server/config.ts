@@ -6,7 +6,6 @@ import { parseAdminSecurityConfig } from "./admin-config";
 
 export interface WebServerConfig {
   apiBaseUrl: string;
-  mockErpBaseUrl: string;
   controlServiceToken: string;
   adminDashboardPassphrase: string;
   adminSessionSecret: string;
@@ -20,7 +19,6 @@ export interface WebServerConfig {
 }
 
 const defaultApiBaseUrl = "http://localhost:4000";
-const defaultMockErpBaseUrl = "http://localhost:4100";
 const activeConfigKey = Symbol.for("checkout-surge.web-server-config");
 
 const unsafeSecretValues = new Set([
@@ -67,17 +65,11 @@ export function loadWebServerConfig(env: Record<string, string | undefined>): We
     throw new Error(`Unsafe web secrets: ${invalid.join("; ")}.`);
   }
   const apiBaseUrl = parseBackendUrl(env.API_BASE_URL, "API_BASE_URL", defaultApiBaseUrl);
-  const mockErpBaseUrl = parseBackendUrl(
-    env.MOCK_ERP_BASE_URL,
-    "MOCK_ERP_BASE_URL",
-    defaultMockErpBaseUrl,
-  );
   const adminSecurity = parseAdminSecurityConfig(env);
   if (!adminSecurity) throw new Error("Unsafe web admin security configuration.");
 
   return {
     apiBaseUrl,
-    mockErpBaseUrl,
     controlServiceToken: env.CONTROL_SERVICE_TOKEN?.trim() ?? "",
     adminDashboardPassphrase: env.ADMIN_DASHBOARD_PASSPHRASE?.trim() ?? "",
     adminSessionSecret: env.ADMIN_SESSION_SECRET?.trim() ?? "",

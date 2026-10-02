@@ -46,7 +46,7 @@ export const erpDispatchEnginePolicyIdentity = {
 /** Small native windows bound sliding-window pressure. */
 export const erpDispatchSafetyMargin = 0.05;
 export const erpDispatchMinimumWindowMs = 20;
-export const catalogErpDispatchLimits = { maxTps: 100, concurrency: 10 } as const;
+export const idleErpDispatchLimits = { maxTps: 100, concurrency: 10 } as const;
 
 export function erpDispatchRateLimit(maxTps: number): { max: number; duration: number } {
   const effectiveRate = maxTps * (1 - erpDispatchSafetyMargin);

@@ -39,10 +39,6 @@ export function apiBaseUrl(): string {
   return webServerConfig().apiBaseUrl;
 }
 
-export function mockErpBaseUrl(): string {
-  return webServerConfig().mockErpBaseUrl;
-}
-
 export async function parseJsonRequest<T>(
   ctx: ProxyRequestContext,
   schema: ContractSchema<T>,
