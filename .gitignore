@@ -81,6 +81,8 @@ build/
 .VSCodeCounter/
 .tmp/
 .claude/settings.local.json
+.claude/skills/orchestrate-kilo/
 .playwright/cli.config.cloud.json
-.codex/
+.codex/config.toml
+.codex/skills/orchestrate-kilo/
 devcontainer-lock.json
