@@ -71,6 +71,9 @@ npm install --global \
 playwright-cli install-browser --with-deps chromium
 playwright-mcp install-browser chromium
 
+# Regenerate the untracked workspace skill so it matches the installed CLI.
+playwright-cli install --skills=claude
+
 verify_playwright_cli
 CHECKOUT_SURGE_PLAYWRIGHT_MCP_VERSION="$(playwright-mcp --version)" \
   verify_playwright_mcp_chromium
