@@ -82,7 +82,10 @@ build/
 .tmp/
 .claude/settings.local.json
 .claude/skills/orchestrate-kilo/
+.claude/skills/playwright-cli/
 .playwright/cli.config.cloud.json
 .codex/config.toml
 .codex/skills/orchestrate-kilo/
 devcontainer-lock.json
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
