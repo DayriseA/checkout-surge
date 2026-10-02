@@ -2,7 +2,7 @@ export const businessOutcomePublicationWindowMs = 500;
 
 export interface BusinessOutcomePublicationScope {
   saleOfferId: string;
-  runId?: string;
+  runId: string;
   correlationId?: string;
 }
 
@@ -119,5 +119,5 @@ export class BusinessOutcomePublicationScheduler {
 }
 
 function scopeKey(scope: BusinessOutcomePublicationScope): string {
-  return JSON.stringify([scope.runId ?? null, scope.saleOfferId]);
+  return JSON.stringify([scope.runId, scope.saleOfferId]);
 }

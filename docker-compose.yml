@@ -13,8 +13,11 @@ x-app-env: &app-env
   WEB_BASE_URL: http://localhost:8080
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:8080}
 
-x-data-env: &data-env
+x-database-env: &database-env
   DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
+
+x-data-env: &data-env
+  <<: *database-env
   REDIS_URL: redis://redis:6379
 
 services:
@@ -273,8 +276,7 @@ services:
       dockerfile: packages/db/Dockerfile
       target: runtime
     environment:
-      <<: *app-env
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/checkout_surge
+      <<: [*app-env, *database-env]
       PUBLIC_RUN_BUDGET_WINDOW_SECONDS: ${PUBLIC_RUN_BUDGET_WINDOW_SECONDS:-300}
       PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS: ${PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS:-2}
       PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS: ${PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS:-6}

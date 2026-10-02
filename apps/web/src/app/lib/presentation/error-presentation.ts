@@ -285,7 +285,6 @@ function codePresentation(
     case "invalid_request":
     case "invalid_run_configuration":
     case "invalid_runtime_policy":
-    case "invalid_chaos_configuration":
     case "public_override_not_allowed":
     case "preset_operation_not_allowed":
       return {

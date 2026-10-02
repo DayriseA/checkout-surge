@@ -4,7 +4,6 @@ import {
   type StockReservationDecision,
   securedReservationHoldSchema,
   stockReservationDecisionSchema,
-  uuidSchema,
 } from "@checkout-surge/contracts";
 import type { CheckoutSurgeRedis } from "./redis.js";
 import {
@@ -47,7 +46,7 @@ if record.quantity ~= tonumber(ARGV[2])
   or record.reservation.saleOfferId ~= ARGV[3]
   or record.reservation.reservationToken ~= ARGV[4]
   or record.reservation.correlationId ~= ARGV[5]
-  or (record.reservation.runId or "") ~= ARGV[6]
+  or record.reservation.runId ~= ARGV[6]
   or record.reservation.securedAt ~= ARGV[7]
   or record.reservation.expiresAt ~= ARGV[8] then
   return "mismatch"
@@ -115,9 +114,7 @@ if not idempotencyJson then
     securedAt = ARGV[7],
     expiresAt = ARGV[8]
   }
-  if ARGV[6] ~= "" then
-    reservation.runId = ARGV[6]
-  end
+  reservation.runId = ARGV[6]
   local acceptedRecord = {
     status = "accepted",
     quantity = tonumber(ARGV[2]),
@@ -134,7 +131,7 @@ if record.quantity ~= tonumber(ARGV[2])
   or record.reservation.saleOfferId ~= ARGV[3]
   or record.reservation.reservationToken ~= ARGV[4]
   or record.reservation.correlationId ~= ARGV[5]
-  or (record.reservation.runId or "") ~= ARGV[6]
+  or record.reservation.runId ~= ARGV[6]
   or record.reservation.securedAt ~= ARGV[7]
   or record.reservation.expiresAt ~= ARGV[8] then
   return "mismatch"
@@ -203,7 +200,7 @@ if rawIdempotency then
     or idempotency.reservation.id ~= ARGV[1]
     or idempotency.reservation.saleOfferId ~= ARGV[3]
     or idempotency.reservation.correlationId ~= ARGV[5]
-    or (idempotency.reservation.runId or "") ~= ARGV[6]
+    or idempotency.reservation.runId ~= ARGV[6]
     or idempotency.reservation.reservationToken ~= ARGV[4]
     or idempotency.reservation.securedAt ~= ARGV[7]
     or idempotency.reservation.expiresAt ~= ARGV[8] then
@@ -224,7 +221,7 @@ end
 local hold = cjson.decode(rawHold)
 if hold.id ~= ARGV[1] or hold.saleOfferId ~= ARGV[3]
   or hold.reservationToken ~= ARGV[4] or hold.quantity ~= tonumber(ARGV[2])
-  or hold.correlationId ~= ARGV[5] or (hold.runId or "") ~= ARGV[6]
+  or hold.correlationId ~= ARGV[5] or hold.runId ~= ARGV[6]
   or hold.securedAt ~= ARGV[7] or hold.expiresAt ~= ARGV[8] then
   return "mismatch"
 end
@@ -307,8 +304,7 @@ local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope")
 if inventoryScope == "generated_run" then
   local inventoryRunId = redis.call("HGET", KEYS[1], "runId")
   local runSaleStatus = redis.call("HGET", KEYS[1], "runSaleStatus")
-  if not reservation.runId
-    or reservation.runId ~= inventoryRunId
+  if reservation.runId ~= inventoryRunId
     or runSaleStatus ~= "accepting" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
@@ -325,7 +321,7 @@ if inventoryScope == "generated_run" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
 else
-  return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
+  return redis.error_reply("Inventory scope must be generated_run")
 end
 
 -- Eligibility precedes idempotency replay so closure always fails closed, including retries.
@@ -808,7 +804,7 @@ function parsePendingPersistenceRecord(
         id: parsed.id,
         saleOfferId: parsed.saleOfferId,
         correlationId: parsed.correlationId,
-        runId: uuidSchema.parse(parsed.runId),
+        runId: hold.runId,
         idempotencyKey: parsedIdempotencyKey.data,
         quantity: parsed.quantity,
         reservationToken: parsed.reservationToken,

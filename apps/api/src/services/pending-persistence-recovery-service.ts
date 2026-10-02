@@ -601,16 +601,7 @@ export class PendingPersistenceRecoveryService {
       runDisposition: "admissible" | "terminal" | "invalid",
     ) => Promise<T>,
   ): Promise<T> {
-    if (ownerPersistence.withRunPendingPersistenceLock) {
-      return ownerPersistence.withRunPendingPersistenceLock({ reservation, operation });
-    }
-    if (ownerPersistence.withRunAdmissionLock) {
-      return ownerPersistence.withRunAdmissionLock({
-        reservation,
-        operation: (persistence) => operation(persistence, "admissible"),
-      });
-    }
-    return operation(ownerPersistence, "admissible");
+    return ownerPersistence.withRunPendingPersistenceLock({ reservation, operation });
   }
 
   private async readRecord(record: PendingPersistenceRecord) {

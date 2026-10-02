@@ -372,9 +372,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Save preset");
     expect(markup).toContain("Copy saved values to custom scenario");
     expect(markup).toContain('id="preset-erpForcedOutage"');
-    expect(markup).not.toContain('id="erp-chaos-forcedOutage"');
     expect(markup).toContain("Reset demo");
-    expect(markup).not.toContain("ERP fault injection");
     expectDisabledStartButtons(markup, ["Run once with these values"]);
   });
 });

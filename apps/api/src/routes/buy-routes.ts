@@ -18,19 +18,16 @@ export interface BuyRouteOptions {
 export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOptions): void {
   app.post("/buy", async (request, reply) => {
     const parsedRequest = buyRequestSchema.parse(request.body);
-    const attributedRequest = applyRunAttribution(
-      parsedRequest,
-      request.headers[loadRunIdHeaderName],
-    );
+    assertRunHeaderAgreement(parsedRequest, request.headers[loadRunIdHeaderName]);
     const correlationId = replaceFastifyCorrelation(
       request,
       reply,
-      attributedRequest.correlationId ?? request.correlationId,
+      parsedRequest.correlationId ?? request.correlationId,
     );
 
     const response = buyResponseSchema.parse(
       await options.reserveOrderService.reserve({
-        request: attributedRequest,
+        request: parsedRequest,
         correlationId,
       }),
     );
@@ -44,14 +41,14 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
   });
 }
 
-function applyRunAttribution(
+function assertRunHeaderAgreement(
   request: BuyRequest,
   headerValue: string | string[] | undefined,
-): BuyRequest {
+): void {
   const headerRunId = parseLoadRunIdHeader(headerValue);
 
   if (!headerRunId) {
-    return request;
+    return;
   }
 
   if (request.runId !== headerRunId) {
@@ -66,8 +63,6 @@ function applyRunAttribution(
       },
     });
   }
-
-  return request;
 }
 
 function parseLoadRunIdHeader(headerValue: string | string[] | undefined): string | undefined {

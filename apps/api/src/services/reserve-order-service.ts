@@ -72,11 +72,11 @@ export interface PendingPersistenceRecovery {
 }
 
 export interface BuyPersistence extends BuyPersistenceOperations {
-  withRunAdmissionLock?<T>(input: {
+  withRunAdmissionLock<T>(input: {
     reservation: SecuredReservationHold;
     operation: (persistence: BuyPersistenceOperations) => Promise<T>;
   }): Promise<T>;
-  withRunPendingPersistenceLock?<T>(input: {
+  withRunPendingPersistenceLock<T>(input: {
     reservation: SecuredReservationHold;
     operation: (
       persistence: BuyPersistenceOperations,
@@ -519,11 +519,7 @@ export class ReserveOrderService {
     reservation: SecuredReservationHold,
     operation: (persistence: BuyPersistenceOperations) => Promise<T>,
   ): Promise<T> {
-    if (this.persistence.withRunAdmissionLock) {
-      return this.persistence.withRunAdmissionLock({ reservation, operation });
-    }
-
-    return operation(this.persistence);
+    return this.persistence.withRunAdmissionLock({ reservation, operation });
   }
 
   private async enqueuePersistedBuy(

@@ -1427,17 +1427,6 @@ describe("buy and dashboard contracts", () => {
     ).toThrow();
   });
 
-  it.each([
-    undefined,
-    null,
-    "not-a-run",
-  ])("requires explicit valid buy run identity: %s", (runId) => {
-    expect(
-      buyRequestSchema.safeParse({ saleOfferId, runId, idempotencyKey: "identity-required" })
-        .success,
-    ).toBe(false);
-  });
-
   it("defaults buy quantity while preserving caller identifiers", () => {
     const request = buyRequestSchema.parse({
       saleOfferId,

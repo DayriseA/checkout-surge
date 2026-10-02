@@ -12,6 +12,18 @@ import {
   type StockReservationGateway,
 } from "../../src/services/reserve-order-service.js";
 
+const passThroughRunLocks: Pick<
+  BuyPersistence,
+  "withRunAdmissionLock" | "withRunPendingPersistenceLock"
+> = {
+  async withRunAdmissionLock({ operation }) {
+    return operation(this as BuyPersistence);
+  },
+  async withRunPendingPersistenceLock({ operation }) {
+    return operation(this as BuyPersistence, "admissible");
+  },
+};
+
 const request: BuyRequest = {
   saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   runId: "ffffffff-ffff-4fff-8fff-ffffffffffff",
@@ -141,6 +153,7 @@ describe("ReserveOrderService queue handoff", () => {
     const monotonicTimes = [100, 102, 107, 115];
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(),
         getPersistedBuyByReservationId: vi.fn(),
       },
@@ -169,6 +182,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(),
         getPersistedBuyByReservationId: vi.fn(),
       },
@@ -193,6 +207,7 @@ describe("ReserveOrderService queue handoff", () => {
     const observeSoldOut = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -219,6 +234,7 @@ describe("ReserveOrderService queue handoff", () => {
   it("contains snapshot scheduling failures without changing reservation correctness", async () => {
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -251,7 +267,11 @@ describe("ReserveOrderService queue handoff", () => {
     const enqueue = vi.fn();
     const observeSoldOut = vi.fn();
     const service = buildService({
-      persistence: { persistSecuredReservation, getPersistedBuyByReservationId },
+      persistence: {
+        ...passThroughRunLocks,
+        persistSecuredReservation,
+        getPersistedBuyByReservationId,
+      },
       stockReservations: acceptingGateway({
         reserve: async () => ({ outcome: decision, reservation: null }),
       }),
@@ -291,6 +311,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => {
           callOrder.push("persist");
           return persistedBuy(reservation);
@@ -332,6 +353,7 @@ describe("ReserveOrderService queue handoff", () => {
     const callOrder: string[] = [];
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         withRunAdmissionLock: async ({ reservation, operation }) => {
           callOrder.push("admission");
           return operation({
@@ -372,6 +394,7 @@ describe("ReserveOrderService queue handoff", () => {
     const promoteAccepted = vi.fn(async () => undefined);
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(),
         getPersistedBuyByReservationId: vi.fn(async () => {
           if (!securedHold) throw new Error("Expected Redis hold before durable lookup.");
@@ -407,6 +430,7 @@ describe("ReserveOrderService queue handoff", () => {
     const publishBusinessOutcomeUpdate = vi.fn().mockResolvedValue(undefined);
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -443,6 +467,7 @@ describe("ReserveOrderService queue handoff", () => {
     );
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -486,6 +511,7 @@ describe("ReserveOrderService queue handoff", () => {
     const observeSoldOut = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async () => {
           throw new Error("Historical replay must not persist again.");
         },
@@ -513,6 +539,7 @@ describe("ReserveOrderService queue handoff", () => {
     const reportBusinessOutcomeUpdateFailure = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -543,6 +570,7 @@ describe("ReserveOrderService queue handoff", () => {
     const scheduleQueue = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -578,6 +606,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -606,6 +635,7 @@ describe("ReserveOrderService queue handoff", () => {
     const promoteAccepted = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: async () => durableBuy,
       },
@@ -673,6 +703,7 @@ describe("ReserveOrderService queue handoff", () => {
     );
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: async () => durableBuy,
       },
@@ -746,6 +777,7 @@ describe("ReserveOrderService queue handoff", () => {
     const markPendingPersistence = vi.fn(async () => undefined);
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => winner),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -791,6 +823,7 @@ describe("ReserveOrderService queue handoff", () => {
     const promoteAccepted = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         getPersistedBuyByReservationId: async () => null,
         persistSecuredReservation: async () => winner,
       },
@@ -841,6 +874,7 @@ describe("ReserveOrderService queue handoff", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async () => {
           throw new Error("Historical replay must not persist again.");
         },
@@ -901,6 +935,7 @@ describe("ReserveOrderService partial failures", () => {
     };
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         ...admissionOperations,
         withRunAdmissionLock: async ({ operation }) => {
           callOrder.push("admission start");
@@ -938,6 +973,7 @@ describe("ReserveOrderService partial failures", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async () => {
           throw persistenceError;
         },
@@ -983,6 +1019,7 @@ describe("ReserveOrderService partial failures", () => {
     const markPendingPersistence = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async () => {
           throw persistenceError;
         },
@@ -1003,6 +1040,7 @@ describe("ReserveOrderService partial failures", () => {
     const reverse = vi.fn(async () => "reversed" as const);
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async () => {
           throw new Error("run_sale_offer_mismatch was mentioned by a downstream diagnostic");
         },
@@ -1022,6 +1060,7 @@ describe("ReserveOrderService partial failures", () => {
     const reportPromotionFailure = vi.fn();
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },
@@ -1054,6 +1093,7 @@ describe("ReserveOrderService partial failures", () => {
     });
     const service = buildService({
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
         getPersistedBuyByReservationId: async () => null,
       },

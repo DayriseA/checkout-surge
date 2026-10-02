@@ -11,6 +11,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { createPendingPersistenceRecoveryOperations } from "../src/runtime/pending-persistence-operation-factory.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
+import type { BuyPersistence } from "../src/services/reserve-order-service.js";
 
 const hold: SecuredReservationHold = {
   runId: "44444444-4444-4444-8444-444444444444",
@@ -21,6 +22,18 @@ const hold: SecuredReservationHold = {
   reservationToken: "recovery-integration-token",
   securedAt: "2026-06-20T00:00:00.000Z",
   expiresAt: "2026-06-20T00:15:00.000Z",
+};
+
+const passThroughRunLocks: Pick<
+  BuyPersistence,
+  "withRunAdmissionLock" | "withRunPendingPersistenceLock"
+> = {
+  async withRunAdmissionLock({ operation }) {
+    return operation(this as BuyPersistence);
+  },
+  async withRunPendingPersistenceLock({ operation }) {
+    return operation(this as BuyPersistence, "admissible");
+  },
 };
 
 describe("pending-persistence recovery cancellation boundaries", () => {
@@ -145,6 +158,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
         signal.addEventListener("abort", disconnect, { once: true });
         return {
           persistence: {
+            ...passThroughRunLocks,
             persistSecuredReservation: async () => durable,
             getPersistedBuyByReservationId: async () => durable,
           },
@@ -219,6 +233,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
 
 function noOpPersistence() {
   return {
+    ...passThroughRunLocks,
     persistSecuredReservation: async () => {
       throw new Error("Unexpected persistence call.");
     },

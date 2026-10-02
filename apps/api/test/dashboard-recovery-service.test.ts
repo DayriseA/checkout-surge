@@ -50,14 +50,14 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     await connection.db.insert(products).values({
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      sku: "RECOVERY-CATALOG",
-      slug: "recovery-catalog",
-      name: "Recovery catalog product",
+      sku: "RECOVERY-RUN",
+      slug: "recovery-run",
+      name: "Recovery run product",
     });
     await connection.db.insert(saleOffers).values({
       id: saleOfferId,
       productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-      name: "Active catalog offer",
+      name: "Recovery run offer",
       allocatedStock: 10,
       saleStartsAt: new Date("2026-07-14T00:00:00.000Z"),
       saleEndsAt: new Date("2026-07-15T00:00:00.000Z"),
@@ -80,19 +80,6 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
 
   afterAll(async () => {
     await connection?.close();
-  });
-
-  it("does not turn an active in-window catalog offer into recovery scope", async () => {
-    if (!connection) throw new Error("Test database connection was not initialized.");
-
-    await expect(
-      new PostgresDashboardRecoveryContextReader(connection.db).readContext(),
-    ).resolves.toEqual({
-      currentRun: null,
-      saleOfferId: null,
-      resetRecoveryRunId: null,
-      resetRecovery: "ready",
-    });
   });
 
   it.each(

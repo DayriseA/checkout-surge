@@ -101,7 +101,7 @@ Setup strictly validates the environment-backed public-policy bootstrap before d
 
 ### Intentional pre-release wipe and rebuild
 
-The run-required purchase version changes PostgreSQL nullability and offer shape plus Redis hold/idempotency/pending formats. Stop all services and intentionally rebuild PostgreSQL, Redis inventory, queues, and the load journal together before running it. Do not mix old and new producers. There is no compatibility layer, synthetic historical run, automatic startup repair, or automatic wipe. Seed creates no sale offer or inventory; run acceptance initializes independent stock from the frozen configuration.
+The run-required purchase version changes PostgreSQL nullability and offer shape plus Redis hold/idempotency/pending formats. The updated baseline journal may make setup against an older schema fail with `type ... already exists`; use the manual rebuild workflow below. Stop all services and intentionally rebuild PostgreSQL, Redis inventory, queues, and the load journal together before running it. Do not mix old and new producers. There is no compatibility layer, synthetic historical run, automatic startup repair, or automatic wipe. Seed creates no sale offer or inventory; run acceptance initializes independent stock from the frozen configuration.
 
 Pre-release reference-runtime data is disposable. When a repository change is incompatible with existing local PostgreSQL, Redis, or load-journal state, confirm that `COMPOSE_PROJECT_NAME` selects the intended Compose project, then use this one rebuild workflow instead of translating the legacy state:
 
@@ -283,7 +283,7 @@ pnpm infra:down
 | Dashboard proxy | `8080` | Normal browser entry point for the containerized and host-native runtimes |
 | Web app debug | `3000` | Direct Next.js app port in `apps/web`; `/dashboard/events` is streamed through the web-owned proxy |
 | API gateway debug | `4000` | Fastify API and SSE stream owner; use for service health/debugging |
-| Mock ERP debug | `4100` | ERP confirmation and chaos-control API; use for service health/debugging |
+| Mock ERP debug | `4100` | ERP confirmation and health/status diagnostics |
 | Load orchestrator debug | `4200` | k6 scenario and run-control service; use for service health/debugging |
 | Worker health | `4300` | Worker process health endpoint |
 | PostgreSQL | `5432` | Development database |
@@ -440,7 +440,7 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `NODE_ENV` | `development` host-native; `production` in reference Compose; `test` in test commands | Runtime mode and strict production-only security/storage requirements |
 | `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/checkout_surge` | API, worker, Mock ERP, db package |
 | `MOCK_ERP_POSTGRES_POOL_MAX` | `5` | Mock ERP ledger PostgreSQL pool maximum |
-| `REDIS_URL` | `redis://localhost:6379` | API, worker, db package |
+| `REDIS_URL` | `redis://localhost:6379` | API, worker |
 | `CONTROL_SERVICE_TOKEN` | Required; generate a private deployment-specific value | API, web, mock ERP, load orchestrator |
 | `ADMIN_DASHBOARD_PASSPHRASE` | Required; generate a private admin passphrase | Web admin session |
 | `ADMIN_SESSION_SECRET` | Required; generate a private HMAC secret distinct from `PUBLIC_CLIENT_COOKIE_SECRET` | Web admin session cookies |

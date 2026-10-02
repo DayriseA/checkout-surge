@@ -1,3 +1,7 @@
+import { execFile } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type {
   AcceptedRunConfigSnapshot,
   PublicRuntimePolicy,
@@ -27,6 +31,7 @@ import {
   products,
   publicRuntimePolicies,
   saleOffers,
+  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
@@ -195,6 +200,103 @@ describe("demo-run lifecycle validation", () => {
         enforcePublicCustomLimits: true,
       }),
     ).not.toThrow();
+  });
+});
+
+describe("fresh bootstrap run inventory", () => {
+  it("starts after migrate and seed and gives consecutive runs independent frozen stock", async () => {
+    await resetTestDatabase();
+    const connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const redis = createRedisClient(requireTestRedisUrl(), { maxRetriesPerRequest: 3 });
+    try {
+      await redis.flushdb();
+      const dbPackageRoot = fileURLToPath(new URL("../../../packages/db/", import.meta.url));
+      await promisify(execFile)(process.execPath, ["--import", "tsx", "src/scripts/seed.ts"], {
+        cwd: path.resolve(dbPackageRoot),
+        env: { ...process.env, DATABASE_URL: requireTestDatabaseUrl() },
+      });
+      expect(await connection.db.select().from(saleOffers)).toEqual([]);
+      const [preset] = await connection.db
+        .select()
+        .from(demoPresets)
+        .where(eq(demoPresets.slug, "custom"));
+      if (!preset) throw new Error("Seeded admin custom preset is missing.");
+      await connection.db
+        .update(demoPresets)
+        .set({
+          inventoryConfig: { ...preset.inventoryConfig, startingStock: 7 },
+        })
+        .where(eq(demoPresets.id, preset.id));
+      const service = createStartService(connection, redis);
+      const first = await service.startRun(
+        { presetSlug: "custom", operatorMode: "admin" },
+        "bootstrap-first",
+      );
+      const firstOfferId = first.run.saleOfferId;
+      if (!firstOfferId) throw new Error("Accepted run has no sale offer.");
+      expect(first.run.status).toBe("active");
+      expect(new Set([first.run.runId, firstOfferId, preset.id]).size).toBe(3);
+      expect(first.run.configSnapshot.inventoryConfig.startingStock).toBe(7);
+      expect(await getInventoryStatus(redis, firstOfferId)).toMatchObject({
+        allocatedStock: 7,
+        remainingStock: 7,
+        reservedStock: 0,
+      });
+      await connection.db
+        .update(demoPresets)
+        .set({
+          inventoryConfig: { ...preset.inventoryConfig, startingStock: 3 },
+        })
+        .where(eq(demoPresets.id, preset.id));
+      await setRunSaleEligibility(redis, {
+        runId: first.run.runId,
+        saleOfferId: firstOfferId,
+        status: "closed",
+      });
+      await expect(
+        new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+          synchronize: async () => {},
+        }).claimTerminalRun({
+          runId: first.run.runId,
+          terminalStatus: "completed",
+          terminalTrafficStatus: "succeeded",
+          failureReason: null,
+          finalizedAt: new Date("2026-06-20T00:01:10.000Z"),
+          allowedCurrentStatuses: ["active"],
+        }),
+      ).resolves.toBe(true);
+      const second = await service.startRun(
+        { presetSlug: "custom", operatorMode: "admin" },
+        "bootstrap-second",
+      );
+      const secondOfferId = second.run.saleOfferId;
+      if (!secondOfferId) throw new Error("Accepted run has no sale offer.");
+      expect(
+        new Set([first.run.runId, firstOfferId, second.run.runId, secondOfferId, preset.id]).size,
+      ).toBe(5);
+      expect(second.run.configSnapshot.inventoryConfig.startingStock).toBe(3);
+      expect(await getInventoryStatus(redis, secondOfferId)).toMatchObject({
+        allocatedStock: 3,
+        remainingStock: 3,
+        reservedStock: 0,
+      });
+      expect(await getInventoryStatus(redis, firstOfferId)).toMatchObject({
+        allocatedStock: 7,
+        remainingStock: 7,
+        reservedStock: 0,
+      });
+      const [storedFirst] = await connection.db
+        .select()
+        .from(demoRuns)
+        .where(eq(demoRuns.id, first.run.runId));
+      expect(storedFirst?.configSnapshot.inventoryConfig.startingStock).toBe(7);
+      const offers = await connection.db.select().from(saleOffers);
+      expect(offers.map((offer) => offer.allocatedStock).sort()).toEqual([3, 7]);
+    } finally {
+      await redis.flushdb();
+      redis.disconnect();
+      await connection.close();
+    }
   });
 });
 
@@ -573,7 +675,7 @@ describe("demo-run lifecycle start gating", () => {
     const fenceConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const writer = createOrderProcessJobPublisher(queue);
     const limits = new DemoRunQueueLimits(db, writer);
-    const expectCatalog = async () => {
+    const expectIdleLimits = async () => {
       expect(await queue.getGlobalConcurrency()).toBe(idleErpDispatchLimits.concurrency);
       expect(await queue.getGlobalRateLimit()).toEqual(
         erpDispatchRateLimit(idleErpDispatchLimits.maxTps),
@@ -581,7 +683,7 @@ describe("demo-run lifecycle start gating", () => {
     };
     try {
       await limits.synchronize();
-      await expectCatalog();
+      await expectIdleLimits();
       const service = createStartService(requireConnection(connection), requireRedis(redis), {
         queueLimits: limits,
         trafficExecutionGateway: {
@@ -619,7 +721,7 @@ describe("demo-run lifecycle start gating", () => {
         finalizedAt: new Date(),
         allowedCurrentStatuses: ["active"],
       });
-      await expectCatalog();
+      await expectIdleLimits();
       // A reset with no active run still repairs stale queue metadata.
       await queue.setGlobalConcurrency(1);
       await queue.setGlobalRateLimit(9, 999);
@@ -636,7 +738,7 @@ describe("demo-run lifecycle start gating", () => {
         logger: createSilentLogger("api"),
       });
       await reset.reset("queue-limit-reset");
-      await expectCatalog();
+      await expectIdleLimits();
     } finally {
       await writer.close();
       await fenceConnection.close();
@@ -846,7 +948,6 @@ describe("demo-run lifecycle start gating", () => {
       productId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       name: "Reset retry offer",
       allocatedStock: 1,
-
       saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
       saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
     });

@@ -142,7 +142,7 @@ The local defaults and environment names are documented in `docs/local_developme
 | Admin session creation | No | No | Created on success | No | Exact trusted Origin, per-client/global login admission, and constant-time passphrase verification are required. |
 | Dashboard snapshot/status reads | Yes | No | Optional | No | Public portfolio visibility is intentional. |
 | Dashboard realtime connection | Yes | No | Optional | No | Payloads must not include secrets or unsafe control tokens. |
-| Demo reset/recovery | No | No | Yes | Yes behind proxy | The protected API workflow uses exact-run confirmed traffic abort, blocks successor starts with `run_conflict` / `details.conflictReason = reset_incomplete` until the missing `admin_reset_completed_at` completion marker is repaired, and keeps projection cleanup truthfully retryable; the separate operational client subsequently restores Mock ERP defaults and reports partial failure. |
+| Demo reset/recovery | No | No | Yes | Yes behind proxy | The protected API workflow uses exact-run confirmed traffic abort, blocks successor starts with `run_conflict` / `details.conflictReason = reset_incomplete` until the missing `admin_reset_completed_at` completion marker is repaired, and keeps projection cleanup truthfully retryable. The operational reset client invokes this API workflow and reports its outcome. |
 | Queue reset/inspection controls | Limited reads | No | Yes | Yes behind proxy | Reads may be public only if sanitized and cheap. |
 | Public preset list/recovery reads | Yes | No | Optional | No | Safe read model for public dashboard; recovery reads must not expose secrets or internal service URLs. |
 | Admin preset reads/saves/duplicates/archival | No | No | Yes | Yes behind proxy | Admins may inspect all presets and mutate only editable admin-only presets. Public presets are read-only and must be duplicated or copied to `Custom` before editing. Archival (soft delete) is limited to operator-created, non-system, non-custom, active admin presets; it requires UI confirmation and is enforced by the service, not just UI disabling. |
@@ -187,7 +187,6 @@ Security-focused test coverage should include:
 - Admin preset archival is protected by the admin-session web proxy and the API control token, requires UI confirmation, rejects public, `public-custom`, `Custom`, and seeded/system admin presets at the service boundary, and excludes archived presets from active lists, lookups, and run starts.
 - Demo reset cannot run through a public path.
 - Run History delete routes reject unauthenticated requests and require delete-all confirmation.
-- Chaos updates reject unsafe values above configured caps.
 - Internal ingestion endpoints reject missing or invalid service tokens.
 - Realtime/read endpoints do not leak secrets or admin-only control material.
 

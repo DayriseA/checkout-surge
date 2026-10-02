@@ -85,7 +85,7 @@ export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSche
 
 export const erpLatestAttemptSummarySchema = z
   .object({
-    runId: uuidSchema.nullable(),
+    runId: uuidSchema,
     status: erpAttemptStatusSchema,
     finishedAt: isoTimestampSchema,
   })

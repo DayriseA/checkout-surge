@@ -46,7 +46,17 @@ describe("Mock ERP configuration", () => {
       databaseUrl: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
       postgresPoolMax: 5,
     });
+  });
+
+  it("rejects an invalid port", () => {
     expect(() => loadMockErpConfig({ PORT: "invalid" })).toThrow("PORT must be a positive integer");
+  });
+
+  it("accepts HOST and PORT overrides", () => {
+    expect(loadMockErpConfig({ HOST: "127.0.0.1", PORT: "5100" })).toMatchObject({
+      host: "127.0.0.1",
+      port: 5100,
+    });
   });
 });
 

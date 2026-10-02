@@ -9,12 +9,12 @@ export const soldOutPublicationWindowMs = 500;
 
 export interface DashboardInventoryDirtyRequest {
   saleOfferId: string;
-  runId?: string;
+  runId: string;
   correlationId: string;
 }
 
 export interface DashboardQueueDirtyRequest {
-  runId?: string;
+  runId: string;
   correlationId: string;
 }
 
@@ -257,5 +257,5 @@ export class DashboardSourceDirtyScheduler implements DashboardSourceDirtySchedu
 }
 
 function inventoryScopeKey(request: DashboardInventoryDirtyRequest): string {
-  return `inventory:${request.runId ?? "none"}:${request.saleOfferId}`;
+  return `inventory:${request.runId}:${request.saleOfferId}`;
 }

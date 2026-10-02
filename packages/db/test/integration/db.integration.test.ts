@@ -17,6 +17,7 @@ import {
   deferPendingPersistenceRecord,
   getInventoryStatus,
   InventoryNotInitializedError,
+  incrementDashboardProjectionRevision,
   initializeInventory,
   inventoryKeys,
   isRunSaleEligible,
@@ -38,7 +39,6 @@ import { resetTestDatabase } from "../../src/testing.js";
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const migrationsFolder = path.join(packageRoot, "drizzle");
-const seededSaleOfferId = "22222222-2222-4222-8222-222222222222";
 const reservationSecuredAt = "2026-06-20T12:00:00.000Z";
 const reservationExpiresAt = "2026-06-20T12:15:00.000Z";
 const orderQueuedAt = "2026-06-20T12:00:01.000Z";
@@ -47,6 +47,8 @@ const saleEndsAt = "2026-06-21T00:00:00.000Z";
 const expectedDeclarativeAttributionConstraints = [
   "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
   "erp_attempts_order_correlation_fk",
+  "erp_attempts_order_run_fk",
+  "erp_dispatch_calls_order_run_fk",
   "order_events_run_sale_context_fk",
   "orders_backing_reservation_fk",
   "orders_run_sale_context_fk",
@@ -63,12 +65,17 @@ const dashboardDirtySignal: DashboardProjectionDirtySignal = {
 type TestSql = ReturnType<typeof createDatabaseConnection>["sql"];
 type OrderStatusForTest = "queued" | "processing" | "confirmed" | "failed";
 
+function inventoryRunId(saleOfferId: string): string {
+  const firstDigit = (Number.parseInt(saleOfferId[0] ?? "0", 16) ^ 8).toString(16);
+  return firstDigit + saleOfferId.slice(1);
+}
+
 function buildReservationInput(options: {
   saleOfferId: string;
   sequence: number;
   quantity?: number;
   idempotencyKey?: string;
-  runId?: string;
+  runId: string;
 }) {
   const suffix = options.sequence.toString(16).padStart(12, "0");
 
@@ -79,7 +86,7 @@ function buildReservationInput(options: {
       id: `aaaaaaaa-aaaa-4aaa-8aaa-${suffix}`,
       saleOfferId: options.saleOfferId,
       correlationId: `corr-reservation-${options.sequence}`,
-      runId: options.runId ?? options.saleOfferId,
+      runId: options.runId,
       quantity: options.quantity ?? 1,
       reservationToken: `reservation-token-${options.sequence}`,
       securedAt: reservationSecuredAt,
@@ -245,24 +252,10 @@ async function insertReservation(
     reservationId: string;
     saleOfferId: string;
     correlationId: string;
-    runId?: string | null;
+    runId: string | null;
     quantity?: number;
   },
 ): Promise<void> {
-  if (input.runId === undefined) {
-    const [scope] = await sql<
-      { run_id: string }[]
-    >`select run_id from demo_run_sale_contexts where sale_offer_id = ${input.saleOfferId}`;
-    if (scope) input.runId = scope.run_id;
-    else {
-      input.runId = input.saleOfferId;
-      await insertGeneratedRunContext(sql, {
-        runId: input.runId,
-        presetId: input.runId,
-        saleOfferId: input.saleOfferId,
-      });
-    }
-  }
   await sql`
     INSERT INTO "reservations" (
       "id",
@@ -294,7 +287,7 @@ async function insertOrder(
     saleOfferId: string;
     reservationId: string;
     correlationId: string;
-    runId?: string | null;
+    runId: string | null;
     quantity?: number;
     status?: OrderStatusForTest;
     processingAt?: string | null;
@@ -302,13 +295,6 @@ async function insertOrder(
     failedAt?: string | null;
   },
 ): Promise<void> {
-  if (input.runId === undefined) {
-    const [scope] = await sql<
-      { run_id: string }[]
-    >`select run_id from reservations where id = ${input.reservationId}`;
-    if (!scope) throw new Error("Reservation fixture missing run attribution.");
-    input.runId = scope.run_id;
-  }
   await sql`
     INSERT INTO "orders" (
       "id",
@@ -894,7 +880,6 @@ describe("database migrations, seed data, and reset behavior", () => {
         WHERE slug = 'idempotency-check-200'
       `,
     );
-    const inventoryState = await redis.hgetall(`inventory:${seededSaleOfferId}:state`);
 
     expect(counts).toEqual({
       products: 1,
@@ -918,7 +903,6 @@ describe("database migrations, seed data, and reset behavior", () => {
         description: "200 buyers, every buyer clicks Buy twice.",
       },
     });
-    expect(inventoryState).toEqual({});
   });
 
   it("reseeds an already-system mutable admin preset as a true no-op", async () => {
@@ -1128,13 +1112,16 @@ describe("database migrations, seed data, and reset behavior", () => {
     await withDatabase(async (sql) => {
       const ids = buildOrderReservationIds(921);
       await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
       await insertReservation(sql, {
+        runId: ids.runId,
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
         correlationId: "corr-lifecycle-checks",
       });
 
       await insertOrder(sql, {
+        runId: ids.runId,
         orderId: ids.orderId,
         saleOfferId: ids.saleOfferId,
         reservationId: ids.reservationId,
@@ -1176,7 +1163,7 @@ describe("database migrations, seed data, and reset behavior", () => {
             "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
             "latency_ms", "started_at", "finished_at"
           ) VALUES (
-            ${ids.orderId}, 'lifecycle-invalid', 'corr-lifecycle-checks', ${ids.saleOfferId}, 1, 'failed', 'temporarily_unavailable',
+            ${ids.orderId}, 'lifecycle-invalid', 'corr-lifecycle-checks', ${ids.runId}, 1, 'failed', 'temporarily_unavailable',
             1, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz - interval '1 millisecond'
           )
         `,
@@ -1187,7 +1174,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${ids.orderId}, 'lifecycle-equal', 'corr-lifecycle-checks', ${ids.saleOfferId}, 1, 'succeeded', 'succeeded',
+          ${ids.orderId}, 'lifecycle-equal', 'corr-lifecycle-checks', ${ids.runId}, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `;
@@ -1200,6 +1187,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       const otherRunIds = buildOrderReservationIds(924);
       await insertRunSaleOffer(sql, { ...generatedIds });
       await insertRunSaleOffer(sql, otherRunIds);
+      await insertGeneratedRunContext(sql, otherRunIds);
       await insertGeneratedRunContext(sql, generatedIds);
       await insertReservation(sql, {
         reservationId: generatedIds.reservationId,
@@ -1244,25 +1232,91 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
 
       await insertReservation(sql, {
+        runId: otherRunIds.runId,
         reservationId: otherRunIds.reservationId,
         saleOfferId: otherRunIds.saleOfferId,
-        correlationId: "corr-erp-null-run",
+        correlationId: "corr-erp-required-run",
       });
       await insertOrder(sql, {
+        runId: otherRunIds.runId,
         orderId: otherRunIds.orderId,
         saleOfferId: otherRunIds.saleOfferId,
         reservationId: otherRunIds.reservationId,
-        correlationId: "corr-erp-null-run",
+        correlationId: "corr-erp-required-run",
       });
       await expect(sql`
         INSERT INTO "erp_attempts" (
           "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${otherRunIds.orderId}, 'erp-null-run-valid', 'corr-erp-null-run', NULL, 1, 'succeeded', 'succeeded',
+          ${otherRunIds.orderId}, 'erp-missing-run-rejected', 'corr-erp-required-run', NULL, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `).rejects.toMatchObject({ code: "23502" });
+    });
+  });
+
+  it("binds ERP dispatch calls and attempts to their order's existing run", async () => {
+    await withDatabase(async (sql) => {
+      const ids = buildOrderReservationIds(925);
+      const other = buildOrderReservationIds(926);
+      for (const fixture of [ids, other]) {
+        await insertRunSaleOffer(sql, fixture);
+        await insertGeneratedRunContext(sql, fixture);
+      }
+      expect(new Set([ids.runId, ids.saleOfferId, ids.presetId]).size).toBe(3);
+      await insertReservation(sql, {
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        runId: ids.runId,
+        correlationId: "corr-erp-order-run",
+      });
+      await insertOrder(sql, {
+        orderId: ids.orderId,
+        reservationId: ids.reservationId,
+        saleOfferId: ids.saleOfferId,
+        runId: ids.runId,
+        correlationId: "corr-erp-order-run",
+      });
+      const insertDispatch = (runId: string) => sql`
+        INSERT INTO erp_dispatch_calls (
+          order_id, processing_generation, idempotency_key, public_order_id,
+          reservation_id, sale_offer_id, run_id, quantity, correlation_id, dispatched_at
+        ) VALUES (
+          ${ids.orderId}, 0, ${`erp:${ids.orderId}`}, ${`ord_${ids.orderId}`},
+          ${ids.reservationId}, ${ids.saleOfferId}, ${runId}, 1, 'corr-erp-order-run',
+          ${orderQueuedAt}::timestamptz
+        )
+      `;
+      const insertAttempt = (runId: string) => sql`
+        INSERT INTO erp_attempts (
+          order_id, delivery_id, correlation_id, run_id, attempt_number, status,
+          disposition, latency_ms, started_at, finished_at
+        ) VALUES (
+          ${ids.orderId}, 'erp-order-run', 'corr-erp-order-run', ${runId}, 1,
+          'succeeded', 'succeeded', 0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
+        )
+      `;
+      await expectConstraintViolation(
+        insertDispatch(other.runId),
+        "erp_dispatch_calls_order_run_fk",
+        "23503",
+      );
+      await expectConstraintViolation(
+        insertAttempt(other.runId),
+        "erp_attempts_order_run_fk",
+        "23503",
+      );
+      await insertDispatch(ids.runId);
+      await insertAttempt(ids.runId);
+      const [dispatch] = await sql<
+        { run_id: string }[]
+      >`SELECT run_id FROM erp_dispatch_calls WHERE order_id = ${ids.orderId}`;
+      const [attempt] = await sql<
+        { run_id: string }[]
+      >`SELECT run_id FROM erp_attempts WHERE order_id = ${ids.orderId}`;
+      expect(dispatch?.run_id).toBe(ids.runId);
+      expect(attempt?.run_id).toBe(ids.runId);
     });
   });
 
@@ -1271,12 +1325,15 @@ describe("database migrations, seed data, and reset behavior", () => {
       const ids = buildOrderReservationIds(931);
       const eventId = "93000000-0000-4000-8000-000000000011";
       await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
       await insertReservation(sql, {
+        runId: ids.runId,
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
         correlationId: "corr-event-delete-actions",
       });
       await insertOrder(sql, {
+        runId: ids.runId,
         orderId: ids.orderId,
         saleOfferId: ids.saleOfferId,
         reservationId: ids.reservationId,
@@ -1288,7 +1345,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           "event_name", "source", "occurred_at", "run_id"
         ) VALUES (
           ${eventId}, ${ids.orderId}, ${ids.reservationId}, ${ids.saleOfferId},
-          'corr-event-delete-actions', 'order.queued', 'test', ${orderQueuedAt}::timestamptz, ${ids.saleOfferId}
+          'corr-event-delete-actions', 'order.queued', 'test', ${orderQueuedAt}::timestamptz, ${ids.runId}
         )
       `;
       await sql`
@@ -1296,7 +1353,7 @@ describe("database migrations, seed data, and reset behavior", () => {
           "order_id", "delivery_id", "correlation_id", "run_id", "attempt_number", "status", "disposition",
           "latency_ms", "started_at", "finished_at"
         ) VALUES (
-          ${ids.orderId}, 'event-delete-actions', 'corr-event-delete-actions', ${ids.saleOfferId}, 1, 'succeeded', 'succeeded',
+          ${ids.orderId}, 'event-delete-actions', 'corr-event-delete-actions', ${ids.runId}, 1, 'succeeded', 'succeeded',
           0, ${orderQueuedAt}::timestamptz, ${orderQueuedAt}::timestamptz
         )
       `;
@@ -1330,6 +1387,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const ids = buildOrderReservationIds(991);
     await withDatabase(async (sql) => {
       await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
       await expect(
         insertReservation(sql, {
           reservationId: ids.reservationId,
@@ -1339,6 +1397,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         }),
       ).rejects.toMatchObject({ code: "23502" });
       await insertReservation(sql, {
+        runId: ids.runId,
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
         correlationId: "corr-mandatory-run",
@@ -1361,11 +1420,19 @@ describe("database migrations, seed data, and reset behavior", () => {
       const correlationId = "corr-order-reservation-mismatch";
 
       await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
       await insertRunSaleOffer(sql, {
         productId: ids.alternateProductId,
         saleOfferId: ids.alternateSaleOfferId,
       });
+      const alternateRunId = "31000010-0000-4000-8000-000000000020";
+      await insertGeneratedRunContext(sql, {
+        runId: alternateRunId,
+        presetId: "31000011-0000-4000-8000-000000000020",
+        saleOfferId: ids.alternateSaleOfferId,
+      });
       await insertReservation(sql, {
+        runId: ids.runId,
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
         correlationId,
@@ -1374,6 +1441,7 @@ describe("database migrations, seed data, and reset behavior", () => {
 
       await expectConstraintViolation(
         insertOrder(sql, {
+          runId: alternateRunId,
           orderId: ids.orderId,
           saleOfferId: ids.alternateSaleOfferId,
           reservationId: ids.reservationId,
@@ -1385,6 +1453,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
       await expectConstraintViolation(
         insertOrder(sql, {
+          runId: ids.runId,
           orderId: ids.alternateOrderId,
           saleOfferId: ids.saleOfferId,
           reservationId: ids.reservationId,
@@ -1396,6 +1465,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       );
       await expectConstraintViolation(
         insertOrder(sql, {
+          runId: ids.runId,
           orderId: ids.thirdOrderId,
           saleOfferId: ids.saleOfferId,
           reservationId: ids.reservationId,
@@ -1451,12 +1521,15 @@ describe("database migrations, seed data, and reset behavior", () => {
       const correlationId = "corr-order-reservation-preserve";
 
       await insertRunSaleOffer(sql, ids);
+      await insertGeneratedRunContext(sql, ids);
       await insertReservation(sql, {
+        runId: ids.runId,
         reservationId: ids.reservationId,
         saleOfferId: ids.saleOfferId,
         correlationId,
       });
       await insertOrder(sql, {
+        runId: ids.runId,
         orderId: ids.orderId,
         saleOfferId: ids.saleOfferId,
         reservationId: ids.reservationId,
@@ -1531,7 +1604,7 @@ describe("database migrations, seed data, and reset behavior", () => {
         dashboardProjectionDirtyRedisChannel,
         JSON.stringify({
           ...dashboardDirtySignal,
-          scope: { runId: "not-a-uuid", saleOfferId: seededSaleOfferId },
+          scope: { runId: "not-a-uuid", saleOfferId: "22222222-2222-4222-8222-222222222222" },
         }),
       );
       const result = await withTimeout(
@@ -1562,7 +1635,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
 
     await initializeInventory(redis, {
-      run: { runId: targetOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(targetOfferId), status: "accepting" },
       saleOfferId: targetOfferId,
       allocatedStock: 12,
       source: "integration-test",
@@ -1579,7 +1652,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     await redis.hset(targetKeys.reservations, "old-reservation", "stale");
 
     const status = await initializeInventory(redis, {
-      run: { runId: targetOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(targetOfferId), status: "accepting" },
       saleOfferId: targetOfferId,
       allocatedStock: 8,
       source: "generated-run",
@@ -1608,7 +1681,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const now = new Date("2026-06-20T12:00:00.000Z");
 
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 20,
       initializedAt: new Date("2026-06-20T11:59:00.000Z"),
@@ -1661,9 +1734,14 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("atomically secures stock and writes the complete replayable hold", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000001";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 1, quantity: 2 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 1,
+      quantity: 2,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 5,
     });
@@ -1723,17 +1801,31 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("recovers the connection-scoped reservation command after SCRIPT FLUSH", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000091";
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
 
     await expect(
-      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 91 })),
+      reserveInventoryStock(
+        redis,
+        buildReservationInput({
+          runId: inventoryRunId(saleOfferId),
+          saleOfferId,
+          sequence: 91,
+        }),
+      ),
     ).resolves.toMatchObject({ outcome: "reservation_secured" });
     await redis.script("FLUSH");
     await expect(
-      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 92 })),
+      reserveInventoryStock(
+        redis,
+        buildReservationInput({
+          runId: inventoryRunId(saleOfferId),
+          saleOfferId,
+          sequence: 92,
+        }),
+      ),
     ).resolves.toMatchObject({ outcome: "reservation_secured" });
 
     await expect(getInventoryStatus(redis, saleOfferId)).resolves.toMatchObject({
@@ -1745,10 +1837,20 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("projects exact rolling successful-reservation throughput and aggregate sold-out pressure", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
-    const first = buildReservationInput({ saleOfferId, sequence: 91, quantity: 2 });
-    const second = buildReservationInput({ saleOfferId, sequence: 92, quantity: 1 });
+    const first = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 91,
+      quantity: 2,
+    });
+    const second = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 92,
+      quantity: 1,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 3,
       initializedAt: new Date("2026-06-20T11:59:00.000Z"),
@@ -1759,7 +1861,12 @@ describe("database migrations, seed data, and reset behavior", () => {
     await reserveInventoryStock(redis, first);
     await reserveInventoryStock(
       redis,
-      buildReservationInput({ saleOfferId, sequence: 93, quantity: 1 }),
+      buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
+        saleOfferId,
+        sequence: 93,
+        quantity: 1,
+      }),
     );
 
     const activeWindow = await getInventoryStatus(
@@ -1798,7 +1905,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000016";
     const keys = inventoryKeys(saleOfferId);
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 5,
     });
@@ -1813,7 +1920,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000010";
     const keys = inventoryKeys(saleOfferId);
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 3,
     });
@@ -1827,9 +1934,14 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("returns sold out without per-loser records or events", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000002";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 2, quantity: 3 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 2,
+      quantity: 3,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -1850,13 +1962,58 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
   });
 
+  it.each([
+    undefined,
+    "catalog",
+    "unknown",
+  ])("raises an integrity error for inventory scope %s before mutation or replay", async (scope) => {
+    const saleOfferId = "10000000-0000-4000-8000-000000000061";
+    const runId = inventoryRunId(saleOfferId);
+    const keys = inventoryKeys(saleOfferId);
+    await initializeInventory(redis, {
+      saleOfferId,
+      allocatedStock: 2,
+      run: { runId, status: "accepting" },
+    });
+    const input = buildReservationInput({ saleOfferId, runId, sequence: 6100 });
+    await expect(reserveInventoryStock(redis, input)).resolves.toMatchObject({
+      outcome: "reservation_secured",
+    });
+    if (scope === undefined) await redis.hdel(keys.state, "inventoryScope");
+    else await redis.hset(keys.state, "inventoryScope", scope);
+    const before = await redis.hgetall(keys.state);
+    const holds = await redis.hgetall(keys.reservations);
+    const pending = await redis.zrange(keys.pendingPersistence, 0, -1);
+    const events = await redis.lrange(keys.events, 0, -1);
+    await expect(reserveInventoryStock(redis, input)).rejects.toThrow(
+      "Inventory scope must be generated_run",
+    );
+    await expect(
+      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, runId, sequence: 6101 })),
+    ).rejects.toThrow("Inventory scope must be generated_run");
+    await expect(
+      incrementDashboardProjectionRevision(redis, { runId, saleOfferId }),
+    ).rejects.toThrow("Dashboard projection revision requires generated-run inventory");
+    await expect(
+      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
+    ).rejects.toThrow("Run eligibility can only be updated for generated-run inventory");
+    expect(await redis.hgetall(keys.state)).toEqual(before);
+    expect(await redis.hgetall(keys.reservations)).toEqual(holds);
+    expect(await redis.zrange(keys.pendingPersistence, 0, -1)).toEqual(pending);
+    expect(await redis.lrange(keys.events, 0, -1)).toEqual(events);
+  });
+
   it("returns inventory not initialized without creating side keys", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000003";
     const keys = inventoryKeys(saleOfferId);
 
     const result = await reserveInventoryStock(
       redis,
-      buildReservationInput({ saleOfferId, sequence: 3 }),
+      buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
+        saleOfferId,
+        sequence: 3,
+      }),
     );
 
     expect(result).toEqual({ outcome: "inventory_not_initialized", reservation: null });
@@ -1867,12 +2024,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000004";
     const keys = inventoryKeys(saleOfferId);
     const firstInput = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 4,
       idempotencyKey: "replay-key",
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -1883,9 +2041,18 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
 
     const immediateRetry = await reserveInventoryStock(redis, {
-      ...buildReservationInput({ saleOfferId, sequence: 40, idempotencyKey: "replay-key" }),
+      ...buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
+        saleOfferId,
+        sequence: 40,
+        idempotencyKey: "replay-key",
+      }),
       reservation: {
-        ...buildReservationInput({ saleOfferId, sequence: 40 }).reservation,
+        ...buildReservationInput({
+          runId: inventoryRunId(saleOfferId),
+          saleOfferId,
+          sequence: 40,
+        }).reservation,
         quantity: 1,
       },
     });
@@ -1941,12 +2108,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000017";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 17,
       idempotencyKey: "expired-before-promotion",
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -1988,12 +2156,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000020";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 20,
       idempotencyKey: "persistent-before-promotion",
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2039,17 +2208,19 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000018";
     const keys = inventoryKeys(saleOfferId);
     const original = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 18,
       idempotencyKey: "replacement-before-promotion",
     });
     const replacement = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 118,
       idempotencyKey: original.idempotencyKey,
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -2086,9 +2257,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("validates the promotion hold window before Redis execution", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000019";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 19 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 19,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2116,10 +2291,14 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("atomically defers a retryable record in both pending indexes", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000029";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 29 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 29,
+    });
     const deferredAt = new Date("2026-06-20T13:00:00.000Z");
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2145,10 +2324,14 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("reports authoritative removal when promotion wins before retry scheduling", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000034";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 34 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 34,
+    });
     const deadline = new Date("2026-06-20T13:05:00.000Z");
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2180,12 +2363,13 @@ describe("database migrations, seed data, and reset behavior", () => {
         : "10000000-0000-4000-8000-000000000031";
     const keys = inventoryKeys(saleOfferId);
     const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: state.status === "pending" ? 30 : 31,
     });
     const deadline = new Date("2026-06-20T13:10:00.000Z");
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2217,10 +2401,18 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("quarantines a malformed due cursor so it cannot starve later valid work", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000032";
     const keys = inventoryKeys(saleOfferId);
-    const first = buildReservationInput({ saleOfferId, sequence: 32 });
-    const second = buildReservationInput({ saleOfferId, sequence: 33 });
+    const first = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 32,
+    });
+    const second = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 33,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -2287,9 +2479,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   ])("skips a due cursor $change between page discovery and the read", async (scenario) => {
     const saleOfferId = `10000000-0000-4000-8000-0000000000${scenario.sequence}`;
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: scenario.sequence });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: scenario.sequence,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2325,9 +2521,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("quarantines an exactly read cursor whose pending record is missing", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000036";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 36 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 36,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2351,9 +2551,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("propagates a failed pending-persistence read instead of reporting missing metadata", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000038";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 38 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 38,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 1,
     });
@@ -2375,9 +2579,14 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("reverses a pending hold atomically and is idempotent on repetition", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000009";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 9, quantity: 2 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 9,
+      quantity: 2,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 5,
     });
@@ -2407,9 +2616,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("rejects a mismatched reversal without mutation and handles an expired idempotency key", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000010";
     const keys = inventoryKeys(saleOfferId);
-    const input = buildReservationInput({ saleOfferId, sequence: 10 });
+    const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 10,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -2441,12 +2654,13 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("verifies pending and accepted transitions against the original hold", async () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000008";
     const input = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 8,
       idempotencyKey: "verified-transition",
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -2520,7 +2734,14 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(await redis.exists(eligibilityKey)).toBe(0);
     expect(await redis.hget(inventoryKeys(saleOfferId).state, "runSaleStatus")).toBe("accepting");
     await expect(
-      reserveInventoryStock(redis, buildReservationInput({ saleOfferId, sequence: 20, runId })),
+      reserveInventoryStock(
+        redis,
+        buildReservationInput({
+          saleOfferId,
+          sequence: 20,
+          runId,
+        }),
+      ),
     ).resolves.toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
     await expect(getInventoryStatus(redis, saleOfferId)).resolves.toMatchObject({
       remainingStock: 2,
@@ -2601,7 +2822,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       run: { runId, status: "accepting" },
     });
     await initializeInventory(redis, {
-      run: { runId: otherRunOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(otherRunOfferId), status: "accepting" },
       saleOfferId: otherRunOfferId,
       allocatedStock: 3,
     });
@@ -2616,7 +2837,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     );
     const otherOfferWithRun = await reserveInventoryStock(
       redis,
-      buildReservationInput({ saleOfferId: otherRunOfferId, sequence: 23, runId }),
+      buildReservationInput({
+        saleOfferId: otherRunOfferId,
+        sequence: 23,
+        runId,
+      }),
     );
 
     expect(mismatched).toEqual({ outcome: "run_not_accepting_traffic", reservation: null });
@@ -2682,18 +2907,24 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000005";
     const keys = inventoryKeys(saleOfferId);
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 5,
     });
     await reserveInventoryStock(
       redis,
-      buildReservationInput({ saleOfferId, sequence: 5, idempotencyKey: "conflict-key" }),
+      buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
+        saleOfferId,
+        sequence: 5,
+        idempotencyKey: "conflict-key",
+      }),
     );
 
     const conflict = await reserveInventoryStock(
       redis,
       buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
         saleOfferId,
         sequence: 50,
         quantity: 2,
@@ -2714,17 +2945,19 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000011";
     const keys = inventoryKeys(saleOfferId);
     const first = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 11,
       idempotencyKey: "late-retry-key",
     });
     const lateRetry = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
       saleOfferId,
       sequence: 111,
       idempotencyKey: "late-retry-key",
     });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 2,
     });
@@ -2752,13 +2985,14 @@ describe("database migrations, seed data, and reset behavior", () => {
     const keys = inventoryKeys(saleOfferId);
     const candidates = Array.from({ length: 20 }, (_, index) =>
       buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
         saleOfferId,
         sequence: 7400 + index,
         idempotencyKey,
       }),
     );
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 10,
     });
@@ -2821,17 +3055,25 @@ describe("database migrations, seed data, and reset behavior", () => {
   it("keeps stale accepted and pending holds reserved with inclusive expiry visibility", async () => {
     const acceptedOfferId = "10000000-0000-4000-8000-000000000012";
     const pendingOfferId = "10000000-0000-4000-8000-000000000013";
-    const accepted = buildReservationInput({ saleOfferId: acceptedOfferId, sequence: 12 });
-    const pending = buildReservationInput({ saleOfferId: pendingOfferId, sequence: 13 });
+    const accepted = buildReservationInput({
+      runId: inventoryRunId(acceptedOfferId),
+      saleOfferId: acceptedOfferId,
+      sequence: 12,
+    });
+    const pending = buildReservationInput({
+      runId: inventoryRunId(pendingOfferId),
+      saleOfferId: pendingOfferId,
+      sequence: 13,
+    });
     const immediatelyBeforeExpiry = new Date(new Date(reservationExpiresAt).getTime() - 1);
     const atExpiry = new Date(reservationExpiresAt);
     await initializeInventory(redis, {
-      run: { runId: acceptedOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(acceptedOfferId), status: "accepting" },
       saleOfferId: acceptedOfferId,
       allocatedStock: 1,
     });
     await initializeInventory(redis, {
-      run: { runId: pendingOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(pendingOfferId), status: "accepting" },
       saleOfferId: pendingOfferId,
       allocatedStock: 1,
     });
@@ -2872,20 +3114,22 @@ describe("database migrations, seed data, and reset behavior", () => {
     const counterKeys = inventoryKeys(malformedCounterOfferId);
     const collectionKeys = inventoryKeys(malformedCollectionOfferId);
     const counterInput = buildReservationInput({
+      runId: inventoryRunId(malformedCounterOfferId),
       saleOfferId: malformedCounterOfferId,
       sequence: 14,
     });
     const collectionInput = buildReservationInput({
+      runId: inventoryRunId(malformedCollectionOfferId),
       saleOfferId: malformedCollectionOfferId,
       sequence: 15,
     });
     await initializeInventory(redis, {
-      run: { runId: malformedCounterOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(malformedCounterOfferId), status: "accepting" },
       saleOfferId: malformedCounterOfferId,
       allocatedStock: 2,
     });
     await initializeInventory(redis, {
-      run: { runId: malformedCollectionOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(malformedCollectionOfferId), status: "accepting" },
       saleOfferId: malformedCollectionOfferId,
       allocatedStock: 2,
     });
@@ -2915,7 +3159,7 @@ describe("database migrations, seed data, and reset behavior", () => {
       () => new Redis(requireTestEnv("TEST_REDIS_URL"), { maxRetriesPerRequest: 3 }),
     );
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock: 100,
     });
@@ -2925,7 +3169,11 @@ describe("database migrations, seed data, and reset behavior", () => {
         Array.from({ length: 250 }, (_, index) =>
           reserveInventoryStock(
             clients[index % clients.length] ?? redis,
-            buildReservationInput({ saleOfferId, sequence: 1000 + index }),
+            buildReservationInput({
+              runId: inventoryRunId(saleOfferId),
+              saleOfferId,
+              sequence: 1000 + index,
+            }),
           ),
         ),
       );
@@ -2959,9 +3207,13 @@ describe("database migrations, seed data, and reset behavior", () => {
     const saleOfferId = "10000000-0000-4000-8000-000000000059";
     const keys = inventoryKeys(saleOfferId);
     const allocatedStock = 501;
-    let latestInput = buildReservationInput({ saleOfferId, sequence: 2000 });
+    let latestInput = buildReservationInput({
+      runId: inventoryRunId(saleOfferId),
+      saleOfferId,
+      sequence: 2000,
+    });
     await initializeInventory(redis, {
-      run: { runId: saleOfferId, status: "accepting" },
+      run: { runId: inventoryRunId(saleOfferId), status: "accepting" },
       saleOfferId,
       allocatedStock,
       source: "retention-test",
@@ -2969,7 +3221,11 @@ describe("database migrations, seed data, and reset behavior", () => {
     });
 
     for (let index = 0; index < allocatedStock; index += 1) {
-      latestInput = buildReservationInput({ saleOfferId, sequence: 2000 + index });
+      latestInput = buildReservationInput({
+        runId: inventoryRunId(saleOfferId),
+        saleOfferId,
+        sequence: 2000 + index,
+      });
       await expect(reserveInventoryStock(redis, latestInput)).resolves.toMatchObject({
         outcome: "reservation_secured",
       });
