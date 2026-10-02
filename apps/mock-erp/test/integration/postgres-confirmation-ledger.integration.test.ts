@@ -24,6 +24,7 @@ const migrationsFolder = fileURLToPath(new URL("../../../../packages/db/drizzle"
 const mockErpRoot = fileURLToPath(new URL("../..", import.meta.url));
 const mockErpEntryPoint = fileURLToPath(new URL("../../src/index.ts", import.meta.url));
 const request: ErpConfirmationRequest = {
+  erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
   orderId: "81000000-0000-4000-8000-000000000001",
   publicOrderId: "ord-ledger-integration",
   reservationId: "81000000-0000-4000-8000-000000000002",
@@ -135,11 +136,15 @@ describe("PostgreSQL confirmation ledger", () => {
     expect(accepted.status).toBe(200);
     await initial.close();
 
-    const restarted = await startMockErpProcess(runtimes, { forcedOutage: true });
+    const restarted = await startMockErpProcess(runtimes);
     const replay = await fetch(`${restarted.baseUrl}${erpConfirmationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...restartRequest, correlationId: "corr-after-restart" }),
+      body: JSON.stringify({
+        ...restartRequest,
+        erpConfig: { ...restartRequest.erpConfig, forcedOutage: true },
+        correlationId: "corr-after-restart",
+      }),
     });
     const replayBody = await replay.text();
     const lookup = await fetch(
@@ -171,7 +176,7 @@ describe("PostgreSQL confirmation ledger", () => {
 
     await discardResponse(`${runtime.baseUrl}${erpConfirmationPath}`, lostResponseRequest);
     await runtime.close("SIGKILL");
-    const restarted = await startMockErpProcess(runtimes, { forcedOutage: true });
+    const restarted = await startMockErpProcess(runtimes);
 
     const lookup = await fetch(
       `${restarted.baseUrl}${erpConfirmationLookupPath.replace(
@@ -183,7 +188,10 @@ describe("PostgreSQL confirmation ledger", () => {
     const replay = await fetch(`${restarted.baseUrl}${erpConfirmationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(lostResponseRequest),
+      body: JSON.stringify({
+        ...lostResponseRequest,
+        erpConfig: { ...lostResponseRequest.erpConfig, forcedOutage: true },
+      }),
     });
     const replayBody = await replay.text();
     await restarted.close();
@@ -198,12 +206,13 @@ describe("PostgreSQL confirmation ledger", () => {
   it("adopts one canonical result after the caller deadline aborts a slower confirmation", async () => {
     const lateRequest = {
       ...request,
+      erpConfig: { ...request.erpConfig, latencyMs: 50 },
       orderId: "83500000-0000-4000-8000-000000000001",
       publicOrderId: "ord-ledger-late-response",
       reservationId: "83500000-0000-4000-8000-000000000002",
       idempotencyKey: "erp-confirmation:83500000-0000-4000-8000-000000000001",
     };
-    const runtime = await startMockErpProcess(runtimes, { latencyMs: 50 });
+    const runtime = await startMockErpProcess(runtimes);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5);
     const aborted = await fetch(`${runtime.baseUrl}${erpConfirmationPath}`, {
@@ -237,12 +246,13 @@ describe("PostgreSQL confirmation ledger", () => {
   it("leaves unknown and no terminal row when killed during latency before insertion", async () => {
     const crashRequest = {
       ...request,
+      erpConfig: { ...request.erpConfig, latencyMs: 5000 },
       orderId: "84000000-0000-4000-8000-000000000001",
       publicOrderId: "ord-ledger-pre-insert-crash",
       reservationId: "84000000-0000-4000-8000-000000000002",
       idempotencyKey: "erp-confirmation:84000000-0000-4000-8000-000000000001",
     };
-    const crashing = await startMockErpProcess(runtimes, { latencyMs: 5000 });
+    const crashing = await startMockErpProcess(runtimes);
     const pendingRequest = fetch(`${crashing.baseUrl}${erpConfirmationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -274,24 +284,27 @@ describe("PostgreSQL confirmation ledger", () => {
   });
 
   it("emits delay-seconds Retry-After on capacity and recognized outage responses", async () => {
-    const capacityRuntime = await startMockErpProcess(runtimes, { maxTps: 1 });
+    const capacityRuntime = await startMockErpProcess(runtimes);
     const first = await postConfirmation(capacityRuntime.baseUrl, {
       ...request,
+      erpConfig: { ...request.erpConfig, maxTps: 1 },
       orderId: "85000000-0000-4000-8000-000000000001",
       idempotencyKey: "erp-confirmation:retry-after-capacity-first",
     });
     const capacity = await postConfirmation(capacityRuntime.baseUrl, {
       ...request,
+      erpConfig: { ...request.erpConfig, maxTps: 1 },
       orderId: "85000000-0000-4000-8000-000000000002",
       idempotencyKey: "erp-confirmation:retry-after-capacity-second",
     });
     await capacityRuntime.close();
 
-    const outageRuntime = await startMockErpProcess(runtimes, { forcedOutage: true });
+    const outageRuntime = await startMockErpProcess(runtimes);
     const outage = await postConfirmation(outageRuntime.baseUrl, {
       ...request,
       orderId: "85000000-0000-4000-8000-000000000003",
       idempotencyKey: "erp-confirmation:retry-after-outage",
+      erpConfig: { ...request.erpConfig, forcedOutage: true },
     });
     await outageRuntime.close();
 
@@ -309,10 +322,7 @@ interface MockErpProcess {
   waitForOutput(text: string): Promise<void>;
 }
 
-async function startMockErpProcess(
-  runtimes: MockErpProcess[],
-  options: { forcedOutage?: boolean; latencyMs?: number; maxTps?: number } = {},
-): Promise<MockErpProcess> {
+async function startMockErpProcess(runtimes: MockErpProcess[]): Promise<MockErpProcess> {
   const port = await availablePort();
   const child = spawn(process.execPath, ["--import", "tsx", mockErpEntryPoint], {
     cwd: mockErpRoot,
@@ -320,18 +330,9 @@ async function startMockErpProcess(
       ...process.env,
       NODE_ENV: "development",
       DATABASE_URL: databaseUrl,
-      CONTROL_SERVICE_TOKEN: "integration-control-token",
       HOST: "127.0.0.1",
       PORT: String(port),
       LOG_LEVEL: "info",
-      LATENCY_MS: String(options.latencyMs ?? 0),
-      MAX_TPS: String(options.maxTps ?? 100),
-      ERROR_RATE: "0",
-      FORCED_OUTAGE: String(options.forcedOutage ?? false),
-      ADMIN_MAX_LATENCY_MS: "5000",
-      ADMIN_MIN_MAX_TPS: "1",
-      ADMIN_MAX_ERROR_RATE: "1",
-      ADMIN_ALLOW_FORCED_OUTAGE: "true",
       MOCK_ERP_POSTGRES_POOL_MAX: "2",
     },
     stdio: ["ignore", "pipe", "pipe"],

@@ -9,7 +9,6 @@ import {
   orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
-  saleOfferPurposeValues,
   technicalOrderFailureCodeValues,
   trafficCompletionEnrichmentStatusValues,
   trafficDeliveryStatusValues,
@@ -18,7 +17,6 @@ import {
 
 describe("shared PostgreSQL vocabulary", () => {
   it("preserves every behavior-bearing ordered tuple", () => {
-    expect(saleOfferPurposeValues).toEqual(["catalog", "generated_run"]);
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
     expect(erpAttemptStatusValues).toEqual(["succeeded", "failed", "timed_out"]);
     expect(recoveryJobStatusValues).toEqual(["pending", "enqueued", "escalated", "resolved"]);

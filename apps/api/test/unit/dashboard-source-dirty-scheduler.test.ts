@@ -36,6 +36,7 @@ describe("DashboardSourceDirtyScheduler", () => {
     const publish = vi.fn().mockResolvedValue(undefined);
     const scheduler = createScheduler({ publish, soldOutWindowMs: 50 });
     const request = {
+      runId: "11111111-1111-4111-8111-111111111111",
       saleOfferId: "22222222-2222-4222-8222-222222222222",
       correlationId: "corr-sold-out",
     };
@@ -58,7 +59,10 @@ describe("DashboardSourceDirtyScheduler", () => {
     const publish = vi.fn().mockResolvedValue(undefined);
     const scheduler = createScheduler({ readQueue, publish, queueRefreshIntervalMs: 50 });
 
-    scheduler.scheduleQueue({ correlationId: "corr-queue" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-queue",
+    });
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
     await vi.advanceTimersByTimeAsync(50);
@@ -76,7 +80,10 @@ describe("DashboardSourceDirtyScheduler", () => {
       .mockResolvedValueOnce(queueStatus(0));
     const scheduler = createScheduler({ readQueue, publish });
 
-    scheduler.scheduleQueue({ correlationId: "corr-shared-cadence" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-shared-cadence",
+    });
     await scheduler.flush();
     expect(publish).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(dashboardLiveUpdateExpectedIntervalMs - 1);
@@ -111,11 +118,13 @@ describe("DashboardSourceDirtyScheduler", () => {
     const scheduler = createScheduler({ publish });
 
     scheduler.scheduleInventory({
+      runId: "33333333-3333-4333-8333-333333333333",
       saleOfferId: "11111111-1111-4111-8111-111111111111",
       correlationId: "corr-first",
     });
     await firstStarted;
     scheduler.scheduleInventory({
+      runId: "33333333-3333-4333-8333-333333333333",
       saleOfferId: "22222222-2222-4222-8222-222222222222",
       correlationId: "corr-during",
     });
@@ -187,7 +196,10 @@ describe("DashboardSourceDirtyScheduler", () => {
     });
     const scheduler = createScheduler({ readQueue, publish, queueRefreshIntervalMs: 50 });
 
-    scheduler.scheduleQueue({ correlationId: "corr-queue" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-queue",
+    });
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
     expect(vi.getTimerCount()).toBe(1);
@@ -215,15 +227,22 @@ describe("DashboardSourceDirtyScheduler", () => {
     const scheduler = createScheduler({ logger, publish, readQueue, queueRefreshIntervalMs: 50 });
 
     scheduler.scheduleInventory({
+      runId: "33333333-3333-4333-8333-333333333333",
       saleOfferId: "11111111-1111-4111-8111-111111111111",
       correlationId: "corr-inventory",
     });
-    scheduler.scheduleQueue({ correlationId: "corr-queue" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-queue",
+    });
     await expect(scheduler.flush()).resolves.toBeUndefined();
     expect(error).toHaveBeenCalledTimes(2);
 
     await scheduler.close();
-    scheduler.scheduleQueue({ correlationId: "corr-after-close" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-after-close",
+    });
     await vi.advanceTimersByTimeAsync(500);
     expect(readQueue).toHaveBeenCalledOnce();
     expect(publish).toHaveBeenCalledOnce();
@@ -243,15 +262,20 @@ describe("DashboardSourceDirtyScheduler", () => {
     });
 
     scheduler.scheduleInventory({
+      runId: "33333333-3333-4333-8333-333333333333",
       saleOfferId: "11111111-1111-4111-8111-111111111111",
       correlationId: "corr-old",
     });
     scheduler.scheduleInventory({
+      runId: "33333333-3333-4333-8333-333333333333",
       saleOfferId: "22222222-2222-4222-8222-222222222222",
       correlationId: "corr-new",
     });
     await scheduler.close();
-    scheduler.scheduleQueue({ correlationId: "corr-after-close" });
+    scheduler.scheduleQueue({
+      runId: "11111111-1111-4111-8111-111111111111",
+      correlationId: "corr-after-close",
+    });
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(warn).toHaveBeenCalledWith(

@@ -23,7 +23,7 @@ export const orderProcessJobSchema = z
     reservationId: uuidSchema,
     saleOfferId: uuidSchema,
     correlationId: correlationIdSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     quantity: positiveIntegerSchema,
     queuedAt: isoTimestampSchema,
     processingGeneration: processingGenerationSchema,
@@ -36,7 +36,7 @@ export const notificationRecordJobSchema = z
     orderId: uuidSchema,
     saleOfferId: uuidSchema,
     correlationId: correlationIdSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     recipientPlaceholder: z.string().trim().min(1),
     confirmedAt: isoTimestampSchema,
   })

@@ -5,6 +5,7 @@ import { createOrderDispatchScanner } from "../../src/application/order-dispatch
 
 const jobs: OrderProcessJob[] = [
   {
+    runId: "44444444-4444-4444-8444-444444444444",
     orderId: "11111111-1111-4111-8111-111111111111",
     publicOrderId: "ord_dispatch_1",
     reservationId: "33333333-3333-4333-8333-333333333333",
@@ -15,6 +16,7 @@ const jobs: OrderProcessJob[] = [
     processingGeneration: 0,
   },
   {
+    runId: "44444444-4444-4444-8444-444444444444",
     orderId: "11111111-1111-4111-8111-111111111112",
     publicOrderId: "ord_dispatch_2",
     reservationId: "33333333-3333-4333-8333-333333333334",
@@ -60,6 +62,7 @@ describe("order dispatch scanner", () => {
     expect(logError).toHaveBeenCalledWith(
       {
         err: publishError,
+        runId: jobs[0]?.runId,
         orderId: jobs[0]?.orderId,
         saleOfferId: jobs[0]?.saleOfferId,
         correlationId: jobs[0]?.correlationId,

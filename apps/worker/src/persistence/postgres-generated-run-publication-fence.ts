@@ -4,7 +4,6 @@ import {
   demoRunSaleContexts,
   demoRuns,
   type SqlClient,
-  saleOffers,
   terminalDemoRunTransitionLockKey,
 } from "@checkout-surge/db";
 import { and, eq, inArray } from "drizzle-orm";
@@ -38,13 +37,6 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
           and(
             eq(demoRunSaleContexts.runId, demoRuns.id),
             eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
-          ),
-        )
-        .innerJoin(
-          saleOffers,
-          and(
-            eq(saleOffers.id, demoRunSaleContexts.saleOfferId),
-            eq(saleOffers.purpose, "generated_run"),
           ),
         )
         .where(

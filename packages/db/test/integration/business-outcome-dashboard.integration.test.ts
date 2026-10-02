@@ -63,7 +63,6 @@ describe("business outcome dashboard projection", () => {
       allocatedStock: 10,
       saleStartsAt: now,
       saleEndsAt: new Date("2026-06-22T00:00:00.000Z"),
-      purpose: "generated_run",
     });
     await connection.db.insert(saleOffers).values({
       id: otherSaleOfferId,
@@ -72,7 +71,6 @@ describe("business outcome dashboard projection", () => {
       allocatedStock: 10,
       saleStartsAt: now,
       saleEndsAt: new Date("2026-06-22T00:00:00.000Z"),
-      purpose: "generated_run",
     });
     await connection.db.insert(demoPresets).values({
       id: presetId,
@@ -198,21 +196,21 @@ describe("business outcome dashboard projection", () => {
     });
     await connection.db.insert(reservations).values({
       id: "55555555-5555-4555-8555-555555555556",
-      saleOfferId,
-      runId: null,
-      correlationId: "corr-unscoped",
+      saleOfferId: otherSaleOfferId,
+      runId: otherRunId,
+      correlationId: "corr-other-attributed",
       quantity: 1,
-      reservationToken: "res-unscoped",
+      reservationToken: "res-other-attributed",
       securedAt: now,
       expiresAt: new Date("2026-06-21T00:15:00.000Z"),
     });
     await connection.db.insert(orders).values({
       id: "66666666-6666-4666-8666-666666666666",
-      publicOrderId: "ord-unscoped",
-      saleOfferId,
+      publicOrderId: "ord-other-attributed",
+      saleOfferId: otherSaleOfferId,
       reservationId: "55555555-5555-4555-8555-555555555556",
-      runId: null,
-      correlationId: "corr-unscoped",
+      runId: otherRunId,
+      correlationId: "corr-other-attributed",
       quantity: 1,
       status: "queued",
       queuedAt: now,

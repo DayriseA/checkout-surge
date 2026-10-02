@@ -346,7 +346,6 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           saleStartsAt: now,
           saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
           isActive: true,
-          purpose: "generated_run",
           createdAt: now,
           updatedAt: now,
         });

@@ -15,8 +15,6 @@ export const erpConfirmationLookupPath = "/confirmations/:idempotencyKey" as con
 export const erpConfirmationLookupParamsSchema = z
   .object({ idempotencyKey: idempotencyKeySchema })
   .strict();
-export const erpChaosStatusPath = "/chaos" as const;
-export const erpChaosResetPath = "/chaos/reset" as const;
 export const controlServiceTokenHeaderName = "x-control-service-token" as const;
 
 /** Deployment ceiling for configured ERP latency, enforced where a configuration is accepted. */
@@ -37,25 +35,15 @@ export const acceptedErpChaosConfigSchema = erpChaosConfigSchema.safeExtend({
   latencyMs: nonnegativeIntegerSchema.max(largestAllowedErpLatencyMs),
 });
 
-export const erpChaosSafetyCapsSchema = z
-  .object({
-    maxLatencyMs: nonnegativeIntegerSchema,
-    minMaxTps: z.number().int().positive(),
-    maxErrorRate: percentageSchema,
-    allowForcedOutage: z.boolean(),
-  })
-  .strict();
-export type ErpChaosSafetyCaps = z.infer<typeof erpChaosSafetyCapsSchema>;
-
 export const erpConfirmationRequestSchema = z
   .object({
     orderId: uuidSchema,
     publicOrderId: z.string().trim().min(1),
     reservationId: uuidSchema,
     saleOfferId: uuidSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     idempotencyKey: idempotencyKeySchema,
-    erpConfig: acceptedErpChaosConfigSchema.optional(),
+    erpConfig: acceptedErpChaosConfigSchema,
     correlationId: correlationIdSchema,
     quantity: z.number().int().positive(),
   })
@@ -95,18 +83,9 @@ export const erpConfirmationResponseSchema = z.discriminatedUnion("status", [
 ]);
 export type ErpConfirmationResponse = z.infer<typeof erpConfirmationResponseSchema>;
 
-export const erpChaosStatusSchema = erpChaosConfigSchema
-  .extend({
-    defaultConfig: erpChaosConfigSchema,
-    updatedAt: isoTimestampSchema,
-    effectiveSafetyCaps: erpChaosSafetyCapsSchema,
-  })
-  .strict();
-export type ErpChaosStatus = z.infer<typeof erpChaosStatusSchema>;
-
 export const erpLatestAttemptSummarySchema = z
   .object({
-    runId: uuidSchema.nullable(),
+    runId: uuidSchema,
     status: erpAttemptStatusSchema,
     finishedAt: isoTimestampSchema,
   })

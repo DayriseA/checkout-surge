@@ -2,12 +2,7 @@ import {
   type AdminMaintenanceCleanupRunsResponse,
   adminMaintenanceCleanupRunsResponseSchema,
 } from "@checkout-surge/contracts";
-import {
-  type CheckoutSurgeDatabase,
-  demoRunSaleContexts,
-  demoRuns,
-  saleOffers,
-} from "@checkout-surge/db";
+import { type CheckoutSurgeDatabase, demoRunSaleContexts, demoRuns } from "@checkout-surge/db";
 import { and, asc, desc, eq, inArray, lt, notInArray } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { RetentionGeneratedRunTeardown } from "./generated-run-teardown-service.js";
@@ -71,8 +66,7 @@ export class GeneratedRunRetentionService implements GeneratedRunRetentionWorkfl
           eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
         ),
       )
-      .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
-      .where(and(...filters, eq(saleOffers.purpose, "generated_run")))
+      .where(and(...filters))
       .orderBy(asc(demoRuns.createdAt));
 
     let deletedRunCount = 0;

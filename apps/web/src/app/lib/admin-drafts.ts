@@ -2,8 +2,6 @@ import type {
   AcceptedRunConfigSnapshot,
   DemoPresetContract,
   DeploymentHardCaps,
-  ErpChaosConfig,
-  ErpChaosSafetyCaps,
   PublicRuntimePolicy,
   PublicRuntimePolicyMutable,
 } from "@checkout-surge/contracts";
@@ -12,7 +10,6 @@ import {
   collectAcceptedRunConfigSnapshotViolations,
   collectPublicRuntimePolicyMutableViolations,
   demoPresetDisplaySchema,
-  erpChaosConfigSchema,
   publicRuntimePolicyMutableSchema,
 } from "@checkout-surge/contracts";
 import { formatCount } from "./presentation/format";
@@ -355,52 +352,6 @@ export function isPresetDraftDirty(draft: PresetDraft, preset: DemoPresetContrac
       },
     })
   );
-}
-
-export function buildErpChaosFromDraft(
-  draft: { latencyMs: string; maxTps: string; errorRate: string; forcedOutage: boolean },
-  caps: ErpChaosSafetyCaps,
-): DraftValidationResult<ErpChaosConfig> {
-  const rules = [
-    rule("latencyMs", "Latency", undefined, caps.maxLatencyMs),
-    rule("maxTps", "Maximum TPS", caps.minMaxTps),
-    rule("errorRate", "Error rate", undefined, ratioToPercent(caps.maxErrorRate)),
-  ];
-  const parsed = parseNumericDraft(draft, rules);
-  if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
-  const values = {
-    latencyMs: requiredNumber(parsed.values, "latencyMs"),
-    maxTps: requiredNumber(parsed.values, "maxTps"),
-    errorRate: percentToRatio(requiredNumber(parsed.values, "errorRate")),
-    forcedOutage: draft.forcedOutage,
-  };
-  const chaosParse = erpChaosConfigSchema.safeParse(values);
-  const contractErrors = chaosParse.success
-    ? emptyDraftErrors()
-    : contractDraftErrors(chaosParse.error.issues, rules, directDraftField);
-  const fieldErrors = mergeBoundErrors(
-    dynamicBoundErrors(parsed.values, rules),
-    contractErrors.fieldErrors,
-  );
-  if (Object.keys(fieldErrors).length > 0 || contractErrors.formErrors.length > 0) {
-    return { fieldErrors, formErrors: contractErrors.formErrors };
-  }
-  if (draft.forcedOutage && !caps.allowForcedOutage) {
-    return {
-      fieldErrors: {},
-      formErrors: [
-        {
-          message: "Forced outage is disabled by the effective safety caps.",
-          fields: ["forcedOutage"],
-        },
-      ],
-    };
-  }
-  return {
-    values,
-    fieldErrors: {},
-    formErrors: [],
-  };
 }
 
 export function buildSortOrder(value: string): DraftValidationResult<number> {

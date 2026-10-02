@@ -52,7 +52,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
     hold: SecuredReservationHold,
     runAdmissionVerified = false,
   ): Promise<PersistedBuyAcceptance> {
-    if (hold.runId && !runAdmissionVerified) {
+    if (!runAdmissionVerified) {
       const [run] = await tx
         .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
         .from(demoRuns)
@@ -72,7 +72,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
       .values({
         id: hold.id,
         saleOfferId: hold.saleOfferId,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         quantity: hold.quantity,
         correlationId: hold.correlationId,
         reservationToken: hold.reservationToken,
@@ -100,7 +100,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         publicOrderId: `ord_${randomUUID()}`,
         saleOfferId: hold.saleOfferId,
         reservationId: reservation.id,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         quantity: hold.quantity,
         correlationId: hold.correlationId,
         status: "queued",
@@ -126,7 +126,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         orderId: order.id,
         reservationId: reservation.id,
         saleOfferId: hold.saleOfferId,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         correlationId: hold.correlationId,
         eventName: "reservation.secured",
         payload: {
@@ -139,7 +139,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         orderId: order.id,
         reservationId: reservation.id,
         saleOfferId: hold.saleOfferId,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         correlationId: hold.correlationId,
         eventName: "order.queued",
         payload: {
@@ -161,9 +161,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
     operation: (persistence: BuyPersistenceOperations) => Promise<T>;
   }): Promise<T> {
     const runId = input.reservation.runId;
-    if (!runId) {
-      return input.operation(this);
-    }
 
     const client = (this.db as DatabaseWithClient).$client;
     const reservedClient = await client.reserve();
@@ -213,9 +210,6 @@ export class PostgresBuyPersistence implements BuyPersistence {
     ) => Promise<T>;
   }): Promise<T> {
     const runId = input.reservation.runId;
-    if (!runId) {
-      return input.operation(this, "admissible");
-    }
 
     return this.withSharedRunLock(runId, async (reservedDb, reservedClient) => {
       const [run] = await reservedDb
@@ -262,7 +256,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         reservationId: hold.id,
         saleOfferId: hold.saleOfferId,
         correlationId: hold.correlationId,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         status: "pending_reconciliation",
         attemptCount: input.attemptCount,
         updatedAt: input.attemptedAt,
@@ -272,7 +266,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         set: {
           saleOfferId: hold.saleOfferId,
           correlationId: hold.correlationId,
-          runId: hold.runId ?? null,
+          runId: hold.runId,
           status: "pending_reconciliation",
           attemptCount: input.attemptCount,
           lastError: null,
@@ -319,7 +313,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         reservationId: hold.id,
         saleOfferId: hold.saleOfferId,
         correlationId: hold.correlationId,
-        ...(hold.runId ? { runId: hold.runId } : {}),
+        runId: hold.runId,
         status: "exhausted",
         attemptCount: input.attemptCount,
         lastError: input.error.slice(0, 500),
@@ -331,7 +325,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
         set: {
           saleOfferId: hold.saleOfferId,
           correlationId: hold.correlationId,
-          runId: hold.runId ?? null,
+          runId: hold.runId,
           status: "exhausted",
           attemptCount: input.attemptCount,
           lastError: input.error.slice(0, 500),
@@ -505,7 +499,7 @@ function toReservationSummary(row: {
   id: string;
   saleOfferId: string;
   correlationId: string;
-  runId: string | null;
+  runId: string;
   quantity: number;
   reservationToken: string;
   expiresAt: Date;
@@ -515,7 +509,7 @@ function toReservationSummary(row: {
     id: row.id,
     saleOfferId: row.saleOfferId,
     correlationId: row.correlationId,
-    ...(row.runId ? { runId: row.runId } : {}),
+    runId: row.runId,
     quantity: row.quantity,
     reservationToken: row.reservationToken,
     expiresAt: row.expiresAt.toISOString(),
@@ -529,7 +523,7 @@ function toOrderSummary(row: {
   saleOfferId: string;
   reservationId: string;
   correlationId: string;
-  runId: string | null;
+  runId: string;
   quantity: number;
   queuedAt: Date;
 }): AcceptedOrderSummary {
@@ -539,7 +533,7 @@ function toOrderSummary(row: {
     saleOfferId: row.saleOfferId,
     reservationId: row.reservationId,
     correlationId: row.correlationId,
-    ...(row.runId ? { runId: row.runId } : {}),
+    runId: row.runId,
     quantity: row.quantity,
     status: "queued",
     queuedAt: row.queuedAt.toISOString(),

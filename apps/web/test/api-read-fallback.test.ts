@@ -33,7 +33,6 @@ describe("dashboard backend API reads", () => {
     initializeWebServerConfig({
       ...validWebEnv,
       API_BASE_URL: "http://api.internal",
-      MOCK_ERP_BASE_URL: "http://mock-erp.internal",
     });
   });
 

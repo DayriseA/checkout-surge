@@ -10,7 +10,6 @@ CREATE TYPE "public"."order_status" AS ENUM('queued', 'processing', 'confirmed',
 CREATE TYPE "public"."order_waiting_reason" AS ENUM('local_admission', 'erp_capacity', 'erp_unavailable', 'uncertain_result');--> statement-breakpoint
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
 CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled', 'exhausted');--> statement-breakpoint
-CREATE TYPE "public"."sale_offer_purpose" AS ENUM('catalog', 'generated_run');--> statement-breakpoint
 CREATE TYPE "public"."traffic_completion_enrichment_status" AS ENUM('pending', 'completed');--> statement-breakpoint
 CREATE TABLE "demo_presets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -111,7 +110,7 @@ CREATE TABLE "erp_attempts" (
 	"order_id" uuid NOT NULL,
 	"delivery_id" text NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"erp_call_id" uuid,
 	"attempt_number" integer NOT NULL,
 	"status" "erp_attempt_status" NOT NULL,
@@ -139,7 +138,7 @@ CREATE TABLE "erp_confirmation_ledger" (
 	"public_order_id" text NOT NULL,
 	"reservation_id" uuid NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"quantity" integer NOT NULL,
 	"terminal_result" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -154,7 +153,7 @@ CREATE TABLE "erp_dispatch_calls" (
 	"public_order_id" text NOT NULL,
 	"reservation_id" uuid NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"quantity" integer NOT NULL,
 	"correlation_id" text NOT NULL,
 	"dispatched_at" timestamp with time zone NOT NULL,
@@ -196,7 +195,7 @@ CREATE TABLE "order_events" (
 	"reservation_id" uuid,
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"event_name" "order_event_name" NOT NULL,
 	"payload" jsonb DEFAULT '{}'::jsonb NOT NULL,
 	"source" text NOT NULL,
@@ -238,7 +237,7 @@ CREATE TABLE "orders" (
 	"sale_offer_id" uuid NOT NULL,
 	"reservation_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"quantity" integer DEFAULT 1 NOT NULL,
 	"status" "order_status" DEFAULT 'queued' NOT NULL,
 	"failure_code" text,
@@ -279,7 +278,7 @@ CREATE TABLE "reservation_pending_persistence" (
 	"reservation_id" uuid NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"status" "reservation_pending_persistence_status" DEFAULT 'pending_reconciliation' NOT NULL,
 	"attempt_count" integer DEFAULT 0 NOT NULL,
 	"last_error" text,
@@ -293,7 +292,7 @@ CREATE TABLE "reservations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"quantity" integer DEFAULT 1 NOT NULL,
 	"reservation_token" text NOT NULL,
 	"expires_at" timestamp with time zone NOT NULL,
@@ -311,7 +310,6 @@ CREATE TABLE "sale_offers" (
 	"sale_starts_at" timestamp with time zone NOT NULL,
 	"sale_ends_at" timestamp with time zone NOT NULL,
 	"is_active" boolean DEFAULT true NOT NULL,
-	"purpose" "sale_offer_purpose" DEFAULT 'catalog' NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "sale_offers_allocated_stock_nonnegative" CHECK ("sale_offers"."allocated_stock" >= 0),
@@ -323,7 +321,7 @@ CREATE TABLE "simulated_notifications" (
 	"order_id" uuid NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
 	"correlation_id" text NOT NULL,
-	"run_id" uuid,
+	"run_id" uuid NOT NULL,
 	"recipient_placeholder" text NOT NULL,
 	"recorded_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
@@ -387,7 +385,6 @@ CREATE INDEX "reservations_sale_offer_id_idx" ON "reservations" USING btree ("sa
 CREATE INDEX "reservations_run_id_idx" ON "reservations" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "reservations_correlation_id_idx" ON "reservations" USING btree ("correlation_id");--> statement-breakpoint
 CREATE INDEX "sale_offers_product_id_idx" ON "sale_offers" USING btree ("product_id");--> statement-breakpoint
-CREATE INDEX "sale_offers_purpose_idx" ON "sale_offers" USING btree ("purpose");--> statement-breakpoint
 CREATE INDEX "sale_offers_active_window_idx" ON "sale_offers" USING btree ("is_active","sale_starts_at","sale_ends_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "simulated_notifications_order_id_unique" ON "simulated_notifications" USING btree ("order_id");--> statement-breakpoint
 CREATE INDEX "simulated_notifications_order_id_idx" ON "simulated_notifications" USING btree ("order_id");--> statement-breakpoint
@@ -431,3 +428,10 @@ ALTER TABLE "sale_offers" ADD CONSTRAINT "sale_offers_product_id_products_id_fk"
 ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_order_attribution_fk" FOREIGN KEY ("order_id","sale_offer_id","correlation_id") REFERENCES "public"."orders"("id","sale_offer_id","correlation_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "simulated_notifications" ADD CONSTRAINT "simulated_notifications_run_sale_context_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE restrict ON UPDATE no action;
+
+--> statement-breakpoint
+CREATE UNIQUE INDEX "orders_run_attribution_identity_unique" ON "orders" ("id", "run_id");
+--> statement-breakpoint
+ALTER TABLE "erp_dispatch_calls" ADD CONSTRAINT "erp_dispatch_calls_order_run_fk" FOREIGN KEY ("order_id","run_id") REFERENCES "orders"("id","run_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
+ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_run_fk" FOREIGN KEY ("order_id","run_id") REFERENCES "orders"("id","run_id") ON DELETE cascade ON UPDATE no action;

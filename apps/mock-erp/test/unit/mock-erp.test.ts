@@ -1,9 +1,5 @@
 import {
-  controlServiceTokenHeaderName,
   type ErpConfirmationRequest,
-  erpChaosResetPath,
-  erpChaosStatusPath,
-  erpChaosStatusSchema,
   erpConfirmationLookupPath,
   erpConfirmationPath,
   erpConfirmationResponseSchema,
@@ -15,11 +11,7 @@ import {
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigSafetyError,
-  ErpChaosConfigStore,
-} from "../../src/application/chaos-control-service.js";
+import { ChaosConfirmationDecisionProvider } from "../../src/application/chaos-control-service.js";
 import {
   ConfirmationIdempotencyConflictError,
   ConfirmationService,
@@ -29,6 +21,7 @@ import { loadMockErpConfig as loadProductionMockErpConfig } from "../../src/runt
 import { buildMockErpServer } from "../../src/server.js";
 
 const confirmationRequest: ErpConfirmationRequest = {
+  erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test_1",
   reservationId: "22222222-2222-4222-8222-222222222222",
@@ -38,19 +31,6 @@ const confirmationRequest: ErpConfirmationRequest = {
   correlationId: "corr-mock-erp-test",
   quantity: 1,
 };
-const defaultChaosConfig = {
-  latencyMs: 0,
-  maxTps: 100,
-  errorRate: 0,
-  forcedOutage: false,
-};
-const testSafetyCaps = {
-  maxLatencyMs: 5000,
-  minMaxTps: 1,
-  maxErrorRate: 1,
-  allowForcedOutage: true,
-};
-const controlServiceToken = "test-control-token";
 const loadMockErpConfig = (environment: Record<string, string | undefined>) =>
   loadProductionMockErpConfig({
     DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
@@ -59,98 +39,24 @@ const loadMockErpConfig = (environment: Record<string, string | undefined>) =>
   });
 
 describe("Mock ERP configuration", () => {
-  it("loads host-native defaults and explicit overrides", () => {
-    expect(loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken })).toEqual({
+  it("loads database and listener defaults", () => {
+    expect(loadMockErpConfig({})).toEqual({
       host: "0.0.0.0",
       port: 4100,
       databaseUrl: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
       postgresPoolMax: 5,
-      controlServiceToken,
-      defaultChaosConfig,
-      chaosSafetyCaps: testSafetyCaps,
     });
-    expect(
-      loadMockErpConfig({
-        HOST: "127.0.0.1",
-        PORT: "5100",
-        CONTROL_SERVICE_TOKEN: controlServiceToken,
-        LATENCY_MS: "25",
-        MAX_TPS: "3",
-        ERROR_RATE: "0.5",
-        FORCED_OUTAGE: "true",
-        ADMIN_MAX_LATENCY_MS: "1000",
-        ADMIN_MIN_MAX_TPS: "2",
-        ADMIN_MAX_ERROR_RATE: "0.75",
-        ADMIN_ALLOW_FORCED_OUTAGE: "false",
-      }),
-    ).toEqual({
-      host: "127.0.0.1",
-      port: 5100,
-      databaseUrl: "postgresql://postgres:postgres@localhost:5432/checkout_surge_test",
-      postgresPoolMax: 5,
-      controlServiceToken,
-      defaultChaosConfig: {
-        latencyMs: 25,
-        maxTps: 3,
-        errorRate: 0.5,
-        forcedOutage: true,
-      },
-      chaosSafetyCaps: {
-        maxLatencyMs: 1000,
-        minMaxTps: 2,
-        maxErrorRate: 0.75,
-        allowForcedOutage: false,
-      },
-    });
-  });
-
-  it("requires a control service token", () => {
-    expect(() => loadMockErpConfig({})).toThrow("CONTROL_SERVICE_TOKEN is required");
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: "change-me-shared-control-token" }),
-    ).toThrow("CONTROL_SERVICE_TOKEN must be replaced");
   });
 
   it("rejects an invalid port", () => {
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, PORT: "0" }),
-    ).toThrow("PORT must be a positive integer");
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, PORT: "invalid" }),
-    ).toThrow("PORT must be a positive integer");
+    expect(() => loadMockErpConfig({ PORT: "invalid" })).toThrow("PORT must be a positive integer");
   });
 
-  it("rejects invalid chaos environment values", () => {
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, ERROR_RATE: "2" }),
-    ).toThrow("ERROR_RATE must be a number from 0 to 1");
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, FORCED_OUTAGE: "yes" }),
-    ).toThrow("FORCED_OUTAGE must be true or false");
-  });
-
-  it.each([
-    "0",
-    "-1",
-    "1.5",
-    "not-a-number",
-    "NaN",
-    "Infinity",
-    "-Infinity",
-    "1e309",
-  ])("rejects MAX_TPS=%s", (value) => {
-    expect(() =>
-      loadMockErpConfig({ CONTROL_SERVICE_TOKEN: controlServiceToken, MAX_TPS: value }),
-    ).toThrow("MAX_TPS must be a positive integer");
-  });
-
-  it("rejects invalid ADMIN_MIN_MAX_TPS", () => {
-    expect(() =>
-      loadMockErpConfig({
-        CONTROL_SERVICE_TOKEN: controlServiceToken,
-        ADMIN_MIN_MAX_TPS: "0",
-      }),
-    ).toThrow("ADMIN_MIN_MAX_TPS must be a positive integer");
+  it("accepts HOST and PORT overrides", () => {
+    expect(loadMockErpConfig({ HOST: "127.0.0.1", PORT: "5100" })).toMatchObject({
+      host: "127.0.0.1",
+      port: 5100,
+    });
   });
 });
 
@@ -377,66 +283,8 @@ describe("confirmation service", () => {
 });
 
 describe("chaos control service", () => {
-  it("tracks config status and rejects values outside admin safety caps", () => {
-    const store = new ErpChaosConfigStore(
-      defaultChaosConfig,
-      testSafetyCaps,
-      () => new Date("2026-06-22T00:00:00.000Z"),
-    );
-
-    expect(store.getStatus()).toEqual({
-      ...defaultChaosConfig,
-      defaultConfig: defaultChaosConfig,
-      updatedAt: "2026-06-22T00:00:00.000Z",
-      effectiveSafetyCaps: testSafetyCaps,
-    });
-
-    expect(() =>
-      store.update({ latencyMs: 5001, maxTps: 100, errorRate: 0, forcedOutage: false }),
-    ).toThrow(ErpChaosConfigSafetyError);
-  });
-
-  it("applies configured latency before returning a successful decision", async () => {
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: false },
-      testSafetyCaps,
-    );
-    const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
-      tpsLimiter: new SlidingWindowTpsLimiter(),
-      sleep,
-    });
-
-    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
-    expect(sleep).toHaveBeenCalledWith(125);
-  });
-
-  it("prefers request-scoped ERP config over the operator chaos store", async () => {
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 125, maxTps: 100, errorRate: 0, forcedOutage: true },
-      testSafetyCaps,
-    );
-    const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
-      tpsLimiter: new SlidingWindowTpsLimiter(),
-      sleep,
-    });
-
-    await expect(
-      provider.decide({
-        ...confirmationRequest,
-        erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
-      }),
-    ).resolves.toEqual({ status: "succeeded" });
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
   it("tracks request-scoped TPS windows independently by run ID", async () => {
-    const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
     const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
       tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
     });
     const runScopedConfig = { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false };
@@ -462,69 +310,6 @@ describe("chaos control service", () => {
       errorCode: "erp_capacity_exceeded",
     });
     await expect(provider.decide(secondRunRequest)).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-  });
-
-  it("keeps global traffic out of a run-scoped TPS window", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
-      testSafetyCaps,
-    );
-    const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
-      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
-    });
-    const globalRequest = {
-      ...confirmationRequest,
-      runId: undefined,
-    };
-
-    await expect(provider.decide(confirmationRequest)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(globalRequest)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(confirmationRequest)).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-    await expect(provider.decide(globalRequest)).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-  });
-
-  it("separates no-run TPS windows for materially different request-scoped configs", async () => {
-    const store = new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps);
-    const provider = new ChaosConfirmationDecisionProvider({
-      configStore: store,
-      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
-      random: () => 1,
-    });
-    const firstConfigRequest = {
-      ...confirmationRequest,
-      runId: undefined,
-      erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
-    };
-    const secondConfigRequest = {
-      ...confirmationRequest,
-      orderId: "55555555-5555-4555-8555-555555555555",
-      publicOrderId: "ord_test_2",
-      idempotencyKey: "erp-confirmation:55555555-5555-4555-8555-555555555555",
-      runId: undefined,
-      erpConfig: { latencyMs: 0, maxTps: 1, errorRate: 0.25, forcedOutage: false },
-    };
-
-    await expect(provider.decide(firstConfigRequest)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(secondConfigRequest)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(firstConfigRequest)).resolves.toMatchObject({
-      status: "failed",
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-    await expect(provider.decide(secondConfigRequest)).resolves.toMatchObject({
       status: "failed",
       httpStatus: 429,
       errorCode: "erp_capacity_exceeded",
@@ -711,17 +496,11 @@ describe("Mock ERP HTTP service", () => {
   });
 
   it("keeps lookup outside chaos and TPS decisions", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false },
-      testSafetyCaps,
-    );
     const decide = new ChaosConfirmationDecisionProvider({
-      configStore: store,
       tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 500 }),
     });
     const server = buildTestServer({
       confirmationService: new ConfirmationService({ decisionProvider: decide }),
-      chaosConfigStore: store,
     });
     const lookupUrl = erpConfirmationLookupPath.replace(
       ":idempotencyKey",
@@ -738,7 +517,6 @@ describe("Mock ERP HTTP service", () => {
         })
       ).statusCode,
     ).toBe(200);
-    store.update({ latencyMs: 5000, maxTps: 1, errorRate: 1, forcedOutage: true });
     const lookup = await server.inject({
       method: "GET",
       url: erpConfirmationLookupPath.replace(
@@ -772,150 +550,6 @@ describe("Mock ERP HTTP service", () => {
       correlationId: "corr-invalid-request",
     });
   });
-
-  it("exposes chaos status as a public read", async () => {
-    const server = buildTestServer({
-      confirmationService: new ConfirmationService(),
-      chaosConfigStore: new ErpChaosConfigStore(
-        { latencyMs: 15, maxTps: 7, errorRate: 0.25, forcedOutage: false },
-        testSafetyCaps,
-        () => new Date("2026-06-22T00:00:00.000Z"),
-      ),
-    });
-
-    const response = await server.inject({ method: "GET", url: erpChaosStatusPath });
-    await server.close();
-
-    expect(response.statusCode).toBe(200);
-    expect(erpChaosStatusSchema.parse(response.json())).toEqual({
-      latencyMs: 15,
-      maxTps: 7,
-      errorRate: 0.25,
-      forcedOutage: false,
-      defaultConfig: { latencyMs: 15, maxTps: 7, errorRate: 0.25, forcedOutage: false },
-      updatedAt: "2026-06-22T00:00:00.000Z",
-      effectiveSafetyCaps: testSafetyCaps,
-    });
-  });
-
-  it("protects chaos updates with the control service token", async () => {
-    const server = buildTestServer({ confirmationService: new ConfirmationService() });
-
-    const response = await server.inject({
-      method: "PUT",
-      url: erpChaosStatusPath,
-      payload: { latencyMs: 10, maxTps: 10, errorRate: 0, forcedOutage: false },
-    });
-    await server.close();
-
-    expect(response.statusCode).toBe(401);
-    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
-      code: "control_token_required",
-    });
-  });
-
-  it("updates and resets chaos controls within configured caps", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
-      testSafetyCaps,
-      sequenceClock(
-        new Date("2026-06-22T00:00:00.000Z"),
-        new Date("2026-06-22T00:00:01.000Z"),
-        new Date("2026-06-22T00:00:02.000Z"),
-        new Date("2026-06-22T00:00:03.000Z"),
-      ),
-    );
-    const server = buildTestServer({
-      confirmationService: new ConfirmationService(),
-      chaosConfigStore: store,
-    });
-
-    const update = await server.inject({
-      method: "PUT",
-      url: erpChaosStatusPath,
-      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
-      payload: { latencyMs: 250, maxTps: 5, errorRate: 0.5, forcedOutage: true },
-    });
-    const reset = await server.inject({
-      method: "POST",
-      url: erpChaosResetPath,
-      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
-    });
-    const repeatedReset = await server.inject({
-      method: "POST",
-      url: erpChaosResetPath,
-      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
-    });
-    await server.close();
-
-    expect(update.statusCode).toBe(200);
-    expect(erpChaosStatusSchema.parse(update.json())).toEqual({
-      latencyMs: 250,
-      maxTps: 5,
-      errorRate: 0.5,
-      forcedOutage: true,
-      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
-      updatedAt: "2026-06-22T00:00:01.000Z",
-      effectiveSafetyCaps: testSafetyCaps,
-    });
-    expect(reset.statusCode).toBe(200);
-    expect(erpChaosStatusSchema.parse(reset.json())).toEqual({
-      latencyMs: 1,
-      maxTps: 100,
-      errorRate: 0,
-      forcedOutage: false,
-      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
-      updatedAt: "2026-06-22T00:00:02.000Z",
-      effectiveSafetyCaps: testSafetyCaps,
-    });
-    expect(erpChaosStatusSchema.parse(repeatedReset.json())).toEqual({
-      latencyMs: 1,
-      maxTps: 100,
-      errorRate: 0,
-      forcedOutage: false,
-      defaultConfig: { latencyMs: 1, maxTps: 100, errorRate: 0, forcedOutage: false },
-      updatedAt: "2026-06-22T00:00:03.000Z",
-      effectiveSafetyCaps: testSafetyCaps,
-    });
-  });
-
-  it.each([undefined, "wrong-token"])("rejects chaos reset with token %s", async (token) => {
-    const server = buildTestServer({ confirmationService: new ConfirmationService() });
-    const response = await server.inject({
-      method: "POST",
-      url: erpChaosResetPath,
-      ...(token ? { headers: { [controlServiceTokenHeaderName]: token } } : {}),
-    });
-    await server.close();
-    expect(response.statusCode).toBe(401);
-    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
-      code: "control_token_required",
-    });
-  });
-
-  it("rejects chaos updates above configured caps", async () => {
-    const server = buildTestServer({
-      confirmationService: new ConfirmationService(),
-      chaosConfigStore: new ErpChaosConfigStore(defaultChaosConfig, {
-        ...testSafetyCaps,
-        maxLatencyMs: 100,
-      }),
-    });
-
-    const response = await server.inject({
-      method: "PUT",
-      url: erpChaosStatusPath,
-      headers: { [controlServiceTokenHeaderName]: controlServiceToken },
-      payload: { latencyMs: 101, maxTps: 10, errorRate: 0, forcedOutage: false },
-    });
-    await server.close();
-
-    expect(response.statusCode).toBe(400);
-    expect(errorPayloadSchema.parse(response.json())).toMatchObject({
-      code: "invalid_chaos_configuration",
-      details: { latencyMs: { maximum: 100, actual: 101 } },
-    });
-  });
 });
 
 function sequenceClock(...dates: Date[]): () => Date {
@@ -933,16 +567,10 @@ function sequenceClock(...dates: Date[]): () => Date {
   };
 }
 
-function buildTestServer(options: {
-  confirmationService: ConfirmationService;
-  chaosConfigStore?: ErpChaosConfigStore;
-  startedAt?: Date;
-}) {
+function buildTestServer(options: { confirmationService: ConfirmationService; startedAt?: Date }) {
   return buildMockErpServer({
     confirmationService: options.confirmationService,
-    chaosConfigStore:
-      options.chaosConfigStore ?? new ErpChaosConfigStore(defaultChaosConfig, testSafetyCaps),
-    controlServiceToken,
+
     logger: createSilentLogger("mock-erp"),
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });

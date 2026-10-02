@@ -45,7 +45,6 @@ describe("web server secret configuration", () => {
   it("accepts distinct deployment secrets", () => {
     expect(loadWebServerConfig(validSecrets)).toEqual({
       apiBaseUrl: "http://localhost:4000",
-      mockErpBaseUrl: "http://localhost:4100",
       controlServiceToken: "control-token",
       adminDashboardPassphrase: "admin-passphrase",
       adminSessionSecret: "session-secret",
@@ -63,16 +62,11 @@ describe("web server secret configuration", () => {
     const config = loadWebServerConfig({
       ...validSecrets,
       API_BASE_URL: " https://api.internal/ ",
-      MOCK_ERP_BASE_URL: "http://mock-erp.internal/",
     });
     expect(config.apiBaseUrl).toBe("https://api.internal");
-    expect(config.mockErpBaseUrl).toBe("http://mock-erp.internal");
     expect(() => loadWebServerConfig({ ...validSecrets, API_BASE_URL: "not-a-url" })).toThrow(
       /API_BASE_URL/,
     );
-    expect(() =>
-      loadWebServerConfig({ ...validSecrets, MOCK_ERP_BASE_URL: "ftp://mock.internal" }),
-    ).toThrow(/MOCK_ERP_BASE_URL/);
   });
 
   it.each([

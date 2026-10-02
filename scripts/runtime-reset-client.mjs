@@ -29,10 +29,6 @@ export async function resetRuntime(options = {}) {
       service: "api",
       url: `${normalizeBaseUrl(options.apiBaseUrl ?? environment.API_BASE_URL ?? "http://localhost:4000")}/admin/demo/reset`,
     },
-    {
-      service: "mock-erp",
-      url: `${normalizeBaseUrl(options.mockErpBaseUrl ?? environment.MOCK_ERP_BASE_URL ?? "http://localhost:4100")}/chaos/reset`,
-    },
   ];
 
   const outcomes = [];

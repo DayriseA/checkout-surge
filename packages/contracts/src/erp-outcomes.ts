@@ -56,7 +56,7 @@ export const erpLookupIdentitySchema = z
     publicOrderId: z.string().trim().min(1),
     reservationId: uuidSchema,
     saleOfferId: uuidSchema,
-    runId: uuidSchema.optional(),
+    runId: uuidSchema,
     idempotencyKey: idempotencyKeySchema,
     quantity: positiveIntegerSchema,
   })

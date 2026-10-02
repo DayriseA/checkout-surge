@@ -15,7 +15,7 @@ interface LedgerRow {
   publicOrderId: string;
   reservationId: string;
   saleOfferId: string;
-  runId: string | null;
+  runId: string;
   quantity: number;
   terminalResult: unknown;
 }
@@ -61,7 +61,7 @@ export class PostgresConfirmationLedger implements ConfirmationLedger {
         ${entry.identity.publicOrderId},
         ${entry.identity.reservationId},
         ${entry.identity.saleOfferId},
-        ${entry.identity.runId ?? null},
+        ${entry.identity.runId},
         ${entry.identity.quantity},
         ${JSON.stringify(entry.response)}::jsonb
       )
@@ -84,7 +84,7 @@ function parseLedgerRow(row: LedgerRow): ConfirmationLedgerEntry {
     publicOrderId: row.publicOrderId,
     reservationId: row.reservationId,
     saleOfferId: row.saleOfferId,
-    ...(row.runId ? { runId: row.runId } : {}),
+    runId: row.runId,
     idempotencyKey: row.idempotencyKey,
     quantity: row.quantity,
   });

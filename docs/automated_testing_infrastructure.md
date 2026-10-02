@@ -245,6 +245,8 @@ Expected future CI behavior:
 
 ---
 
+Purchase fixtures must create an explicit run, a dedicated sale offer, and durable `DemoRunSaleContext` ownership with a contract-valid frozen configuration before reserving or processing. The public `@checkout-surge/db/testing` entry point exposes `createPurchaseRunFixture` for purchase-boundary tests; it freezes the existing offer's allocation. Redis-only atomicity tests initialize owned inventory and its accepting run identity. Global read filters and idle queue observations may omit a selected run, but business payloads may not. Seed tests assert that no sale or inventory is bootstrapped and that reseeding preserves existing run stock and accepted reservations.
+
 ## Summary
 
 The repository's testing foundation provides:

@@ -17,6 +17,7 @@ import {
   type TrafficCompletionReport,
   trafficDeliverySummarySchema,
 } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
   demoPresets,
@@ -43,7 +44,7 @@ import {
   saleOffers,
   simulatedNotifications,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { createPurchaseRunFixture, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -53,10 +54,7 @@ import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-f
 import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
-import {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigStore,
-} from "../../../mock-erp/src/application/chaos-control-service.js";
+import { ChaosConfirmationDecisionProvider } from "../../../mock-erp/src/application/chaos-control-service.js";
 import { ConfirmationService } from "../../../mock-erp/src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-limiter.js";
 import { PostgresConfirmationLedger } from "../../../mock-erp/src/persistence/postgres-confirmation-ledger.js";
@@ -110,6 +108,7 @@ const ids = {
 } as const;
 const queuedAt = new Date("2026-06-21T00:00:00.000Z");
 const job: OrderProcessJob = {
+  runId: ids.run,
   orderId: ids.order,
   publicOrderId: "ord_worker_integration",
   reservationId: ids.reservation,
@@ -213,7 +212,7 @@ describe("PostgreSQL worker order transitions", () => {
     "unknown",
   ] as const)("settles a %s lookup when recovery publication loses the accepted snapshot", async (lookupStatus) => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     const control = new PostgresOrderRecoveryPersistence(connection.db);
     const transitions = new PostgresOrderTransitionPersistence(connection.db);
     const attempts = new PostgresErpAttemptPersistence(connection.db);
@@ -263,6 +262,7 @@ describe("PostgreSQL worker order transitions", () => {
       }),
     );
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
@@ -346,6 +346,7 @@ describe("PostgreSQL worker order transitions", () => {
               lookup: {
                 status: "succeeded",
                 identity: {
+                  runId: ids.run,
                   orderId: job.orderId,
                   publicOrderId: job.publicOrderId,
                   reservationId: job.reservationId,
@@ -365,6 +366,7 @@ describe("PostgreSQL worker order transitions", () => {
             }),
     );
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
@@ -434,6 +436,7 @@ describe("PostgreSQL worker order transitions", () => {
       .fn<typeof globalThis.fetch>()
       .mockResolvedValue(new Response("denied", { status: 401 }));
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1000, maximumDelayMs: 60000 },
@@ -533,7 +536,7 @@ describe("PostgreSQL worker order transitions", () => {
         orderId: ids.order,
         reservationId: ids.reservation,
         saleOfferId: ids.saleOffer,
-        runId: null,
+        runId: ids.run,
         correlationId: job.correlationId,
         source: "worker",
         occurredAt: new Date("2026-06-21T00:00:01.000Z"),
@@ -543,7 +546,7 @@ describe("PostgreSQL worker order transitions", () => {
         orderId: ids.order,
         reservationId: ids.reservation,
         saleOfferId: ids.saleOffer,
-        runId: null,
+        runId: ids.run,
         correlationId: job.correlationId,
         source: "worker",
         occurredAt: new Date("2026-06-21T00:00:02.000Z"),
@@ -594,6 +597,7 @@ describe("PostgreSQL worker order transitions", () => {
       sequenceClock(new Date("2026-06-21T00:00:03.000Z"), new Date("2026-06-21T00:00:04.000Z")),
     );
     const notificationJob: NotificationRecordJob = {
+      runId: ids.run,
       orderId: ids.order,
       saleOfferId: ids.saleOffer,
       correlationId: job.correlationId,
@@ -633,7 +637,7 @@ describe("PostgreSQL worker order transitions", () => {
         orderId: ids.order,
         saleOfferId: ids.saleOffer,
         correlationId: job.correlationId,
-        runId: null,
+        runId: ids.run,
         recipientPlaceholder: "simulated-buyer:ord_worker_integration",
         recordedAt: new Date("2026-06-21T00:00:03.000Z"),
       },
@@ -931,7 +935,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("confirms accepted run work after sale eligibility expires", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     await connection.db.delete(orderEvents);
     await connection.db.delete(orders);
     await connection.db.delete(reservations);
@@ -1075,8 +1079,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("filters terminal notification work before applying the recovery batch limit", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
-    await seedAdditionalQueuedOrder(connection, freshJob);
+    await seedQueuedOrder(connection);
     await connection.db
       .update(orders)
       .set({
@@ -1086,14 +1089,6 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       })
       .where(eq(orders.id, ids.order));
     await connection.db
-      .update(orders)
-      .set({
-        status: "confirmed",
-        processingAt: new Date("2026-06-21T00:00:02.000Z"),
-        confirmedAt: new Date("2026-06-21T00:00:03.000Z"),
-      })
-      .where(eq(orders.id, freshIds.order));
-    await connection.db
       .update(demoRuns)
       .set({
         status: "completed",
@@ -1101,6 +1096,16 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       })
       .where(eq(demoRuns.id, ids.run));
 
+    const eligibleJob = await seedIndependentFreshRun(connection);
+    await seedAdditionalQueuedOrder(connection, eligibleJob);
+    await connection.db
+      .update(orders)
+      .set({
+        status: "confirmed",
+        processingAt: new Date("2026-06-21T00:00:02.000Z"),
+        confirmedAt: new Date("2026-06-21T00:00:03.000Z"),
+      })
+      .where(eq(orders.id, freshIds.order));
     const candidates = await new PostgresNotificationRecoveryPersistence(
       connection.db,
     ).findConfirmedOrdersMissingNotifications({ limit: 1 });
@@ -1111,7 +1116,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("completes a purged reset job without dead-lettering and preserves genuine missing-order evidence", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     const entered = releaseBarrier();
     const release = releaseBarrier();
     const logger = createSilentLogger("worker");
@@ -1190,7 +1195,8 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           .where(eq(demoRuns.id, ids.run)),
       ).toEqual([{ status: "failed" }]);
 
-      await queue.add(orderProcessJobName, freshJob, {
+      const missingJob = await seedIndependentFreshRun(connection);
+      await queue.add(orderProcessJobName, missingJob, {
         jobId: "genuine-missing-order",
         attempts: 2,
         backoff: { type: "fixed", delay: 10 },
@@ -1216,7 +1222,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     destructiveResetReasonValues,
   )("fences recovery and notification recording for %s", async (reason) => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     const recovery = new PostgresOrderRecoveryPersistence(connection.db);
     const notifications = new PostgresNotificationRecordPersistence(connection.db);
     expect(await recovery.isTerminalResetRun(ids.run)).toBe(false);
@@ -1231,7 +1237,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("waits for an in-flight order transaction before purging run rows", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     await new PostgresTerminalDemoRunSummaryWriter(connection.db, {
       synchronize: async () => {},
     }).claimTerminalRun({
@@ -1325,7 +1331,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   it("recovers a terminally failed notification job so the run can finalize", async () => {
     await redis.flushdb();
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     await seedTrafficCompleteRunArtifacts(connection, redis);
 
     const logger = createSilentLogger("worker");
@@ -1444,6 +1450,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     consumer = buildConsumer(
       connection,
       new HttpErpOrderConfirmation({
+        runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
         baseUrl: "http://mock-erp:4100",
         lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -1544,6 +1551,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
           lookup: {
             status: "succeeded",
             identity: {
+              runId: ids.run,
               orderId: job.orderId,
               publicOrderId: job.publicOrderId,
               reservationId: job.reservationId,
@@ -1571,6 +1579,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       });
     });
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -1583,7 +1592,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
-      fallbackConcurrency: 2,
+      reconciliationConcurrency: 2,
       now: () => policyNow.getTime(),
       random: () => 0,
     });
@@ -1608,10 +1617,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       }),
       logger: createSilentLogger("worker"),
     });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: control,
       handler: { handle: vi.fn() },
@@ -1645,6 +1657,18 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   }, 20_000);
 
   it("does not gate fresh orders behind overlapping healthy dispatch leases", async () => {
+    await connection.db
+      .update(demoRuns)
+      .set({
+        configSnapshot: {
+          ...configSnapshotFixture(),
+          backpressureConfig: {
+            ...configSnapshotFixture().backpressureConfig,
+            orderProcessConcurrency: 10,
+          },
+        },
+      })
+      .where(eq(demoRuns.id, ids.run));
     const secondJob = capacityJobs[1];
     if (!secondJob) throw new Error("Missing overlap fixture order.");
     await seedAdditionalQueuedOrder(connection, secondJob);
@@ -1661,11 +1685,12 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => now,
       random: () => 0,
     });
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -1704,7 +1729,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     succeed(0);
     await first;
     // B still owns a durable dispatch intent and an unexpired lease.
-    expect(await scopeState.readReconciliationGate("catalog")).toMatchObject({
+    expect(await scopeState.readReconciliationGate(`run:${ids.run}`)).toMatchObject({
       pending: true,
       nextEligibleAtMs: baseTime + 30_500,
     });
@@ -1750,6 +1775,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const fetch = vi.fn<typeof globalThis.fetch>();
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -1762,7 +1788,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => policyNow.getTime(),
       random: () => 0,
     });
@@ -1783,10 +1809,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       }),
       logger: createSilentLogger("worker"),
     });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: control,
       handler: { handle: vi.fn() },
@@ -1822,7 +1851,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const safetyUntil = policyNow.getTime() + 1_000;
     const scopeState = new PostgresErpScopeResiliencePersistence(connection.db);
     await scopeState.save({
-      scope: "catalog",
+      scope: `run:${ids.run}`,
       cooldownUntilMs: safetyUntil,
       availabilityRetryAtMs: safetyUntil,
       availabilityCircuitOpen: true,
@@ -1840,6 +1869,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     );
     const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -1851,7 +1881,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       pauseDelivery: async () => {},
       persistence: scopeState,
       runConfigReader: new PostgresRunConfigReader(connection.db),
-      fallbackConcurrency: 10,
+      reconciliationConcurrency: 10,
       now: () => policyNow.getTime(),
       random: () => 0,
     });
@@ -1876,10 +1906,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       }),
       logger: createSilentLogger("worker"),
     });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: control,
       handler: { handle: vi.fn() },
@@ -1946,10 +1979,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const confirm = vi.fn(async () => {
       await gates[confirm.mock.calls.length - 1]?.promise;
     });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: control,
       handler: { handle: vi.fn() },
@@ -2033,10 +2069,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
   it("re-claims a durable claim whose delivery never reached the queue", async () => {
     let policyNow = new Date();
     const control = new PostgresOrderRecoveryPersistence(connection.db, () => policyNow);
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: control,
       handler: { handle: vi.fn() },
@@ -2087,7 +2126,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("reaches lookup reconciliation when an unresolved call's recovery delivery waits past its lease", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     const snapshot = configSnapshotFixture();
     snapshot.erpConfig.latencyMs = 300;
     await connection.db
@@ -2099,22 +2138,15 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     const transitions = new PostgresOrderTransitionPersistence(connection.db);
     const attempts = new PostgresErpAttemptPersistence(connection.db);
     const publishForConfirmedOrder = vi.fn().mockResolvedValue(undefined);
-    const store = new ErpChaosConfigStore(snapshot.erpConfig, {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
-    });
+
     const server = buildMockErpServer({
-      chaosConfigStore: store,
       confirmationService: new ConfirmationService({
         ledger: new PostgresConfirmationLedger(connection.sql),
         decisionProvider: new ChaosConfirmationDecisionProvider({
-          configStore: store,
           tpsLimiter: new SlidingWindowTpsLimiter(),
         }),
       }),
-      controlServiceToken: "recovery-backlog-test",
+
       logger: createSilentLogger("mock-erp"),
     });
     const methods: string[] = [];
@@ -2249,6 +2281,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     );
     let confirmations = 0;
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -2269,10 +2302,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     await queue.setGlobalRateLimit(rateLimit.max, rateLimit.duration);
     await queue.setGlobalConcurrency(5);
     consumer = buildConsumer(connection, client, { concurrency: 5 });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
@@ -2333,7 +2369,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
 
   it("honors the Retry-After pause from an unexpected capacity rejection and resumes the configured rate", async () => {
     await resetTestDatabase({ databaseUrl, migrationsFolder });
-    await seedQueuedOrder(connection, { runScoped: true });
+    await seedQueuedOrder(connection);
     const snapshot = configSnapshotFixture();
     snapshot.trafficConfig = {
       ...snapshot.trafficConfig,
@@ -2363,27 +2399,24 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     let requests = 0;
     const responses: Array<{ status: number }> = [];
     let rejectedAt = 0;
-    const store = new ErpChaosConfigStore(snapshot.erpConfig, {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
+
+    const capacityProvider = new ChaosConfirmationDecisionProvider({
+      tpsLimiter: new SlidingWindowTpsLimiter(),
     });
     const server = buildMockErpServer({
-      chaosConfigStore: store,
       confirmationService: new ConfirmationService({
         ledger: new PostgresConfirmationLedger(connection.sql),
-        decisionProvider: new ChaosConfirmationDecisionProvider({
-          configStore: store,
-          tpsLimiter: new SlidingWindowTpsLimiter(),
-          // Test composition only. Production always honors the accepted snapshot.
-          resolveConfig: (request) => {
+        decisionProvider: {
+          decide: (request) => {
             expect(request.erpConfig).toEqual(snapshot.erpConfig);
-            return { ...snapshot.erpConfig, maxTps: effectiveCapacity };
+            return capacityProvider.decide({
+              ...request,
+              erpConfig: { ...request.erpConfig, maxTps: effectiveCapacity },
+            });
           },
-        }),
+        },
       }),
-      controlServiceToken: "capacity-seam-test",
+
       logger: createSilentLogger("mock-erp"),
     });
     server.addHook("onRequest", async () => {
@@ -2545,6 +2578,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       });
     });
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -2563,10 +2597,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
         await queue.add(orderProcessJobName, lateJob, { attempts: 1, jobId: lateJob.orderId });
       },
     });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
@@ -2708,6 +2745,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     });
     const notificationRecordPublisher = { publishForConfirmedOrder: vi.fn() };
     const client = new HttpErpOrderConfirmation({
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
       baseUrl: "http://mock-erp:4100",
       lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
       retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -2719,10 +2757,13 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
       notificationRecordPublisher,
     });
     consumer.start();
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: requireTestEnv("TEST_REDIS_URL"),
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: requireTestEnv("TEST_REDIS_URL"),
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderRecoveryScanner({
       persistence: new PostgresOrderRecoveryPersistence(connection.db),
       handler: { handle: vi.fn() },
@@ -2807,6 +2848,7 @@ describe("BullMQ and PostgreSQL worker workflow", () => {
     consumer = buildConsumer(
       connection,
       new HttpErpOrderConfirmation({
+        runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
         baseUrl: "http://mock-erp:4100",
         lookupTimeoutMs: erpResiliencePolicy.initialRequestDeadlineMs,
         retryAfterPolicy: { fallbackDelayMs: 1_000, maximumDelayMs: 60_000 },
@@ -2954,7 +2996,7 @@ function scheduledConfirmation(
     pauseDelivery,
     persistence: scopeState,
     runConfigReader: new PostgresRunConfigReader(connection.db),
-    fallbackConcurrency: concurrency,
+    reconciliationConcurrency: concurrency,
     ...(now ? { now: () => now().getTime() } : {}),
     random: () => 0,
   });
@@ -2983,9 +3025,8 @@ async function waitForQueueToSettle(queue: Queue): Promise<void> {
 
 async function seedQueuedOrder(
   connection: ReturnType<typeof createDatabaseConnection>,
-  options: { runScoped?: boolean } = {},
 ): Promise<void> {
-  const testJob = options.runScoped ? runScopedJob : job;
+  const testJob = runScopedJob;
   const configSnapshot = configSnapshotFixture();
 
   await connection.db.insert(products).values({
@@ -2994,24 +3035,22 @@ async function seedQueuedOrder(
     slug: "worker-test-product",
     name: "Worker Test Product",
   });
-  if (options.runScoped) {
-    await connection.db.insert(demoPresets).values({
-      id: ids.preset,
-      slug: "worker-recovery-preset",
-      visibility: "public",
-      isEditable: false,
-      isCustom: false,
-      display: {
-        name: "Worker Recovery Preset",
-        description: "Worker recovery fixture.",
-        sortOrder: 1,
-        outcomeFocus: ["run_history"],
-      },
-      ...configSnapshot,
-      createdAt: queuedAt,
-      updatedAt: queuedAt,
-    });
-  }
+  await connection.db.insert(demoPresets).values({
+    id: ids.preset,
+    slug: "worker-recovery-preset",
+    visibility: "public",
+    isEditable: false,
+    isCustom: false,
+    display: {
+      name: "Worker Recovery Preset",
+      description: "Worker recovery fixture.",
+      sortOrder: 1,
+      outcomeFocus: ["run_history"],
+    },
+    ...configSnapshot,
+    createdAt: queuedAt,
+    updatedAt: queuedAt,
+  });
   await connection.db.insert(saleOffers).values({
     id: ids.saleOffer,
     productId: ids.product,
@@ -3019,36 +3058,33 @@ async function seedQueuedOrder(
     allocatedStock: configSnapshot.inventoryConfig.startingStock,
     saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
     saleEndsAt: new Date("2030-01-01T00:00:00.000Z"),
-    purpose: options.runScoped ? "generated_run" : "catalog",
   });
-  if (options.runScoped) {
-    await connection.db.insert(demoRuns).values({
-      correlationId: "corr-test-run",
-      id: ids.run,
-      presetId: ids.preset,
-      presetName: "Worker Recovery Preset",
-      operatorMode: "public",
-      status: "draining",
-      trafficStatus: "succeeded",
-      configSnapshot,
-      saleOfferId: ids.saleOffer,
-      startedAt: new Date("2026-06-21T00:00:00.000Z"),
-      trafficStartedAt: new Date("2026-06-21T00:00:01.000Z"),
-      trafficEndedAt: new Date("2026-06-21T00:00:03.000Z"),
-      createdAt: queuedAt,
-      updatedAt: new Date("2026-06-21T00:00:03.000Z"),
-    });
-    await connection.db.insert(demoRunSaleContexts).values({
-      runId: ids.run,
-      saleOfferId: ids.saleOffer,
-      createdAt: queuedAt,
-      updatedAt: queuedAt,
-    });
-  }
+  await connection.db.insert(demoRuns).values({
+    correlationId: "corr-test-run",
+    id: ids.run,
+    presetId: ids.preset,
+    presetName: "Worker Recovery Preset",
+    operatorMode: "public",
+    status: "draining",
+    trafficStatus: "succeeded",
+    configSnapshot,
+    saleOfferId: ids.saleOffer,
+    startedAt: new Date("2026-06-21T00:00:00.000Z"),
+    trafficStartedAt: new Date("2026-06-21T00:00:01.000Z"),
+    trafficEndedAt: new Date("2026-06-21T00:00:03.000Z"),
+    createdAt: queuedAt,
+    updatedAt: new Date("2026-06-21T00:00:03.000Z"),
+  });
+  await connection.db.insert(demoRunSaleContexts).values({
+    runId: ids.run,
+    saleOfferId: ids.saleOffer,
+    createdAt: queuedAt,
+    updatedAt: queuedAt,
+  });
   await connection.db.insert(reservations).values({
     id: ids.reservation,
     saleOfferId: ids.saleOffer,
-    ...(testJob.runId ? { runId: testJob.runId } : {}),
+    runId: testJob.runId,
     correlationId: testJob.correlationId,
     quantity: testJob.quantity,
     reservationToken: "worker-test-reservation-token",
@@ -3060,7 +3096,7 @@ async function seedQueuedOrder(
     publicOrderId: testJob.publicOrderId,
     saleOfferId: ids.saleOffer,
     reservationId: ids.reservation,
-    ...(testJob.runId ? { runId: testJob.runId } : {}),
+    runId: testJob.runId,
     correlationId: testJob.correlationId,
     quantity: testJob.quantity,
     status: "queued",
@@ -3071,7 +3107,7 @@ async function seedQueuedOrder(
       orderId: ids.order,
       reservationId: ids.reservation,
       saleOfferId: ids.saleOffer,
-      ...(testJob.runId ? { runId: testJob.runId } : {}),
+      runId: testJob.runId,
       correlationId: testJob.correlationId,
       eventName: "reservation.secured",
       payload: { quantity: 1 },
@@ -3082,7 +3118,7 @@ async function seedQueuedOrder(
       orderId: ids.order,
       reservationId: ids.reservation,
       saleOfferId: ids.saleOffer,
-      ...(testJob.runId ? { runId: testJob.runId } : {}),
+      runId: testJob.runId,
       correlationId: testJob.correlationId,
       eventName: "order.queued",
       payload: { quantity: 1 },
@@ -3092,6 +3128,23 @@ async function seedQueuedOrder(
   ]);
 }
 
+async function seedIndependentFreshRun(
+  connection: ReturnType<typeof createDatabaseConnection>,
+): Promise<OrderProcessJob> {
+  const runId = "99999999-9999-4999-8999-999999999999";
+  const saleOfferId = "99999999-9999-4999-8999-999999999998";
+  await connection.db.insert(saleOffers).values({
+    id: saleOfferId,
+    productId: ids.product,
+    name: "Independent fresh run offer",
+    allocatedStock: 10,
+    saleStartsAt: queuedAt,
+    saleEndsAt: new Date(queuedAt.getTime() + 900_000),
+  });
+  await createPurchaseRunFixture(connection.db, { runId, saleOfferId, status: "draining" });
+  return { ...freshJob, runId, saleOfferId };
+}
+
 async function seedAdditionalQueuedOrder(
   connection: ReturnType<typeof createDatabaseConnection>,
   additionalJob: OrderProcessJob,
@@ -3099,7 +3152,7 @@ async function seedAdditionalQueuedOrder(
   await connection.db.insert(reservations).values({
     id: additionalJob.reservationId,
     saleOfferId: additionalJob.saleOfferId,
-    ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
+    runId: additionalJob.runId,
     correlationId: additionalJob.correlationId,
     quantity: additionalJob.quantity,
     reservationToken: `token-${additionalJob.orderId}`,
@@ -3111,7 +3164,7 @@ async function seedAdditionalQueuedOrder(
     publicOrderId: additionalJob.publicOrderId,
     saleOfferId: additionalJob.saleOfferId,
     reservationId: additionalJob.reservationId,
-    ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
+    runId: additionalJob.runId,
     correlationId: additionalJob.correlationId,
     quantity: additionalJob.quantity,
     status: "queued",
@@ -3122,7 +3175,7 @@ async function seedAdditionalQueuedOrder(
       orderId: additionalJob.orderId,
       reservationId: additionalJob.reservationId,
       saleOfferId: additionalJob.saleOfferId,
-      ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
+      runId: additionalJob.runId,
       correlationId: additionalJob.correlationId,
       eventName: "reservation.secured",
       payload: { quantity: additionalJob.quantity },
@@ -3133,7 +3186,7 @@ async function seedAdditionalQueuedOrder(
       orderId: additionalJob.orderId,
       reservationId: additionalJob.reservationId,
       saleOfferId: additionalJob.saleOfferId,
-      ...(additionalJob.runId ? { runId: additionalJob.runId } : {}),
+      runId: additionalJob.runId,
       correlationId: additionalJob.correlationId,
       eventName: "order.queued",
       payload: { quantity: additionalJob.quantity },

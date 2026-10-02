@@ -8,7 +8,11 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
+import {
+  createPurchaseRunFixture,
+  requireTestDatabaseUrl,
+  resetTestDatabase,
+} from "@checkout-surge/db/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
@@ -21,6 +25,7 @@ const ids = {
   order: "dddddddd-dddd-4ddd-8ddd-ddddddddddde",
 } as const;
 const job: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: ids.order,
   publicOrderId: "ord_recovery_boundary",
   reservationId: ids.reservation,
@@ -66,7 +71,13 @@ describe("PostgreSQL durable order recovery boundary", () => {
       saleStartsAt: new Date("2026-01-01"),
       saleEndsAt: new Date("2030-01-01"),
     });
+    await createPurchaseRunFixture(db, {
+      runId: "44444444-4444-4444-8444-444444444444",
+      saleOfferId: ids.offer,
+      status: "draining",
+    });
     await db.insert(reservations).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.reservation,
       saleOfferId: ids.offer,
       correlationId: job.correlationId,
@@ -76,6 +87,7 @@ describe("PostgreSQL durable order recovery boundary", () => {
       expiresAt: new Date("2026-06-22T00:15:00.000Z"),
     });
     await db.insert(orders).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.order,
       publicOrderId: job.publicOrderId,
       saleOfferId: ids.offer,

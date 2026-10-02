@@ -56,11 +56,6 @@ const enumInventory = {
     "reservation_pending_persistence_status",
     contracts.reservationPendingPersistenceStatusValues,
   ],
-  saleOfferPurposeEnum: [
-    schema.saleOfferPurposeEnum,
-    "sale_offer_purpose",
-    contracts.saleOfferPurposeValues,
-  ],
   trafficCompletionEnrichmentStatusEnum: [
     schema.trafficCompletionEnrichmentStatusEnum,
     "traffic_completion_enrichment_status",

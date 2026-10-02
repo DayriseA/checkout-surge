@@ -18,7 +18,6 @@ describe("protected admin readiness read", () => {
   it("retains canonical probe details server-side without public BFF sanitization", async () => {
     initializeWebServerConfig({
       API_BASE_URL: "http://api.internal",
-      MOCK_ERP_BASE_URL: "http://mock-erp.internal",
       CONTROL_SERVICE_TOKEN: "control-token",
       ADMIN_DASHBOARD_PASSPHRASE: "admin-passphrase",
       ADMIN_SESSION_SECRET: "session-secret",

@@ -10,8 +10,8 @@ import { pathToFileURL } from "node:url";
 import {
   adminRunHistoryDetailPath,
   adminRunHistoryDetailResponseSchema,
-  catalogErpDispatchLimits,
   erpDispatchRateLimit,
+  idleErpDispatchLimits,
   startDemoRunResponseSchema,
   uuidSchema,
 } from "../packages/contracts/dist/index.js";
@@ -622,7 +622,7 @@ export async function runAcceptance(name, outputDirectory) {
     report.erpHttp = readErpHttpEvidence(correlationId, report.startedAt);
     report.workerHttp = readWorkerHttpEvidence(runId, report.startedAt);
     report.queueLimitsAtSettlement = queueLimits();
-    assertQueueLimits(report.queueLimitsAtSettlement, catalogErpDispatchLimits);
+    assertQueueLimits(report.queueLimitsAtSettlement, idleErpDispatchLimits);
     report.detail = adminRunHistoryDetailResponseSchema.parse(
       await request(adminRunHistoryDetailPath(runId)),
     );

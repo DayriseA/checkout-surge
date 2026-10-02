@@ -311,7 +311,7 @@ function findMismatchedIdentityFields(order: DurableOrder, job: OrderProcessJob)
   compare("reservationId", order.reservationId, job.reservationId);
   compare("saleOfferId", order.saleOfferId, job.saleOfferId);
   compare("correlationId", order.correlationId, job.correlationId);
-  compare("runId", order.runId ?? undefined, job.runId);
+  compare("runId", order.runId, job.runId);
   compare("quantity", order.quantity, job.quantity);
   compare("queuedAt", order.queuedAt.toISOString(), new Date(job.queuedAt).toISOString());
   return mismatches;
@@ -331,7 +331,7 @@ async function appendTransitionEvent(
       orderId: order.id,
       reservationId: order.reservationId,
       saleOfferId: order.saleOfferId,
-      ...(order.runId ? { runId: order.runId } : {}),
+      runId: order.runId,
       correlationId: order.correlationId,
       eventName,
       payload: {

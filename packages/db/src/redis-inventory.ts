@@ -160,7 +160,7 @@ export interface InitializeInventoryInput {
   allocatedStock: number;
   source?: string;
   initializedAt?: Date;
-  run?: RunInventoryConfig;
+  run: RunInventoryConfig;
 }
 
 export class InventoryNotInitializedError extends Error {
@@ -196,12 +196,10 @@ export async function initializeInventory(
 ): Promise<InventoryStatus> {
   assertNonnegativeInteger(input.allocatedStock, "allocatedStock");
 
-  const run = input.run
-    ? {
-        runId: uuidSchema.parse(input.run.runId),
-        status: assertRunSaleStatus(input.run.status),
-      }
-    : undefined;
+  const run = {
+    runId: uuidSchema.parse(input.run.runId),
+    status: assertRunSaleStatus(input.run.status),
+  };
 
   const keys = inventoryKeys(input.saleOfferId);
   const initializedAt = input.initializedAt ?? new Date();
@@ -226,23 +224,21 @@ export async function initializeInventory(
     .multi()
     .hset(keys.state, {
       saleOfferId: input.saleOfferId,
-      inventoryScope: run ? "generated_run" : "catalog",
+      inventoryScope: "generated_run",
       allocatedStock: input.allocatedStock.toString(),
       remainingStock: input.allocatedStock.toString(),
       reservedStock: "0",
       lastUpdatedAt: timestamp,
-      ...(run ? { runId: run.runId, runSaleStatus: run.status } : {}),
+      runId: run.runId,
+      runSaleStatus: run.status,
     })
     .hset(keys.soldOut, "count", "0");
-
-  if (run) {
-    initialization.set(
-      runSaleEligibilityKey(run.runId),
-      JSON.stringify({ runId: run.runId, saleOfferId: input.saleOfferId, status: run.status }),
-      "EX",
-      runSaleEligibilityTtlSeconds,
-    );
-  }
+  initialization.set(
+    runSaleEligibilityKey(run.runId),
+    JSON.stringify({ runId: run.runId, saleOfferId: input.saleOfferId, status: run.status }),
+    "EX",
+    runSaleEligibilityTtlSeconds,
+  );
 
   await initialization
     .rpush(keys.events, JSON.stringify(event))

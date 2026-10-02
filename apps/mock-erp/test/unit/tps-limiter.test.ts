@@ -1,20 +1,14 @@
 import { type ErpConfirmationRequest, erpDispatchRateLimit } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
+import { ChaosConfirmationDecisionProvider } from "../../src/application/chaos-control-service.js";
 import {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigStore,
-} from "../../src/application/chaos-control-service.js";
-import { ConfirmationService } from "../../src/application/confirmation-service.js";
+  type ConfirmationResult,
+  ConfirmationService,
+} from "../../src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../src/application/tps-limiter.js";
 
-const safetyCaps = {
-  maxLatencyMs: 5_000,
-  minMaxTps: 1,
-  maxErrorRate: 1,
-  allowForcedOutage: true,
-};
-
 const request: ErpConfirmationRequest = {
+  erpConfig: { latencyMs: 0, maxTps: 100, errorRate: 0, forcedOutage: false },
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test_1",
   reservationId: "22222222-2222-4222-8222-222222222222",
@@ -132,129 +126,108 @@ describe("SlidingWindowTpsLimiter", () => {
   });
 });
 
-describe("ChaosConfirmationDecisionProvider TPS ordering", () => {
-  it("returns forced outage without sleeping or consuming capacity", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 25, maxTps: 1, errorRate: 0, forcedOutage: true },
-      safetyCaps,
-    );
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const provider = createProvider(store, { sleep });
-
-    await expect(provider.decide(request)).resolves.toMatchObject({
-      httpStatus: 503,
-      errorCode: "erp_forced_outage",
-    });
-    expect(sleep).not.toHaveBeenCalled();
-
-    store.update({ latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false });
-    await expect(provider.decide(request)).resolves.toEqual({ status: "succeeded" });
-  });
-
-  it("returns throttle without sleeping", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 25, maxTps: 1, errorRate: 0, forcedOutage: false },
-      safetyCaps,
-    );
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const provider = createProvider(store, { sleep });
-
-    await provider.decide(request);
-    sleep.mockClear();
-    await expect(provider.decide(request)).resolves.toMatchObject({
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("sleeps for admitted injected errors and retains their capacity", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 25, maxTps: 1, errorRate: 1, forcedOutage: false },
-      safetyCaps,
-    );
-    const sleep = vi.fn().mockResolvedValue(undefined);
-    const provider = createProvider(store, { sleep, random: () => 0 });
-
-    await expect(provider.decide(request)).resolves.toMatchObject({
-      httpStatus: 503,
-      errorCode: "erp_injected_error",
-    });
-    expect(sleep).toHaveBeenCalledOnce();
-    sleep.mockClear();
-    await expect(provider.decide(request)).resolves.toMatchObject({
-      httpStatus: 429,
-      errorCode: "erp_capacity_exceeded",
-    });
-    expect(sleep).not.toHaveBeenCalled();
-  });
-
-  it("preserves run history across live cap updates and reset", async () => {
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 0, maxTps: 2, errorRate: 0, forcedOutage: false },
-      safetyCaps,
-    );
-    const provider = createProvider(store);
-
-    await expect(provider.decide(request)).resolves.toEqual({ status: "succeeded" });
-    await expect(provider.decide(request)).resolves.toEqual({ status: "succeeded" });
-    store.update({ latencyMs: 0, maxTps: 1, errorRate: 0, forcedOutage: false });
-    await expect(provider.decide(request)).resolves.toMatchObject({ httpStatus: 429 });
-    store.update({ latencyMs: 0, maxTps: 3, errorRate: 0, forcedOutage: false });
-    await expect(provider.decide(request)).resolves.toEqual({ status: "succeeded" });
-    store.reset();
-    await expect(provider.decide(request)).resolves.toMatchObject({ httpStatus: 429 });
-  });
-
-  it("acquires capacity synchronously before concurrent calls sleep", async () => {
-    const cap = 2;
-    const store = new ErpChaosConfigStore(
-      { latencyMs: 10, maxTps: cap, errorRate: 0, forcedOutage: false },
-      safetyCaps,
-    );
-    let releaseSleep!: () => void;
+describe("run-owned confirmation capacity", () => {
+  it.each([
+    0, 1,
+  ])("acquires capacity before concurrent calls sleep at error rate %i", async (errorRate) => {
+    let releaseSleep = () => {};
     const controlledSleep = new Promise<void>((resolve) => {
       releaseSleep = resolve;
     });
-    const sleep = vi.fn(() => controlledSleep);
+    const sleep = vi.fn((_durationMs: number) => controlledSleep);
+    let nowMs = 0;
     const service = new ConfirmationService({
-      decisionProvider: createProvider(store, { sleep }),
-      generateConfirmationId: () => crypto.randomUUID(),
-    });
-    const confirmations = Array.from({ length: 5 }, (_, index) =>
-      service.confirm({
-        ...request,
-        orderId: `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`,
-        publicOrderId: `ord_concurrent_${index}`,
-        idempotencyKey: `erp-confirmation:concurrent-${index}`,
+      decisionProvider: new ChaosConfirmationDecisionProvider({
+        tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => nowMs }),
+        sleep,
+        random: () => 0,
       }),
+      now: () => new Date(nowMs),
+    });
+    const settled: ConfirmationResult[] = [];
+    const confirmations = Array.from({ length: 5 }, (_, index) =>
+      service
+        .confirm({
+          ...request,
+          orderId: `${String(index + 1).padStart(8, "0")}-1111-4111-8111-111111111111`,
+          publicOrderId: `ord_concurrent_${index}`,
+          reservationId: `${String(index + 1).padStart(8, "0")}-2222-4222-8222-222222222222`,
+          idempotencyKey: `erp-confirmation:concurrent-${index}`,
+          erpConfig: { latencyMs: 25, maxTps: 2, errorRate, forcedOutage: false },
+        })
+        .then((result) => {
+          settled.push(result);
+          return result;
+        }),
     );
-
-    await vi.waitFor(() => expect(sleep).toHaveBeenCalledTimes(cap));
-    releaseSleep();
+    try {
+      await vi.waitFor(() => {
+        expect(sleep).toHaveBeenCalledTimes(2);
+        expect(settled).toHaveLength(3);
+      });
+      expect(sleep.mock.calls).toEqual([[25], [25]]);
+      expect(settled.map(({ response }) => response)).toEqual(
+        Array.from({ length: 3 }, () =>
+          expect.objectContaining({
+            status: "failed",
+            httpStatus: 429,
+            errorCode: "erp_capacity_exceeded",
+            latencyMs: 0,
+          }),
+        ),
+      );
+      nowMs = 25;
+    } finally {
+      releaseSleep();
+    }
     const results = await Promise.all(confirmations);
-    expect(results.filter((result) => result.response.status === "succeeded")).toHaveLength(cap);
-    expect(
-      results.filter(
-        (result) =>
-          result.response.status === "failed" &&
-          result.response.httpStatus === 429 &&
-          result.response.errorCode === "erp_capacity_exceeded",
-      ),
-    ).toHaveLength(3);
+    const admitted = results.filter(({ response }) => response.httpStatus !== 429);
+    expect(admitted).toHaveLength(2);
+    for (const { response } of admitted) {
+      expect(response).toMatchObject(
+        errorRate === 0
+          ? { status: "succeeded", httpStatus: 200, latencyMs: 25 }
+          : { status: "failed", httpStatus: 503, errorCode: "erp_injected_error", latencyMs: 25 },
+      );
+    }
+    expect(sleep).toHaveBeenCalledTimes(2);
+  });
+
+  it("checks outage before capacity and throttles before sleeping", async () => {
+    const sleep = vi.fn(async () => undefined);
+    const provider = new ChaosConfirmationDecisionProvider({
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 0 }),
+      sleep,
+    });
+    const erpConfig = { latencyMs: 25, maxTps: 1, errorRate: 0, forcedOutage: false };
+    await expect(
+      provider.decide({ ...request, erpConfig: { ...erpConfig, forcedOutage: true } }),
+    ).resolves.toMatchObject({ httpStatus: 503 });
+    expect(sleep).not.toHaveBeenCalled();
+    await expect(provider.decide({ ...request, erpConfig })).resolves.toEqual({
+      status: "succeeded",
+    });
+    expect(sleep).toHaveBeenCalledOnce();
+    sleep.mockClear();
+    await expect(provider.decide({ ...request, erpConfig })).resolves.toMatchObject({
+      httpStatus: 429,
+    });
+    expect(sleep).not.toHaveBeenCalled();
+  });
+  it("accounts admitted failures independently for each run", async () => {
+    const provider = new ChaosConfirmationDecisionProvider({
+      tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 0 }),
+      random: () => 0,
+    });
+    const erpConfig = { latencyMs: 0, maxTps: 1, errorRate: 1, forcedOutage: false };
+    await expect(provider.decide({ ...request, erpConfig })).resolves.toMatchObject({
+      errorCode: "erp_injected_error",
+    });
+    await expect(provider.decide({ ...request, erpConfig })).resolves.toMatchObject({
+      httpStatus: 429,
+    });
+    await expect(
+      provider.decide({ ...request, runId: "55555555-5555-4555-8555-555555555555", erpConfig }),
+    ).resolves.toMatchObject({ errorCode: "erp_injected_error" });
   });
 });
-
-function createProvider(
-  configStore: ErpChaosConfigStore,
-  options: {
-    sleep?: (durationMs: number) => Promise<void>;
-    random?: () => number;
-  } = {},
-): ChaosConfirmationDecisionProvider {
-  return new ChaosConfirmationDecisionProvider({
-    configStore,
-    tpsLimiter: new SlidingWindowTpsLimiter({ nowMs: () => 0 }),
-    ...options,
-  });
-}

@@ -62,14 +62,13 @@ checkout-surge/
 - Should keep the frontend dependency strategy intentionally small: Tailwind CSS for utility styling, local React components for the current dashboard controls, and additional component, toast, or icon libraries only when a scoped need justifies the dependency.
 - Consumes `packages/contracts` for API request/response types.
 - Communicates with `apps/api` over same-origin HTTP routes and the live SSE stream at `/dashboard/events`.
-- Proxies `apps/mock-erp` admin-only chaos endpoints server-side so the API gateway does not couple itself to ERP control behavior.
 - Keeps atomic projection comparison in one small pure state module, EventSource and single-flight current-read recovery coordination in focused hooks, and the watch page as a phase-aware narrative whose lifecycle-to-layout mapping lives in one pure presentation helper (`deriveWatchComposition`) rather than in individual panels.
-- Uses a server-side admin session gate and protected read helpers, then composes independent current-run, policy, preset/start, maintenance, and ERP client controllers.
+- Uses a server-side admin session gate and protected read helpers, then composes independent current-run, policy, preset/start, and maintenance client controllers.
 
 ### `apps/api`
 
 - Owns the buy flow: validates requests, runs the Redis atomic reservation, enqueues BullMQ jobs.
-- Owns one bounded, per-sale pending-persistence recovery scheduler for nonterminal run scopes and active catalog offers; request replay delegates exact due work to the same owner, while startup reconciliation and finalization only observe its state.
+- Owns one bounded, per-sale pending-persistence recovery scheduler for nonterminal run scopes; request replay delegates exact due work to the same owner, while startup reconciliation and finalization only observe its state.
 - Owns the browser-facing SSE transport for complete revisioned projection delivery to `apps/web`.
 - Subscribes once per API process to the strict internal Redis projection-dirty signal, builds bounded complete projections, and fans only that projection schema out to connected dashboard clients.
 - Composes separate preset-administration, public-runtime-policy, run-lifecycle, and traffic-completion application services. Demo routes receive those narrow controllers explicitly; lifecycle reads active presets and the effective policy through minimal injected readers before freezing one validated run snapshot, while completion alone validates and persists immutable load evidence before handing a draining run to finalization.
@@ -95,12 +94,11 @@ checkout-surge/
 ### `apps/mock-erp`
 
 - Owns the simulated legacy ERP HTTP surface.
-- Applies run-scoped ERP behavior supplied by accepted jobs; `LATENCY_MS`, `MAX_TPS`, `ERROR_RATE`, and `FORCED_OUTAGE` remain environment-backed catalog/fallback diagnostics.
-- Owns runtime admin chaos controls for latency, TPS cap, error rate, and forced outage.
+- Applies the accepted run configuration supplied by attributed jobs. Global chaos mutation endpoints and environment-backed business fallbacks have been removed; health and canonical status lookup remain service diagnostics.
 - Enforces each TPS scope with an in-process rolling one-second limiter in the single supported Mock ERP process; additional processes are outside the local topology and would not share limiter history.
-- Replays successful confirmations from a process-local in-memory ledger and rejects contradictory reuse during that process lifetime. A restart may forget this simulated history; durable accepted-result idempotency belongs to the worker's PostgreSQL `erp_attempts` boundary.
+- Replays terminal confirmations from its PostgreSQL ledger and rejects contradictory business identity, retaining canonical results across process restarts.
 - Has no knowledge of the queue or any other internal service.
-- Consumes `packages/contracts` and `packages/logger`; it has no PostgreSQL or Redis dependency.
+- Consumes `packages/contracts`, `packages/logger`, and the shared PostgreSQL client; it has no Redis dependency.
 
 ### `apps/load-orchestrator`
 

@@ -8,9 +8,6 @@ import {
   adminPublicRuntimePolicyPath,
   adminPublicRuntimePolicyResponseSchema,
   controlServiceTokenHeaderName,
-  type ErpChaosStatus,
-  erpChaosStatusPath,
-  erpChaosStatusSchema,
   type HealthResponse,
   healthReadyPath,
   healthResponseSchema,
@@ -66,12 +63,5 @@ export function readAdminRuntimePolicy(): Promise<BackendRead<AdminPublicRuntime
   return readProtectedJson(
     `${webServerConfig().apiBaseUrl}${adminPublicRuntimePolicyPath}`,
     adminPublicRuntimePolicyResponseSchema,
-  );
-}
-
-export function readAdminErpChaos(): Promise<BackendRead<ErpChaosStatus>> {
-  return readProtectedJson(
-    `${webServerConfig().mockErpBaseUrl}${erpChaosStatusPath}`,
-    erpChaosStatusSchema,
   );
 }

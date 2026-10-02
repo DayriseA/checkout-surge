@@ -27,7 +27,7 @@ export const erpResiliencePolicy = {
   requestDeadlineLeaseHeadroomMs: 5_000,
 } as const;
 
-export type ErpAdmissionScope = `run:${string}` | "catalog";
+export type ErpAdmissionScope = `run:${string}`;
 export type ErpAdmissionOperation = "confirmation" | "lookup";
 
 export type ErpLatencyObservationSource =

@@ -1,7 +1,11 @@
+import { randomUUID } from "node:crypto";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
-import { createDatabaseConnection, type SqlClient } from "./client.js";
+import { type CheckoutSurgeDatabase, createDatabaseConnection, type SqlClient } from "./client.js";
 import { assertConnectedDatabaseIdentity } from "./database-identity.js";
 import { resolveMigrationsFolder, runDatabaseMigrations } from "./migrations.js";
+import { demoPresets, demoRunSaleContexts, demoRuns, saleOffers } from "./schema.js";
 import {
   assertTestEnvironment,
   validateDedicatedTestDatabaseUrl,
@@ -87,4 +91,55 @@ async function createTestDatabaseIfMissing(sql: SqlClient, databaseName: string)
 
 function quoteIdentifier(identifier: string): string {
   return `"${identifier.replaceAll('"', '""')}"`;
+}
+
+/** Create the durable ownership and frozen configuration for purchase-boundary tests. */
+export async function createPurchaseRunFixture(
+  db: CheckoutSurgeDatabase,
+  input: { runId: string; saleOfferId: string; status?: "active" | "draining" | "completed" },
+): Promise<void> {
+  const [offer] = await db
+    .select({ stock: saleOffers.allocatedStock })
+    .from(saleOffers)
+    .where(eq(saleOffers.id, input.saleOfferId));
+  if (!offer) throw new Error("Purchase fixture requires its existing sale offer.");
+  const presetId = randomUUID();
+  const configSnapshot = previewRunConfigSnapshotFixture();
+  configSnapshot.inventoryConfig.startingStock = offer.stock;
+  await db
+    .insert(demoPresets)
+    .values({
+      id: presetId,
+      slug: `purchase-test-${presetId}`,
+      visibility: "admin",
+      isEditable: true,
+      isCustom: true,
+      display: {
+        name: "Purchase test",
+        description: "Run-owned purchase fixture",
+        sortOrder: 1,
+        outcomeFocus: [],
+      },
+      ...configSnapshot,
+    })
+    .onConflictDoNothing();
+  await db
+    .insert(demoRuns)
+    .values({
+      id: input.runId,
+      correlationId: `run-${input.runId}`,
+      presetId,
+      presetName: "Purchase test",
+      operatorMode: "admin",
+      status: input.status ?? "active",
+      trafficStatus:
+        input.status === "draining" || input.status === "completed" ? "succeeded" : "active",
+      configSnapshot,
+      saleOfferId: input.saleOfferId,
+    })
+    .onConflictDoNothing({ target: demoRuns.id });
+  await db
+    .insert(demoRunSaleContexts)
+    .values({ runId: input.runId, saleOfferId: input.saleOfferId })
+    .onConflictDoNothing();
 }

@@ -10,6 +10,7 @@ import {
 } from "../../src/queue/bullmq-order-process-job-publisher.js";
 
 const job = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test",
   reservationId: "33333333-3333-4333-8333-333333333333",
@@ -24,11 +25,18 @@ describe("worker order-processing job publisher", () => {
   it("uses the deterministic order ID as the BullMQ job ID", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
-    const publisher: WorkerOrderProcessJobPublisher = createOrderProcessJobPublisher({
-      rateLimit: async () => {},
-      add,
-      close,
-    });
+    const publisher: WorkerOrderProcessJobPublisher = createOrderProcessJobPublisher(
+      {
+        rateLimit: async () => {},
+        add,
+        close,
+      },
+      {
+        publish: async ({ operation }) => {
+          return await operation();
+        },
+      },
+    );
 
     await publisher.enqueue(job);
     await publisher.close();
@@ -42,11 +50,18 @@ describe("worker order-processing job publisher", () => {
 
   it("rejects invalid jobs before reaching the queue", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({
-      rateLimit: async () => {},
-      add,
-      close: vi.fn(),
-    });
+    const publisher = createOrderProcessJobPublisher(
+      {
+        rateLimit: async () => {},
+        add,
+        close: vi.fn(),
+      },
+      {
+        publish: async ({ operation }) => {
+          return await operation();
+        },
+      },
+    );
 
     await expect(publisher.enqueue({ ...job, orderId: "invalid" })).rejects.toThrow();
     expect(add).not.toHaveBeenCalled();
@@ -84,11 +99,18 @@ describe("worker order-processing job publisher", () => {
 
   it("publishes recovery work with an explicit attempt-scoped ID and one delivery", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
-    const publisher = createOrderProcessJobPublisher({
-      rateLimit: async () => {},
-      add,
-      close: vi.fn(),
-    });
+    const publisher = createOrderProcessJobPublisher(
+      {
+        rateLimit: async () => {},
+        add,
+        close: vi.fn(),
+      },
+      {
+        publish: async ({ operation }) => {
+          return await operation();
+        },
+      },
+    );
 
     await publisher.enqueue(job, { jobId: "recovery-order-key-2" });
 

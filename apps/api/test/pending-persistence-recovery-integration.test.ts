@@ -11,8 +11,10 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { createPendingPersistenceRecoveryOperations } from "../src/runtime/pending-persistence-operation-factory.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
+import { passThroughRunLocks } from "./pass-through-run-locks.js";
 
 const hold: SecuredReservationHold = {
+  runId: "44444444-4444-4444-8444-444444444444",
   id: "aaaaaaaa-aaaa-4aaa-8aaa-000000000091",
   saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-000000000091",
   correlationId: "recovery-integration",
@@ -103,7 +105,11 @@ describe("pending-persistence recovery cancellation boundaries", () => {
     });
     let operationClientId: number | undefined;
     const keys = inventoryKeys(hold.saleOfferId);
-    await initializeInventory(discoveryRedis, { saleOfferId: hold.saleOfferId, allocatedStock: 1 });
+    await initializeInventory(discoveryRedis, {
+      run: { runId: "44444444-4444-4444-8444-444444444444", status: "accepting" },
+      saleOfferId: hold.saleOfferId,
+      allocatedStock: 1,
+    });
     await reserveInventoryStock(discoveryRedis, {
       reservation: hold,
       idempotencyKey: "recovery-integration-key",
@@ -116,6 +122,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
     const durable = {
       reservation: hold,
       order: {
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "dddddddd-dddd-4ddd-8ddd-000000000091",
         publicOrderId: "ord_recovery_integration",
         reservationId: hold.id,
@@ -139,6 +146,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
         signal.addEventListener("abort", disconnect, { once: true });
         return {
           persistence: {
+            ...passThroughRunLocks,
             persistSecuredReservation: async () => durable,
             getPersistedBuyByReservationId: async () => durable,
           },
@@ -213,6 +221,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
 
 function noOpPersistence() {
   return {
+    ...passThroughRunLocks,
     persistSecuredReservation: async () => {
       throw new Error("Unexpected persistence call.");
     },

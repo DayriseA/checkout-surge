@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  catalogErpDispatchLimits,
   erpCallReferenceSchema,
   erpDispatchMinimumWindowMs,
   erpDispatchRateLimit,
   erpDispatchSafetyMargin,
+  idleErpDispatchLimits,
   processingGenerationSchema,
 } from "../src/index.js";
 
@@ -15,7 +15,7 @@ describe("processing control contracts", () => {
     10,
     100,
     250,
-    catalogErpDispatchLimits.maxTps,
+    idleErpDispatchLimits.maxTps,
   ])("uses the smallest native burst with a sliding-second bound at %i TPS", (declared) => {
     const { max, duration } = erpDispatchRateLimit(declared);
     const effectiveRate = declared * (1 - erpDispatchSafetyMargin);

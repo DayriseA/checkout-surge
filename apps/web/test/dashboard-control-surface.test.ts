@@ -6,7 +6,6 @@ import {
   dashboardProjectionSchemaName,
   dashboardProjectionScopeId,
   demoRunSnapshotSchema,
-  type ErpChaosStatus,
   type HealthResponse,
   type PublicPresetListResponse,
   type PublicRuntimePolicyResponse,
@@ -354,7 +353,6 @@ describe("dashboard control surface", () => {
   it("renders protected admin controls and disables starts while a run is draining", () => {
     const markup = renderToStaticMarkup(
       createElement(AdminAuthenticatedSurface, {
-        initialErpChaos: available(erpChaosFixture()),
         initialPresets: available(adminPresetListFixture()),
         initialRecovery: available(recoveryFixture(runFixture("draining"))),
         initialReadiness: available(readinessFixture()),
@@ -374,9 +372,7 @@ describe("dashboard control surface", () => {
     expect(markup).toContain("Save preset");
     expect(markup).toContain("Copy saved values to custom scenario");
     expect(markup).toContain('id="preset-erpForcedOutage"');
-    expect(markup).toContain('id="erp-chaos-forcedOutage"');
     expect(markup).toContain("Reset demo");
-    expect(markup).toContain("ERP fault injection");
     expectDisabledStartButtons(markup, ["Run once with these values"]);
   });
 });
@@ -531,23 +527,6 @@ function runFixture(status: "active" | "draining"): DashboardProjection["current
     trafficStartedAt: "2026-06-20T00:00:00.000Z",
     ...(status === "draining" ? { trafficEndedAt: "2026-06-20T00:00:10.000Z" } : {}),
   });
-}
-
-function erpChaosFixture(): ErpChaosStatus {
-  return {
-    latencyMs: 50,
-    maxTps: 100,
-    errorRate: 0,
-    forcedOutage: false,
-    defaultConfig: { latencyMs: 50, maxTps: 100, errorRate: 0, forcedOutage: false },
-    updatedAt: "2026-06-20T00:00:10.000Z",
-    effectiveSafetyCaps: {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
-    },
-  };
 }
 
 function demoPresetFixture(

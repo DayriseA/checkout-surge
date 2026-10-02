@@ -57,12 +57,12 @@ export interface DashboardRecoveryContextReader {
 }
 
 export interface DashboardBusinessOutcomeReader {
-  read(scope: { saleOfferId: string; runId?: string }): Promise<BusinessOutcomeSummary>;
+  read(scope: { saleOfferId: string; runId: string }): Promise<BusinessOutcomeSummary>;
 }
 
 export interface DashboardConsistencyLagReader {
   read(
-    scope: { saleOfferId: string; runId?: string },
+    scope: { saleOfferId: string; runId: string },
     measuredAt: Date,
   ): Promise<ConsistencyLagSummary>;
 }
@@ -209,7 +209,7 @@ export class PostgresDashboardRecoveryContextReader implements DashboardRecovery
 export class PostgresDashboardBusinessOutcomeReader implements DashboardBusinessOutcomeReader {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
-  read(scope: { saleOfferId: string; runId?: string }): Promise<BusinessOutcomeSummary> {
+  read(scope: { saleOfferId: string; runId: string }): Promise<BusinessOutcomeSummary> {
     return readBusinessOutcomeSummary(this.db, scope);
   }
 }
@@ -218,7 +218,7 @@ export class PostgresDashboardConsistencyLagReader implements DashboardConsisten
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
   read(
-    scope: { saleOfferId: string; runId?: string },
+    scope: { saleOfferId: string; runId: string },
     measuredAt: Date,
   ): Promise<ConsistencyLagSummary> {
     return readConsistencyLagSummary(this.db, scope, measuredAt);

@@ -1,10 +1,7 @@
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterAll, describe, expect, it, vi } from "vitest";
-import {
-  ChaosConfirmationDecisionProvider,
-  ErpChaosConfigStore,
-} from "../../../mock-erp/src/application/chaos-control-service.js";
+import { ChaosConfirmationDecisionProvider } from "../../../mock-erp/src/application/chaos-control-service.js";
 import { ConfirmationService } from "../../../mock-erp/src/application/confirmation-service.js";
 import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-limiter.js";
 import { buildMockErpServer } from "../../../mock-erp/src/server.js";
@@ -14,34 +11,20 @@ import {
 } from "../../src/application/erp-confirmation-client.js";
 import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 
-const globalFallback = {
-  latencyMs: 0,
-  maxTps: 100,
-  errorRate: 0,
-  forcedOutage: true,
-};
-const store = new ErpChaosConfigStore(globalFallback, {
-  maxLatencyMs: 5000,
-  minMaxTps: 1,
-  maxErrorRate: 1,
-  allowForcedOutage: true,
-});
 const server = buildMockErpServer({
-  chaosConfigStore: store,
   confirmationService: new ConfirmationService({
     decisionProvider: new ChaosConfirmationDecisionProvider({
-      configStore: store,
       tpsLimiter: new SlidingWindowTpsLimiter(),
     }),
   }),
-  controlServiceToken: "integration-token",
+
   logger: createSilentLogger("mock-erp"),
 });
 
 afterAll(() => server.close());
 
 describe("worker and Mock ERP precedence", () => {
-  it("uses the accepted run snapshot instead of the global fallback", async () => {
+  it("uses the accepted run snapshot for ERP confirmation", async () => {
     const snapshot = previewRunConfigSnapshotFixture();
     snapshot.erpConfig = {
       latencyMs: 0,

@@ -110,7 +110,7 @@ describe("server-decided admin presentation", () => {
     expect(markup).toContain("Admin console");
     expect(markup).toContain("Authenticated console data");
     expect(markup).not.toContain("Admin passphrase");
-    expect(adminReads.erp).toHaveBeenCalledOnce();
+    expect(adminReads.erp).not.toHaveBeenCalled();
     expect(adminReads.presets).toHaveBeenCalledOnce();
     expect(adminReads.policy).toHaveBeenCalledOnce();
     expect(adminReads.readiness).toHaveBeenCalledOnce();

@@ -118,17 +118,12 @@ async function inspectLockedGeneratedRunTeardown(
   const [ownership] = await db
     .select({
       contextSaleOfferId: demoRunSaleContexts.saleOfferId,
-      offerPurpose: saleOffers.purpose,
     })
     .from(demoRunSaleContexts)
     .innerJoin(saleOffers, eq(saleOffers.id, demoRunSaleContexts.saleOfferId))
     .where(eq(demoRunSaleContexts.runId, runId))
     .for("update");
-  if (
-    !run.saleOfferId ||
-    ownership?.contextSaleOfferId !== run.saleOfferId ||
-    ownership.offerPurpose !== "generated_run"
-  ) {
+  if (!run.saleOfferId || ownership?.contextSaleOfferId !== run.saleOfferId) {
     return { outcome: "ownership_mismatch" };
   }
   if (await hasOutstandingGeneratedRunWork(db, runId)) {
@@ -167,7 +162,7 @@ async function deleteGeneratedRunRows(
 
   const deletedSaleOffers = await tx
     .delete(saleOffers)
-    .where(and(eq(saleOffers.id, saleOfferId), eq(saleOffers.purpose, "generated_run")))
+    .where(eq(saleOffers.id, saleOfferId))
     .returning({ id: saleOffers.id });
   if (deletedSaleOffers.length !== 1) {
     throw new Error(`Generated sale offer ${saleOfferId} changed during durable deletion.`);

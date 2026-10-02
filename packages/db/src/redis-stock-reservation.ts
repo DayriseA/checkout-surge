@@ -46,7 +46,7 @@ if record.quantity ~= tonumber(ARGV[2])
   or record.reservation.saleOfferId ~= ARGV[3]
   or record.reservation.reservationToken ~= ARGV[4]
   or record.reservation.correlationId ~= ARGV[5]
-  or (record.reservation.runId or "") ~= ARGV[6]
+  or record.reservation.runId ~= ARGV[6]
   or record.reservation.securedAt ~= ARGV[7]
   or record.reservation.expiresAt ~= ARGV[8] then
   return "mismatch"
@@ -59,7 +59,7 @@ local pendingRecord = {
   id = ARGV[1],
   saleOfferId = ARGV[3],
   correlationId = ARGV[5],
-  runId = (ARGV[6] ~= "" and ARGV[6] or cjson.null),
+  runId = ARGV[6],
   idempotencyKey = ARGV[10],
   quantity = tonumber(ARGV[2]),
   reservationToken = ARGV[4],
@@ -114,9 +114,7 @@ if not idempotencyJson then
     securedAt = ARGV[7],
     expiresAt = ARGV[8]
   }
-  if ARGV[6] ~= "" then
-    reservation.runId = ARGV[6]
-  end
+  reservation.runId = ARGV[6]
   local acceptedRecord = {
     status = "accepted",
     quantity = tonumber(ARGV[2]),
@@ -133,7 +131,7 @@ if record.quantity ~= tonumber(ARGV[2])
   or record.reservation.saleOfferId ~= ARGV[3]
   or record.reservation.reservationToken ~= ARGV[4]
   or record.reservation.correlationId ~= ARGV[5]
-  or (record.reservation.runId or "") ~= ARGV[6]
+  or record.reservation.runId ~= ARGV[6]
   or record.reservation.securedAt ~= ARGV[7]
   or record.reservation.expiresAt ~= ARGV[8] then
   return "mismatch"
@@ -202,7 +200,7 @@ if rawIdempotency then
     or idempotency.reservation.id ~= ARGV[1]
     or idempotency.reservation.saleOfferId ~= ARGV[3]
     or idempotency.reservation.correlationId ~= ARGV[5]
-    or (idempotency.reservation.runId or "") ~= ARGV[6]
+    or idempotency.reservation.runId ~= ARGV[6]
     or idempotency.reservation.reservationToken ~= ARGV[4]
     or idempotency.reservation.securedAt ~= ARGV[7]
     or idempotency.reservation.expiresAt ~= ARGV[8] then
@@ -223,7 +221,7 @@ end
 local hold = cjson.decode(rawHold)
 if hold.id ~= ARGV[1] or hold.saleOfferId ~= ARGV[3]
   or hold.reservationToken ~= ARGV[4] or hold.quantity ~= tonumber(ARGV[2])
-  or hold.correlationId ~= ARGV[5] or (hold.runId or "") ~= ARGV[6]
+  or hold.correlationId ~= ARGV[5] or hold.runId ~= ARGV[6]
   or hold.securedAt ~= ARGV[7] or hold.expiresAt ~= ARGV[8] then
   return "mismatch"
 end
@@ -303,15 +301,10 @@ if redis.call("HGET", KEYS[1], "saleOfferId") ~= reservation.saleOfferId then
   return redis.error_reply("Inventory state sale offer ID must match the reservation")
 end
 local inventoryScope = redis.call("HGET", KEYS[1], "inventoryScope")
-if inventoryScope == "catalog" then
-  if reservation.runId then
-    return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
-  end
-elseif inventoryScope == "generated_run" then
+if inventoryScope == "generated_run" then
   local inventoryRunId = redis.call("HGET", KEYS[1], "runId")
   local runSaleStatus = redis.call("HGET", KEYS[1], "runSaleStatus")
-  if not reservation.runId
-    or reservation.runId ~= inventoryRunId
+  if reservation.runId ~= inventoryRunId
     or runSaleStatus ~= "accepting" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
@@ -328,7 +321,7 @@ elseif inventoryScope == "generated_run" then
     return cjson.encode({ outcome = "run_not_accepting_traffic", reservation = cjson.null })
   end
 else
-  return redis.error_reply("Inventory scope must be catalog or generated_run")
+  return redis.error_reply("Inventory scope must be generated_run")
 end
 
 -- Eligibility precedes idempotency replay so closure always fails closed, including retries.
@@ -448,7 +441,7 @@ local pendingRecord = {
   id = reservation.id,
   saleOfferId = reservation.saleOfferId,
   correlationId = reservation.correlationId,
-  runId = (reservation.runId or cjson.null),
+  runId = reservation.runId,
   idempotencyKey = ARGV[10],
   quantity = quantity,
   reservationToken = reservation.reservationToken,
@@ -520,7 +513,7 @@ export async function reserveInventoryStock(
     keys.pendingPersistence,
     keys.pendingPersistenceRecords,
     keys.idempotency(idempotencyKey),
-    runSaleEligibilityKey(reservation.runId ?? "none"),
+    runSaleEligibilityKey(reservation.runId),
     reservation.quantity.toString(),
     JSON.stringify(reservation),
     new Date(reservation.expiresAt).getTime().toString(),
@@ -575,7 +568,7 @@ export async function markReservationPendingPersistence(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     new Date(reservation.securedAt).getTime().toString(),
@@ -611,7 +604,7 @@ export async function promoteReservationIdempotencyToAccepted(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     idempotencyTtlSeconds.toString(),
@@ -628,7 +621,7 @@ export interface PendingPersistenceRecord {
   id: string;
   saleOfferId: string;
   correlationId: string;
-  runId?: string;
+  runId: string;
   idempotencyKey: string;
   quantity: number;
   reservationToken: string;
@@ -800,7 +793,7 @@ function parsePendingPersistenceRecord(
       hold.quantity !== parsed.quantity ||
       hold.reservationToken !== parsed.reservationToken ||
       hold.correlationId !== parsed.correlationId ||
-      (hold.runId ?? "") !== (parsed.runId ?? "") ||
+      hold.runId !== parsed.runId ||
       hold.securedAt !== parsed.securedAt ||
       hold.expiresAt !== parsed.expiresAt
     ) {
@@ -811,7 +804,7 @@ function parsePendingPersistenceRecord(
         id: parsed.id,
         saleOfferId: parsed.saleOfferId,
         correlationId: parsed.correlationId,
-        ...(typeof parsed.runId === "string" ? { runId: parsed.runId } : {}),
+        runId: hold.runId,
         idempotencyKey: parsedIdempotencyKey.data,
         quantity: parsed.quantity,
         reservationToken: parsed.reservationToken,
@@ -918,7 +911,7 @@ export async function reverseReservation(
     reservation.saleOfferId,
     reservation.reservationToken,
     reservation.correlationId,
-    reservation.runId ?? "",
+    reservation.runId,
     reservation.securedAt,
     reservation.expiresAt,
     (input.occurredAt ?? new Date()).toISOString(),

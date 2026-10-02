@@ -6,7 +6,11 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
+import {
+  createPurchaseRunFixture,
+  requireTestDatabaseUrl,
+  resetTestDatabase,
+} from "@checkout-surge/db/testing";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { OrderStatusService } from "../src/services/order-status-service.js";
 
@@ -41,6 +45,11 @@ describe("OrderStatusService", () => {
       allocatedStock: 1,
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2030-01-01T00:00:00.000Z"),
+    });
+    await createPurchaseRunFixture(connection.db, {
+      runId: "44444444-4444-4444-8444-444444444444",
+      saleOfferId: ids.saleOffer,
+      status: "draining",
     });
   });
 
@@ -212,6 +221,7 @@ describe("OrderStatusService", () => {
   async function seedOrder(status: DurableOrderStatus): Promise<void> {
     const db = requireConnection().db;
     await db.insert(reservations).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.reservation,
       saleOfferId: ids.saleOffer,
       correlationId: "persisted-reservation-correlation",
@@ -221,6 +231,7 @@ describe("OrderStatusService", () => {
       expiresAt: new Date("2026-07-15T10:15:00.000Z"),
     });
     await db.insert(orders).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.order,
       publicOrderId: "ord_service_test",
       saleOfferId: ids.saleOffer,
@@ -241,6 +252,7 @@ describe("OrderStatusService", () => {
     });
     const events: Array<typeof orderEvents.$inferInsert> = [
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "77777777-7777-4777-8777-777777777777",
         orderId: ids.order,
         reservationId: ids.reservation,
@@ -252,6 +264,7 @@ describe("OrderStatusService", () => {
         createdAt: new Date("2026-07-15T10:00:00.001Z"),
       },
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "88888888-8888-4888-8888-888888888888",
         orderId: ids.order,
         reservationId: ids.reservation,
@@ -266,6 +279,7 @@ describe("OrderStatusService", () => {
 
     if (status !== "queued") {
       events.push({
+        runId: "44444444-4444-4444-8444-444444444444",
         id: "99999999-9999-4999-8999-999999999999",
         orderId: ids.order,
         reservationId: ids.reservation,
@@ -279,6 +293,7 @@ describe("OrderStatusService", () => {
 
     if (status === "confirmed" || status === "failed") {
       events.push({
+        runId: "44444444-4444-4444-8444-444444444444",
         id:
           status === "confirmed"
             ? "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"

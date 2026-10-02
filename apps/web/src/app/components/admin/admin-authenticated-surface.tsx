@@ -17,10 +17,6 @@ import {
   type DashboardProjection,
   type DemoRunSnapshot,
   duplicateDemoPresetRequestSchema,
-  type ErpChaosConfig,
-  type ErpChaosStatus,
-  erpChaosConfigSchema,
-  erpChaosStatusSchema,
   estimateAdmissionRejectionDetailsSchema,
   type HealthResponse,
   type HealthStatus,
@@ -35,7 +31,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import {
   buildEffectiveRunConfig,
-  buildErpChaosFromDraft,
   buildPolicyFromDraft,
   buildSortOrder,
   type DraftFieldError,
@@ -52,8 +47,6 @@ import { readProxyJson } from "../../lib/client/proxy-json";
 import {
   adminDemoResetProxyPath,
   adminDemoRunStartProxyPath,
-  adminErpChaosProxyPath,
-  adminErpChaosResetProxyPath,
   adminMaintenanceCleanupRunsProxyPath,
   adminPresetCopyToCustomProxyPath,
   adminPresetDuplicateProxyPath,
@@ -85,7 +78,6 @@ import { RunEstimateNotice } from "../run-estimate-notice";
 import { StatusPill } from "../status-pill";
 import { useRunEstimate } from "../use-run-estimate";
 import {
-  AdminErpDiagnosticsView,
   AdminPresetView,
   AdminRuntimePolicyView,
   currentRunStatus,
@@ -100,7 +92,6 @@ import {
 import { AdminNoticeView } from "./admin-notice";
 
 export interface AdminAuthenticatedSurfaceProps {
-  initialErpChaos: BackendRead<ErpChaosStatus>;
   initialPresets: BackendRead<AdminPresetListResponse>;
   initialRecovery: BackendRead<DashboardProjection>;
   initialReadiness: BackendRead<HealthResponse>;
@@ -211,21 +202,6 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
           startBlocked={startBlocked}
           startBlockedReason={startBlockedReason}
         />
-        <AdminErpDiagnosticsController
-          runState={
-            recovery.status !== "available"
-              ? "unavailable"
-              : isRunInProgress(recovery.data.currentRun?.status)
-                ? "active"
-                : "inactive"
-          }
-          initialErpChaos={props.initialErpChaos}
-          runErpConfig={
-            recovery.status === "available"
-              ? recovery.data.currentRun?.configSnapshot.erpConfig
-              : undefined
-          }
-        />
         <AdminMaintenancePanel
           onResetComplete={recoveryController.retryNow}
           incomplete={
@@ -248,7 +224,6 @@ const adminSections = [
   ["readiness", "Readiness"],
   ["routine-actions", "Routine actions"],
   ["presets", "Presets"],
-  ["erp-fault-injection", "ERP fault injection"],
   ["maintenance", "Maintenance"],
   ["public-runtime-policy", "Public runtime policy"],
   ["diagnostics-links", "Diagnostics"],
@@ -1383,7 +1358,7 @@ export function AdminMaintenancePanel({
       }
       if (intent === "reset" && "failedRunCount" in result.data) {
         setNotice(
-          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount)} sale offers closed, ${formatMaintenanceCount(result.data.cleanedQueueCount)} queues cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned. Global ERP fault injection is not changed by this reset.`,
+          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount)} sale offers closed, ${formatMaintenanceCount(result.data.cleanedQueueCount)} queues cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned.`,
         );
       } else if ("deletedRunCount" in result.data) {
         setNotice(
@@ -1440,7 +1415,7 @@ export function AdminMaintenancePanel({
         confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
         description={
           intent === "reset"
-            ? "Resetting stops all demo work immediately, discards the current run's data, and frees the demo for the next run. One basic history line marked as cancelled remains. Global ERP fault injection is not changed by this reset."
+            ? "Resetting stops all demo work immediately, discards the current run's data, and frees the demo for the next run. One basic history line marked as cancelled remains."
             : "Permanently remove generated runs older than 7 days while keeping the latest 15."
         }
         error={error ? <AdminNoticeView notice={error} /> : null}
@@ -1452,221 +1427,6 @@ export function AdminMaintenancePanel({
       />
     </section>
   );
-}
-
-export function AdminErpDiagnosticsController({
-  initialErpChaos,
-  runErpConfig,
-  runState = "unavailable",
-}: {
-  initialErpChaos: BackendRead<ErpChaosStatus>;
-  runErpConfig?: AcceptedRunConfigSnapshot["erpConfig"] | undefined;
-  runState?: "active" | "inactive" | "unavailable";
-}) {
-  const router = useRouter();
-  const [erpChaos, setErpChaos] = useState(initialErpChaos);
-  const [latestErpChaosRead, setLatestErpChaosRead] = useState(initialErpChaos);
-  const [draft, setDraft] = useState(() => erpDraftFromRead(initialErpChaos));
-  const [isPending, setIsPending] = useState(false);
-  const [notice, setNotice] = useState<AdminNotice | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, DraftFieldError>>({});
-  const [formErrors, setFormErrors] = useState<DraftFormError[]>([]);
-  const [showValidationSummary, setShowValidationSummary] = useState(false);
-  const [validationSummaryRevision, setValidationSummaryRevision] = useState(0);
-  const [confirmation, setConfirmation] = useState<{
-    kind: "apply" | "reset";
-    proposed: ErpChaosConfig;
-  } | null>(null);
-  const [confirmationError, setConfirmationError] = useState<AdminNotice | null>(null);
-  const isDraftDirtyRef = useRef(false);
-  const controlsDisabledReason = isPending
-    ? "A change is being applied — wait before applying or resetting ERP controls."
-    : erpChaos.status === "unavailable"
-      ? "Diagnostics status is unavailable — refresh before applying or resetting ERP controls."
-      : undefined;
-
-  useEffect(() => {
-    setLatestErpChaosRead(initialErpChaos);
-    setErpChaos((current) =>
-      initialErpChaos.status === "available" || current.status !== "available"
-        ? initialErpChaos
-        : current,
-    );
-    if (initialErpChaos.status === "available") {
-      setFieldErrors({});
-      setFormErrors([]);
-      setShowValidationSummary(false);
-    }
-    if (!isDraftDirtyRef.current && initialErpChaos.status === "available") {
-      setDraft(erpDraftFromRead(initialErpChaos));
-    }
-  }, [initialErpChaos]);
-
-  async function submit() {
-    if (!confirmation) return;
-    const path =
-      confirmation.kind === "reset" ? adminErpChaosResetProxyPath : adminErpChaosProxyPath;
-    const init: RequestInit =
-      confirmation.kind === "reset"
-        ? { method: "POST" }
-        : {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(confirmation.proposed),
-          };
-    setIsPending(true);
-    setNotice(null);
-    try {
-      const result = await readProxyJson(path, erpChaosStatusSchema, init);
-      if (isAdminSessionRequired(result)) {
-        setConfirmation(null);
-        router.refresh();
-        return;
-      }
-      if (result.status === "unavailable") {
-        setConfirmationError(adminFailureNotice(result));
-        setFieldErrors(serverFieldErrors(result.details, "erp"));
-        setShowValidationSummary(true);
-        setValidationSummaryRevision((revision) => revision + 1);
-        return;
-      }
-      setErpChaos(result);
-      setLatestErpChaosRead(result);
-      setDraft(erpDraftFromRead(result));
-      isDraftDirtyRef.current = false;
-      clearValidationState();
-      setNotice(
-        path === adminErpChaosResetProxyPath
-          ? "Global ERP fault injection reset."
-          : "Global ERP fault injection updated.",
-      );
-      setConfirmation(null);
-      setConfirmationError(null);
-    } finally {
-      setIsPending(false);
-    }
-  }
-
-  function apply() {
-    if (erpChaos.status !== "available") return;
-    const built = buildErpChaosFromDraft(draft, erpChaos.data.effectiveSafetyCaps);
-    if (!built.values) {
-      setFieldErrors(built.fieldErrors);
-      setFormErrors(built.formErrors);
-      setShowValidationSummary(true);
-      setValidationSummaryRevision((revision) => revision + 1);
-      return;
-    }
-    const parsed = erpChaosConfigSchema.safeParse(built.values);
-    if (!parsed.success) {
-      setNotice(adminValidationMessage());
-      return;
-    }
-    setFieldErrors({});
-    setFormErrors([]);
-    setConfirmationError(null);
-    setConfirmation({ kind: "apply", proposed: parsed.data });
-  }
-
-  return (
-    <>
-      <AdminErpDiagnosticsView
-        controlsDisabledReason={controlsDisabledReason}
-        errorRate={draft.errorRate}
-        erpChaos={erpChaos}
-        fieldErrors={fieldErrors}
-        formErrors={formErrors}
-        forcedOutage={draft.forcedOutage}
-        isPending={isPending}
-        latencyMs={draft.latencyMs}
-        latestErpChaosRead={latestErpChaosRead}
-        maxTps={draft.maxTps}
-        notice={notice}
-        onBlurField={(field) => {
-          if (erpChaos.status !== "available") return;
-          setFieldErrors((current) =>
-            replaceFieldError(
-              current,
-              field,
-              buildErpChaosFromDraft(draft, erpChaos.data.effectiveSafetyCaps).fieldErrors[field],
-            ),
-          );
-        }}
-        onApply={apply}
-        onErrorRateChange={(errorRate) => updateErpDraft({ errorRate })}
-        onForcedOutageChange={(forcedOutage) => updateErpDraft({ forcedOutage })}
-        onLatencyMsChange={(latencyMs) => updateErpDraft({ latencyMs })}
-        onMaxTpsChange={(maxTps) => updateErpDraft({ maxTps })}
-        onReset={() => {
-          if (erpChaos.status !== "available") return;
-          setConfirmationError(null);
-          setConfirmation({ kind: "reset", proposed: erpChaos.data.defaultConfig });
-        }}
-        runErpConfig={runErpConfig}
-        showValidationSummary={showValidationSummary}
-        validationSummaryRevision={validationSummaryRevision}
-      />
-      <ConfirmationDialog
-        confirmLabel={confirmation?.kind === "reset" ? "Reset ERP controls" : "Apply ERP controls"}
-        tone="default"
-        description={`${runState === "active" ? "This does not change the active run — frozen in the accepted run snapshot; affects fallback and future non-snapshot calls. " : runState === "inactive" ? "There is no active run; these values govern fallback and future non-snapshot calls. " : "Current run state is unavailable — a currently active run keeps its frozen snapshot; these values govern fallback and future non-snapshot calls. "}They have global/fallback scope and reset when Mock ERP restarts.`}
-        error={confirmationError ? <AdminNoticeView notice={confirmationError} /> : null}
-        onCancel={() => {
-          setConfirmation(null);
-          setConfirmationError(null);
-        }}
-        onConfirm={() => void submit()}
-        open={confirmation !== null}
-        pending={isPending}
-        title={
-          confirmation?.kind === "reset"
-            ? "Reset global ERP fault injection?"
-            : "Apply global ERP fault injection?"
-        }
-      >
-        {confirmation && erpChaos.status === "available" ? (
-          <EffectiveChangeList changes={erpChangeSummary(erpChaos.data, confirmation.proposed)} />
-        ) : null}
-      </ConfirmationDialog>
-    </>
-  );
-
-  function updateErpDraft(next: Partial<ErpDraft>) {
-    isDraftDirtyRef.current = true;
-    setFieldErrors((current) => clearChangedErrors(current, next));
-    setFormErrors([]);
-    setDraft((current) => ({ ...current, ...next }));
-  }
-
-  function clearValidationState() {
-    setFieldErrors({});
-    setFormErrors([]);
-    setShowValidationSummary(false);
-  }
-}
-
-interface ErpDraft {
-  latencyMs: string;
-  maxTps: string;
-  errorRate: string;
-  forcedOutage: boolean;
-}
-
-function erpChangeSummary(current: ErpChaosConfig, proposed: ErpChaosConfig) {
-  return [
-    { label: "Latency ms", oldValue: current.latencyMs, proposedValue: proposed.latencyMs },
-    { label: "Max TPS", oldValue: current.maxTps, proposedValue: proposed.maxTps },
-    {
-      label: "Error rate",
-      oldValue: `${ratioToPercent(current.errorRate)}%`,
-      proposedValue: `${ratioToPercent(proposed.errorRate)}%`,
-    },
-    {
-      label: "Forced outage",
-      oldValue: current.forcedOutage ? "on" : "off",
-      proposedValue: proposed.forcedOutage ? "on" : "off",
-    },
-  ];
 }
 
 const policyFieldKeys = {
@@ -1802,17 +1562,6 @@ export function policyChangeSummary(
       JSON.stringify(proposed.publicCustomLimits.allowedTrafficModes),
     ),
   ].filter((change) => change.oldValue !== change.proposedValue);
-}
-
-function erpDraftFromRead(read: BackendRead<ErpChaosStatus>): ErpDraft {
-  return read.status === "available"
-    ? {
-        latencyMs: String(read.data.latencyMs),
-        maxTps: String(read.data.maxTps),
-        errorRate: String(ratioToPercent(read.data.errorRate)),
-        forcedOutage: read.data.forcedOutage,
-      }
-    : { latencyMs: "0", maxTps: "100", errorRate: "0", forcedOutage: false };
 }
 
 function deriveAdminFreshness(

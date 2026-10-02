@@ -100,7 +100,7 @@ export class AdaptiveErpRuntimeAdmission {
       pauseDelivery: (durationMs: number) => Promise<void>;
       persistence: AdaptiveErpSafetyPersistence;
       runConfigReader: RunConfigReader;
-      fallbackConcurrency: number;
+      reconciliationConcurrency: number;
       now: () => number;
     },
   ) {}
@@ -109,7 +109,7 @@ export class AdaptiveErpRuntimeAdmission {
     pauseDelivery: (durationMs: number) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
-    fallbackConcurrency: number;
+    reconciliationConcurrency: number;
     now?: () => number;
     random?: () => number;
   }): Promise<AdaptiveErpRuntimeAdmission> {
@@ -142,7 +142,7 @@ export class AdaptiveErpRuntimeAdmission {
     pauseDelivery: (durationMs: number) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
-    fallbackConcurrency: number;
+    reconciliationConcurrency: number;
     safetyState?: AdaptiveErpAdmissionSafetyState;
     now?: () => number;
     random?: () => number;
@@ -162,15 +162,12 @@ export class AdaptiveErpRuntimeAdmission {
       pauseDelivery: options.pauseDelivery,
       persistence: options.persistence,
       runConfigReader: options.runConfigReader,
-      fallbackConcurrency: options.fallbackConcurrency,
+      reconciliationConcurrency: options.reconciliationConcurrency,
       now,
     });
   }
 
   async context(job: OrderProcessJob): Promise<ErpAdmissionContext> {
-    if (!job.runId) {
-      return { scope: "catalog", configuredConcurrency: this.options.fallbackConcurrency };
-    }
     const snapshot = await this.options.runConfigReader.read(job.runId);
     if (!snapshot) throw new MissingAcceptedRunSnapshotError(job.runId);
     return {
@@ -179,10 +176,12 @@ export class AdaptiveErpRuntimeAdmission {
     };
   }
 
+  // Lookup/restart coordination can proceed without constructing a confirmation request.
+  // Fresh confirmation always requires context() and its frozen run configuration.
   reconciliationContext(job: OrderProcessJob): ErpAdmissionContext {
     return {
-      scope: job.runId ? `run:${job.runId}` : "catalog",
-      configuredConcurrency: this.options.fallbackConcurrency,
+      scope: `run:${job.runId}`,
+      configuredConcurrency: this.options.reconciliationConcurrency,
     };
   }
 
@@ -310,7 +309,7 @@ export class AdaptiveErpRuntimeAdmission {
       scopes: this.options.controller.scopeKeys().map((scope) => ({
         admission: this.options.controller.snapshot(
           scope,
-          this.configuredConcurrency.get(scope) ?? this.options.fallbackConcurrency,
+          this.configuredConcurrency.get(scope) ?? this.options.reconciliationConcurrency,
         ),
         deadline: this.options.deadlines.snapshot(scope),
       })),

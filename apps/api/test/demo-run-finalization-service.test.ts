@@ -8,11 +8,11 @@ import type {
   TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
-  catalogErpDispatchLimits,
   deriveLoadExecutionPlan,
   emptyHttpTimingBreakdownSummary,
   emptyRequestArrivalSummary,
   erpDispatchRateLimit,
+  idleErpDispatchLimits,
   isReplayPossible,
   orderProcessBullMqQueueName,
   technicalOrderFailureCodeValues,
@@ -162,9 +162,9 @@ describe("demo run finalization service", () => {
       });
       await expect(service.finalizeReadyRuns()).resolves.toBe(0);
       expect(await queue.getGlobalRateLimit()).toEqual(
-        erpDispatchRateLimit(catalogErpDispatchLimits.maxTps),
+        erpDispatchRateLimit(idleErpDispatchLimits.maxTps),
       );
-      expect(await queue.getGlobalConcurrency()).toBe(catalogErpDispatchLimits.concurrency);
+      expect(await queue.getGlobalConcurrency()).toBe(idleErpDispatchLimits.concurrency);
     } finally {
       await publisher.close();
     }
@@ -1626,7 +1626,7 @@ async function seedDrainingRun(input: {
     saleStartsAt: new Date("2026-06-20T00:00:00.000Z"),
     saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
     isActive: true,
-    purpose: "generated_run",
+
     createdAt: new Date("2026-06-20T00:00:00.000Z"),
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });

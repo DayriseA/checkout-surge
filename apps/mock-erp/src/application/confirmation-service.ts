@@ -193,7 +193,7 @@ function assertSameConfirmationIdentity(
     existing.publicOrderId !== received.publicOrderId ||
     existing.reservationId !== received.reservationId ||
     existing.saleOfferId !== received.saleOfferId ||
-    (existing.runId ?? null) !== (received.runId ?? null) ||
+    existing.runId !== received.runId ||
     existing.quantity !== received.quantity
   ) {
     throw new ConfirmationIdempotencyConflictError(request.idempotencyKey);
@@ -206,7 +206,7 @@ function confirmationIdentity(request: ErpConfirmationRequest): ErpLookupIdentit
     publicOrderId: request.publicOrderId,
     reservationId: request.reservationId.toLowerCase(),
     saleOfferId: request.saleOfferId.toLowerCase(),
-    ...(request.runId ? { runId: request.runId.toLowerCase() } : {}),
+    runId: request.runId.toLowerCase(),
     idempotencyKey: request.idempotencyKey,
     quantity: request.quantity,
   };

@@ -36,8 +36,6 @@ import {
   GET as getAdminRuntimePolicy,
   PUT as updateAdminRuntimePolicy,
 } from "../src/app/api/admin/demo/runtime-policy/route.js";
-import { POST as resetErpChaos } from "../src/app/api/admin/erp-chaos/reset/route.js";
-import { GET as getErpChaos, PUT as updateErpChaos } from "../src/app/api/admin/erp-chaos/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
 import { POST as previewDemoRun } from "../src/app/api/demo/runs/estimate/route.js";
@@ -58,7 +56,6 @@ describe("dashboard control proxy routes", () => {
     process.env.CONTROL_SERVICE_TOKEN = "control-token";
     process.env.PUBLIC_CLIENT_COOKIE_SECRET = "public-cookie-secret";
     process.env.API_BASE_URL = "http://api.internal";
-    process.env.MOCK_ERP_BASE_URL = "http://mock-erp.internal";
     initializeWebServerConfig(process.env);
   });
 
@@ -89,8 +86,6 @@ describe("dashboard control proxy routes", () => {
       ["run estimate", "POST", previewAdminDemoRun],
       ["runtime policy read", "GET", getAdminRuntimePolicy],
       ["runtime policy update", "PUT", updateAdminRuntimePolicy],
-      ["ERP update", "PUT", updateErpChaos],
-      ["ERP reset", "POST", resetErpChaos],
     ];
     for (const [name, method, handler] of privateRoutes) {
       const request = (headers: Record<string, string> = {}) =>
@@ -476,8 +471,8 @@ describe("dashboard control proxy routes", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     for (const origin of [undefined, "null", "not an origin", "http://evil.local"]) {
-      const response = await updateErpChaos(
-        new Request("http://dashboard.local/api/admin/erp-chaos", {
+      const response = await updateAdminRuntimePolicy(
+        new Request("http://dashboard.local/api/admin/demo/runtime-policy", {
           method: "PUT",
           headers: {
             cookie,
@@ -513,35 +508,7 @@ describe("dashboard control proxy routes", () => {
     expect(privateGet.status).toBe(200);
   });
 
-  it("keeps the read-only ERP chaos status public", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(erpChaosStatusPayload()));
-    vi.stubGlobal("fetch", fetchMock);
-    const response = await getErpChaos(new Request("http://dashboard.local/api/admin/erp-chaos"));
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledOnce();
-  });
-
   it.each([
-    {
-      name: "valid ERP chaos updates with the server-side control token",
-      handler: updateErpChaos,
-      method: "PUT",
-      requestPath: "/api/admin/erp-chaos",
-      upstreamUrl: "http://mock-erp.internal/chaos",
-      requestBody: erpChaosConfigPayload(),
-      partialBodyMatch: true,
-      mockResponseBody: erpChaosStatusPayload(),
-      expectedPayload: { forcedOutage: true },
-    },
-    {
-      name: "ERP chaos reset with the server-side control token",
-      handler: resetErpChaos,
-      method: "POST",
-      requestPath: "/api/admin/erp-chaos/reset",
-      upstreamUrl: "http://mock-erp.internal/chaos/reset",
-      mockResponseBody: { ...erpChaosStatusPayload(), forcedOutage: false },
-      expectedPayload: { forcedOutage: false },
-    },
     {
       name: "demo reset with the server-side control token",
       handler: resetDemo,
@@ -596,7 +563,6 @@ describe("dashboard control proxy routes", () => {
     requestPath,
     upstreamUrl,
     requestBody,
-    partialBodyMatch = false,
     mockResponseBody,
     expectedPayload,
   }) => {
@@ -610,11 +576,7 @@ describe("dashboard control proxy routes", () => {
       );
       if (requestBody !== undefined) {
         const parsedBody = JSON.parse(String(init?.body));
-        if (partialBodyMatch) {
-          expect(parsedBody).toMatchObject(requestBody);
-        } else {
-          expect(parsedBody).toEqual(requestBody);
-        }
+        expect(parsedBody).toEqual(requestBody);
       }
       return jsonResponse(mockResponseBody);
     });
@@ -842,29 +804,6 @@ describe("dashboard control proxy routes", () => {
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
-
-function erpChaosConfigPayload() {
-  return {
-    latencyMs: 250,
-    maxTps: 20,
-    errorRate: 0.25,
-    forcedOutage: true,
-  };
-}
-
-function erpChaosStatusPayload() {
-  return {
-    ...erpChaosConfigPayload(),
-    defaultConfig: erpChaosConfigPayload(),
-    updatedAt: "2026-06-20T00:00:10.000Z",
-    effectiveSafetyCaps: {
-      maxLatencyMs: 5000,
-      minMaxTps: 1,
-      maxErrorRate: 1,
-      allowForcedOutage: true,
-    },
-  };
-}
 
 function dashboardRecoveryPayload(correlationId = "corr-recovery") {
   return {

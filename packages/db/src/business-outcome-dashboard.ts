@@ -21,15 +21,14 @@ import {
 
 export interface BusinessOutcomeProjectionScope {
   saleOfferId: string;
-  runId?: string;
+  runId: string;
 }
 
 export async function readCumulativeErpOutcomeCounts(
   db: CheckoutSurgeDatabase,
-  scope: { runId: string } | { saleOfferId: string },
+  scope: { runId: string },
 ): Promise<ErpCumulativeOutcomeCounts> {
-  const orderFilter =
-    "runId" in scope ? eq(orders.runId, scope.runId) : eq(orders.saleOfferId, scope.saleOfferId);
+  const orderFilter = eq(orders.runId, scope.runId);
   const [row] = await db
     .select({
       capacityRejected: sumAttemptCount("capacity_rejected"),
@@ -51,18 +50,10 @@ export async function readBusinessOutcomeSummary(
   db: CheckoutSurgeDatabase,
   scope: BusinessOutcomeProjectionScope,
 ): Promise<BusinessOutcomeSummary> {
-  const reservationFilter = scope.runId
-    ? eq(reservations.runId, scope.runId)
-    : eq(reservations.saleOfferId, scope.saleOfferId);
-  const orderFilter = scope.runId
-    ? eq(orders.runId, scope.runId)
-    : eq(orders.saleOfferId, scope.saleOfferId);
-  const pendingFilter = scope.runId
-    ? eq(reservationPendingPersistence.runId, scope.runId)
-    : eq(reservationPendingPersistence.saleOfferId, scope.saleOfferId);
-  const notificationFilter = scope.runId
-    ? eq(simulatedNotifications.runId, scope.runId)
-    : eq(simulatedNotifications.saleOfferId, scope.saleOfferId);
+  const reservationFilter = eq(reservations.runId, scope.runId);
+  const orderFilter = eq(orders.runId, scope.runId);
+  const pendingFilter = eq(reservationPendingPersistence.runId, scope.runId);
+  const notificationFilter = eq(simulatedNotifications.runId, scope.runId);
 
   const [
     acceptedReservations,
@@ -118,9 +109,7 @@ export async function readConsistencyLagSummary(
   scope: BusinessOutcomeProjectionScope,
   measuredAt: Date = new Date(),
 ): Promise<ConsistencyLagSummary> {
-  const orderFilter = scope.runId
-    ? eq(orders.runId, scope.runId)
-    : eq(orders.saleOfferId, scope.saleOfferId);
+  const orderFilter = eq(orders.runId, scope.runId);
 
   const [confirmedRow, pendingRow] = await Promise.all([
     db
@@ -331,14 +320,7 @@ async function countRetryingOrders(
   return row?.value ?? 0;
 }
 
-async function readSoldOutRejections(
-  db: CheckoutSurgeDatabase,
-  runId: string | undefined,
-): Promise<number> {
-  if (!runId) {
-    return 0;
-  }
-
+async function readSoldOutRejections(db: CheckoutSurgeDatabase, runId: string): Promise<number> {
   const [row] = await db
     .select({ value: demoRunSoldOutCounts.count })
     .from(demoRunSoldOutCounts)

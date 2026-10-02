@@ -61,7 +61,7 @@ export function createOrderDispatchScanner(dependencies: {
               err: error,
               orderId: job.orderId,
               saleOfferId: job.saleOfferId,
-              ...(job.runId ? { runId: job.runId } : {}),
+              runId: job.runId,
               correlationId: job.correlationId,
             },
             "Order dispatch recovery could not publish an order-processing job.",

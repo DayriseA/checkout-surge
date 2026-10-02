@@ -92,7 +92,6 @@ describe("generated buy bounded-pool admission", () => {
         saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
         saleEndsAt: new Date("2035-01-01T00:00:00.000Z"),
         isActive: true,
-        purpose: "generated_run",
       });
       await setup.db.insert(demoPresets).values({
         id: ids.preset,

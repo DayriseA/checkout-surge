@@ -1,7 +1,5 @@
 import { z } from "zod";
 
-export const saleOfferPurposeValues = ["catalog", "generated_run"] as const;
-
 export const publicBuyOutcomeValues = [
   "reservation_secured",
   "reservation_pending_persistence",

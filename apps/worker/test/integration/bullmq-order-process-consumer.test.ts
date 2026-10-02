@@ -27,6 +27,7 @@ import type { OrderProcessConsumer } from "../../src/queue/order-process-consume
 import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const job: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test",
   reservationId: "33333333-3333-4333-8333-333333333333",
@@ -37,6 +38,7 @@ const job: OrderProcessJob = {
   processingGeneration: 0,
 };
 const notificationJob: NotificationRecordJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: job.orderId,
   saleOfferId: job.saleOfferId,
   correlationId: job.correlationId,
@@ -156,7 +158,9 @@ describe("BullMQ order-processing boundary", () => {
     expect(failed?.failedReason).toContain(deadLetterFailureMarker);
     expect(handled).not.toHaveBeenCalled();
 
-    const publisher = createOrderProcessJobPublisher(queue);
+    const publisher = createOrderProcessJobPublisher(queue, {
+      publish: async ({ operation }) => operation(),
+    });
     const recordDeadLetter = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderRecoveryScanner({
       handler: { handle: vi.fn() },
@@ -233,7 +237,9 @@ describe("BullMQ order-processing boundary", () => {
         markEscalated: vi.fn(),
         recordDeadLetter: vi.fn(),
       },
-      publisher: createOrderProcessJobPublisher(queue),
+      publisher: createOrderProcessJobPublisher(queue, {
+        publish: async ({ operation }) => operation(),
+      }),
       deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -330,7 +336,9 @@ describe("BullMQ order-processing boundary", () => {
     const scanner = createOrderRecoveryScanner({
       persistence: recoveryPersistence,
       handler: { handle: vi.fn() },
-      publisher: createOrderProcessJobPublisher(queue),
+      publisher: createOrderProcessJobPublisher(queue, {
+        publish: async ({ operation }) => operation(),
+      }),
       deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1000,
@@ -419,6 +427,7 @@ describe("BullMQ notification-recording boundary", () => {
     const publisher = createBullMqNotificationRecordPublisher({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
       attempts: 1,
+      publicationFence: { publish: async ({ operation }) => operation() },
     });
     consumer = createBullMqNotificationRecordConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },

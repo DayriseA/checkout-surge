@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 
 const data: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test",
   reservationId: "33333333-3333-4333-8333-333333333333",
@@ -23,7 +24,7 @@ describe("adaptive ERP runtime admission", () => {
       persistence: {
         listActive: async () => [
           {
-            scope: "catalog",
+            scope: `run:${"44444444-4444-4444-8444-444444444444"}`,
             cooldownUntilMs: 5_000,
             availabilityRetryAtMs: 0,
             availabilityCircuitOpen: false,
@@ -45,13 +46,13 @@ describe("adaptive ERP runtime admission", () => {
           },
         }),
       },
-      fallbackConcurrency: 2,
+      reconciliationConcurrency: 2,
       now: () => now,
       random: () => 0,
     });
 
-    const catalog = await admission.tryAcquire(await admission.context(data), "confirmation");
-    expect(catalog).toMatchObject({ admitted: false, decision: { reason: "capacity_cooldown" } });
+    const rejected = await admission.tryAcquire(await admission.context(data), "confirmation");
+    expect(rejected).toMatchObject({ admitted: false, decision: { reason: "capacity_cooldown" } });
     const run = await admission.tryAcquire(
       await admission.context({ ...data, runId }),
       "confirmation",
@@ -82,8 +83,8 @@ describe("adaptive ERP runtime admission", () => {
           events.push("persist");
         },
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => now,
     });
     const context = await admission.context(data);
@@ -124,12 +125,12 @@ describe("adaptive ERP runtime admission", () => {
     await admission.close();
   });
 
-  it("rejects a missing accepted run snapshot instead of falling back to catalog", async () => {
+  it("rejects a missing accepted run snapshot without business configuration defaults", async () => {
     const admission = AdaptiveErpRuntimeAdmission.create({
       pauseDelivery: async () => {},
       persistence: noSafetyPersistence(),
       runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      reconciliationConcurrency: 2,
     });
     await expect(
       admission.context({ ...data, runId: "55555555-5555-4555-8555-555555555555" }),
@@ -140,8 +141,8 @@ describe("adaptive ERP runtime admission", () => {
     const admission = AdaptiveErpRuntimeAdmission.create({
       pauseDelivery: async () => {},
       persistence: noSafetyPersistence(),
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => 0,
     });
     const context = await admission.context(data);
@@ -172,8 +173,8 @@ describe("adaptive ERP runtime admission", () => {
           throw new Error("PostgreSQL unavailable");
         },
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => 0,
     });
     const acquired = await admission.tryAcquire(await admission.context(data), "confirmation");
@@ -220,8 +221,8 @@ describe("adaptive ERP runtime admission", () => {
           if (saved.length === 1) await firstSave;
         },
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => now,
     });
     const context = await admission.context(data);
@@ -251,11 +252,11 @@ describe("adaptive ERP runtime admission", () => {
       pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate: async () => ({ pending: true, nextEligibleAtMs: 60_000 }),
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => 1_000,
     });
     const context = await admission.context(data);
@@ -284,18 +285,20 @@ describe("adaptive ERP runtime admission", () => {
       pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate,
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => now,
     });
     const context = await admission.context(data);
 
     const deniedRefresh = admission.tryAcquire(context, "confirmation");
     await vi.waitFor(() => expect(readReconciliationGate).toHaveBeenCalledOnce());
-    const settledRefresh = admission.reconciliationSettled("catalog");
+    const settledRefresh = admission.reconciliationSettled(
+      `run:${"44444444-4444-4444-8444-444444444444"}`,
+    );
     await vi.waitFor(() => expect(readReconciliationGate).toHaveBeenCalledTimes(2));
     finishNewer?.({ pending: false, nextEligibleAtMs: 0 });
     await settledRefresh;
@@ -326,18 +329,18 @@ describe("adaptive ERP runtime admission", () => {
       pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate,
         save,
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => now,
     });
     const context = await admission.context(data);
     await admission.tryAcquire(context, "confirmation");
     now = 1_100;
-    await admission.reconciliationSettled("catalog");
+    await admission.reconciliationSettled(`run:${"44444444-4444-4444-8444-444444444444"}`);
     expect(admission.state()).toEqual({ available: false, error: "gate read failed" });
     await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
       admitted: false,
@@ -357,7 +360,7 @@ describe("adaptive ERP runtime admission", () => {
       available: false,
       error: "safety write failed; gate read failed",
     });
-    await admission.reconciliationSettled("catalog");
+    await admission.reconciliationSettled(`run:${"44444444-4444-4444-8444-444444444444"}`);
     expect(admission.state()).toEqual({ available: false, error: "safety write failed" });
     now = 2_100;
     const third = await admission.tryAcquire(context, "confirmation");
@@ -376,11 +379,11 @@ describe("adaptive ERP runtime admission", () => {
       pauseDelivery: async () => {},
       persistence: {
         ...noSafetyPersistence(),
-        listUnresolvedScopes: async () => ["catalog"],
+        listUnresolvedScopes: async () => ["run:44444444-4444-4444-8444-444444444444"],
         readReconciliationGate,
       },
-      runConfigReader: { read: async () => null },
-      fallbackConcurrency: 2,
+      runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+      reconciliationConcurrency: 2,
       now: () => now,
     });
     const context = await admission.context(data);

@@ -122,7 +122,7 @@ export function lowCapacityFixture(): AdaptiveErpScenarioFixture {
 
 /**
  * Finite outage window applied by stopping and restarting the mock-erp service;
- * accepted run snapshots override global chaos controls. Admin scope only.
+ * ERP behavior is frozen in the accepted run snapshot. Admin scope only.
  * Dimensioning: service rate
  * r = min(200, 5 / 1.0 s) = 5 confirmations/s, so the 200 accepted orders need
  * an ideal 40 s; the outage opens at 10 s with 150 orders still outstanding
@@ -167,9 +167,7 @@ export function finiteOutageFixture(): AdaptiveErpScenarioFixture {
 }
 
 /**
- * Baseline for the latency acceptance case; admin scope only. Accepted run
- * snapshots override global chaos controls, so changing /chaos cannot produce
- * the 15 s–45 s latency segment during a run. Runtime verification derives a
+ * Baseline for the latency acceptance case; admin scope only. Runtime verification derives a
  * separate stable 3000 ms snapshot from this baseline to exceed the adaptive
  * policy's 2000 ms initial deadline for the whole run.
  */

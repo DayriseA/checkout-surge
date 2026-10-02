@@ -12,6 +12,7 @@ import { SlidingWindowTpsLimiter } from "../../../mock-erp/src/application/tps-l
 import { createBullMqOrderProcessConsumer } from "./order-process-consumer-test-helper.js";
 
 const baseJob: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: "11111111-1111-4111-8111-111111111111",
   publicOrderId: "ord_test",
   reservationId: "33333333-3333-4333-8333-333333333333",
@@ -76,7 +77,7 @@ describe("BullMQ order-process execution boundary", () => {
       handler: {
         handle: async () => {
           arrivals.push(performance.now());
-          if (!limiter.acquire("catalog", maxTps)) rejected += 1;
+          if (!limiter.acquire(`run:${baseJob.runId}`, maxTps)) rejected += 1;
         },
       },
       logger: createSilentLogger("worker"),

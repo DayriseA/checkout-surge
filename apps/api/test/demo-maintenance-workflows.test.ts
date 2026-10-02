@@ -85,13 +85,13 @@ const ids = {
   drainingRun: "55555555-5555-4555-8555-555555555553",
   completedRun: "55555555-5555-4555-8555-555555555554",
   failedRun: "55555555-5555-4555-8555-555555555555",
-  catalogRun: "55555555-5555-4555-8555-555555555556",
+  unownedRun: "55555555-5555-4555-8555-555555555556",
   startingOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1",
   activeOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2",
   drainingOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb3",
   completedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb4",
   failedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb5",
-  catalogOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6",
+  unownedOffer: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb6",
   activeReservation: "77777777-7777-4777-8777-777777777771",
   completedReservation: "77777777-7777-4777-8777-777777777772",
   activeOrder: "88888888-8888-4888-8888-888888888881",
@@ -446,11 +446,11 @@ describe("focused demo maintenance workflows", () => {
       expect(deleteDurable).not.toHaveBeenCalled();
     });
 
-    it("rejects catalog ownership without queue, Redis, or durable mutation", async () => {
+    it("rejects missing run-sale ownership without queue, Redis, or durable mutation", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       await seedBase(db);
-      await seedCatalogReferencedTerminalRun(db);
+      await seedUnownedReferencedTerminalRun(db);
       const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
       const service = createTeardownService({
         db,
@@ -460,17 +460,17 @@ describe("focused demo maintenance workflows", () => {
       });
 
       await expect(
-        service.teardownGeneratedRun({ runId: ids.catalogRun, correlationId: "corr-catalog" }),
+        service.teardownGeneratedRun({ runId: ids.unownedRun, correlationId: "corr-unowned" }),
       ).rejects.toMatchObject({
         statusCode: 409,
         details: { conflictReason: "ownership_mismatch" },
       });
       expect(cleanRuns).not.toHaveBeenCalled();
-      expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun))).toHaveLength(
+      expect(await db.select().from(demoRuns).where(eq(demoRuns.id, ids.unownedRun))).toHaveLength(
         1,
       );
       expect(
-        await db.select().from(saleOffers).where(eq(saleOffers.id, ids.catalogOffer)),
+        await db.select().from(saleOffers).where(eq(saleOffers.id, ids.unownedOffer)),
       ).toHaveLength(1);
     });
 
@@ -2488,7 +2488,7 @@ describe("focused demo maintenance workflows", () => {
       });
     });
 
-    it("leaves catalog sale offers untouched when an old terminal run references one", async () => {
+    it("leaves unowned sale offers untouched when an old terminal run references one", async () => {
       const db = requireConnection(connection).db;
       const redisClient = requireRedis(redis);
       const service = createIntegratedRetentionService({
@@ -2500,33 +2500,33 @@ describe("focused demo maintenance workflows", () => {
       });
 
       await seedBase(db);
-      await seedCatalogReferencedTerminalRun(db);
+      await seedUnownedReferencedTerminalRun(db);
 
       const response = await service.cleanupOldRuns({
         keepLatest: 0,
         olderThanDays: 1,
-        correlationId: "corr-cleanup-catalog",
+        correlationId: "corr-cleanup-unowned",
       });
-      const runRows = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.catalogRun));
+      const runRows = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.unownedRun));
       const summaryRows = await db
         .select()
         .from(demoRunSummaries)
-        .where(eq(demoRunSummaries.runId, ids.catalogRun));
+        .where(eq(demoRunSummaries.runId, ids.unownedRun));
       const saleOfferRows = await db
-        .select({ id: saleOffers.id, purpose: saleOffers.purpose })
+        .select({ id: saleOffers.id })
         .from(saleOffers)
-        .where(eq(saleOffers.id, ids.catalogOffer));
+        .where(eq(saleOffers.id, ids.unownedOffer));
 
       expect(response).toMatchObject({
         deletedRunCount: 0,
         deletedSaleOfferCount: 0,
         preservedLatestCount: 0,
         preservedActiveRunCount: 0,
-        correlationId: "corr-cleanup-catalog",
+        correlationId: "corr-cleanup-unowned",
       });
       expect(runRows).toHaveLength(1);
       expect(summaryRows).toHaveLength(1);
-      expect(saleOfferRows).toEqual([{ id: ids.catalogOffer, purpose: "catalog" }]);
+      expect(saleOfferRows).toEqual([{ id: ids.unownedOffer }]);
     });
 
     it("keeps earlier per-run commits when a later durable deletion fails", async () => {
@@ -2929,7 +2929,7 @@ async function seedRun(
     saleStartsAt: now,
     saleEndsAt: new Date(now.getTime() + 24 * 60 * 60 * 1000),
     isActive: true,
-    purpose: "generated_run",
+
     createdAt: now,
     updatedAt: now,
   });
@@ -3017,32 +3017,32 @@ async function seedRun(
   }
 }
 
-async function seedCatalogReferencedTerminalRun(
+async function seedUnownedReferencedTerminalRun(
   db: ReturnType<typeof createDatabaseConnection>["db"],
 ): Promise<void> {
   const now = new Date("2026-06-20T00:00:00.000Z");
   await db.insert(saleOffers).values({
-    id: ids.catalogOffer,
+    id: ids.unownedOffer,
     productId: ids.product,
-    name: "Catalog Offer",
+    name: "Unowned Offer",
     allocatedStock: 10,
     saleStartsAt: now,
     saleEndsAt: new Date("2026-06-21T00:00:00.000Z"),
     isActive: true,
-    purpose: "catalog",
+
     createdAt: now,
     updatedAt: now,
   });
   await db.insert(demoRuns).values({
     correlationId: "corr-test-run",
-    id: ids.catalogRun,
+    id: ids.unownedRun,
     presetId: ids.preset,
     presetName: "Reset Preset",
     operatorMode: "admin",
     status: "completed",
     trafficStatus: "succeeded",
     configSnapshot: configSnapshotFixture(),
-    saleOfferId: ids.catalogOffer,
+    saleOfferId: ids.unownedOffer,
     startedAt: now,
     trafficStartedAt: new Date("2026-06-20T00:00:01.000Z"),
     trafficEndedAt: new Date("2026-06-20T00:00:05.000Z"),
@@ -3052,8 +3052,8 @@ async function seedCatalogReferencedTerminalRun(
     updatedAt: now,
   });
   await seedTerminalSummary(db, {
-    runId: ids.catalogRun,
-    saleOfferId: ids.catalogOffer,
+    runId: ids.unownedRun,
+    saleOfferId: ids.unownedOffer,
     status: "completed",
     failureReason: null,
   });

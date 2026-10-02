@@ -55,7 +55,7 @@ export function createNotificationRecoveryScanner(dependencies: {
               err: error,
               orderId: candidate.job.orderId,
               saleOfferId: candidate.job.saleOfferId,
-              ...(candidate.job.runId ? { runId: candidate.job.runId } : {}),
+              runId: candidate.job.runId,
               correlationId: candidate.job.correlationId,
             },
             "Notification recovery could not publish a notification-recording job.",

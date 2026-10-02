@@ -885,7 +885,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "erp_call_id": {
           "name": "erp_call_id",
@@ -1147,6 +1147,15 @@
           "columnsTo": ["id", "correlation_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
+        },
+        "erp_attempts_order_run_fk": {
+          "name": "erp_attempts_order_run_fk",
+          "tableFrom": "erp_attempts",
+          "tableTo": "orders",
+          "columnsFrom": ["order_id", "run_id"],
+          "columnsTo": ["id", "run_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -1210,7 +1219,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "quantity": {
           "name": "quantity",
@@ -1312,7 +1321,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "quantity": {
           "name": "quantity",
@@ -1416,6 +1425,15 @@
           "tableTo": "orders",
           "columnsFrom": ["order_id", "correlation_id"],
           "columnsTo": ["id", "correlation_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "erp_dispatch_calls_order_run_fk": {
+          "name": "erp_dispatch_calls_order_run_fk",
+          "tableFrom": "erp_dispatch_calls",
+          "tableTo": "orders",
+          "columnsFrom": ["order_id", "run_id"],
+          "columnsTo": ["id", "run_id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1663,7 +1681,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "event_name": {
           "name": "event_name",
@@ -2164,7 +2182,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "quantity": {
           "name": "quantity",
@@ -2418,6 +2436,27 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "orders_run_attribution_identity_unique": {
+          "name": "orders_run_attribution_identity_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -2659,7 +2698,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "status": {
           "name": "status",
@@ -2793,7 +2832,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "quantity": {
           "name": "quantity",
@@ -3009,14 +3048,6 @@
           "notNull": true,
           "default": true
         },
-        "purpose": {
-          "name": "purpose",
-          "type": "sale_offer_purpose",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'catalog'"
-        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3038,21 +3069,6 @@
           "columns": [
             {
               "expression": "product_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "sale_offers_purpose_idx": {
-          "name": "sale_offers_purpose_idx",
-          "columns": [
-            {
-              "expression": "purpose",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -3150,7 +3166,7 @@
           "name": "run_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "recipient_placeholder": {
           "name": "recipient_placeholder",
@@ -3389,11 +3405,6 @@
       "name": "reservation_pending_persistence_status",
       "schema": "public",
       "values": ["pending_reconciliation", "reconciled", "exhausted"]
-    },
-    "public.sale_offer_purpose": {
-      "name": "sale_offer_purpose",
-      "schema": "public",
-      "values": ["catalog", "generated_run"]
     },
     "public.traffic_completion_enrichment_status": {
       "name": "traffic_completion_enrichment_status",

@@ -86,10 +86,6 @@ export function createOrderProcessJobPublisher(
         });
       };
 
-      if (!job.runId) {
-        await add();
-        return;
-      }
       if (!publicationFence) {
         throw new Error("Generated-run order publication requires a PostgreSQL publication fence.");
       }

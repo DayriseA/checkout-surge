@@ -6,6 +6,7 @@ import {
   PendingPersistenceDiscoveryDeadlineError,
   PendingPersistenceRecoveryService,
 } from "../../src/services/pending-persistence-recovery-service.js";
+import { passThroughRunLocks } from "../pass-through-run-locks.js";
 
 const hold: SecuredReservationHold & { runId: string } = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -192,7 +193,7 @@ function persisted(reservation: SecuredReservationHold = hold) {
       saleOfferId: reservation.saleOfferId,
       reservationId: reservation.id,
       correlationId: reservation.correlationId,
-      ...(reservation.runId ? { runId: reservation.runId } : {}),
+      runId: reservation.runId,
       quantity: reservation.quantity,
       status: "queued" as const,
       queuedAt: reservation.securedAt,
@@ -219,6 +220,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -252,6 +254,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
           throw new Error("postgres unavailable");
         }),
@@ -299,6 +302,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
           throw new Error("postgres unavailable");
         }),
@@ -342,6 +346,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -374,6 +379,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -412,6 +418,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => durable),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -440,6 +447,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -473,6 +481,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         getPersistedBuyByReservationId: vi.fn(async () => null),
         persistSecuredReservation: vi.fn(async () => {
           calls.push("materialize");
@@ -532,6 +541,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => (durableExists ? durable : null)),
       },
@@ -565,6 +575,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => durable),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -594,6 +605,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -625,6 +637,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
           now = new Date("2026-06-20T00:00:01.000Z");
           throw new Error("slow postgres failure");
@@ -665,6 +678,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation,
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -702,6 +716,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const pending = pendingRedis();
     const firstAudit = audit();
     const failingPersistence = {
+      ...passThroughRunLocks,
       persistSecuredReservation: vi.fn(async () => {
         throw new Error("postgres unavailable");
       }),
@@ -749,6 +764,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const pending = pendingRedis();
     const recoveryAudit = audit();
     const persistence = {
+      ...passThroughRunLocks,
       persistSecuredReservation: vi.fn(async () => persisted()),
       getPersistedBuyByReservationId: vi.fn(async () => null),
     };
@@ -780,6 +796,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -810,6 +827,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -843,6 +861,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -869,6 +888,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
           throw new Error("postgres unavailable");
         }),
@@ -911,6 +931,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -941,6 +962,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const failingService = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -984,6 +1006,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -995,6 +1018,7 @@ describe("PendingPersistenceRecoveryService", () => {
         let reservationId = "";
         return {
           persistence: {
+            ...passThroughRunLocks,
             persistSecuredReservation: vi.fn(async () => persisted()),
             getPersistedBuyByReservationId: async (inputReservationId) => {
               reservationId = inputReservationId;
@@ -1043,6 +1067,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -1085,6 +1110,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -1094,6 +1120,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes,
       openAttemptScope: async ({ signal }) => ({
         persistence: {
+          ...passThroughRunLocks,
           persistSecuredReservation: vi.fn(async () => persisted()),
           getPersistedBuyByReservationId: (reservationId) =>
             getPersistedBuyByReservationId(reservationId, signal),
@@ -1132,6 +1159,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
+        ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
         getPersistedBuyByReservationId: vi.fn(async () => null),
       },
@@ -1141,6 +1169,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes: async () => [],
       openAttemptScope: async ({ signal }) => ({
         persistence: {
+          ...passThroughRunLocks,
           persistSecuredReservation: vi.fn(async () => persisted()),
           getPersistedBuyByReservationId: async () => {
             attemptStarted?.();
@@ -1183,6 +1212,7 @@ describe("PendingPersistenceRecoveryService", () => {
       const service = new PendingPersistenceRecoveryService({
         redis: pending.redis as never,
         persistence: {
+          ...passThroughRunLocks,
           persistSecuredReservation: vi.fn(async () => persisted()),
           getPersistedBuyByReservationId: vi.fn(async () => null),
         },
@@ -1195,6 +1225,7 @@ describe("PendingPersistenceRecoveryService", () => {
           const scopeAudit = audit();
           return {
             persistence: {
+              ...passThroughRunLocks,
               persistSecuredReservation: vi.fn(async () => persisted()),
               getPersistedBuyByReservationId: vi.fn(
                 async () =>

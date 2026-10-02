@@ -61,7 +61,11 @@ describe("BullMQ exact-run maintenance", () => {
       await bounded(started.promise);
       const waiting = await queue.add(jobName, payload(runId));
       const unrelated = await queue.add(jobName, payload(otherRunId), { delay: 60_000 });
-      const catalog = await queue.add(jobName, payload(undefined), { delay: 60_000 });
+      const retainedRunJob = await queue.add(
+        jobName,
+        payload("44444444-4444-4444-8444-444444444444"),
+        { delay: 60_000 },
+      );
       const events = new QueueEvents(queueName, { connection });
       resources.push(events);
       await events.waitUntilReady();
@@ -74,7 +78,7 @@ describe("BullMQ exact-run maintenance", () => {
       await expect(cleanup).resolves.toMatchObject({ cleanedJobCount: 2 });
       expect(await waiting.getState()).toBe("unknown");
       expect(await unrelated.getState()).toBe("delayed");
-      expect(await catalog.getState()).toBe("delayed");
+      expect(await retainedRunJob.getState()).toBe("delayed");
       expect(processedCount).toBe(1);
       expect(await queue.isPaused()).toBe(false);
       expect(await otherQueue.isPaused()).toBe(true);
@@ -122,7 +126,7 @@ describe("BullMQ exact-run maintenance", () => {
     resources.push(maintenance, orders, notifications);
     await orders.add(orderProcessJobName, orderJob(runId));
     await orders.add(orderProcessJobName, orderJob(otherRunId));
-    await orders.add(orderProcessJobName, orderJob(undefined));
+    await orders.add(orderProcessJobName, orderJob("44444444-4444-4444-8444-444444444444"));
     await notifications.add(notificationRecordJobName, notificationJob(runId), { delay: 60_000 });
     await notifications.add(notificationRecordJobName, notificationJob(otherRunId));
 
@@ -131,7 +135,7 @@ describe("BullMQ exact-run maintenance", () => {
       cleanedJobCount: 2,
     });
     expect((await orders.getJobs(["waiting", "delayed"])).map((job) => job.data.runId)).toEqual(
-      expect.arrayContaining([otherRunId, undefined]),
+      expect.arrayContaining([otherRunId, "44444444-4444-4444-8444-444444444444"]),
     );
     expect(
       (await notifications.getJobs(["waiting", "delayed"])).map((job) => job.data.runId),
@@ -163,7 +167,7 @@ describe("BullMQ exact-run maintenance", () => {
     release();
   });
 
-  it("removes every supported state for multiple runs and preserves other/catalog jobs", async () => {
+  it("removes every supported state for multiple runs and preserves other runs' jobs", async () => {
     const states = ["waiting", "delayed", "prioritized", "paused", "failed", "completed"];
     const orders = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
     const notifications = new FakeQueue("notifications:record", (data) =>
@@ -174,7 +178,7 @@ describe("BullMQ exact-run maintenance", () => {
       notifications.add(state, notificationJob(secondRunId));
     }
     orders.add("waiting", orderJob(otherRunId));
-    notifications.add("completed", notificationJob(undefined));
+    notifications.add("completed", notificationJob("44444444-4444-4444-8444-444444444444"));
     const maintenance = createDemoQueueMaintenance([orders, notifications]);
 
     await expect(maintenance.cleanRuns([runId, secondRunId])).resolves.toEqual({
@@ -182,7 +186,7 @@ describe("BullMQ exact-run maintenance", () => {
       cleanedJobCount: 12,
     });
     expect(orders.remainingRunIds()).toEqual([otherRunId]);
-    expect(notifications.remainingRunIds()).toEqual([undefined]);
+    expect(notifications.remainingRunIds()).toEqual(["44444444-4444-4444-8444-444444444444"]);
     expect(orders.pauseCalls).toBe(1);
     expect(notifications.pauseCalls).toBe(1);
     expect(orders.resumeCalls).toBe(1);
@@ -327,26 +331,26 @@ describe("BullMQ exact-run maintenance", () => {
   });
 });
 
-function orderJob(attributedRunId?: string) {
+function orderJob(attributedRunId: string) {
   return {
+    runId: attributedRunId,
     orderId: crypto.randomUUID(),
     publicOrderId: `order-${crypto.randomUUID()}`,
     reservationId: crypto.randomUUID(),
     saleOfferId: crypto.randomUUID(),
     correlationId: "corr-queue",
-    ...(attributedRunId ? { runId: attributedRunId } : {}),
     quantity: 1,
     queuedAt: new Date().toISOString(),
     processingGeneration: 0,
   };
 }
 
-function notificationJob(attributedRunId?: string) {
+function notificationJob(attributedRunId: string) {
   return {
+    runId: attributedRunId,
     orderId: crypto.randomUUID(),
     saleOfferId: crypto.randomUUID(),
     correlationId: "corr-queue",
-    ...(attributedRunId ? { runId: attributedRunId } : {}),
     recipientPlaceholder: "buyer@example.invalid",
     confirmedAt: new Date().toISOString(),
   };

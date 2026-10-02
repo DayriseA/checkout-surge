@@ -1,11 +1,8 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type OrderProcessJob, orderProcessBullMqQueueName } from "@checkout-surge/contracts";
-import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
-  demoPresets,
-  demoRunSaleContexts,
   demoRuns,
   orderEvents,
   orders,
@@ -13,13 +10,14 @@ import {
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
-import { resetTestDatabase } from "@checkout-surge/db/testing";
+import { createPurchaseRunFixture, resetTestDatabase } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
 import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
+import { PostgresGeneratedRunPublicationFence } from "../../src/persistence/postgres-generated-run-publication-fence.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { createBullMqOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
@@ -37,6 +35,7 @@ const ids = {
 };
 const queuedAt = new Date("2026-06-21T00:00:00.000Z");
 const job: OrderProcessJob = {
+  runId: "44444444-4444-4444-8444-444444444444",
   orderId: ids.order,
   publicOrderId: "ord_dispatch_recovery",
   reservationId: ids.reservation,
@@ -67,10 +66,13 @@ describe("queued order dispatch recovery", () => {
   it("recovers an order when the API never successfully enqueued its initial job", async () => {
     const queue = new Queue(orderProcessBullMqQueueName, { connection: { url: redisUrl } });
     await queue.obliterate({ force: true });
-    const publisher = createBullMqOrderProcessJobPublisher({
-      url: redisUrl,
-      maxRetriesPerRequest: null,
-    });
+    const publisher = createBullMqOrderProcessJobPublisher(
+      {
+        url: redisUrl,
+        maxRetriesPerRequest: null,
+      },
+      new PostgresGeneratedRunPublicationFence(connection.db),
+    );
     const scanner = createOrderDispatchScanner({
       persistence: new PostgresOrderDispatchPersistence(connection.db),
       publisher,
@@ -123,42 +125,32 @@ describe("queued order dispatch recovery", () => {
   });
 
   it("filters terminal-run orders before limiting the dispatch batch", async () => {
-    const runId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01";
-    const snapshot = previewRunConfigSnapshotFixture();
-    await connection.db.insert(demoPresets).values({
-      id: "ffffffff-ffff-4fff-8fff-fffffffffff1",
-      slug: "terminal-dispatch-recovery",
-      visibility: "public",
-      isEditable: false,
-      isCustom: false,
-      display: {
-        name: "Terminal dispatch recovery",
-        description: "Dispatch eligibility fixture.",
-        sortOrder: 1,
-        outcomeFocus: ["run_history"],
-      },
-      ...snapshot,
+    const runId = "55555555-5555-4555-8555-555555555555";
+    const terminalOfferId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbc";
+    await connection.db.insert(saleOffers).values({
+      id: terminalOfferId,
+      productId: ids.product,
+      name: "Terminal run offer",
+      allocatedStock: 10,
+      saleStartsAt: queuedAt,
+      saleEndsAt: new Date(queuedAt.getTime() + 900_000),
     });
-    await connection.db.insert(demoRuns).values({
-      correlationId: "corr-test-run",
-      id: runId,
-      presetId: "ffffffff-ffff-4fff-8fff-fffffffffff1",
-      presetName: "Terminal dispatch recovery",
-      operatorMode: "public",
+    await createPurchaseRunFixture(connection.db, {
+      runId,
+      saleOfferId: terminalOfferId,
       status: "completed",
-      trafficStatus: "succeeded",
-      configSnapshot: snapshot,
-      saleOfferId: ids.saleOffer,
-      finalizedAt: queuedAt,
     });
-    await connection.db.insert(demoRunSaleContexts).values({ runId, saleOfferId: ids.saleOffer });
+    await connection.db
+      .update(demoRuns)
+      .set({ status: "completed", trafficStatus: "succeeded", finalizedAt: queuedAt })
+      .where(eq(demoRuns.id, runId));
     for (const [index, suffix] of ["02", "03"].entries()) {
       const reservationId = `cccccccc-cccc-4ccc-8ccc-cccccccccc${suffix}`;
       const orderId = `dddddddd-dddd-4ddd-8ddd-dddddddddd${suffix}`;
       const olderQueuedAt = new Date(queuedAt.getTime() - (index + 1) * 1_000);
       await connection.db.insert(reservations).values({
         id: reservationId,
-        saleOfferId: ids.saleOffer,
+        saleOfferId: terminalOfferId,
         runId,
         correlationId: `corr-terminal-${suffix}`,
         quantity: 1,
@@ -169,7 +161,7 @@ describe("queued order dispatch recovery", () => {
       await connection.db.insert(orders).values({
         id: orderId,
         publicOrderId: `ord_terminal_${suffix}`,
-        saleOfferId: ids.saleOffer,
+        saleOfferId: terminalOfferId,
         reservationId,
         runId,
         correlationId: `corr-terminal-${suffix}`,
@@ -221,7 +213,13 @@ describe("queued order dispatch recovery", () => {
       saleStartsAt: new Date("2026-01-01T00:00:00.000Z"),
       saleEndsAt: new Date("2030-01-01T00:00:00.000Z"),
     });
+    await createPurchaseRunFixture(connection.db, {
+      runId: "44444444-4444-4444-8444-444444444444",
+      saleOfferId: ids.saleOffer,
+      status: "draining",
+    });
     await connection.db.insert(reservations).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.reservation,
       saleOfferId: ids.saleOffer,
       correlationId: job.correlationId,
@@ -231,6 +229,7 @@ describe("queued order dispatch recovery", () => {
       expiresAt: new Date("2026-06-21T00:15:00.000Z"),
     });
     await connection.db.insert(orders).values({
+      runId: "44444444-4444-4444-8444-444444444444",
       id: ids.order,
       publicOrderId: job.publicOrderId,
       saleOfferId: ids.saleOffer,
@@ -242,6 +241,7 @@ describe("queued order dispatch recovery", () => {
     });
     await connection.db.insert(orderEvents).values([
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         orderId: ids.order,
         reservationId: ids.reservation,
         saleOfferId: ids.saleOffer,
@@ -252,6 +252,7 @@ describe("queued order dispatch recovery", () => {
         occurredAt: queuedAt,
       },
       {
+        runId: "44444444-4444-4444-8444-444444444444",
         orderId: ids.order,
         reservationId: ids.reservation,
         saleOfferId: ids.saleOffer,

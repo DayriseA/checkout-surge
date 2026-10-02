@@ -425,7 +425,7 @@ async function seedRun(
     saleStartsAt: acceptedAt,
     saleEndsAt: new Date("2026-07-20T00:00:00.000Z"),
     isActive: true,
-    purpose: "generated_run",
+
     createdAt: acceptedAt,
     updatedAt: acceptedAt,
   });
