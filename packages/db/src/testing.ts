@@ -110,7 +110,7 @@ export async function createPurchaseRunFixture(
     .insert(demoPresets)
     .values({
       id: presetId,
-      slug: `purchase-test-${input.runId}`,
+      slug: `purchase-test-${presetId}`,
       visibility: "admin",
       isEditable: true,
       isCustom: true,

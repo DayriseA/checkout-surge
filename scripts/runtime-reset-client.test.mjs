@@ -194,19 +194,17 @@ test("uses local defaults and one generated correlation ID", async () => {
 
 test("CLI reports API failure and exits nonzero", async () => {
   const api = await listenWithResponse(503, { code: "api_failed" });
-  const erp = await listenWithResponse(200, { reset: true });
   try {
     const result = await runCli({
       CONTROL_SERVICE_TOKEN: "secret",
       API_BASE_URL: api.baseUrl,
-      MOCK_ERP_BASE_URL: erp.baseUrl,
     });
     assert.equal(result.code, 1);
     assert.match(result.stdout, /Runtime reset correlation:/);
     assert.match(result.stdout, /api: failed \(HTTP 503\)/);
     assert.doesNotMatch(result.stdout, /mock-erp:/);
   } finally {
-    await Promise.all([api.close(), erp.close()]);
+    await api.close();
   }
 });
 

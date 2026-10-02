@@ -6,19 +6,7 @@ import {
   PendingPersistenceDiscoveryDeadlineError,
   PendingPersistenceRecoveryService,
 } from "../../src/services/pending-persistence-recovery-service.js";
-import type { BuyPersistence } from "../../src/services/reserve-order-service.js";
-
-const passThroughRunLocks: Pick<
-  BuyPersistence,
-  "withRunAdmissionLock" | "withRunPendingPersistenceLock"
-> = {
-  async withRunAdmissionLock({ operation }) {
-    return operation(this as BuyPersistence);
-  },
-  async withRunPendingPersistenceLock({ operation }) {
-    return operation(this as BuyPersistence, "admissible");
-  },
-};
+import { passThroughRunLocks } from "../pass-through-run-locks.js";
 
 const hold: SecuredReservationHold & { runId: string } = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

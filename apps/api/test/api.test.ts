@@ -166,6 +166,7 @@ import {
   type TrafficMetricIngestionController,
   TrafficMetricIngestionService,
 } from "../src/services/traffic-metric-ingestion-service.js";
+import { passThroughRunLocks } from "./pass-through-run-locks.js";
 
 const fixtureIds = {
   product: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -987,18 +988,6 @@ async function readStreamUntil(
 
   return received;
 }
-
-const passThroughRunLocks: Pick<
-  BuyPersistence,
-  "withRunAdmissionLock" | "withRunPendingPersistenceLock"
-> = {
-  async withRunAdmissionLock({ operation }) {
-    return operation(this as BuyPersistence);
-  },
-  async withRunPendingPersistenceLock({ operation }) {
-    return operation(this as BuyPersistence, "admissible");
-  },
-};
 
 class AcceptingPersistence implements BuyPersistence {
   withRunAdmissionLock: BuyPersistence["withRunAdmissionLock"] = ({ operation }) => operation(this);

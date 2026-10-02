@@ -11,18 +11,7 @@ import {
   ReserveOrderService,
   type StockReservationGateway,
 } from "../../src/services/reserve-order-service.js";
-
-const passThroughRunLocks: Pick<
-  BuyPersistence,
-  "withRunAdmissionLock" | "withRunPendingPersistenceLock"
-> = {
-  async withRunAdmissionLock({ operation }) {
-    return operation(this as BuyPersistence);
-  },
-  async withRunPendingPersistenceLock({ operation }) {
-    return operation(this as BuyPersistence, "admissible");
-  },
-};
+import { passThroughRunLocks } from "../pass-through-run-locks.js";
 
 const request: BuyRequest = {
   saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
