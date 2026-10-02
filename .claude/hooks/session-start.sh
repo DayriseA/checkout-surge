@@ -10,6 +10,25 @@ if ! docker info >/dev/null 2>&1; then
   for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
 fi
 
+# Image builds go through a TLS-intercepting proxy whose CA the official node image
+# does not trust. The CA only exists once the session starts (and is refreshed during
+# it), so shadow the base tag used by every Dockerfile here, from the untouched copy
+# the environment setup script tags as node-upstream.
+PROXY_CA=/root/.ccr/ca-bundle.crt
+if [ -f "$PROXY_CA" ] && docker image inspect node-upstream:22-bookworm-slim >/dev/null 2>&1; then
+  ca_build_dir=$(mktemp -d)
+  cp "$PROXY_CA" "$ca_build_dir/proxy-ca.crt"
+  cat >"$ca_build_dir/Dockerfile" <<'EOF'
+FROM node-upstream:22-bookworm-slim
+COPY proxy-ca.crt /usr/local/share/ca-certificates/proxy-ca.crt
+ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/proxy-ca.crt
+EOF
+  docker build -q -t node:22-bookworm-slim "$ca_build_dir" >&2
+  rm -rf "$ca_build_dir"
+else
+  echo "session-start: $PROXY_CA or node-upstream:22-bookworm-slim missing, skipping proxy-trusting node base image" >&2
+fi
+
 [ -f .env ] || cp .env.example .env
 [ -f .env.test ] || cp .env.test.example .env.test
 for key in CONTROL_SERVICE_TOKEN ADMIN_DASHBOARD_PASSPHRASE ADMIN_SESSION_SECRET PUBLIC_CLIENT_COOKIE_SECRET; do
