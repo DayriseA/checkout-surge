@@ -37,9 +37,11 @@ FROM node-base AS runtime-tools-prune
 
 WORKDIR /build
 
+RUN npm install -g turbo@2.9.18
+
 COPY . .
 
-RUN pnpm dlx turbo@2.9.18 prune "@checkout-surge/contracts" --docker
+RUN turbo prune "@checkout-surge/contracts" --docker
 
 FROM node-base AS runtime-tools-build
 

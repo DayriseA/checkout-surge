@@ -6,7 +6,7 @@ const root = new URL("../", import.meta.url);
 const readText = (file) => readFileSync(new URL(file, root), "utf8");
 const readJson = (file) => JSON.parse(readText(file));
 
-test("Docker prune commands use the resolved root Turbo version", () => {
+test("Docker prune stages install and run the resolved root Turbo version", () => {
   const rootImporter = readText("pnpm-lock.yaml").match(
     /^ {2}\.:\n([\s\S]*?)(?=^ {2}\S|$(?![\s\S]))/m,
   );
@@ -24,15 +24,14 @@ test("Docker prune commands use the resolved root Turbo version", () => {
   ]) {
     const dockerfile = readText(file);
     const instructions = dockerfile.replace(/[ \t]*\\\n\s*/g, " ");
+    assert.match(instructions, /^RUN npm install -g turbo@\S+$/m, file);
     assert.match(
       instructions,
-      /^RUN (?:case "\$\{SERVICE_NAME\}" in .* esac && )?pnpm dlx turbo@\S+ prune \S+ --docker$/m,
+      /^RUN (?:case "\$\{SERVICE_NAME\}" in .* esac && )?turbo prune \S+ --docker$/m,
       file,
     );
-    const occurrences = [...dockerfile.matchAll(/turbo@([^\s"']*)/g)];
-    assert.ok(occurrences.length > 0, `${file} must pin Turbo`);
-    for (const occurrence of occurrences) {
-      assert.equal(occurrence[1], resolvedVersion, file);
+    for (const [, version] of dockerfile.matchAll(/turbo@([^\s"']*)/g)) {
+      assert.equal(version, resolvedVersion, file);
     }
   }
 });

@@ -6,11 +6,11 @@ FROM node:${NODE_VERSION} AS prune
 
 WORKDIR /build
 
-RUN corepack enable && corepack prepare pnpm@10.33.2 --activate
+RUN npm install -g turbo@2.9.18
 
 COPY . .
 
-RUN pnpm dlx turbo@2.9.18 prune "load-orchestrator" --docker
+RUN turbo prune "load-orchestrator" --docker
 
 FROM node:${NODE_VERSION} AS build
 

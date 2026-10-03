@@ -5,6 +5,7 @@
 .claude/scheduled_tasks.lock
 .turbo
 **/.turbo
+out
 **/node_modules
 **/.next
 **/dist
