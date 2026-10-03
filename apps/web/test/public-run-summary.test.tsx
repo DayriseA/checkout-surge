@@ -13,6 +13,7 @@ import {
   derivePublicRunSummary,
   type PublicRunSummaryInput,
 } from "../src/app/lib/presentation/public-run-summary.js";
+import { trafficEvidenceUnavailableText } from "../src/app/lib/presentation/traffic-evidence.js";
 
 const cleanDurable: NonNullable<RunResultEvidence["durable"]> = {
   reservedUnits: 250,
@@ -152,6 +153,23 @@ describe("public run summary", () => {
         tone: "danger",
       },
     ]);
+  });
+
+  it("states unavailable evidence instead of a delivery verdict when counts are unknown", () => {
+    const observation = deriveTransportObservation(
+      {
+        plannedRequests: 1_000,
+        startedRequests: null,
+        completedRequests: null,
+        interruptedRequests: null,
+        unstartedRequests: null,
+      },
+      null,
+    );
+    const summary = derivePublicRunSummary(
+      summaryInput({ trafficDeliveryStatus: "failed", transportObservation: observation }),
+    );
+    expect(summary.caveats).toEqual([{ message: trafficEvidenceUnavailableText, tone: "warning" }]);
   });
 
   it("does not turn expected duplicate-population differences into a caveat", () => {

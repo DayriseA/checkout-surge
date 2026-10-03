@@ -1,5 +1,9 @@
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
+import {
+  hasUnknownTrafficCounts,
+  trafficEvidenceUnavailableText,
+} from "../lib/presentation/traffic-evidence";
 
 export function RunFailureExplanation({
   evidence,
@@ -16,6 +20,7 @@ export function RunFailureExplanation({
   const business = evidence.businessOutcomeSummary;
   const connectionP95 = evidence.httpTimingBreakdownSummary.connecting?.p95Ms;
   const known = diagnostic.cause === "virtual_user_limit";
+  const countsUnknown = hasUnknownTrafficCounts(counts);
   const settled =
     business.acceptedReservations > 0 &&
     business.confirmedOrders === business.acceptedReservations &&
@@ -36,9 +41,7 @@ export function RunFailureExplanation({
       <h2 className="type-title m-0 text-xl leading-tight text-ink">
         {known ? "Virtual user limit reached" : "Traffic failed — exact cause not identified"}
       </h2>
-      {counts.startedRequests === null ? (
-        <p>Traffic evidence unavailable: no completion report was recorded.</p>
-      ) : null}
+      {countsUnknown ? <p className="m-0 mt-2">{trafficEvidenceUnavailableText}</p> : null}
       <p className="m-0 mt-2">
         {known
           ? `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent virtual users and could not maintain the requested traffic rate.`
@@ -135,8 +138,8 @@ export function RunFailureExplanation({
       <details className="mt-2 border-t border-border pt-2">
         <summary className="disclosure font-semibold text-ink">Measurement coverage</summary>
         <p className="m-0 mt-2">
-          {counts.startedRequests === null ? (
-            "Traffic counters and HTTP outcomes are unavailable."
+          {countsUnknown ? (
+            trafficEvidenceUnavailableText
           ) : (
             <>
               {formatCount(counts.unstartedRequests)} planned requests were never sent;{" "}

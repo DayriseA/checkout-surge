@@ -47,6 +47,11 @@ The API starts a freshly booted runner for every run and stops it when the run r
 - Confirm a shutdown by waiting for the Machine to reach `stopped`: the connection may drop once the runner exits.
 - Version handshake: never treat `unknown` as a match on Fly. The runner gets `COMMIT_SHA` from the deploy script; the API needs its own commit the same way (core Machine env set by the deploy script), which task 04 did not add.
 
+## Inputs from Task 03
+
+- `startRun` and starting-run reconciliation run inside the API maintenance authority. A runner boot inside `startRun` (3.4 to 7.4 s measured) lengthens that hold; resets, teardown and retention wait behind it.
+- After dispatch, only a definitive start rejection proves that no traffic started: the gateway's `TrafficStartRejectedError` (4xx from the load orchestrator) makes `failRun` write zeros; any other dispatch failure writes unknown counters. Classify Fly Machines API 4xx errors separately and never raise them as `TrafficStartRejectedError`: a Fly failure before the start is dispatched is a setup failure (zeros), decided at its own call site.
+
 ## Working Notes
 
 _None yet._

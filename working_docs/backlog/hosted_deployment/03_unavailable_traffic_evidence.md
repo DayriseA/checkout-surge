@@ -78,3 +78,18 @@ Commands use `pnpm_config_verify_deps_before_run=false` and `TURBO_ENV_MODE=loos
 - Independent `orchestrate` review: no actionable findings. Implementation landed at rung 2 (`gpt-6.1-sol`, medium); review used `gpt-6.1-sol`, xhigh. The main agent's final diff review also passed.
 
 The first full test attempt exposed three old maintenance expectations for reset synthetic zeros; those expectations now assert unknown evidence, and the full rerun passed. Existing web tests emit a jsdom navigation-not-implemented diagnostic while passing. No composition or characterization tests were run.
+
+**Integration (2026-10-03):**
+
+Merged on `integrate/03` after review; owner decisions applied there:
+
+- When traffic counts are unknown, the web shows neither the delivery pill (admin header, public "Delivery quality") nor the "Delivery failed" caveat; the unavailable-evidence text is enough. Web-only: the API still classifies the delivery status as `failed`.
+- The traffic execution gateway owns the definitive-start-rejection rule: it throws `TrafficStartRejectedError` for a 4xx start answer, and `demo-run-service.ts` checks that class instead of reading `error.details.statusCode`.
+- One web helper (`apps/web/src/app/lib/presentation/traffic-evidence.ts`) holds the unknown-counts check and its wording for every surface.
+- `trafficHttpSummarySchema` reuses the measured schema's `failedRequests` equation instead of duplicating it.
+- Documentation updated: `design.md` 4.3, `docs/load_generation_metrics_streaming.md`, `docs/architecture.md`, `docs/automated_testing_infrastructure.md`, and inputs for tasks 05, 06 and 14.
+- DB-backed API and integration tests are pending a cloud run before `dev` is updated.
+
+### Cloud verification (2026-10-03)
+
+The integrated state (`dev` plus this task and its integration follow-ups) passed on Linux: `pnpm type-check`, `pnpm lint`, `pnpm test:unit` (1,547 tests), `pnpm test:api` (337 tests) and `pnpm test:integration` (192 tests), with the isolated PostgreSQL and Redis test infrastructure.

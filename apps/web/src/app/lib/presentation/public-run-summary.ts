@@ -3,6 +3,7 @@ import type { TransportObservation } from "../../components/transport-observatio
 import { formatCount } from "./format";
 import { publicFailureExplanation, runResultOutcomeLabel } from "./public-vocabulary";
 import { runConclusionSentence } from "./run-result-presentation";
+import { hasUnknownTrafficCounts, trafficEvidenceUnavailableText } from "./traffic-evidence";
 
 /**
  * The small public summary shared by Watch and the public report. It is a presentation adapter
@@ -154,25 +155,24 @@ function publicRunCaveats(
 
   const measurementCaveats = input.hasFailureExplanation
     ? []
-    : [
-        ...transportCaveats(input.transportObservation),
-        ...deliveryCaveats(input.trafficDeliveryStatus),
-      ];
+    : measurementCaveatsFor(input.transportObservation, input.trafficDeliveryStatus);
   return {
     caveats: [...caveats, ...measurementCaveats],
     hasMeasurementCaveat: measurementCaveats.length > 0,
   };
 }
 
+function measurementCaveatsFor(
+  observation: TransportObservation | null,
+  deliveryStatus: TrafficDeliveryStatus | null,
+): PublicRunCaveat[] {
+  // Unknown counts cannot support a delivery verdict; the unavailable-evidence caveat says it all.
+  if (observation && hasUnknownTrafficCounts(observation.counts))
+    return [{ message: trafficEvidenceUnavailableText, tone: "warning" }];
+  return [...transportCaveats(observation), ...deliveryCaveats(deliveryStatus)];
+}
+
 function transportCaveats(observation: TransportObservation | null): PublicRunCaveat[] {
-  if (observation?.counts.startedRequests === null)
-    return [
-      {
-        message:
-          "Traffic evidence unavailable: no completion report was recorded. Traffic counters, outcomes and latency are unavailable.",
-        tone: "warning",
-      },
-    ];
   if (!observation || (!observation.hasUnrecordedReplies && !observation.hasUndispatchedAttempts)) {
     return [];
   }

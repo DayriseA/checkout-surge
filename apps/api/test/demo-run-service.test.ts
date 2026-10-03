@@ -66,6 +66,7 @@ import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-sto
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { RunHistoryService } from "../src/services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
+import { TrafficStartRejectedError } from "../src/services/traffic-execution-gateway.js";
 
 const publicCookieSecret = "test-public-cookie-secret";
 const signedVisitor = (visitorId: string) =>
@@ -1697,13 +1698,7 @@ describe("demo-run lifecycle start gating", () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       trafficExecutionGateway: {
         start: async () => {
-          if (evidence === "definitive_rejection")
-            throw new ApiHttpError({
-              statusCode: 502,
-              code: "load_orchestrator_unavailable",
-              message: "load orchestrator unavailable",
-              details: { statusCode: 409 },
-            });
+          if (evidence === "definitive_rejection") throw new TrafficStartRejectedError(409, null);
           throw new Error("load orchestrator unavailable");
         },
       },
@@ -1711,7 +1706,7 @@ describe("demo-run lifecycle start gating", () => {
 
     await expect(
       service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
-    ).rejects.toThrow("load orchestrator unavailable");
+    ).rejects.toThrow("load orchestrator");
 
     const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
 

@@ -64,7 +64,10 @@ import type {
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
-import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
+import {
+  type TrafficExecutionGateway,
+  TrafficStartRejectedError,
+} from "./traffic-execution-gateway.js";
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
@@ -218,12 +221,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
             accepted.run.runId,
             "load_orchestrator_unavailable",
             correlationId,
-            error instanceof ApiHttpError &&
-              typeof error.details?.statusCode === "number" &&
-              error.details.statusCode >= 400 &&
-              error.details.statusCode < 500
-              ? "no_traffic_started"
-              : "unavailable",
+            error instanceof TrafficStartRejectedError ? "no_traffic_started" : "unavailable",
           );
         }
         throw error;

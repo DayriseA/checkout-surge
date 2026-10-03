@@ -81,7 +81,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
 
       if (result.outcome === "rejected") {
         if (isDefinitiveStartRejection(result.statusCode)) {
-          throw loadOrchestratorStartRejected(result.statusCode, result.payload);
+          throw new TrafficStartRejectedError(result.statusCode, result.payload);
         }
         throw new TrafficStartNonDefinitiveResponseError();
       }
@@ -93,7 +93,7 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
         !receivedResponse.ok &&
         isDefinitiveStartRejection(receivedResponse.status)
       ) {
-        throw loadOrchestratorStartRejected(receivedResponse.status, null);
+        throw new TrafficStartRejectedError(receivedResponse.status, null);
       }
 
       const recovered = await this.recoverAmbiguousStart(startRequest, requestTimeoutMs).catch(
@@ -258,16 +258,19 @@ function parseStartConfirmation(
   return confirmation;
 }
 
-function loadOrchestratorStartRejected(statusCode: number, payload: unknown): ApiHttpError {
-  return new ApiHttpError({
-    statusCode: 502,
-    code: "load_orchestrator_unavailable",
-    message: "The load orchestrator rejected the run start.",
-    details: {
-      statusCode,
-      payload: payload && typeof payload === "object" ? payload : {},
-    },
-  });
+/** A definitive (4xx) start rejection: the load orchestrator started no traffic for this request. */
+export class TrafficStartRejectedError extends ApiHttpError {
+  constructor(statusCode: number, payload: unknown) {
+    super({
+      statusCode: 502,
+      code: "load_orchestrator_unavailable",
+      message: "The load orchestrator rejected the run start.",
+      details: {
+        statusCode,
+        payload: payload && typeof payload === "object" ? payload : {},
+      },
+    });
+  }
 }
 
 function isDefinitiveStartRejection(statusCode: number): boolean {

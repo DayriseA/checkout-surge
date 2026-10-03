@@ -24,6 +24,7 @@ import {
   PublicRunHistoryDetail,
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
+import { trafficEvidenceUnavailableText } from "../src/app/lib/presentation/traffic-evidence.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
 
@@ -135,7 +136,7 @@ describe("run history", () => {
         : "cancelled by an admin reset",
     );
     expect(publicMarkup).toContain("experiment data was discarded");
-    expect(publicMarkup).toContain("Traffic counters and HTTP outcomes are unknown.");
+    expect(publicMarkup).toContain(trafficEvidenceUnavailableText);
     expect(publicMarkup).not.toContain("Final stock and orders");
     expect(publicMarkup).toContain("Back to run history");
 
@@ -164,7 +165,7 @@ describe("run history", () => {
         : "cancelled by an admin reset",
     );
     expect(adminMarkup).toContain("experiment data was discarded");
-    expect(adminMarkup).toContain("Traffic counters and HTTP outcomes are unknown.");
+    expect(adminMarkup).toContain(trafficEvidenceUnavailableText);
     expect(adminMarkup).toContain("Delete run");
     expect(adminMarkup).toContain("Back to admin history");
     expect(adminMarkup).not.toContain("Evidence and reconciliation proof");

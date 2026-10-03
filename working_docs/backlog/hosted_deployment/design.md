@@ -311,7 +311,8 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **Report already persisted.** If the run is draining, finalization continues normally.
 - **Missing evidence is unavailable, never zero.**
   - Traffic counters without a k6 report are explicitly unknown, across contracts, persistence and UI.
-  - This also applies to an admin or automatic reset during traffic. Today `syntheticFailedTrafficSummary` (`apps/api/src/services/traffic-delivery-plan.ts`) writes `startedRequests: 0` even when traffic happened.
+  - This also applies to an admin or automatic reset during traffic.
+  - **Implemented in task 03.** `syntheticFailedTrafficSummary` (`apps/api/src/services/traffic-delivery-plan.ts`) writes zeros only when no traffic can have started: setup failed before the start was dispatched, or the load orchestrator answered the start with a definitive 4xx rejection (`TrafficStartRejectedError` in the traffic execution gateway). Every other case, including any reset without a persisted completion report, writes unknown (`null`) counters. Starts and starting-run reconciliation share the maintenance authority with resets, so no replay can race a start being set up; this relies on the single-API-process contract. The web hides the delivery verdict when counts are unknown.
 
 ### 4.4 Capacity failures and region
 

@@ -317,15 +317,8 @@ export const measuredTrafficHttpSummarySchema = z
     failureRate: percentageSchema,
   })
   .strict()
-  .superRefine((summary, context) => {
-    if (summary.failedRequests !== summary.unexpectedResponses + summary.transportFailures) {
-      context.addIssue({
-        code: "custom",
-        path: ["failedRequests"],
-        message: "must equal unexpectedResponses plus transportFailures",
-      });
-    }
-  });
+  .superRefine(refineFailedRequests);
+/** Stored HTTP outcomes: measured, or unavailable as a whole (no counters, rate or latency). */
 export const trafficHttpSummarySchema = z
   .object({
     failedRequests: nonnegativeIntegerSchema.nullable(),
@@ -338,8 +331,8 @@ export const trafficHttpSummarySchema = z
   })
   .strict()
   .superRefine((summary, context) => {
-    const { p95LatencyMs, ...counts } = summary;
-    const values = Object.values(counts);
+    const { p95LatencyMs, ...outcomes } = summary;
+    const values = Object.values(outcomes);
     if (values.some((value) => value === null)) {
       if (!values.every((value) => value === null) || p95LatencyMs !== undefined) {
         context.addIssue({
@@ -350,17 +343,25 @@ export const trafficHttpSummarySchema = z
       }
       return;
     }
-    if (
-      summary.failedRequests !==
-      (summary.unexpectedResponses ?? 0) + (summary.transportFailures ?? 0)
-    ) {
-      context.addIssue({
-        code: "custom",
-        path: ["failedRequests"],
-        message: "must equal unexpectedResponses plus transportFailures",
-      });
-    }
+    // Every outcome is known here.
+    refineFailedRequests(summary as FailedRequestsParts, context);
   });
+
+interface FailedRequestsParts {
+  failedRequests: number;
+  unexpectedResponses: number;
+  transportFailures: number;
+}
+
+function refineFailedRequests(summary: FailedRequestsParts, context: z.RefinementCtx): void {
+  if (summary.failedRequests !== summary.unexpectedResponses + summary.transportFailures) {
+    context.addIssue({
+      code: "custom",
+      path: ["failedRequests"],
+      message: "must equal unexpectedResponses plus transportFailures",
+    });
+  }
+}
 export type TrafficHttpSummary = z.infer<typeof trafficHttpSummarySchema>;
 
 export const arrivalRateSeriesLimit = 120 as const;

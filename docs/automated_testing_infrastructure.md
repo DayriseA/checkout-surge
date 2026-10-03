@@ -49,6 +49,7 @@ The checked-in commands support Linux host-native development, local Dev Contain
 - Exercise service boundaries such as Fastify routes through in-process testing tools like `server.inject()`.
 - Use test PostgreSQL and test Redis dependencies, not module-level production clients.
 - Should validate response codes, response shapes, persistence side effects, and error behavior.
+- Unavailable traffic evidence is covered at each boundary: contract tests for nullable counts, API service tests for true zeros (setup failure, definitive start rejection) versus unknown counts (admin and automatic resets, ambiguous starts) through persistence and Run History, a setup/replay race under the shared maintenance authority, and web tests for the unavailable-evidence wording.
 
 ### Browser Workflow and Deployed-Topology Characterization
 

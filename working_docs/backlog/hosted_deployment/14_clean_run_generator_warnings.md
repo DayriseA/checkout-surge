@@ -34,6 +34,11 @@ Found in task 02 (see its Working Notes) and confirmed on a clean local run by a
 
 - None.
 
+## Inputs from Task 03
+
+- The completion path still writes `0` for a counter with no source (`selectCount` in `apps/load-orchestrator/src/application/k6-output-parser.ts:345` returns `value: 0, source: null`); only the diagnostics mark it unavailable.
+- Task 03 kept completion reports strictly measured (`measuredTransportAttemptCountsSchema`, `measuredTrafficHttpSummarySchema`), and stored HTTP outcomes are all known or all unknown together. Reporting individual counters as `null` when the export is missing needs both relaxed: nullable fields in the completion schema and per-counter nulls in the stored HTTP summary, with the `failedRequests` equation applied only when its terms are known.
+
 ## Working Notes
 
 _None yet._

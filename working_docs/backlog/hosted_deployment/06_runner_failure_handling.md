@@ -33,6 +33,11 @@ A lost runner fails its run immediately, with honest evidence. A provider capaci
 
 - None.
 
+## Inputs from Task 03
+
+- Terminalize a lost runner with `syntheticFailedTrafficSummary(…, "unavailable")`, inside the API maintenance authority so it cannot interleave with resets, starts or starting-run reconciliation. Keep a persisted completion report when one exists.
+- When counts are unknown, the web already hides the delivery verdict (pill and "Delivery failed" caveat) and shows the shared unavailable-evidence text (`apps/web/src/app/lib/presentation/traffic-evidence.ts`). The API still classifies the delivery status as `failed`.
+
 ## Working Notes
 
 _None yet._

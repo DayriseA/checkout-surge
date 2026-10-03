@@ -22,6 +22,10 @@ import {
   evidenceFromRunHistoryDetail,
   oversoldUnitsFromTerminalInventory,
 } from "../lib/presentation/run-result-presentation";
+import {
+  hasUnknownTrafficCounts,
+  trafficEvidenceUnavailableText,
+} from "../lib/presentation/traffic-evidence";
 import { ConfigGroup, FieldRow } from "./config-presentation";
 import { neutralLinkButtonClassName } from "./control-styles";
 import { GoldSignals, PublicSignalChart } from "./gold-signals";
@@ -49,7 +53,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         actions={actions}
         navigation={navigation}
         presetName={summary.presetName}
-        trafficEvidenceUnavailable={summary.transportAttemptCounts.startedRequests === null}
+        trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}
         automatic={summary.failureCategory === "automatic_reset"}
       />
     );
@@ -90,14 +94,16 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               }}
             />
             <StatusPill status={{ label: `operator ${run.operatorMode}`, tone: "idle" }} />
-            <StatusPill
-              status={{
-                label: adminDeliveryLabel(summary.trafficDeliverySummary.trafficDeliveryStatus),
-                tone: trafficDeliveryStatusTone(
-                  summary.trafficDeliverySummary.trafficDeliveryStatus,
-                ),
-              }}
-            />
+            {hasUnknownTrafficCounts(summary.transportAttemptCounts) ? null : (
+              <StatusPill
+                status={{
+                  label: adminDeliveryLabel(summary.trafficDeliverySummary.trafficDeliveryStatus),
+                  tone: trafficDeliveryStatusTone(
+                    summary.trafficDeliverySummary.trafficDeliveryStatus,
+                  ),
+                }}
+              />
+            )}
             {actions}
           </div>
         </div>
@@ -437,7 +443,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           </Link>
         }
         presetName={summary.presetName}
-        trafficEvidenceUnavailable={summary.transportAttemptCounts.startedRequests === null}
+        trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}
         automatic={summary.failureCategory === "automatic_reset"}
       />
     );
@@ -591,18 +597,22 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         <h2 className="type-title m-0 text-base leading-tight text-ink">
           Delivery and measurements
         </h2>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
-          <StatusPill
-            status={{
-              label: publicStatusLabel({
-                family: "traffic-delivery",
-                status: summary.trafficDeliverySummary.trafficDeliveryStatus,
-              }),
-              tone: trafficDeliveryStatusTone(summary.trafficDeliverySummary.trafficDeliveryStatus),
-            }}
-          />
-        </div>
+        {hasUnknownTrafficCounts(summary.transportAttemptCounts) ? null : (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
+            <StatusPill
+              status={{
+                label: publicStatusLabel({
+                  family: "traffic-delivery",
+                  status: summary.trafficDeliverySummary.trafficDeliveryStatus,
+                }),
+                tone: trafficDeliveryStatusTone(
+                  summary.trafficDeliverySummary.trafficDeliveryStatus,
+                ),
+              }}
+            />
+          </div>
+        )}
         <div
           className="mt-3 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1"
           data-delivery-summary=""
@@ -808,8 +818,7 @@ function DiscardedRunDetail({
       </p>
       {trafficEvidenceUnavailable ? (
         <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
-          Traffic evidence unavailable: no completion report was recorded. Traffic counters and HTTP
-          outcomes are unknown.
+          {trafficEvidenceUnavailableText}
         </p>
       ) : null}
     </section>

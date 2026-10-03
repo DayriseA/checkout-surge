@@ -18,6 +18,10 @@ import {
   loadGeneratorLens,
   publicVocabulary,
 } from "../lib/presentation/public-vocabulary";
+import {
+  hasUnknownTrafficCounts,
+  trafficEvidenceUnavailableText,
+} from "../lib/presentation/traffic-evidence";
 
 /**
  * Presentation for the five transport-attempt counts.
@@ -93,8 +97,7 @@ export function survivorshipWarningText(
   observation: TransportObservation,
   surface: ObservationSurface,
 ): string {
-  if (observation.counts.startedRequests === null)
-    return "Traffic evidence unavailable: no completion report was recorded. Outcomes and latency are unavailable.";
+  if (hasUnknownTrafficCounts(observation.counts)) return trafficEvidenceUnavailableText;
   const recorded = formatNumber(observation.repliesRecorded);
   const planned = formatNumber(observation.counts.plannedRequests);
 
@@ -508,7 +511,7 @@ function SurvivorshipWarning({
 }) {
   return (
     <ConditionalCaveat
-      show={observation.counts.startedRequests === null || observation.hasUnrecordedReplies}
+      show={hasUnknownTrafficCounts(observation.counts) || observation.hasUnrecordedReplies}
     >
       {survivorshipWarningText(observation, surface)}
     </ConditionalCaveat>
