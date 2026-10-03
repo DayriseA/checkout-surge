@@ -16,6 +16,7 @@ import {
   adminPublicRuntimePolicyResponseSchema,
   adminRunHistoryDetailPath,
   adminRunHistoryDetailResponseSchema,
+  adminRunnerRecreatePath,
   archiveAdminPresetResponseSchema,
   type BusinessOutcomeSummary,
   buyOutcomeHeaderName,
@@ -120,7 +121,7 @@ import {
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
-import { buildApiServer } from "../src/server.js";
+import { type BuildApiServerOptions, buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
@@ -266,6 +267,7 @@ async function buildTestServer(options: {
   adminDemoReset?: AdminDemoResetWorkflow;
   generatedRunRetention?: GeneratedRunRetentionWorkflow;
   generatedRunTeardown?: GeneratedRunTeardownWorkflow;
+  runnerRecreation?: BuildApiServerOptions["runnerRecreation"];
   runHistoryService?: RunHistoryController;
   logger?: CheckoutSurgeLogger;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
@@ -413,6 +415,9 @@ async function buildTestServer(options: {
           correlationId: input.correlationId,
         }),
       } as GeneratedRunTeardownWorkflow),
+    runnerRecreation: options.runnerRecreation ?? {
+      recreate: async () => ({ machineId: "runner-2", region: "cdg" }),
+    },
     runHistoryService: options.runHistoryService ?? runHistoryControllerFixture(),
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
@@ -1073,6 +1078,7 @@ describe("API gateway routes", () => {
     adminDemoReset?: AdminDemoResetWorkflow;
     generatedRunRetention?: GeneratedRunRetentionWorkflow;
     generatedRunTeardown?: GeneratedRunTeardownWorkflow;
+    runnerRecreation?: BuildApiServerOptions["runnerRecreation"];
     runHistoryService?: RunHistoryController;
   }) {
     const server = await buildTestServer(options);
@@ -2158,6 +2164,32 @@ describe("API gateway routes", () => {
       runId,
       correlationId: "corr-targeted-cleanup",
     });
+  });
+
+  it("protects the operator runner recreation and returns the new runner", async () => {
+    const recreate = vi.fn(async () => ({ machineId: "runner-2", region: "cdg" }));
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      runnerRecreation: { recreate },
+    });
+    expect((await server.inject({ method: "POST", url: adminRunnerRecreatePath })).statusCode).toBe(
+      401,
+    );
+    const response = await server.inject({
+      method: "POST",
+      url: adminRunnerRecreatePath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [correlationIdHeaderName]: "corr-runner-recreate",
+      },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      machineId: "runner-2",
+      region: "cdg",
+      correlationId: "corr-runner-recreate",
+    });
+    expect(recreate).toHaveBeenCalledOnce();
   });
 
   it("maps a targeted teardown conflict to a correlated 409", async () => {

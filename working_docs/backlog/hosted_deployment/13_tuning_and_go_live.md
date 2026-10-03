@@ -16,6 +16,7 @@ The demo is measured, tuned, documented and opened to visitors.
 - **Documentation:** move implemented behavior into `docs/`, and update `docs/runtime_topology.md` and `docs/scope_and_caveats.md`.
 - **Portfolio link** to the gate.
 - **Bot review,** after a few days of real traffic: check the gate logs and Fly metrics, then decide on the signed session cookie.
+- **Runner start-wait errors:** revisit retrying start-wait errors if they appear in logs (task 06 review).
 
 ## Out of Scope
 

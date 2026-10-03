@@ -426,6 +426,26 @@ describe("run history", () => {
     expect(lastPage).not.toContain(">Next</");
   });
 
+  it("shows the load generator region on the public and admin reports", () => {
+    const publicDetail = detailFixture();
+    const adminDetail = adminDetailFixture();
+    const publicMarkup = renderToStaticMarkup(
+      createElement(PublicRunHistoryDetail, {
+        detail: { ...publicDetail, run: { ...publicDetail.run, runnerRegion: "cdg" } },
+      }),
+    );
+    const adminMarkup = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, {
+        detail: { ...adminDetail, run: { ...adminDetail.run, runnerRegion: "cdg" } },
+      }),
+    );
+
+    expect(publicMarkup).toContain("Load generator region: <code>cdg</code>");
+    expect(adminMarkup).toContain("Load generator region");
+    expect(adminMarkup).toContain("cdg");
+    expect(renderToStaticMarkup(publicReport(publicDetail))).not.toContain("Load generator region");
+  });
+
   it("renders the complete public report and hides clean zero-noise", () => {
     const markup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail: detailFixture() }),

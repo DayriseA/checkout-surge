@@ -1305,16 +1305,19 @@ function StartGate({
   const resetIncomplete =
     recovery.status === "available" && recovery.data.resetRecovery === "incomplete";
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
-  const activeRunPresentation = runInProgress
-    ? mapErrorPresentation(
-        {
-          status: "unavailable",
-          errorCode: "run_conflict",
-          details: { conflictReason: resetIncomplete ? "reset_incomplete" : "active_run_exists" },
-        },
-        "public-start",
-      )
-    : null;
+  const runPresentation = deriveRunPresentationState(recovery);
+  const relocatingRunner = runPresentation.state === "relocating-load-generator";
+  const activeRunPresentation =
+    runInProgress && !relocatingRunner
+      ? mapErrorPresentation(
+          {
+            status: "unavailable",
+            errorCode: "run_conflict",
+            details: { conflictReason: resetIncomplete ? "reset_incomplete" : "active_run_exists" },
+          },
+          "public-start",
+        )
+      : null;
   const recoveryUnavailable = recovery.status === "unavailable";
   const readinessBlocked = readinessBlocksRunStart(readiness);
   const retryAfterMs = [
@@ -1334,7 +1337,7 @@ function StartGate({
         ) : resetIncomplete ? (
           <StatusPill status={{ label: "Recovery incomplete", tone: "warning" }} />
         ) : runInProgress ? (
-          <StatusPill status={deriveRunPresentationState(recovery)} />
+          <StatusPill status={runPresentation} />
         ) : postStartReconciliationPending ? (
           <StatusPill status={{ label: "Checking run status", tone: "idle" }} />
         ) : isStarting ? (
@@ -1349,6 +1352,14 @@ function StartGate({
           <StatusPill status={{ label: readyLabel, tone: "idle" }} />
         )}
       </div>
+      {relocatingRunner ? (
+        <p
+          className="m-0 rounded-lg border border-warning-line bg-warning-soft p-3 text-sm text-warning"
+          role="status"
+        >
+          {runPresentation.description}
+        </p>
+      ) : null}
       {activeRunPresentation ? (
         <ErrorNotice
           className="w-full"

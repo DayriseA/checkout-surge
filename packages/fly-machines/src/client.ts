@@ -18,12 +18,23 @@ export interface FlyMachineConfig {
   [key: string]: unknown;
 }
 
+/** One entry of a Machine's event log, newest first. Fly omits a zero `exit_code`. */
+export interface FlyMachineEvent {
+  type: string;
+  status?: string;
+  request?: { exit_event?: { exit_code?: number; requested_stop?: boolean } };
+}
+
 export interface FlyMachine {
   id: string;
   state: string;
   region: string;
   instance_id: string;
   config: FlyMachineConfig;
+  /** ISO 8601 creation time. */
+  created_at: string;
+  host_status?: string;
+  events?: FlyMachineEvent[];
 }
 
 export class FlyMachinesApiError extends Error {
@@ -61,6 +72,19 @@ export class FlyMachinesClient {
     return this.request("GET", `/machines/${machineId}`);
   }
 
+  /**
+   * Creates and launches a Machine. `region` may be a prioritized list such as `cdg,eu`, which Fly
+   * tries in order.
+   */
+  createMachine(config: FlyMachineConfig, region: string): Promise<FlyMachine> {
+    return this.request("POST", "/machines", { body: { config, region } });
+  }
+
+  /** Destroys a Machine, even a running one or one on a dead host. Pass the nonce of a held lease. */
+  async destroyMachine(machineId: string, nonce?: string): Promise<void> {
+    await this.request("DELETE", `/machines/${machineId}?force=true`, nonce ? { nonce } : {});
+  }
+
   /** Replaces the Machine config without starting the Machine. */
   updateMachine(machineId: string, config: FlyMachineConfig, nonce: string): Promise<FlyMachine> {
     return this.request("POST", `/machines/${machineId}`, {
@@ -73,8 +97,9 @@ export class FlyMachinesClient {
     await this.request("POST", `/machines/${machineId}/start`, { nonce });
   }
 
-  async stopMachine(machineId: string, nonce: string): Promise<void> {
-    await this.request("POST", `/machines/${machineId}/stop`, { nonce });
+  /** Pass the nonce of a held lease: without it, a stop blocks until the lease expires. */
+  async stopMachine(machineId: string, nonce?: string): Promise<void> {
+    await this.request("POST", `/machines/${machineId}/stop`, nonce ? { nonce } : {});
   }
 
   /**

@@ -1,14 +1,22 @@
 import type { RunnerIdentity, TrafficExecutionAbortResponse } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { ApiHttpError } from "../runtime/errors.js";
-import type { RunnerHost, RunnerStopTarget } from "./runner-host.js";
+import {
+  RunnerCapacityUnavailableError,
+  type RunnerHost,
+  type RunnerPlacement,
+  type RunnerStartHooks,
+  type RunnerStopTarget,
+} from "./runner-host.js";
 import type { RunnerControlGateway, TrafficAbortGateway } from "./traffic-execution-gateway.js";
 
 /** The runner boot a run is bound to. Every start or replay of the run must target it. */
-export interface RunnerBoot {
-  machineId: string | null;
+export interface RunnerBoot extends RunnerPlacement {
   bootId: string;
 }
+
+/** What the API can tell about the runner of an active run. */
+export type RunnerCondition = "alive" | "lost" | "unreachable";
 
 const defaultReadyTimeoutMs = 30_000;
 const readyPollIntervalMs = 250;
@@ -35,9 +43,9 @@ export class RunnerVersionMismatchError extends ApiHttpError {
 }
 
 /**
- * The single owner of runner operations: boot for a run, stop after it, and abort. Operations run
- * one at a time in this process (the single API process contract), so a stop always completes
- * before a later boot.
+ * The single owner of runner operations: boot for a run, stop after it, abort, and recreate.
+ * Operations run one at a time in this process (the single API process contract), so a stop
+ * always completes before a later boot.
  */
 export class RunnerOperations implements TrafficAbortGateway {
   private tail: Promise<unknown> = Promise.resolve();
@@ -64,15 +72,15 @@ export class RunnerOperations implements TrafficAbortGateway {
    * Starts a freshly booted runner for `runId` and returns its boot. On failure the runner is
    * left stopped and the error is an ApiHttpError: no traffic was dispatched.
    */
-  bootForRun(runId: string): Promise<RunnerBoot> {
-    return this.serialize(() => this.boot(runId));
+  bootForRun(runId: string, hooks: RunnerStartHooks): Promise<RunnerBoot> {
+    return this.serialize(() => this.boot(runId, hooks));
   }
 
   /**
    * Stops the runner of a terminal run, in the background. A failure is only logged. A release
    * that arrives after a later run booted is skipped: that boot already stopped the old runner.
    */
-  releaseAfterRun(target: { runId: string; bootId: string }): void {
+  releaseAfterRun(target: RunnerStopTarget): void {
     void this.serialize(async () => {
       if (this.lastBootRunId !== null && this.lastBootRunId !== target.runId) return;
       await this.options.host.stop(target);
@@ -82,6 +90,37 @@ export class RunnerOperations implements TrafficAbortGateway {
         "Could not stop the runner after a run.",
       );
     });
+  }
+
+  /**
+   * Whether the runner of an active run still serves its boot. A stopped Machine, a Machine on an
+   * unreachable host, or another boot means the runner was lost. Read-only, so it does not wait
+   * behind other operations.
+   */
+  async checkRunner(boot: { bootId: string }): Promise<RunnerCondition> {
+    if (await this.options.host.isLost()) return "lost";
+    try {
+      const identity = await this.options.control.readIdentity();
+      return identity.bootId === boot.bootId ? "alive" : "lost";
+    } catch {
+      return "unreachable";
+    }
+  }
+
+  /**
+   * Stops the runner of an active run that stays unreachable, through Fly if needed. Skipped when
+   * a later run booted meanwhile: the runner now serves that run.
+   */
+  stopUnreachable(target: RunnerStopTarget): Promise<void> {
+    return this.serialize(async () => {
+      if (this.lastBootRunId !== null && this.lastBootRunId !== target.runId) return;
+      await this.options.host.stop(target);
+    });
+  }
+
+  /** Replaces the stopped runner with a fresh one, as a capacity failure would. */
+  recreate(): Promise<RunnerPlacement> {
+    return this.serialize(() => this.options.host.recreate());
   }
 
   /** A stopped runner cannot emit traffic, so aborting it is confirmed without a call. */
@@ -97,22 +136,25 @@ export class RunnerOperations implements TrafficAbortGateway {
     );
   }
 
-  private async boot(runId: string): Promise<RunnerBoot> {
+  private async boot(runId: string, hooks: RunnerStartHooks): Promise<RunnerBoot> {
     this.lastBootRunId = runId;
     let identity: RunnerIdentity | null = null;
     try {
-      const { machineId } = await this.options.host.start(runId);
+      const placement = await this.options.host.start(runId, hooks);
       identity = await this.waitForReadyIdentity();
       if (!this.versionMatches(identity.version)) {
         throw new RunnerVersionMismatchError(this.options.apiVersion, identity.version);
       }
-      return { machineId, bootId: identity.bootId };
+      return { ...placement, bootId: identity.bootId };
     } catch (error) {
       if (!(error instanceof RunnerVersionMismatchError)) {
         this.options.logger.error({ err: error, runId }, "The runner could not be booted.");
       }
       await this.stopAfterFailedBoot({ runId, bootId: identity?.bootId ?? null });
-      throw error instanceof RunnerVersionMismatchError ? error : new RunnerBootError();
+      throw error instanceof RunnerVersionMismatchError ||
+        error instanceof RunnerCapacityUnavailableError
+        ? error
+        : new RunnerBootError();
     }
   }
 

@@ -459,6 +459,7 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
     ...(row.adminResetCompletedAt
       ? { adminResetCompletedAt: row.adminResetCompletedAt.toISOString() }
       : {}),
+    ...(row.runnerRegion ? { runnerRegion: row.runnerRegion } : {}),
   });
 }
 

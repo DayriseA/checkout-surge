@@ -34,6 +34,8 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt.toISOString() } : {}),
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
+    ...(run.runnerRegion ? { runnerRegion: run.runnerRegion } : {}),
+    ...(run.status === "starting" && run.runnerRelocating ? { runnerRelocating: true } : {}),
     ...(run.adminResetCompletedAt
       ? { adminResetCompletedAt: run.adminResetCompletedAt.toISOString() }
       : {}),

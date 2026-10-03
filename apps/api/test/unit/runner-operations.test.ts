@@ -1,10 +1,11 @@
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import type { RunnerHost } from "../../src/services/runner-host.js";
+import { RunnerCapacityUnavailableError, type RunnerHost } from "../../src/services/runner-host.js";
 import { RunnerOperations } from "../../src/services/runner-operations.js";
 
 const runId = "55555555-5555-4555-8555-555555555555";
 const bootId = "11111111-1111-4111-8111-111111111111";
+const hooks = { onRelocating: async () => undefined };
 
 function setup(
   options: {
@@ -18,9 +19,11 @@ function setup(
   let clock = 0;
   let readinessChecks = 0;
   const host = {
-    start: vi.fn(async () => ({ machineId: "runner-1" })),
+    start: vi.fn(async () => ({ machineId: "runner-1", region: "cdg" })),
     stop: vi.fn(async () => undefined),
     isStopped: vi.fn(async () => false),
+    isLost: vi.fn(async () => false),
+    recreate: vi.fn(async () => ({ machineId: "runner-2", region: "ams" })),
     ...options.host,
   };
   const control = {
@@ -53,11 +56,12 @@ describe("RunnerOperations boot", () => {
   it("starts the runner, waits until it is ready, and returns its boot", async () => {
     const { operations, host, control } = setup({ readyAfterChecks: 3 });
 
-    await expect(operations.bootForRun(runId)).resolves.toEqual({
+    await expect(operations.bootForRun(runId, hooks)).resolves.toEqual({
       machineId: "runner-1",
+      region: "cdg",
       bootId,
     });
-    expect(host.start).toHaveBeenCalledWith(runId);
+    expect(host.start).toHaveBeenCalledWith(runId, hooks);
     expect(control.isReady).toHaveBeenCalledTimes(4);
     expect(host.stop).not.toHaveBeenCalled();
   });
@@ -65,7 +69,7 @@ describe("RunnerOperations boot", () => {
   it("refuses a runner on another commit and stops it through its boot", async () => {
     const { operations, host } = setup({ runnerVersion: "def456" });
 
-    await expect(operations.bootForRun(runId)).rejects.toMatchObject({
+    await expect(operations.bootForRun(runId, hooks)).rejects.toMatchObject({
       code: "runner_version_mismatch",
       details: { apiVersion: "abc123", runnerVersion: "def456" },
     });
@@ -74,7 +78,7 @@ describe("RunnerOperations boot", () => {
 
   it("never matches unknown versions unless the topology accepts them", async () => {
     const strict = setup({ apiVersion: "unknown", runnerVersion: "unknown" });
-    await expect(strict.operations.bootForRun(runId)).rejects.toMatchObject({
+    await expect(strict.operations.bootForRun(runId, hooks)).rejects.toMatchObject({
       code: "runner_version_mismatch",
     });
 
@@ -83,17 +87,32 @@ describe("RunnerOperations boot", () => {
       runnerVersion: "unknown",
       acceptUnknownVersion: true,
     });
-    await expect(local.operations.bootForRun(runId)).resolves.toMatchObject({ bootId });
+    await expect(local.operations.bootForRun(runId, hooks)).resolves.toMatchObject({ bootId });
   });
 
   it("reports a runner that never becomes ready as unavailable and stops it", async () => {
     const { operations, host } = setup({ readyAfterChecks: Number.POSITIVE_INFINITY });
 
-    await expect(operations.bootForRun(runId)).rejects.toMatchObject({
+    await expect(operations.bootForRun(runId, hooks)).rejects.toMatchObject({
       statusCode: 503,
       code: "load_orchestrator_unavailable",
     });
     expect(host.stop).toHaveBeenCalledWith({ runId, bootId: null });
+  });
+
+  it("passes a capacity failure through so the visitor learns no traffic started", async () => {
+    const { operations } = setup({
+      host: {
+        start: async () => {
+          throw new RunnerCapacityUnavailableError();
+        },
+      },
+    });
+
+    await expect(operations.bootForRun(runId, hooks)).rejects.toMatchObject({
+      statusCode: 503,
+      code: "runner_capacity_unavailable",
+    });
   });
 
   it("finishes a pending stop before the next boot", async () => {
@@ -110,7 +129,7 @@ describe("RunnerOperations boot", () => {
     });
 
     operations.releaseAfterRun({ runId, bootId });
-    const boot = operations.bootForRun("66666666-6666-4666-8666-666666666666");
+    const boot = operations.bootForRun("66666666-6666-4666-8666-666666666666", hooks);
     await vi.waitFor(() => expect(host.stop).toHaveBeenCalled());
     expect(host.start).not.toHaveBeenCalled();
 
@@ -125,7 +144,7 @@ describe("RunnerOperations release", () => {
 
   it("stops the runner of the latest booted run", async () => {
     const { operations, host } = setup();
-    await operations.bootForRun(runId);
+    await operations.bootForRun(runId, hooks);
 
     operations.releaseAfterRun({ runId, bootId });
 
@@ -136,13 +155,47 @@ describe("RunnerOperations release", () => {
     const { operations, host } = setup({
       host: { stop: vi.fn(async () => Promise.reject(new Error("runner unreachable"))) },
     });
-    await operations.bootForRun(runId);
-    await operations.bootForRun(nextRunId);
+    await operations.bootForRun(runId, hooks);
+    await operations.bootForRun(nextRunId, hooks);
 
     operations.releaseAfterRun({ runId, bootId });
     await operations.abortCurrent({ runId: nextRunId, reason: "probe", correlationId: "corr" });
 
     expect(host.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe("RunnerOperations unreachable stop", () => {
+  it("skips the stop of a run once a later run booted", async () => {
+    const { operations, host } = setup();
+    await operations.bootForRun("66666666-6666-4666-8666-666666666666", hooks);
+
+    await operations.stopUnreachable({ runId, bootId });
+
+    expect(host.stop).not.toHaveBeenCalled();
+  });
+});
+
+describe("RunnerOperations runner check", () => {
+  it("reports a runner that still serves the boot as alive", async () => {
+    const { operations } = setup();
+    await expect(operations.checkRunner({ bootId })).resolves.toBe("alive");
+  });
+
+  it("reports a lost Machine or another boot as lost", async () => {
+    const stopped = setup({ host: { isLost: async () => true } });
+    await expect(stopped.operations.checkRunner({ bootId })).resolves.toBe("lost");
+
+    const rebooted = setup();
+    await expect(
+      rebooted.operations.checkRunner({ bootId: "22222222-2222-4222-8222-222222222222" }),
+    ).resolves.toBe("lost");
+  });
+
+  it("reports a started runner that does not answer as unreachable", async () => {
+    const { operations, control } = setup();
+    control.readIdentity.mockRejectedValueOnce(new Error("timeout"));
+    await expect(operations.checkRunner({ bootId })).resolves.toBe("unreachable");
   });
 });
 

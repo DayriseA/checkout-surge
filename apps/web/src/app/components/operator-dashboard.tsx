@@ -562,7 +562,9 @@ function runPhaseSentence(
     case "draining":
       return "New checkout traffic has stopped. Remaining reservations are moving through protected processing to final confirmation.";
     case "starting":
-      return "Preparing inventory and checkout traffic. Signal readings will appear when traffic begins.";
+      return composition.presentation.state === "relocating-load-generator"
+        ? composition.presentation.description
+        : "Preparing inventory and checkout traffic. Signal readings will appear when traffic begins.";
   }
 }
 

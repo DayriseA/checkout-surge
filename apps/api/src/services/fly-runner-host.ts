@@ -1,6 +1,21 @@
-import type { FlyMachine, FlyMachineConfig, FlyMachinesClient } from "@checkout-surge/fly-machines";
+import {
+  classifyFlyError,
+  classifyFlyMachine,
+  type FlyFailureClass,
+  type FlyMachine,
+  type FlyMachineConfig,
+  FlyMachinesApiError,
+  type FlyMachinesClient,
+} from "@checkout-surge/fly-machines";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import type { RunnerHost, RunnerStopTarget } from "./runner-host.js";
+import { ApiHttpError } from "../runtime/errors.js";
+import {
+  RunnerCapacityUnavailableError,
+  type RunnerHost,
+  type RunnerPlacement,
+  type RunnerStartHooks,
+  type RunnerStopTarget,
+} from "./runner-host.js";
 import type { RunnerControlGateway } from "./traffic-execution-gateway.js";
 
 export interface RunnerMachineSize {
@@ -13,6 +28,8 @@ type FlyRunnerMachines = Pick<
   FlyMachinesClient,
   | "listMachines"
   | "getMachine"
+  | "createMachine"
+  | "destroyMachine"
   | "updateMachine"
   | "startMachine"
   | "stopMachine"
@@ -29,6 +46,16 @@ const busyRetryWindowMs = 30_000;
 const busyRetryIntervalMs = 1_000;
 const shutdownWaitSeconds = 30;
 const machineWaitSeconds = 60;
+// Three start attempts in place, with back-off between them, before the runner is recreated.
+const startRetryDelaysMs = [1_000, 3_000];
+const retriedStartFailures = new Set<FlyFailureClass>([
+  "provider_capacity",
+  "host_unreachable",
+  "transient",
+]);
+const relocatingFailures = new Set<FlyFailureClass>(["provider_capacity", "host_unreachable"]);
+/** Where a recreated runner may go after the core's own region (design section 4.4). */
+const fallbackRegion = "eu";
 
 /**
  * The runner as one Fly Machine with no volume, stopped between runs. Each operation holds the
@@ -42,38 +69,155 @@ export class FlyRunnerHost implements RunnerHost {
       size: RunnerMachineSize;
       /** The core's address for the runner's metrics and completion reports. */
       apiBaseUrl: string;
-      logger: Pick<CheckoutSurgeLogger, "info" | "warn">;
+      /** The core's current region, where a recreated runner goes first. */
+      coreRegion: string;
+      logger: Pick<CheckoutSurgeLogger, "info" | "warn" | "error">;
       sleep?: (ms: number) => Promise<void>;
       now?: () => number;
     },
   ) {}
 
-  start(runId: string): Promise<{ machineId: string }> {
+  /**
+   * Starts the runner where it is, retrying with back-off. When the provider still has no
+   * capacity, or the host is unreachable, the runner is recreated elsewhere.
+   */
+  start(runId: string, hooks: RunnerStartHooks): Promise<RunnerPlacement> {
     return this.withLease("runner start", async (machine, nonce) => {
-      if (machine.state !== "stopped") {
-        // No other run is in flight, so a running runner is stale: it never serves this run.
-        const identity = await this.options.control.readIdentity().catch(() => null);
-        await this.stopMachine(machine, nonce, { runId, bootId: identity?.bootId ?? null }, true);
+      if (classifyFlyMachine(machine) !== "host_unreachable") {
+        const failure = await this.startInPlace(runId, machine, nonce);
+        if (failure === null) return { machineId: machine.id, region: machine.region };
+        if (!relocatingFailures.has(classifyFlyError(failure))) throw failure;
       }
-      const config = this.configForNextRun(machine.config);
-      if (config) {
-        const updated = await this.options.machines.updateMachine(machine.id, config, nonce);
-        await this.requireState(machine.id, "stopped", updated.instance_id);
-      }
-      await this.options.machines.startMachine(machine.id, nonce);
-      await this.requireState(machine.id, "started");
-      return { machineId: machine.id };
+      await hooks.onRelocating();
+      return this.replace(machine, nonce);
     });
   }
 
   stop(target: RunnerStopTarget): Promise<void> {
-    return this.withLease("runner stop", (machine, nonce) =>
-      this.stopMachine(machine, nonce, target, false),
-    );
+    return this.withLease("runner stop", async (machine, nonce) => {
+      if (classifyFlyMachine(machine) === "host_unreachable") {
+        // A stop could hang on a dead host; the next start recreates the runner instead.
+        this.options.logger.warn(
+          { ...target },
+          "The runner's host is unreachable; not stopping it.",
+        );
+        return;
+      }
+      await this.stopMachine(machine, nonce, target, false);
+    });
   }
 
   async isStopped(): Promise<boolean> {
     return (await this.findRunnerMachine()).state === "stopped";
+  }
+
+  async isLost(): Promise<boolean> {
+    const machine = await this.findRunnerMachine();
+    return machine.state === "stopped" || classifyFlyMachine(machine) === "host_unreachable";
+  }
+
+  /** Replaces the stopped runner with a fresh one, left stopped. Refused while it runs. */
+  recreate(): Promise<RunnerPlacement> {
+    return this.withLease("runner recreate", async (machine, nonce) => {
+      if (machine.state !== "stopped") {
+        throw new ApiHttpError({
+          statusCode: 409,
+          code: "run_conflict",
+          message: "The load generator is running; recreate it between runs.",
+        });
+      }
+      const placement = await this.replace(machine, nonce);
+      if (placement.machineId) {
+        await this.options.machines.stopMachine(placement.machineId);
+        await this.requireState(placement.machineId, "stopped");
+      }
+      return placement;
+    });
+  }
+
+  /**
+   * Brings the Machine up in place. Returns the last start failure once the retries are spent, or
+   * null when it started.
+   */
+  private async startInPlace(
+    runId: string,
+    machine: FlyMachine,
+    nonce: string,
+  ): Promise<unknown | null> {
+    if (machine.state !== "stopped") {
+      // No other run is in flight, so a running runner is stale: it never serves this run.
+      const identity = await this.options.control.readIdentity().catch(() => null);
+      await this.stopMachine(machine, nonce, { runId, bootId: identity?.bootId ?? null }, true);
+    }
+    if (!this.hasRunSettings(machine.config)) {
+      const updated = await this.options.machines.updateMachine(
+        machine.id,
+        this.withRunSettings(machine.config),
+        nonce,
+      );
+      await this.requireState(machine.id, "stopped", updated.instance_id);
+    }
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.options.machines.startMachine(machine.id, nonce);
+        break;
+      } catch (error) {
+        const failure = classifyFlyError(error);
+        this.options.logger.warn(
+          { err: error, failure, attempt: attempt + 1 },
+          "The runner Machine did not start.",
+        );
+        const delayMs = startRetryDelaysMs[attempt];
+        if (!retriedStartFailures.has(failure)) throw error;
+        if (delayMs === undefined) return error;
+        await this.sleep(delayMs);
+      }
+    }
+    await this.requireState(machine.id, "started");
+    return null;
+  }
+
+  /**
+   * Creates a fresh runner from the current config, in the core's region or else in Europe,
+   * waits for it to start, then retires the old one. The old one stays when no new one starts.
+   */
+  private async replace(old: FlyMachine, nonce: string): Promise<RunnerPlacement> {
+    let created: FlyMachine;
+    try {
+      created = await this.options.machines.createMachine(
+        this.withRunSettings(old.config),
+        `${this.options.coreRegion},${fallbackRegion}`,
+      );
+    } catch (error) {
+      if (classifyFlyError(error) === "provider_capacity") {
+        this.options.logger.error({ err: error }, "No capacity to recreate the runner.");
+        throw new RunnerCapacityUnavailableError();
+      }
+      throw error;
+    }
+    try {
+      await this.requireState(created.id, "started");
+    } catch (error) {
+      await this.options.machines.destroyMachine(created.id).catch((destroyError: unknown) => {
+        this.options.logger.error(
+          { err: destroyError, machineId: created.id },
+          "Could not destroy a recreated runner that did not start.",
+        );
+      });
+      throw error;
+    }
+    await this.options.machines.destroyMachine(old.id, nonce).catch((error: unknown) => {
+      // Two runner Machines now exist; the newest is used and the guard removes the old one.
+      this.options.logger.error(
+        { err: error, machineId: old.id },
+        "Could not destroy the replaced runner Machine.",
+      );
+    });
+    this.options.logger.warn(
+      { oldMachineId: old.id, machineId: created.id, region: created.region },
+      "Recreated the runner Machine.",
+    );
+    return { machineId: created.id, region: created.region };
   }
 
   /**
@@ -130,17 +274,19 @@ export class FlyRunnerHost implements RunnerHost {
     }
   }
 
-  /** The config with the size and API address the next run needs, or null when it has them. */
-  private configForNextRun(config: FlyMachineConfig): FlyMachineConfig | null {
+  /** Whether the config already has the size and API address the next run needs. */
+  private hasRunSettings(config: FlyMachineConfig): boolean {
     const { size, apiBaseUrl } = this.options;
-    if (
+    return (
       config.guest.cpu_kind === size.cpuKind &&
       config.guest.cpus === size.cpus &&
       config.guest.memory_mb === size.memoryMb &&
       config.env?.API_BASE_URL === apiBaseUrl
-    ) {
-      return null;
-    }
+    );
+  }
+
+  private withRunSettings(config: FlyMachineConfig): FlyMachineConfig {
+    const { size, apiBaseUrl } = this.options;
     return {
       ...config,
       guest: { ...config.guest, cpu_kind: size.cpuKind, cpus: size.cpus, memory_mb: size.memoryMb },
@@ -163,19 +309,28 @@ export class FlyRunnerHost implements RunnerHost {
       return await operation(await this.options.machines.getMachine(machine.id), nonce);
     } finally {
       await this.options.machines.releaseLease(machine.id, nonce).catch((error: unknown) => {
+        // A recreation destroys the leased Machine, and its lease with it.
+        if (error instanceof FlyMachinesApiError && error.status === 404) return;
         this.options.logger.warn({ err: error }, "Could not release the runner Machine lease.");
       });
     }
   }
 
-  /** The runner is the app's only Machine with `role=runner` metadata, never a fixed ID. */
+  /**
+   * The runner is the newest Machine with `role=runner` metadata, never a fixed ID. Several exist
+   * only after a failed retirement or a lost create response; the guard removes the older ones.
+   */
   private async findRunnerMachine(): Promise<FlyMachine> {
-    const runners = (await this.options.machines.listMachines()).filter(
-      (machine) => machine.config.metadata?.role === "runner",
-    );
+    const runners = (await this.options.machines.listMachines())
+      .filter((machine) => machine.config.metadata?.role === "runner")
+      .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
     const [runner] = runners;
-    if (!runner || runners.length > 1) {
-      throw new Error(`Expected one runner Machine, found ${runners.length}.`);
+    if (!runner) throw new Error("Expected a runner Machine, found none.");
+    if (runners.length > 1) {
+      this.options.logger.warn(
+        { machineIds: runners.map((machine) => machine.id) },
+        "Several runner Machines exist; using the newest.",
+      );
     }
     return runner;
   }

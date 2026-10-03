@@ -29,6 +29,11 @@ An hourly safety net bounds the cost of a bug: nothing stays awake or left over 
 
 - None.
 
+## Inputs from Task 06
+
+- The guard keeps the newest `role=runner` Machine (by `created_at`) and treats older ones as surplus, destroyed after the grace period.
+- The API itself tolerates several runners by using the newest. They appear only after a failed retirement of a recreated runner or a lost create response.
+
 ## Working Notes
 
 _None yet._

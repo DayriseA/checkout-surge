@@ -74,6 +74,9 @@ const genericPresentation = {
   tone: "danger" as const,
 };
 
+/** The hosting provider's public status page, offered when it has no capacity for a run. */
+const providerStatusUrl = "https://status.flyio.net/";
+
 /** Shared by the infrastructure-limit notice and the custom run builder's limits hint. */
 export const largerRunsGuidance =
   "For larger runs, run the project locally or deploy it on larger infrastructure.";
@@ -110,6 +113,7 @@ const publicStartActionCodes = new Set<ErrorPayloadCode>([
   "invalid_request",
   "invalid_run_configuration",
   "runner_version_mismatch",
+  "runner_capacity_unavailable",
 ]);
 
 // When returned from the start path, these mean the BFF never saw a valid API verdict,
@@ -360,6 +364,14 @@ function codePresentation(
         explanation:
           "Its load generator and its backend run different versions, so runs are paused until the update completes. Try again later.",
         action: { kind: "check", label: "Check again" },
+        tone: "warning",
+      };
+    case "runner_capacity_unavailable":
+      return {
+        headline: "Our hosting provider has no capacity right now",
+        explanation:
+          "Fly.io has no room for the load generator in Europe at the moment, so no traffic was started. Please come back later.",
+        action: { kind: "check", label: "Fly.io status", href: providerStatusUrl },
         tone: "warning",
       };
     case "traffic_termination_unconfirmed":

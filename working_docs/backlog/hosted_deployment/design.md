@@ -312,12 +312,13 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - The runner is declared lost if its Machine is stopped, or its boot ID changed, before a completion report was persisted.
   - The API then closes admission, treats the abort as confirmed, and terminalizes the run immediately as failed with reason `load_generator_lost`, without waiting for the 900 s automatic reset.
   - If the runner is merely unreachable while its Machine is started, the state is uncertain. After about 60 s, the API stops it through Fly, then applies the same rule.
+  - **Implemented in task 06.** The check runs on the API's 5 s poll, for the run that is `starting` or `active` with a recorded boot. That set is exactly "no report persisted": the report and the move to `draining` are written in one transaction. A runner Machine whose `host_status` is `unreachable` also counts as lost (owner decision, 2026-10-04); the API does not try to stop it, and the next start recreates the runner (section 4.4). Measured on Fly: SIGKILL to a terminal `load_generator_lost` run in 3.4 s, 1.3 s after Fly marks the Machine stopped.
 - **Report already persisted.** If the run is draining, finalization continues normally.
 - **Missing evidence is unavailable, never zero.**
   - Traffic counters without a k6 report are explicitly unknown, across contracts, persistence and UI.
   - This also applies to an admin or automatic reset during traffic.
   - **Implemented in task 03.** `syntheticFailedTrafficSummary` (`apps/api/src/services/traffic-delivery-plan.ts`) writes zeros only when no traffic can have started: setup failed before the start was dispatched, or the load orchestrator answered the start with a definitive 4xx rejection (`TrafficStartRejectedError` in the traffic execution gateway). Every other case, including any reset without a persisted completion report, writes unknown (`null`) counters. Starts and starting-run reconciliation share the maintenance authority with resets, so no replay can race a start being set up; this relies on the single-API-process contract. The web hides the delivery verdict when counts are unknown.
-- **Starting run without a recorded boot (task 05).** Such a run was never dispatched. Startup reconciliation skips it until the automatic reset; task 06 may fail it with zeros instead.
+- **Starting run without a recorded boot.** Such a run was never dispatched. Starting-run reconciliation fails it within one poll as `load_orchestrator_unavailable` with zero counters, and stops any runner booted for it through Fly (task 06). This covers a failed write of the boot: reading the database settles an ambiguous commit, and a run whose boot was in fact recorded is replayed as a normal starting run.
 
 ### 4.4 Capacity failures and region
 
@@ -325,6 +326,13 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   1. Retry `start` 2-3 times with back-off.
   2. Recreate a fresh, volume-less runner with region list "the core's current region, then `eu`" (`cdg,eu` while the core is in cdg).
   3. Retire the old runner.
+- **Implemented in task 06.**
+  - `start` is tried 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries (owner decision, 2026-10-04). A runner already on an unreachable host is recreated at once.
+  - The new runner reuses the current config (image, size from section 1.1, `API_BASE_URL`) and is created with region `"<core region>,eu"`, which the Machines API accepts as a prioritized list (verified). The core region is `FLY_REGION`. The old runner is force-destroyed only once the new one has started; otherwise the old one is kept.
+  - A create refused for capacity answers 503 `runner_capacity_unavailable`: the run fails with zero counters (`load_orchestrator_unavailable`), and the UI shows the provider message.
+  - While relocating, the run carries a flag (`runner_relocating`), so the dashboard projection shows the message during the start request.
+  - Measured: a recreation takes about 14 s, including stopping the new runner (create to `started` in 5 s).
+  - When several runners exist (a failed retirement or a lost create response), the API uses the newest, and the guard removes the others (section 5).
 - **The runner follows the core** if the core is relocated.
 - **Region evidence.** The run records the runner's actual region, and the UI shows it, because a runner outside the core's region adds latency between k6 and the API. Measure it rather than assume it.
 - **UX.**
@@ -354,6 +362,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - It destroys unexpected Machines in the core and runner apps.
   - Expected Machines carry a role tag in metadata, set by our code.
   - A Machine without a known role, or beyond the expected count and older than a short grace period, is destroyed. The grace period keeps legitimate recovery and replacement Machines safe.
+  - In the runner app, the newest `role=runner` Machine is the expected one (task 06).
   - This is cleanup of accidental leftovers, not protection against an attacker, who could set the same metadata.
 - **Tokens.** It needs tokens for both the core and runner apps.
 
@@ -442,6 +451,7 @@ Machines API tokens are app-scoped deploy tokens:
   - Near the end of the project: GitHub Actions, calling the same script.
 - **Version mismatch outcome (task 05).** Besides the UI message, the refused run ends failed (`load_orchestrator_unavailable`) with zero counters, since no traffic was dispatched.
 - **Deploy and runner lease (task 05).** The deploy script does not take the runner lease: it fails with 409 while the API holds it during a run operation, and is simply re-run.
+- **Runner recreation trigger (task 06).** `POST /admin/demo/runner/recreate` (control token) recreates the runner as a capacity failure would. It is refused with 409 while the runner Machine is not stopped, and leaves the new runner stopped (owner decision, 2026-10-04). It deliberately tests the runner path, and the deploy command can call it.
 
 ---
 
@@ -479,7 +489,7 @@ This section lists the changes implied by the decisions above, grouped by owner.
   - boot ID and version fields in the runner control contracts;
   - the countdown status schema.
 - **`packages/db`:**
-  - per-run runner identity: Machine, boot ID and region;
+  - per-run runner identity: Machine, boot ID and region, plus a relocation flag while the run starts;
   - unknown counters in persisted summaries.
 - **`apps/web`:**
   - the countdown widget and the "Demo paused" state;

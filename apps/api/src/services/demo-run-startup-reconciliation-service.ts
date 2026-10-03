@@ -3,6 +3,7 @@ import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
+import type { DemoRunLifecycleService } from "./demo-run-service.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
@@ -90,6 +91,7 @@ export class DemoRunStartupReconciliationService {
       >;
       startingRunStore: StartingDemoRunReconciliationStore;
       trafficExecutionGateway: Pick<TrafficExecutionGateway, "start">;
+      undispatchedRuns: Pick<DemoRunLifecycleService, "failUndispatchedRun">;
       apiBaseUrl: string;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
       closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
@@ -110,11 +112,18 @@ export class DemoRunStartupReconciliationService {
     for (const run of runs) {
       if (!run.saleOfferId) continue;
       if (!run.runnerBootId) {
-        // A start is dispatched only after its runner boot is recorded, so none was sent.
+        // A start is dispatched only after its runner boot is recorded, so none was sent. This
+        // authority excludes a start still in progress, so the boot will not be recorded later.
         this.options.logger.warn(
           { runId: run.id },
-          "Starting run has no runner boot to replay against; it waits for the automatic reset.",
+          "Failing a starting run that was never dispatched.",
         );
+        await this.options.undispatchedRuns.failUndispatchedRun(run.id).catch((error: unknown) => {
+          this.options.logger.error(
+            { err: error, runId: run.id },
+            "Could not fail a starting run that was never dispatched; it is retried.",
+          );
+        });
         continue;
       }
       const correlationId = `traffic-reconcile-${run.id}`;

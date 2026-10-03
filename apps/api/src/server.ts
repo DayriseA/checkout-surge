@@ -34,6 +34,7 @@ import type { PublicRuntimePolicyController } from "./services/public-runtime-po
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
+import type { RunnerOperations } from "./services/runner-operations.js";
 import type { TrafficCompletionController } from "./services/traffic-completion-service.js";
 import type { TrafficMetricIngestionController } from "./services/traffic-metric-ingestion-service.js";
 
@@ -56,6 +57,7 @@ export interface BuildApiServerOptions {
   adminDemoReset: AdminDemoResetWorkflow;
   generatedRunRetention: GeneratedRunRetentionWorkflow;
   generatedRunTeardown: GeneratedRunTeardownWorkflow;
+  runnerRecreation: Pick<RunnerOperations, "recreate">;
   runHistoryService: RunHistoryController;
   startedAt?: Date;
 }
@@ -145,6 +147,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     adminDemoReset: options.adminDemoReset,
     generatedRunRetention: options.generatedRunRetention,
     generatedRunTeardown: options.generatedRunTeardown,
+    runnerRecreation: options.runnerRecreation,
     controlServiceToken: options.config.controlServiceToken,
   });
   registerRunHistoryRoutes(app, {

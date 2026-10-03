@@ -189,9 +189,12 @@ export const demoRuns = pgTable(
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     adminResetCompletedAt: timestamp("admin_reset_completed_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
-    // The runner that served this run: its Fly Machine (null without one) and its process boot.
+    // The runner that served this run: its Fly Machine and region (null without one) and its
+    // process boot. `runnerRelocating` is set while a capacity issue makes the API recreate it.
     runnerMachineId: text("runner_machine_id"),
     runnerBootId: uuid("runner_boot_id"),
+    runnerRegion: text("runner_region"),
+    runnerRelocating: boolean("runner_relocating").default(false).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

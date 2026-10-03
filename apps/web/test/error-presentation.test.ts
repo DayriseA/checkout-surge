@@ -85,6 +85,19 @@ describe("error presentation", () => {
     }
   });
 
+  it("explains a provider capacity shortage with the provider's status page", () => {
+    expect(
+      mapErrorPresentation(
+        { status: "unavailable", errorCode: "runner_capacity_unavailable" },
+        "public-start",
+      ),
+    ).toMatchObject({
+      explanation: expect.stringContaining("no traffic was started"),
+      action: { href: "https://status.flyio.net/" },
+      tone: "warning",
+    });
+  });
+
   it("distinguishes projection cleanup from malformed queue work", () => {
     const present = (conflictReason: string) =>
       mapErrorPresentation(

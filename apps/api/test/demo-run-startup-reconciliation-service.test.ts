@@ -70,6 +70,35 @@ describe("DemoRunStartupReconciliationService", () => {
     expect(activateStartingRun).toHaveBeenCalledOnce();
   });
 
+  it("fails a starting run whose boot was never recorded instead of replaying it", async () => {
+    const start = vi.fn();
+    const failUndispatchedRun = vi.fn(async () => undefined);
+    const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      ...unusedStartingRunOptions(),
+      logger: createSilentLogger("api"),
+      startingRunStore: {
+        listStartingRuns: async () => [
+          {
+            id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            saleOfferId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            runnerBootId: null,
+            configSnapshot: acceptedRunConfigSnapshot(),
+          } as never,
+        ],
+        activateStartingRun: vi.fn(async () => false),
+      },
+      trafficExecutionGateway: { start },
+      undispatchedRuns: { failUndispatchedRun },
+    });
+
+    await expect(service.reconcileStartingRuns()).resolves.toBe(0);
+    expect(failUndispatchedRun).toHaveBeenCalledExactlyOnceWith(
+      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+    );
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it("repairs only startup-owned sale closure and completion enrichment", async () => {
     const closeRunSaleEligibility = vi.fn(async () => true);
     const completePendingEnrichment = vi.fn(async () => "completed" as const);
@@ -169,6 +198,7 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
           throw new Error("No starting traffic intent should exist.");
         },
       },
+      undispatchedRuns: { failUndispatchedRun: async () => undefined },
       apiBaseUrl: "http://api.test",
       listDrainingRuns: () =>
         activeConnection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
@@ -215,6 +245,7 @@ function unusedStartingRunOptions() {
         throw new Error("No starting run should be reconciled.");
       },
     },
+    undispatchedRuns: { failUndispatchedRun: async () => undefined },
     apiBaseUrl: "http://api.test",
   };
 }

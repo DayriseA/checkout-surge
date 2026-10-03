@@ -739,10 +739,28 @@ describe("run lifecycle contracts", () => {
     expect(destructiveResetReasonValues).toEqual(["admin_reset", "auto_reset"]);
     expect(internalRunFailureReasonSchema.parse("auto_reset")).toBe("auto_reset");
     expect(toPublicRunFailureCategory("auto_reset")).toBe("automatic_reset");
+    expect(toPublicRunFailureCategory("load_generator_lost")).toBe("traffic");
     expect(
       demoRunSnapshotSchema.parse({ ...baseRun, status: "starting", trafficStatus: "starting" })
         .autoResetAt,
     ).toBe(baseRun.autoResetAt);
+    expect(
+      demoRunSnapshotSchema.safeParse({
+        ...baseRun,
+        status: "starting",
+        trafficStatus: "starting",
+        runnerRelocating: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      demoRunSnapshotSchema.safeParse({
+        ...baseRun,
+        status: "active",
+        trafficStatus: "active",
+        trafficStartedAt: timestamp,
+        runnerRelocating: true,
+      }).success,
+    ).toBe(false);
     expect(
       demoRunSnapshotSchema.safeParse({
         ...baseRun,

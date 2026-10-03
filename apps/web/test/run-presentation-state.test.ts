@@ -38,6 +38,18 @@ describe("run presentation state", () => {
     expect(deriveRunPresentationState(read).label).toBe(expected);
   });
 
+  it("tells viewers of a starting run that the load generator is being relocated", () => {
+    const starting = run("starting");
+    expect(
+      deriveRunPresentationState(
+        available(projection({ ...starting, runnerRelocating: true } as DemoRunSnapshot)),
+      ),
+    ).toMatchObject({
+      state: "relocating-load-generator",
+      description: "Provider capacity issue, relocating the load generator, please wait.",
+    });
+  });
+
   it("presents incomplete reset recovery until the idle projection is repaired", () => {
     const incomplete = projection(null);
     incomplete.resetRecovery = "incomplete";

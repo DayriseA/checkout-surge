@@ -76,6 +76,7 @@ import {
 } from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
 import { alwaysOnRunnerHost, type RunnerHost } from "./services/runner-host.js";
+import { PostgresMonitoredRunReader, RunnerLossMonitor } from "./services/runner-loss-monitor.js";
 import { RunnerOperations } from "./services/runner-operations.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
@@ -321,18 +322,6 @@ export async function startApiServer(): Promise<void> {
     terminalInventoryReadTimeoutMs,
     reservationTiming,
   });
-  const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
-    maintenanceAuthority,
-    logger,
-    completionEnrichmentService: trafficCompletionEnrichmentService,
-    startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
-    trafficExecutionGateway,
-    apiBaseUrl: config.apiBaseUrl,
-    listDrainingRuns: () =>
-      connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
-    closeRunSaleEligibility: ({ runId, saleOfferId }) =>
-      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
-  });
   const presetService = new DemoPresetService({ db: connection.db });
   const runtimePolicyService = new PublicRuntimePolicyService({
     db: connection.db,
@@ -354,6 +343,25 @@ export async function startApiServer(): Promise<void> {
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
     estimatorConstants: config.estimatorConstants,
+  });
+  const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
+    maintenanceAuthority,
+    logger,
+    completionEnrichmentService: trafficCompletionEnrichmentService,
+    startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
+    trafficExecutionGateway,
+    undispatchedRuns: demoRunLifecycleService,
+    apiBaseUrl: config.apiBaseUrl,
+    listDrainingRuns: () =>
+      connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
+    closeRunSaleEligibility: ({ runId, saleOfferId }) =>
+      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
+  });
+  const runnerLossMonitor = new RunnerLossMonitor({
+    runs: new PostgresMonitoredRunReader(connection.db),
+    runner: runnerOperations,
+    lostRuns: demoRunLifecycleService,
+    logger,
   });
   const trafficCompletionService = new TrafficCompletionService({
     db: connection.db,
@@ -498,6 +506,9 @@ export async function startApiServer(): Promise<void> {
       void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
       });
+      void runnerLossMonitor.check().catch((error: unknown) => {
+        logger.error({ err: error }, "Runner loss check failed.");
+      });
     }, config.demoRunFinalizationPollIntervalSeconds * 1000);
     finalizationPoller.unref();
 
@@ -520,6 +531,7 @@ export async function startApiServer(): Promise<void> {
       adminDemoReset,
       generatedRunRetention,
       generatedRunTeardown,
+      runnerRecreation: runnerOperations,
       runHistoryService,
       startedAt: new Date(),
     });
@@ -573,6 +585,7 @@ function createRunnerHost(
       memoryMb: config.runnerHost.memoryMb,
     },
     apiBaseUrl: config.apiBaseUrl,
+    coreRegion: config.runnerHost.coreRegion,
     logger,
   });
 }

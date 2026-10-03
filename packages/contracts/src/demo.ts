@@ -65,6 +65,8 @@ export const runHistoryDetailPathTemplate = "/demo/runs/history/:runId" as const
 export const adminRunHistoryDetailPathTemplate = "/admin/demo/runs/history/:runId" as const;
 export const adminDemoResetPath = "/admin/demo/reset" as const;
 export const adminMaintenanceCleanupRunsPath = "/admin/demo/runs/cleanup" as const;
+/** Operator trigger for the runner recreation a capacity failure performs (control token). */
+export const adminRunnerRecreatePath = "/admin/demo/runner/recreate" as const;
 export const adminGeneratedRunTeardownPathTemplate = "/admin/demo/runs/:runId" as const;
 export const adminPresetListPath = "/admin/demo/presets" as const;
 export const adminPresetSavePath = "/admin/demo/presets/save" as const;
@@ -145,6 +147,8 @@ const demoRunSnapshotBaseShape = {
   configSnapshot: acceptedRunConfigSnapshotSchema,
   startedAt: isoTimestampSchema,
   autoResetAt: isoTimestampSchema,
+  /** The Fly region of the runner that served the run. Absent without a Fly runner. */
+  runnerRegion: z.string().trim().min(1).optional(),
 };
 
 const nonterminalDemoRunSnapshotShape = {
@@ -194,6 +198,8 @@ export const demoRunSnapshotSchema = z.discriminatedUnion("status", [
       trafficStatus: z.literal("starting"),
       trafficStartedAt: z.never().optional(),
       trafficEndedAt: z.never().optional(),
+      /** Set while a provider capacity issue makes the API relocate the runner. */
+      runnerRelocating: z.literal(true).optional(),
     })
     .strict(),
   z
@@ -460,6 +466,7 @@ export const publicRunHistoryRunSchema = z
     trafficEndedAt: isoTimestampSchema.optional(),
     finalizedAt: isoTimestampSchema.optional(),
     adminResetCompletedAt: isoTimestampSchema.optional(),
+    runnerRegion: z.string().trim().min(1).optional(),
   })
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;
@@ -745,6 +752,15 @@ export const adminMaintenanceCleanupRunsResponseSchema = z
 export type AdminMaintenanceCleanupRunsResponse = z.infer<
   typeof adminMaintenanceCleanupRunsResponseSchema
 >;
+
+export const adminRunnerRecreateResponseSchema = z
+  .object({
+    machineId: z.string().trim().min(1),
+    region: z.string().trim().min(1),
+    correlationId: correlationIdSchema,
+  })
+  .strict();
+export type AdminRunnerRecreateResponse = z.infer<typeof adminRunnerRecreateResponseSchema>;
 
 export const adminGeneratedRunTeardownParamsSchema = z.object({ runId: uuidSchema }).strict();
 

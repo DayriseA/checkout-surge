@@ -138,6 +138,9 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               ["Traffic ended", formatDate(run.trafficEndedAt)],
               ["Finalized", formatDate(run.finalizedAt)],
               ["Evidence recorded", formatDate(summary.capturedAt)],
+              ...(run.runnerRegion
+                ? [["Load generator region", codeValue(run.runnerRegion)] as [string, ReactNode]]
+                : []),
               ...(detail.internalFailureReason
                 ? [["Failure code", codeValue(detail.internalFailureReason)] as [string, ReactNode]]
                 : []),
@@ -641,6 +644,11 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           Local run note: the load generator, API, database, order-processing service, and simulated
           ERP share one host. This is not hosted benchmark evidence.
         </p>
+        {run.runnerRegion ? (
+          <p className="m-0 mt-3 text-xs text-muted" data-runner-region="">
+            Load generator region: <code>{run.runnerRegion}</code>
+          </p>
+        ) : null}
         <details className="mt-4 rounded border border-border px-3 py-2">
           <summary className="disclosure font-semibold text-ink">All measurements</summary>
           <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">

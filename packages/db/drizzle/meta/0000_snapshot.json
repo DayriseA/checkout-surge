@@ -755,6 +755,19 @@
           "primaryKey": false,
           "notNull": false
         },
+        "runner_region": {
+          "name": "runner_region",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "runner_relocating": {
+          "name": "runner_relocating",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",

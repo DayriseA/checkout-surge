@@ -45,6 +45,7 @@ export const errorPayloadCodes = [
   "runner_boot_mismatch",
   "runner_stopping",
   "runner_version_mismatch",
+  "runner_capacity_unavailable",
   "traffic_termination_unconfirmed",
 ] as const;
 

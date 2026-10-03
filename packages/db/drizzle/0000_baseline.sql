@@ -103,6 +103,8 @@ CREATE TABLE "demo_runs" (
 	"failure_reason" text,
 	"runner_machine_id" text,
 	"runner_boot_id" uuid,
+	"runner_region" text,
+	"runner_relocating" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

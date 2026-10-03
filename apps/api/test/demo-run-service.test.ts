@@ -1634,6 +1634,7 @@ describe("demo-run lifecycle start gating", () => {
       logger: createSilentLogger("api"),
       startingRunStore: new PostgresStartingDemoRunReconciliationStore(db),
       trafficExecutionGateway: { start: replayStart },
+      undispatchedRuns: { failUndispatchedRun: async () => undefined },
       apiBaseUrl: "http://api.test",
       listDrainingRuns: async () => [],
       closeRunSaleEligibility: async () => true,
@@ -1747,7 +1748,11 @@ describe("demo-run lifecycle start gating", () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       trafficExecutionGateway: { start: trafficStart },
       runnerOperations: {
-        bootForRun: async () => ({ machineId: "runner-machine", bootId: testRunnerBootId }),
+        bootForRun: async () => ({
+          machineId: "runner-machine",
+          region: "cdg",
+          bootId: testRunnerBootId,
+        }),
         releaseAfterRun,
       },
     });
@@ -1761,6 +1766,7 @@ describe("demo-run lifecycle start gating", () => {
       status: "failed",
       runnerMachineId: "runner-machine",
       runnerBootId: testRunnerBootId,
+      runnerRegion: "cdg",
     });
     expect(trafficStart).toHaveBeenCalledWith(
       expect.objectContaining({ expectedBootId: testRunnerBootId }),
@@ -1769,6 +1775,113 @@ describe("demo-run lifecycle start gating", () => {
       runId: "77777777-7777-4777-8777-777777777777",
       bootId: testRunnerBootId,
     });
+  });
+
+  it("shows the starting run as relocating while its runner moves, then records the new region", async () => {
+    const db = requireConnection(connection).db;
+    const relocatingWhileBooting: boolean[] = [];
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      runnerOperations: {
+        bootForRun: async (_runId, hooks) => {
+          await hooks.onRelocating();
+          const rows = await db.select({ relocating: demoRuns.runnerRelocating }).from(demoRuns);
+          relocatingWhileBooting.push(...rows.map((row) => row.relocating));
+          return { machineId: "runner-2", region: "ams", bootId: testRunnerBootId };
+        },
+        releaseAfterRun: vi.fn(),
+      },
+    });
+
+    const response = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+
+    expect(relocatingWhileBooting).toEqual([true]);
+    expect(response.run).toMatchObject({ status: "active", runnerRegion: "ams" });
+    const [run] = await db.select().from(demoRuns);
+    expect(run).toMatchObject({ runnerMachineId: "runner-2", runnerRelocating: false });
+  });
+
+  it("fails a lost run with unavailable counters, and leaves a draining run to finalization", async () => {
+    const db = requireConnection(connection).db;
+    const releaseAfterRun = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      runnerOperations: {
+        bootForRun: async () => ({
+          machineId: "runner-1",
+          region: "cdg",
+          bootId: testRunnerBootId,
+        }),
+        releaseAfterRun,
+      },
+    });
+    const { run: started } = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+
+    await db
+      .update(demoRuns)
+      .set({ status: "draining", trafficStatus: "failed", trafficEndedAt: new Date() })
+      .where(eq(demoRuns.id, started.runId));
+    await service.failLostRun(started.runId);
+    expect((await db.select().from(demoRuns))[0]?.status).toBe("draining");
+
+    await db
+      .update(demoRuns)
+      .set({ status: "active", trafficStatus: "active", trafficEndedAt: null })
+      .where(eq(demoRuns.id, started.runId));
+    await service.failLostRun(started.runId);
+
+    const [run] = await db.select().from(demoRuns);
+    expect(run).toMatchObject({ status: "failed", failureReason: "load_generator_lost" });
+    const [summary] = await db.select().from(demoRunSummaries);
+    expect(summary?.transportAttemptCounts).toMatchObject({
+      startedRequests: null,
+      completedRequests: null,
+    });
+    expect(summary?.httpSummary).toMatchObject({ acceptedResponses: null });
+    expect(releaseAfterRun).toHaveBeenCalledWith({
+      runId: started.runId,
+      bootId: testRunnerBootId,
+    });
+  });
+
+  it("fails a starting run that was never dispatched with zero counters and stops its runner", async () => {
+    const db = requireConnection(connection).db;
+    const releaseAfterRun = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      runnerOperations: {
+        bootForRun: async () => ({ machineId: null, region: null, bootId: testRunnerBootId }),
+        releaseAfterRun,
+      },
+    });
+    const { run: started } = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+    // The state a failed boot record leaves: still starting, with no runner boot.
+    await db
+      .update(demoRuns)
+      .set({
+        status: "starting",
+        trafficStatus: "starting",
+        trafficStartedAt: null,
+        runnerBootId: null,
+      })
+      .where(eq(demoRuns.id, started.runId));
+
+    await service.failUndispatchedRun(started.runId);
+
+    const [run] = await db.select().from(demoRuns);
+    expect(run).toMatchObject({ status: "failed", failureReason: "load_orchestrator_unavailable" });
+    const [summary] = await db.select().from(demoRunSummaries);
+    expect(summary?.transportAttemptCounts).toMatchObject({
+      startedRequests: 0,
+      unstartedRequests: 10_000,
+    });
+    expect(releaseAfterRun).toHaveBeenCalledWith({ runId: started.runId, bootId: null });
   });
 
   it("fails a run whose runner cannot boot as a setup failure, without dispatching traffic", async () => {
@@ -2137,7 +2250,7 @@ function createStartService(
       }),
     },
     runnerOperations: overrides.runnerOperations ?? {
-      bootForRun: async () => ({ machineId: null, bootId: testRunnerBootId }),
+      bootForRun: async () => ({ machineId: null, region: null, bootId: testRunnerBootId }),
       releaseAfterRun: () => undefined,
     },
     publicRunBudgetStore: overrides.publicRunBudgetStore ?? {

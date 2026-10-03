@@ -36,6 +36,12 @@ const states = {
     "New runs remain unavailable until operator recovery completes.",
   ),
   starting: state("starting", "progress", "starting", "Preparing checkout traffic."),
+  relocatingRunner: state(
+    "relocating-load-generator",
+    "warning",
+    "relocating the load generator",
+    "Provider capacity issue, relocating the load generator, please wait.",
+  ),
   active: state(
     "accepting-checkout-attempts",
     "progress",
@@ -113,7 +119,8 @@ export function deriveRunPresentationState(
     return states.resetRecoveryIncomplete;
   }
   if (!run) return states.ready;
-  if (run.status === "starting") return states.starting;
+  if (run.status === "starting")
+    return run.runnerRelocating ? states.relocatingRunner : states.starting;
   if (run.status === "active") {
     return run.trafficStatus === "starting" ? states.starting : states.active;
   }

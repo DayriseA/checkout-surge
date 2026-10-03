@@ -48,8 +48,10 @@ describe("demo-run projections", () => {
       finalizedAt: new Date("2026-07-21T10:00:03.000Z"),
       adminResetCompletedAt: null,
       failureReason: "traffic_failed",
-      runnerMachineId: null,
-      runnerBootId: null,
+      runnerMachineId: "runner-1",
+      runnerBootId: "44444444-4444-4444-8444-444444444444",
+      runnerRegion: "cdg",
+      runnerRelocating: true,
       createdAt: new Date("2026-07-21T09:59:59.000Z"),
       updatedAt: new Date("2026-07-21T10:00:03.000Z"),
     } satisfies typeof demoRuns.$inferSelect;
@@ -75,8 +77,38 @@ describe("demo-run projections", () => {
       trafficStartedAt: "2026-07-21T10:00:01.000Z",
       trafficEndedAt: "2026-07-21T10:00:02.000Z",
       finalizedAt: "2026-07-21T10:00:03.000Z",
+      runnerRegion: "cdg",
       failureCategory: "traffic",
     });
+  });
+
+  it("shows a runner relocation only while the run is starting", () => {
+    const row = {
+      id: "11111111-1111-4111-8111-111111111111",
+      presetId: "22222222-2222-4222-8222-222222222222",
+      presetName: "Scarcity spike",
+      operatorMode: "public",
+      status: "starting",
+      trafficStatus: "starting",
+      configSnapshot,
+      correlationId: "corr-projection",
+      saleOfferId: "33333333-3333-4333-8333-333333333333",
+      startedAt: new Date("2026-07-21T10:00:00.000Z"),
+      trafficStartedAt: null,
+      trafficEndedAt: null,
+      finalizedAt: null,
+      adminResetCompletedAt: null,
+      failureReason: null,
+      runnerMachineId: null,
+      runnerBootId: null,
+      runnerRegion: null,
+      runnerRelocating: true,
+      createdAt: new Date("2026-07-21T09:59:59.000Z"),
+      updatedAt: new Date("2026-07-21T10:00:00.000Z"),
+    } satisfies typeof demoRuns.$inferSelect;
+
+    expect(toDemoRunSnapshot(row)).toMatchObject({ status: "starting", runnerRelocating: true });
+    expect(toDemoRunSnapshot(row)).not.toHaveProperty("runnerRegion");
   });
 
   it("projects live Redis inventory with its own sold-out evidence", () => {

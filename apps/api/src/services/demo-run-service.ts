@@ -208,7 +208,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
 
       let boot: RunnerBoot;
       try {
-        boot = await this.options.runnerOperations.bootForRun(accepted.run.runId);
+        boot = await this.options.runnerOperations.bootForRun(accepted.run.runId, {
+          onRelocating: () => this.markRunnerRelocating(accepted.run.runId, correlationId),
+        });
       } catch (error) {
         // The runner failed before any start was dispatched: no traffic can have started.
         await this.failRun(
@@ -219,6 +221,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         );
         throw error;
       }
+      // If this write fails, the run stays starting: reconciliation then fails it when the boot
+      // is not recorded, or replays it against the boot when the write did commit.
       await this.recordRunnerBoot(accepted.run.runId, boot);
 
       let trafficResponse: TrafficExecutionStartResponse;
@@ -274,6 +278,32 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Fails an active or starting run whose runner was lost before its completion report was
+   * persisted. Traffic may have started, so its counts are unavailable. A run already draining
+   * (its report persisted) is left to finalization.
+   */
+  failLostRun(runId: string): Promise<void> {
+    return this.options.maintenanceAuthority.runExclusive(() =>
+      this.failRun(runId, "load_generator_lost", `runner-loss-${runId}`, "unavailable"),
+    );
+  }
+
+  /**
+   * Fails a starting run whose runner boot was never recorded: its start was never dispatched,
+   * so no traffic started. Stops any runner booted for it. The caller holds the maintenance
+   * authority, so no start of this run is in progress.
+   */
+  async failUndispatchedRun(runId: string): Promise<void> {
+    await this.failRun(
+      runId,
+      "load_orchestrator_unavailable",
+      `traffic-reconcile-${runId}`,
+      "no_traffic_started",
+    );
+    this.options.runnerOperations.releaseAfterRun({ runId, bootId: null });
   }
 
   async previewRun(request: StartDemoRunCommand): Promise<PreviewDemoRunResponse> {
@@ -477,8 +507,33 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   private async recordRunnerBoot(runId: string, boot: RunnerBoot): Promise<void> {
     await this.options.db
       .update(demoRuns)
-      .set({ runnerMachineId: boot.machineId, runnerBootId: boot.bootId, updatedAt: this.now() })
+      .set({
+        runnerMachineId: boot.machineId,
+        runnerBootId: boot.bootId,
+        runnerRegion: boot.region,
+        runnerRelocating: false,
+        updatedAt: this.now(),
+      })
       .where(eq(demoRuns.id, runId));
+  }
+
+  /** Lets viewers of the starting run know the runner is being relocated. Best effort. */
+  private async markRunnerRelocating(runId: string, correlationId: string): Promise<void> {
+    try {
+      const [run] = await this.options.db
+        .update(demoRuns)
+        .set({ runnerRelocating: true, updatedAt: this.now() })
+        .where(and(eq(demoRuns.id, runId), eq(demoRuns.status, "starting")))
+        .returning();
+      if (run) {
+        await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+          run: toDemoRunSnapshot(run),
+          correlationId,
+        });
+      }
+    } catch (error) {
+      this.options.logger.warn({ err: error, runId }, "Could not record the runner relocation.");
+    }
   }
 
   private async updateRunAfterTrafficStart(
@@ -527,7 +582,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         [
           evidence === "no_traffic_started"
             ? `${failureReason}_before_traffic_start`
-            : "Traffic evidence is unavailable: start failed without a definitive rejection.",
+            : failureReason === "load_generator_lost"
+              ? "Traffic evidence is unavailable: the load generator was lost before its completion report."
+              : "Traffic evidence is unavailable: start failed without a definitive rejection.",
         ],
         evidence,
       );

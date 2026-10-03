@@ -19,6 +19,7 @@ export const internalRunFailureReasonValues = [
   "traffic_failed",
   "inventory_initialization_failed",
   "load_orchestrator_unavailable",
+  "load_generator_lost",
   ...destructiveResetReasonValues,
 ] as const;
 export const internalRunFailureReasonSchema = z.enum(internalRunFailureReasonValues);
@@ -42,6 +43,7 @@ export function toPublicRunFailureCategory(
     case "traffic_transport_major_loss":
     case "traffic_failed":
     case "load_orchestrator_unavailable":
+    case "load_generator_lost":
       return "traffic";
     case "inventory_initialization_failed":
       return "inventory";

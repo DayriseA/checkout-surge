@@ -299,6 +299,7 @@ describe("API runtime configuration", () => {
         RUNNER_FLY_APP: "runner-app",
         RUNNER_FLY_API_TOKEN: "runner-token",
         RUNNER_CPUS: "8",
+        FLY_REGION: "cdg",
       }),
     ).toMatchObject({
       commitSha: "abc123",
@@ -306,6 +307,7 @@ describe("API runtime configuration", () => {
         kind: "fly",
         appName: "runner-app",
         machinesApiToken: "runner-token",
+        coreRegion: "cdg",
         cpuKind: "performance",
         cpus: 8,
         memoryMb: 8192,
