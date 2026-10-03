@@ -42,6 +42,8 @@ export const errorPayloadCodes = [
   "idempotency_conflict",
   "erp_idempotency_conflict",
   "traffic_execution_conflict",
+  "runner_boot_mismatch",
+  "runner_stopping",
   "traffic_termination_unconfirmed",
 ] as const;
 

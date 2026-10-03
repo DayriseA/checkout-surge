@@ -38,6 +38,8 @@ export function createLoadOrchestratorConfig(
   overrides: Partial<LoadOrchestratorConfig> = {},
 ): LoadOrchestratorConfig {
   return {
+    runnerLifecycleEnabled: false,
+    commitSha: "unknown",
     host: "127.0.0.1",
     port: 4200,
     apiBaseUrl: "http://localhost:4000",

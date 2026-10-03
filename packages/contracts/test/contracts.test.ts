@@ -215,6 +215,8 @@ describe("traffic ownership contracts", () => {
       trafficExecutionStatusResponseSchema.parse({
         runId: "55555555-5555-4555-8555-555555555555",
         state: "accepted",
+        bootId: "11111111-1111-4111-8111-111111111111",
+        version: "unknown",
         acceptedAt: "2026-06-20T00:00:01.000Z",
         observedAt: "2026-06-20T00:00:02.000Z",
         correlationId: "contract-test",
