@@ -6,6 +6,37 @@ const root = new URL("../", import.meta.url);
 const readText = (file) => readFileSync(new URL(file, root), "utf8");
 const readJson = (file) => JSON.parse(readText(file));
 
+test("Docker prune commands use the resolved root Turbo version", () => {
+  const rootImporter = readText("pnpm-lock.yaml").match(
+    /^ {2}\.:\n([\s\S]*?)(?=^ {2}\S|$(?![\s\S]))/m,
+  );
+  assert.ok(rootImporter, "root lockfile importer must exist");
+  const turbo = rootImporter[1].match(/^ {6}turbo:\n {8}specifier: [^\n]+\n {8}version: (\S+)/m);
+  assert.ok(turbo, "root importer must resolve Turbo");
+  const resolvedVersion = turbo[1];
+
+  for (const file of [
+    "docker/Dockerfile.node-service",
+    "apps/load-orchestrator/Dockerfile",
+    "apps/web/Dockerfile",
+    "packages/db/Dockerfile",
+    "Dockerfile",
+  ]) {
+    const dockerfile = readText(file);
+    const instructions = dockerfile.replace(/[ \t]*\\\n\s*/g, " ");
+    assert.match(
+      instructions,
+      /^RUN (?:case "\$\{SERVICE_NAME\}" in .* esac && )?pnpm dlx turbo@\S+ prune \S+ --docker$/m,
+      file,
+    );
+    const occurrences = [...dockerfile.matchAll(/turbo@([^\s"']*)/g)];
+    assert.ok(occurrences.length > 0, `${file} must pin Turbo`);
+    for (const occurrence of occurrences) {
+      assert.equal(occurrence[1], resolvedVersion, file);
+    }
+  }
+});
+
 test("production Dockerfiles use production artifacts and non-root direct entrypoints", () => {
   const nodeService = readText("docker/Dockerfile.node-service");
   assert.match(nodeService, /api\|worker\|mock-erp/);
