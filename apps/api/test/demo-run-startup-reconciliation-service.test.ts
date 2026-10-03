@@ -32,7 +32,7 @@ const drainingRun = {
 } as never;
 
 describe("DemoRunStartupReconciliationService", () => {
-  it("replays a durable starting intent with the same run identity and activates it", async () => {
+  it("replays a durable starting intent against its runner boot and activates it", async () => {
     const start = vi.fn(async (request) => ({
       runId: request.runId,
       status: "active" as const,
@@ -49,6 +49,7 @@ describe("DemoRunStartupReconciliationService", () => {
           {
             id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
             saleOfferId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            runnerBootId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
             configSnapshot: acceptedRunConfigSnapshot(),
           } as never,
         ],
@@ -62,6 +63,7 @@ describe("DemoRunStartupReconciliationService", () => {
       expect.objectContaining({
         runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
         saleOfferId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        expectedBootId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
         correlationId: "traffic-reconcile-cccccccc-cccc-4ccc-8ccc-cccccccccccc",
       }),
     );

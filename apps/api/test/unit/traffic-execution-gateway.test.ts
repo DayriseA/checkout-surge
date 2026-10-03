@@ -7,12 +7,16 @@ import {
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { ApiHttpError } from "../../src/runtime/errors.js";
-import { HttpTrafficExecutionGateway } from "../../src/services/traffic-execution-gateway.js";
+import {
+  HttpTrafficExecutionGateway,
+  TrafficStartRejectedError,
+} from "../../src/services/traffic-execution-gateway.js";
 
 const request: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
   apiBaseUrl: "http://api.test",
+  expectedBootId: "11111111-1111-4111-8111-111111111111",
   correlationId: "gateway-reconcile",
   configSnapshot: {
     trafficConfig: {
@@ -199,6 +203,22 @@ describe("HttpTrafficExecutionGateway start", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    "runner_boot_mismatch",
+    "runner_stopping",
+  ] as const)("maps the runner %s rejection as a definitive no-start rejection", async (code) => {
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: async () => Response.json({ code }, { status: 409 }),
+    });
+
+    const rejection = gateway.start(request);
+
+    await expect(rejection).rejects.toBeInstanceOf(TrafficStartRejectedError);
+    await expect(rejection).rejects.toMatchObject({ statusCode: 503, code });
+  });
+
   it("bounds successful start response parsing before status recovery", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
@@ -273,6 +293,26 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
         }),
       }),
     );
+  });
+
+  it("does not recover a start from the durable status of another runner boot", async () => {
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "token",
+      fetch: vi
+        .fn<typeof fetch>()
+        .mockRejectedValueOnce(new Error("network"))
+        .mockResolvedValueOnce(
+          Response.json({
+            ...(await acceptedStatusResponse().json()),
+            bootId: "33333333-3333-4333-8333-333333333333",
+          }),
+        ),
+    });
+
+    await expect(gateway.start(request)).rejects.toMatchObject({
+      code: "load_orchestrator_start_ambiguous",
+    });
   });
 
   it("keeps a reachable unknown status ambiguous", async () => {
@@ -485,5 +525,48 @@ describe("HttpTrafficExecutionGateway abort", () => {
       statusCode: 502,
       code: "load_orchestrator_abort_unconfirmed",
     });
+  });
+});
+
+describe("HttpTrafficExecutionGateway runner control", () => {
+  const target = { runId: request.runId, bootId: request.expectedBootId };
+
+  it("sends the fenced shutdown and returns the runner's outcome", async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(Response.json({ ...target, outcome: "deferred_busy" }, { status: 202 }));
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: fetchMock,
+    });
+
+    await expect(gateway.shutdown(target)).resolves.toBe("deferred_busy");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://load.test/traffic/shutdown",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ [controlServiceTokenHeaderName]: "control-token" }),
+        body: JSON.stringify(target),
+      }),
+    );
+  });
+
+  it("rejects a shutdown answer bound to another boot", async () => {
+    const gateway = new HttpTrafficExecutionGateway({
+      loadOrchestratorBaseUrl: "http://load.test",
+      controlServiceToken: "control-token",
+      fetch: async () =>
+        Response.json(
+          {
+            ...target,
+            bootId: "33333333-3333-4333-8333-333333333333",
+            outcome: "shutdown_requested",
+          },
+          { status: 202 },
+        ),
+    });
+
+    await expect(gateway.shutdown(target)).rejects.toThrow(/different run or boot/);
   });
 });

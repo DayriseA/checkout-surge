@@ -38,6 +38,14 @@ A lost runner fails its run immediately, with honest evidence. A provider capaci
 - Terminalize a lost runner with `syntheticFailedTrafficSummary(…, "unavailable")`, inside the API maintenance authority so it cannot interleave with resets, starts or starting-run reconciliation. Keep a persisted completion report when one exists.
 - When counts are unknown, the web already hides the delivery verdict (pill and "Delivery failed" caveat) and shows the shared unavailable-evidence text (`apps/web/src/app/lib/presentation/traffic-evidence.ts`). The API still classifies the delivery status as `failed`.
 
+## Inputs from Task 05
+
+- Kill the runner with SIGKILL for the loss check. A Fly `stop` (SIGINT) makes the runner publish an interrupted completion report, so the run finalizes as a failed shortfall instead of a loss.
+- A starting run without a recorded boot was never dispatched; reconciliation currently skips it until the automatic reset. Failing it immediately with zeros is an option here.
+- The Fly `stop` fallback path was never needed on Fly in task 05; only unit tests cover it.
+- If `recordRunnerBoot` (`apps/api/src/services/demo-run-service.ts`) throws after a successful boot, the run stays `starting` without a recorded boot: admission is blocked until the 900 s automatic reset, and the runner self-exits within 3 minutes. Failing a starting run without a recorded boot immediately must cover this case, and account for an ambiguous DB commit (the boot may in fact be recorded).
+- Startup replay of a starting run does not re-run the version handshake. It only matters if the API crashes in the milliseconds between recording the boot and dispatching, then a deploy lands within the runner's 3-minute idle window. Accepted.
+
 ## Working Notes
 
 _None yet._

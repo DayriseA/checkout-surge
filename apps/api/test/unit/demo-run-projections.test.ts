@@ -48,6 +48,8 @@ describe("demo-run projections", () => {
       finalizedAt: new Date("2026-07-21T10:00:03.000Z"),
       adminResetCompletedAt: null,
       failureReason: "traffic_failed",
+      runnerMachineId: null,
+      runnerBootId: null,
       createdAt: new Date("2026-07-21T09:59:59.000Z"),
       updatedAt: new Date("2026-07-21T10:00:03.000Z"),
     } satisfies typeof demoRuns.$inferSelect;

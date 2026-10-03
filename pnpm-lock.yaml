@@ -35,6 +35,9 @@ importers:
       '@checkout-surge/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@checkout-surge/fly-machines':
+        specifier: workspace:*
+        version: link:../../packages/fly-machines
       '@checkout-surge/logger':
         specifier: workspace:*
         version: link:../../packages/logger
@@ -209,6 +212,8 @@ importers:
       tsx:
         specifier: ^4.22.4
         version: 4.22.4
+
+  packages/fly-machines: {}
 
   packages/logger:
     dependencies:

@@ -309,6 +309,7 @@ describe("TrafficCompletionService", () => {
       },
     }) as typeof redisClient;
     const finalizationService = new DemoRunFinalizationService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: activeConnection.db,
       redis: redisClient,

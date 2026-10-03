@@ -62,6 +62,7 @@ import type {
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
+import type { RunnerBoot, RunnerOperations } from "./runner-operations.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
 import {
@@ -115,6 +116,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       trafficExecutionGateway: TrafficExecutionGateway;
+      runnerOperations: Pick<RunnerOperations, "bootForRun" | "releaseAfterRun">;
       publicRunBudgetStore: PublicRunBudgetStore;
       presetReader: ActiveDemoPresetReader;
       runtimePolicyReader: EffectivePublicRuntimePolicyReader;
@@ -204,12 +206,28 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         correlationId,
       });
 
+      let boot: RunnerBoot;
+      try {
+        boot = await this.options.runnerOperations.bootForRun(accepted.run.runId);
+      } catch (error) {
+        // The runner failed before any start was dispatched: no traffic can have started.
+        await this.failRun(
+          accepted.run.runId,
+          "load_orchestrator_unavailable",
+          correlationId,
+          "no_traffic_started",
+        );
+        throw error;
+      }
+      await this.recordRunnerBoot(accepted.run.runId, boot);
+
       let trafficResponse: TrafficExecutionStartResponse;
       try {
         trafficResponse = await this.options.trafficExecutionGateway.start({
           runId: accepted.run.runId,
           saleOfferId,
           apiBaseUrl: this.options.apiBaseUrl,
+          expectedBootId: boot.bootId,
           correlationId,
           configSnapshot: accepted.run.configSnapshot,
         });
@@ -456,6 +474,13 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     };
   }
 
+  private async recordRunnerBoot(runId: string, boot: RunnerBoot): Promise<void> {
+    await this.options.db
+      .update(demoRuns)
+      .set({ runnerMachineId: boot.machineId, runnerBootId: boot.bootId, updatedAt: this.now() })
+      .where(eq(demoRuns.id, runId));
+  }
+
   private async updateRunAfterTrafficStart(
     runId: string,
     trafficResponse: TrafficExecutionStartResponse,
@@ -530,6 +555,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         allowedCurrentStatuses: ["starting", "active"],
         terminalTrafficStatus: "failed",
       });
+      if (run.runnerBootId) {
+        this.options.runnerOperations.releaseAfterRun({ runId, bootId: run.runnerBootId });
+      }
       const updatedRun = await readDemoRunSnapshot(this.options.db, runId);
 
       if (

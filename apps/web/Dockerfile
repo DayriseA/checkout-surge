@@ -18,6 +18,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 COPY packages/db/package.json packages/db/package.json
+COPY packages/fly-machines/package.json packages/fly-machines/package.json
 COPY packages/logger/package.json packages/logger/package.json
 
 RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \

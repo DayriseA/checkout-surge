@@ -19,12 +19,14 @@ import {
 } from "../src/application/execution-store.js";
 import { K6RunAccumulator } from "../src/application/k6-output-parser.js";
 import { generateK6Script } from "../src/application/k6-script.js";
+import { processBootId } from "../src/application/traffic-execution-service.js";
 
 const acceptedAt = new Date("2026-07-23T09:00:00.000Z");
 const request: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
   apiBaseUrl: "http://localhost:4000",
+  expectedBootId: processBootId,
   correlationId: "corr-completion-delivery",
   configSnapshot: {
     trafficConfig: {

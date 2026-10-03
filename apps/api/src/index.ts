@@ -17,6 +17,7 @@ import {
   reverseReservation,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
+import { FlyMachinesClient } from "@checkout-surge/fly-machines";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
@@ -25,7 +26,7 @@ import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-pro
 import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboard-dirty-signal-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
-import { loadApiConfig } from "./runtime/config.js";
+import { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { warnWhenListenBacklogIsCapped } from "./runtime/listen-backlog-ceiling.js";
@@ -51,6 +52,7 @@ import {
   DemoRunStartupReconciliationService,
   PostgresStartingDemoRunReconciliationStore,
 } from "./services/demo-run-startup-reconciliation-service.js";
+import { FlyRunnerHost } from "./services/fly-runner-host.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
@@ -73,6 +75,8 @@ import {
   ReserveOrderService,
 } from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
+import { alwaysOnRunnerHost, type RunnerHost } from "./services/runner-host.js";
+import { RunnerOperations } from "./services/runner-operations.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 import { TrafficCompletionService } from "./services/traffic-completion-service.js";
@@ -209,6 +213,14 @@ export async function startApiServer(): Promise<void> {
     loadOrchestratorBaseUrl: config.loadOrchestratorBaseUrl,
     controlServiceToken: config.controlServiceToken,
   });
+  const runnerOperations = new RunnerOperations({
+    host: createRunnerHost(config, trafficExecutionGateway, logger),
+    control: trafficExecutionGateway,
+    aborter: trafficExecutionGateway,
+    apiVersion: config.commitSha,
+    acceptUnknownVersion: config.runnerHost.kind === "local",
+    logger,
+  });
   const queueLimits = new DemoRunQueueLimits(connection.db, orderProcessJobPublisher);
   const terminalRunWriter = new PostgresTerminalDemoRunSummaryWriter(
     connection.db,
@@ -237,7 +249,8 @@ export async function startApiServer(): Promise<void> {
     redis,
     queueMaintenance: demoQueueMaintenance,
     terminalRunWriter,
-    trafficAborter: trafficExecutionGateway,
+    trafficAborter: runnerOperations,
+    runnerOperations,
     dashboardLiveStateReset: {
       fenceRun: (runId) => trafficMetricStore.fenceRun(runId),
       hasRunState: (runId) => trafficMetricStore.hasRunState(runId),
@@ -300,6 +313,7 @@ export async function startApiServer(): Promise<void> {
     redis,
     logger,
     terminalRunWriter,
+    runnerOperations,
     terminalInventoryRead: createTerminalInventoryReadOperation({
       redisUrl: config.redisUrl,
       timeoutMs: terminalInventoryReadTimeoutMs,
@@ -332,6 +346,7 @@ export async function startApiServer(): Promise<void> {
     presetReader: presetService,
     runtimePolicyReader: runtimePolicyService,
     trafficExecutionGateway,
+    runnerOperations,
     publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
     businessOutcomeReader,
     terminalRunWriter,
@@ -538,6 +553,28 @@ export async function startApiServer(): Promise<void> {
       logger.error({ err: cleanupError }, "API startup cleanup failed.");
     }
   }
+}
+
+function createRunnerHost(
+  config: ApiConfig,
+  control: HttpTrafficExecutionGateway,
+  logger: ReturnType<typeof createServiceLogger>,
+): RunnerHost {
+  if (config.runnerHost.kind === "local") return alwaysOnRunnerHost;
+  return new FlyRunnerHost({
+    machines: new FlyMachinesClient({
+      appName: config.runnerHost.appName,
+      token: config.runnerHost.machinesApiToken,
+    }),
+    control,
+    size: {
+      cpuKind: config.runnerHost.cpuKind,
+      cpus: config.runnerHost.cpus,
+      memoryMb: config.runnerHost.memoryMb,
+    },
+    apiBaseUrl: config.apiBaseUrl,
+    logger,
+  });
 }
 
 function orderEnqueueFailureLogContext(report: OrderEnqueueFailureReport) {

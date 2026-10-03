@@ -65,10 +65,12 @@ import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-re
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { RunHistoryService } from "../src/services/run-history-service.js";
+import { RunnerVersionMismatchError } from "../src/services/runner-operations.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficStartRejectedError } from "../src/services/traffic-execution-gateway.js";
 
 const publicCookieSecret = "test-public-cookie-secret";
+const testRunnerBootId = "88888888-8888-4888-8888-888888888888";
 const signedVisitor = (visitorId: string) =>
   signPublicVisitorCredential(publicCookieSecret, visitorId, 1_750_000_000_000);
 
@@ -107,6 +109,7 @@ describe("demo-run lifecycle validation", () => {
         },
       },
       trafficExecutionGateway: {} as never,
+      runnerOperations: {} as never,
       publicRunBudgetStore: { reserve, release: vi.fn() },
       businessOutcomeReader: {} as never,
       terminalRunWriter: {} as never,
@@ -732,6 +735,7 @@ describe("demo-run lifecycle start gating", () => {
       await queue.setGlobalConcurrency(1);
       await queue.setGlobalRateLimit(9, 999);
       const reset = new AdminDemoResetService({
+        runnerOperations: { releaseAfterRun: () => undefined },
         queueLimits: limits,
         db,
         redis: requireRedis(redis),
@@ -786,6 +790,7 @@ describe("demo-run lifecycle start gating", () => {
     let abortAttempt = 0;
     const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
     const resetService = new AdminDemoResetService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       redis: redisClient,
@@ -898,6 +903,7 @@ describe("demo-run lifecycle start gating", () => {
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
     const resetService = new AdminDemoResetService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       redis: redisClient,
@@ -965,6 +971,7 @@ describe("demo-run lifecycle start gating", () => {
     const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
     const createResetService = () =>
       new AdminDemoResetService({
+        runnerOperations: { releaseAfterRun: () => undefined },
         queueLimits: { synchronize: async () => {} },
         db: resetConnection.db,
         redis: redisClient,
@@ -1732,6 +1739,66 @@ describe("demo-run lifecycle start gating", () => {
     });
   });
 
+  it("binds the run to its runner boot, starts traffic against it, and releases it on failure", async () => {
+    const trafficStart = vi.fn(async () => {
+      throw new TrafficStartRejectedError(409, null);
+    });
+    const releaseAfterRun = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: { start: trafficStart },
+      runnerOperations: {
+        bootForRun: async () => ({ machineId: "runner-machine", bootId: testRunnerBootId }),
+        releaseAfterRun,
+      },
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toBeInstanceOf(TrafficStartRejectedError);
+
+    const [run] = await requireConnection(connection).db.select().from(demoRuns);
+    expect(run).toMatchObject({
+      status: "failed",
+      runnerMachineId: "runner-machine",
+      runnerBootId: testRunnerBootId,
+    });
+    expect(trafficStart).toHaveBeenCalledWith(
+      expect.objectContaining({ expectedBootId: testRunnerBootId }),
+    );
+    expect(releaseAfterRun).toHaveBeenCalledExactlyOnceWith({
+      runId: "77777777-7777-4777-8777-777777777777",
+      bootId: testRunnerBootId,
+    });
+  });
+
+  it("fails a run whose runner cannot boot as a setup failure, without dispatching traffic", async () => {
+    const trafficStart = vi.fn();
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      trafficExecutionGateway: { start: trafficStart },
+      runnerOperations: {
+        bootForRun: async () => {
+          throw new RunnerVersionMismatchError("abc123", "def456");
+        },
+        releaseAfterRun: vi.fn(),
+      },
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toMatchObject({ statusCode: 503, code: "runner_version_mismatch" });
+
+    expect(trafficStart).not.toHaveBeenCalled();
+    const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
+    expect(summaries[0]).toMatchObject({
+      status: "failed",
+      failureReason: "load_orchestrator_unavailable",
+    });
+    expect(summaries[0]?.transportAttemptCounts).toMatchObject({
+      startedRequests: 0,
+      unstartedRequests: 10_000,
+    });
+  });
+
   it("repairs stale Redis acceptance when an existing summary terminalizes a failed start", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
@@ -1813,6 +1880,7 @@ describe("demo-run lifecycle start gating", () => {
       "reset-active",
     );
     const resetService = new AdminDemoResetService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
@@ -1879,6 +1947,7 @@ describe("demo-run lifecycle start gating", () => {
       },
     });
     const resetService = new AdminDemoResetService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
@@ -2021,6 +2090,7 @@ function createStartService(
     trafficExecutionGateway?: ConstructorParameters<
       typeof DemoRunLifecycleService
     >[0]["trafficExecutionGateway"];
+    runnerOperations?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["runnerOperations"];
     publicRunBudgetStore?: ConstructorParameters<
       typeof DemoRunLifecycleService
     >[0]["publicRunBudgetStore"];
@@ -2065,6 +2135,10 @@ function createStartService(
         startedAt: "2026-06-20T00:00:11.000Z",
         correlationId: request.correlationId,
       }),
+    },
+    runnerOperations: overrides.runnerOperations ?? {
+      bootForRun: async () => ({ machineId: null, bootId: testRunnerBootId }),
+      releaseAfterRun: () => undefined,
     },
     publicRunBudgetStore: overrides.publicRunBudgetStore ?? {
       reserve: async () => ({

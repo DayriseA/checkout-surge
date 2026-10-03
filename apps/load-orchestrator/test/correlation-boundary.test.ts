@@ -8,7 +8,10 @@ import {
 import { correlationIdHeaderName, createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import type { K6Runner } from "../src/application/k6-runner.js";
-import { TrafficExecutionService } from "../src/application/traffic-execution-service.js";
+import {
+  processBootId,
+  TrafficExecutionService,
+} from "../src/application/traffic-execution-service.js";
 import { buildLoadOrchestratorServer } from "../src/server.js";
 import { createLoadOrchestratorConfig as createConfig } from "./load-orchestrator-test-helper.js";
 
@@ -18,6 +21,7 @@ const startRequest: TrafficExecutionStartRequest = {
   runId: "55555555-5555-4555-8555-555555555555",
   saleOfferId: "22222222-2222-4222-8222-222222222222",
   apiBaseUrl: "http://localhost:4000",
+  expectedBootId: processBootId,
   correlationId: "load-body-corr",
   configSnapshot: {
     trafficConfig: {

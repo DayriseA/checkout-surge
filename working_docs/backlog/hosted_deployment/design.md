@@ -270,6 +270,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - the runner's size (section 1.1);
   - the runner's `API_BASE_URL`, which is the core's current 6PN address for metrics and completion. That address is fixed at runner boot, independently of the `apiBaseUrl` k6 targets, and it changes when the core is recreated.
 - **Noted option, not decided: runner pre-start.** If the runner boot hurts the experience, the API can start the runner as soon as a visitor opens the run launch screen. The change is local to the start trigger.
+- **Implemented in task 05.** Inside the maintenance authority, right before dispatch, the API reads the runner's readiness (`/health/ready`, which also probes the API over 6PN) before reading its identity. Measured on Fly: a run starts 3.4 to 3.9 s later than with an always-on runner (8.1 s on the first run after a deploy, which also updates the runner config).
 
 ### 4.2 Operations owner and stop
 
@@ -294,6 +295,9 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - Admin and automatic resets call `abortCurrent` for every run they terminate. Today that call fails when the load-orchestrator is unreachable.
   - A stopped runner cannot emit traffic, so the abort path checks the Machine state first and treats a stopped runner as a confirmed abort.
 - **Finalization does not need the runner.** The API persists the completion report before acknowledging it.
+- **Stop details (task 05).** `deferred_busy` is retried for 30 s; `shutdown_requested` must be confirmed by `stopped` within 30 s; an `ignored_*` outcome leaves the runner running; otherwise the owner falls back to Fly `stop`. A runner found running when a run starts is always stopped first (fenced shutdown, then Fly `stop`). Measured: shutdown request to `stopped` in 1.3 to 2.0 s.
+- **Stop at the terminal state, not at `draining` (owner decision, 2026-10-03).** The runner stays up while a run drains (about 30 s for `surge-10k`). Stopping at `draining` would save that time, about 0.15 cents per run, at the cost of a second stop trigger to maintain and test.
+- **A Fly `stop` is not a silent loss.** Fly `stop` sends SIGINT: the runner publishes an interrupted completion report and the run finalizes as a failed shortfall. Loss detection (section 4.3) only sees hard losses: crash, SIGKILL, host loss.
 
 ### 4.3 Boot identity and runner loss
 
@@ -313,6 +317,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - Traffic counters without a k6 report are explicitly unknown, across contracts, persistence and UI.
   - This also applies to an admin or automatic reset during traffic.
   - **Implemented in task 03.** `syntheticFailedTrafficSummary` (`apps/api/src/services/traffic-delivery-plan.ts`) writes zeros only when no traffic can have started: setup failed before the start was dispatched, or the load orchestrator answered the start with a definitive 4xx rejection (`TrafficStartRejectedError` in the traffic execution gateway). Every other case, including any reset without a persisted completion report, writes unknown (`null`) counters. Starts and starting-run reconciliation share the maintenance authority with resets, so no replay can race a start being set up; this relies on the single-API-process contract. The web hides the delivery verdict when counts are unknown.
+- **Starting run without a recorded boot (task 05).** Such a run was never dispatched. Startup reconciliation skips it until the automatic reset; task 06 may fail it with zeros instead.
 
 ### 4.4 Capacity failures and region
 
@@ -399,7 +404,7 @@ Machines API tokens are app-scoped deploy tokens:
 
 - **Narrower tokens.** Attenuate tokens to specific actions if Fly makes that simple. This is not required, because the caveat schema is undocumented.
 - **No broad tokens.** No personal or org-wide token ever goes into a Machine.
-- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together.
+- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05).
 
 ### 7.3 Accepted risk
 
@@ -435,6 +440,8 @@ Machines API tokens are app-scoped deploy tokens:
 - **Where deployments run.**
   - During the build-out: a local script (for example `pnpm deploy:fly`), run from the owner's workstation with flyctl.
   - Near the end of the project: GitHub Actions, calling the same script.
+- **Version mismatch outcome (task 05).** Besides the UI message, the refused run ends failed (`load_orchestrator_unavailable`) with zero counters, since no traffic was dispatched.
+- **Deploy and runner lease (task 05).** The deploy script does not take the runner lease: it fails with 409 while the API holds it during a run operation, and is simply re-run.
 
 ---
 

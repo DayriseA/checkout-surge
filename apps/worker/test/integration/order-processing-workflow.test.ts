@@ -3238,6 +3238,7 @@ function createFinalizationService(
   redis: Redis,
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    runnerOperations: { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: connection.db,
     redis,

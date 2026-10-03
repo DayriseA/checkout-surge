@@ -39,7 +39,7 @@ export class TrafficExecutionService {
   }
 
   async start(input: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse> {
-    if (input.expectedBootId && input.expectedBootId !== this.identity.bootId)
+    if (input.expectedBootId !== this.identity.bootId)
       throw new RunnerBootMismatchError(this.identity.bootId);
     if (this.draining) throw new RunnerStoppingError();
     this.startGeneration++;

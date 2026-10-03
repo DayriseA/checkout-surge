@@ -1,4 +1,5 @@
 import type { TrafficExecutionStartRequest } from "@checkout-surge/contracts";
+import { processBootId } from "../src/application/traffic-execution-service.js";
 import type { LoadOrchestratorConfig } from "../src/runtime/config.js";
 
 export function trafficExecutionStartRequestFixture(): TrafficExecutionStartRequest {
@@ -6,6 +7,7 @@ export function trafficExecutionStartRequestFixture(): TrafficExecutionStartRequ
     runId: "55555555-5555-4555-8555-555555555555",
     saleOfferId: "22222222-2222-4222-8222-222222222222",
     apiBaseUrl: "http://localhost:4000",
+    expectedBootId: processBootId,
     correlationId: "corr-load-test",
     configSnapshot: {
       trafficConfig: {

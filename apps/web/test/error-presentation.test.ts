@@ -74,6 +74,17 @@ describe("error presentation", () => {
     ).not.toBe("This run exceeds an infrastructure limit");
   });
 
+  it("explains a refused run during a partial deployment on both surfaces", () => {
+    for (const surface of ["public-start", "admin-operation"] as const) {
+      expect(
+        mapErrorPresentation(
+          { status: "unavailable", errorCode: "runner_version_mismatch" },
+          surface,
+        ),
+      ).toMatchObject({ headline: "The demo is being updated", tone: "warning" });
+    }
+  });
+
   it("distinguishes projection cleanup from malformed queue work", () => {
     const present = (conflictReason: string) =>
       mapErrorPresentation(

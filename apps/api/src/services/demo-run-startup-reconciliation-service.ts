@@ -109,12 +109,21 @@ export class DemoRunStartupReconciliationService {
 
     for (const run of runs) {
       if (!run.saleOfferId) continue;
+      if (!run.runnerBootId) {
+        // A start is dispatched only after its runner boot is recorded, so none was sent.
+        this.options.logger.warn(
+          { runId: run.id },
+          "Starting run has no runner boot to replay against; it waits for the automatic reset.",
+        );
+        continue;
+      }
       const correlationId = `traffic-reconcile-${run.id}`;
       try {
         const response = await this.options.trafficExecutionGateway.start({
           runId: run.id,
           saleOfferId: run.saleOfferId,
           apiBaseUrl: this.options.apiBaseUrl,
+          expectedBootId: run.runnerBootId,
           correlationId,
           configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
             run.configSnapshot,

@@ -40,6 +40,7 @@ import {
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
 import type { TerminalReservationTimingReader } from "./reservation-timing-observation.js";
+import type { RunnerOperations } from "./runner-operations.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
   classifyTrafficTransport,
@@ -72,6 +73,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       logger: CheckoutSurgeLogger;
       queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "writePrepared">;
+      runnerOperations: Pick<RunnerOperations, "releaseAfterRun">;
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
       reservationTiming?: TerminalReservationTimingReader;
@@ -288,6 +290,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         };
       },
     );
+    if (wroteSummary && row.run.runnerBootId) {
+      this.options.runnerOperations.releaseAfterRun({ runId, bootId: row.run.runnerBootId });
+    }
     const updatedRun = await this.readRun(runId);
 
     if (wroteSummary) {

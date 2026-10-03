@@ -50,6 +50,7 @@ import {
 } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type { ReservationTimingLifecycle } from "./reservation-timing-observation.js";
+import type { RunnerOperations } from "./runner-operations.js";
 import type {
   TerminalDemoRunSummaryInput,
   TerminalDemoRunWriter,
@@ -97,6 +98,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       >;
       logger: CheckoutSurgeLogger;
       trafficAborter: TrafficAbortGateway;
+      runnerOperations: Pick<RunnerOperations, "releaseAfterRun">;
       dashboardLiveStateReset: DashboardLiveStateReset;
       reservationTiming?: ReservationTimingLifecycle;
       resetWorkflowFence: DemoResetWorkflowFence;
@@ -332,6 +334,12 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         reason: row.reason,
         correlationId,
       });
+      if (row.run.runnerBootId) {
+        this.options.runnerOperations.releaseAfterRun({
+          runId: row.run.id,
+          bootId: row.run.runnerBootId,
+        });
+      }
     }
 
     const queueCleanup =

@@ -117,6 +117,7 @@ type ResetTestOptions = MaintenanceTestContext & {
   queueMaintenance: ExactRunQueueMaintenance;
   terminalRunWriter: ConstructorParameters<typeof AdminDemoResetService>[0]["terminalRunWriter"];
   trafficAborter?: ConstructorParameters<typeof AdminDemoResetService>[0]["trafficAborter"];
+  runnerOperations?: ConstructorParameters<typeof AdminDemoResetService>[0]["runnerOperations"];
   dashboardLiveStateReset?: ConstructorParameters<
     typeof AdminDemoResetService
   >[0]["dashboardLiveStateReset"];
@@ -159,6 +160,7 @@ function createIntegratedRetentionService(
 
 function createResetService(options: ResetTestOptions): AdminDemoResetService {
   return new AdminDemoResetService({
+    runnerOperations: options.runnerOperations ?? { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: options.db,
     redis: options.redis,
@@ -1930,6 +1932,48 @@ describe("focused demo maintenance workflows", () => {
         failureReason: "admin_reset",
         saleOfferId: null,
       });
+    });
+
+    it("stops the runner bound to a reset run after aborting it", async () => {
+      const db = requireConnection(connection).db;
+      await seedBase(db);
+      const runnerBootId = "99999999-9999-4999-8999-999999999999";
+      await db.insert(demoRuns).values({
+        correlationId: "corr-test-run",
+        id: ids.startingRun,
+        presetId: ids.preset,
+        presetName: "Reset Preset",
+        operatorMode: "admin",
+        status: "starting",
+        trafficStatus: "starting",
+        configSnapshot: configSnapshotFixture(),
+        startedAt: new Date("2026-06-20T00:00:00.000Z"),
+        runnerBootId,
+      });
+      const abortCurrent = vi.fn(async () => ({ outcome: "no_current_run" as const }));
+      const releaseAfterRun = vi.fn();
+      const service = createResetService({
+        db,
+        redis: requireRedis(redis),
+        terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(db, {
+          synchronize: async () => {},
+        }),
+        queueMaintenance: noOpGeneratedRunQueueMaintenance(),
+        logger: createSilentLogger("api"),
+        trafficAborter: { abortCurrent },
+        runnerOperations: { releaseAfterRun },
+      });
+
+      await expect(service.reset("corr-runner-release")).resolves.toMatchObject({
+        failedRunCount: 1,
+      });
+      expect(releaseAfterRun).toHaveBeenCalledExactlyOnceWith({
+        runId: ids.startingRun,
+        bootId: runnerBootId,
+      });
+      expect(abortCurrent.mock.invocationCallOrder[0]).toBeLessThan(
+        releaseAfterRun.mock.invocationCallOrder[0] ?? 0,
+      );
     });
 
     it.each(

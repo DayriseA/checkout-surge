@@ -109,6 +109,7 @@ const publicStartActionCodes = new Set<ErrorPayloadCode>([
   "public_run_budget_exceeded",
   "invalid_request",
   "invalid_run_configuration",
+  "runner_version_mismatch",
 ]);
 
 // When returned from the start path, these mean the BFF never saw a valid API verdict,
@@ -353,6 +354,14 @@ function codePresentation(
         tone: "danger",
       };
 
+    case "runner_version_mismatch":
+      return {
+        headline: "The demo is being updated",
+        explanation:
+          "Its load generator and its backend run different versions, so runs are paused until the update completes. Try again later.",
+        action: { kind: "check", label: "Check again" },
+        tone: "warning",
+      };
     case "traffic_termination_unconfirmed":
     case "load_orchestrator_abort_unconfirmed":
     case "load_orchestrator_run_mismatch":

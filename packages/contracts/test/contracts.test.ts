@@ -129,6 +129,7 @@ function omit<T extends object, K extends keyof T>(value: T, key: K): Omit<T, K>
 const correlationId = "corr-test-1";
 const saleOfferId = "22222222-2222-4222-8222-222222222222";
 const runId = "55555555-5555-4555-8555-555555555555";
+const expectedBootId = "11111111-1111-4111-8111-111111111111";
 const serverReservationTimingSummary = serverReservationTimingSummarySchema.parse({
   redisAtomicReservation: { sampleCount: 10, averageMs: 0.7, p95Ms: 1 },
   reserveOrderService: { sampleCount: 10, averageMs: 12, p95Ms: 25 },
@@ -548,6 +549,7 @@ describe("run lifecycle contracts", () => {
         runId,
         saleOfferId,
         apiBaseUrl: "http://api.local",
+        expectedBootId,
         correlationId,
         configSnapshot: acceptedRunSnapshot(),
       }),
@@ -558,10 +560,23 @@ describe("run lifecycle contracts", () => {
         runId,
         saleOfferId,
         apiBaseUrl: "http://api.local",
+        expectedBootId,
         correlationId: `run:${runId}:buyer:1`,
         configSnapshot: acceptedRunSnapshot(),
       }),
     ).not.toThrow();
+  });
+
+  it("requires the expected runner boot on every start request", () => {
+    expect(
+      trafficExecutionStartRequestSchema.safeParse({
+        runId,
+        saleOfferId,
+        apiBaseUrl: "http://api.local",
+        correlationId,
+        configSnapshot: acceptedRunSnapshot(),
+      }).success,
+    ).toBe(false);
   });
 
   it("keeps constant-arrival VU overrides all-or-nothing and validates their relationship", () => {
@@ -569,6 +584,7 @@ describe("run lifecycle contracts", () => {
       runId,
       saleOfferId,
       apiBaseUrl: "http://api.local",
+      expectedBootId,
       correlationId,
       configSnapshot: {
         ...acceptedRunSnapshot(),
@@ -2884,6 +2900,7 @@ describe("public runtime policy contract", () => {
         runId,
         saleOfferId,
         apiBaseUrl: "http://localhost:4000",
+        expectedBootId,
         correlationId,
         configSnapshot,
       }).configSnapshot.trafficConfig.mode,

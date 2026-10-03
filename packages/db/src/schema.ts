@@ -189,6 +189,9 @@ export const demoRuns = pgTable(
     finalizedAt: timestamp("finalized_at", { withTimezone: true }),
     adminResetCompletedAt: timestamp("admin_reset_completed_at", { withTimezone: true }),
     failureReason: text("failure_reason"),
+    // The runner that served this run: its Fly Machine (null without one) and its process boot.
+    runnerMachineId: text("runner_machine_id"),
+    runnerBootId: uuid("runner_boot_id"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

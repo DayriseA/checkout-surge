@@ -227,7 +227,7 @@ export const trafficExecutionStartRequestSchema = z
     runId: uuidSchema,
     saleOfferId: uuidSchema,
     apiBaseUrl: z.string().url(),
-    expectedBootId: uuidSchema.optional(),
+    expectedBootId: uuidSchema,
     correlationId: correlationIdSchema,
     configSnapshot: acceptedRunConfigSnapshotSchema,
   })

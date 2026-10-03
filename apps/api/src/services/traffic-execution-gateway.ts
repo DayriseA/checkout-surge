@@ -1,5 +1,13 @@
 import {
   controlServiceTokenHeaderName,
+  healthReadyPath,
+  type RunnerIdentity,
+  type RunnerShutdownRequest,
+  type RunnerShutdownResponse,
+  runnerControlPath,
+  runnerIdentitySchema,
+  runnerShutdownPath,
+  runnerShutdownResponseSchema,
   type TrafficExecutionAbortResponse,
   type TrafficExecutionStartRequest,
   type TrafficExecutionStartResponse,
@@ -17,6 +25,8 @@ import { ApiHttpError } from "../runtime/errors.js";
 
 const defaultStartRequestTimeoutMs = 5_000;
 const defaultAbortRequestTimeoutMs = 20_000;
+// The runner readiness check probes the API and the k6 binary, each bounded at 2 to 3 seconds.
+const runnerControlRequestTimeoutMs = 6_000;
 
 export interface TrafficExecutionGateway {
   start(request: TrafficExecutionStartRequest): Promise<TrafficExecutionStartResponse>;
@@ -30,7 +40,16 @@ export interface TrafficAbortGateway {
   }): Promise<Pick<TrafficExecutionAbortResponse, "outcome">>;
 }
 
-export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, TrafficAbortGateway {
+/** Runner control calls that do not start traffic. */
+export interface RunnerControlGateway {
+  isReady(): Promise<boolean>;
+  readIdentity(): Promise<RunnerIdentity>;
+  shutdown(request: RunnerShutdownRequest): Promise<RunnerShutdownResponse["outcome"]>;
+}
+
+export class HttpTrafficExecutionGateway
+  implements TrafficExecutionGateway, TrafficAbortGateway, RunnerControlGateway
+{
   constructor(
     private readonly options: {
       loadOrchestratorBaseUrl: string;
@@ -192,6 +211,73 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
     return confirmation;
   }
 
+  async isReady(): Promise<boolean> {
+    try {
+      return await runBoundedTrafficRequest(
+        runnerControlRequestTimeoutMs,
+        () => new RunnerControlTimeoutError(),
+        async (signal) =>
+          (
+            await this.fetch(
+              trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, healthReadyPath),
+              { signal },
+            )
+          ).ok,
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  readIdentity(): Promise<RunnerIdentity> {
+    return runBoundedTrafficRequest(
+      runnerControlRequestTimeoutMs,
+      () => new RunnerControlTimeoutError(),
+      async (signal) => {
+        const response = await this.fetch(
+          trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, runnerControlPath),
+          {
+            headers: {
+              accept: "application/json",
+              [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+            },
+            signal,
+          },
+        );
+        if (!response.ok) throw new Error(`Runner control answered ${response.status}.`);
+        return runnerIdentitySchema.parse(await response.json());
+      },
+    );
+  }
+
+  shutdown(request: RunnerShutdownRequest): Promise<RunnerShutdownResponse["outcome"]> {
+    return runBoundedTrafficRequest(
+      runnerControlRequestTimeoutMs,
+      () => new RunnerControlTimeoutError(),
+      async (signal) => {
+        const response = await this.fetch(
+          trafficExecutionUrl(this.options.loadOrchestratorBaseUrl, runnerShutdownPath),
+          {
+            method: "POST",
+            headers: {
+              accept: "application/json",
+              "content-type": "application/json",
+              [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+            },
+            body: JSON.stringify(request),
+            signal,
+          },
+        );
+        if (!response.ok) throw new Error(`Runner shutdown answered ${response.status}.`);
+        const answer = runnerShutdownResponseSchema.parse(await response.json());
+        if (answer.runId !== request.runId || answer.bootId !== request.bootId) {
+          throw new Error("Runner shutdown answer is bound to a different run or boot.");
+        }
+        return answer.outcome;
+      },
+    );
+  }
+
   private async recoverAmbiguousStart(
     request: TrafficExecutionStartRequest,
     requestTimeoutMs: number,
@@ -223,6 +309,8 @@ export class HttpTrafficExecutionGateway implements TrafficExecutionGateway, Tra
         if (status.runId !== request.runId || status.correlationId !== request.correlationId) {
           throw new TrafficStatusInvalidResponseError();
         }
+        // Another boot cannot hold this start: the expected runner process is gone.
+        if (status.bootId !== request.expectedBootId) return null;
         if (status.state === "unknown" || !status.acceptedAt) return null;
         return trafficExecutionStartResponseSchema.parse({
           runId: request.runId,
@@ -261,16 +349,37 @@ function parseStartConfirmation(
 /** A definitive (4xx) start rejection: the load orchestrator started no traffic for this request. */
 export class TrafficStartRejectedError extends ApiHttpError {
   constructor(statusCode: number, payload: unknown) {
-    super({
-      statusCode: 502,
-      code: "load_orchestrator_unavailable",
-      message: "The load orchestrator rejected the run start.",
-      details: {
-        statusCode,
-        payload: payload && typeof payload === "object" ? payload : {},
-      },
-    });
+    const details = {
+      statusCode,
+      payload: payload && typeof payload === "object" ? payload : {},
+    };
+    const runnerCode = runnerStartRejectionCode(payload);
+    super(
+      runnerCode
+        ? {
+            statusCode: 503,
+            code: runnerCode,
+            message:
+              runnerCode === "runner_boot_mismatch"
+                ? "The load generator restarted before the run could start."
+                : "The load generator is shutting down.",
+            details,
+          }
+        : {
+            statusCode: 502,
+            code: "load_orchestrator_unavailable",
+            message: "The load orchestrator rejected the run start.",
+            details,
+          },
+    );
   }
+}
+
+function runnerStartRejectionCode(
+  payload: unknown,
+): "runner_boot_mismatch" | "runner_stopping" | null {
+  const code = payload && typeof payload === "object" && "code" in payload ? payload.code : null;
+  return code === "runner_boot_mismatch" || code === "runner_stopping" ? code : null;
 }
 
 function isDefinitiveStartRejection(statusCode: number): boolean {
@@ -312,3 +421,4 @@ class TrafficStatusTimeoutError extends Error {}
 class TrafficStatusInvalidResponseError extends Error {}
 class TrafficAbortTimeoutError extends Error {}
 class TrafficAbortInvalidResponseError extends Error {}
+class RunnerControlTimeoutError extends Error {}

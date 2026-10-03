@@ -27,7 +27,7 @@ import {
 
 const bootId = "11111111-1111-4111-8111-111111111111";
 const otherBootId = "22222222-2222-4222-8222-222222222222";
-const request = trafficExecutionStartRequestFixture();
+const request = { ...trafficExecutionStartRequestFixture(), expectedBootId: bootId };
 const identity = { bootId, version: "test-commit" };
 const headers = { [controlServiceTokenHeaderName]: "test-token" };
 
@@ -112,17 +112,17 @@ describe("runner control", () => {
       await app.close();
     }
   });
-  it("rejects mismatched starts and replays before touching the runner, while retaining optional staging", async () => {
+  it("rejects mismatched starts and replays before touching the runner", async () => {
     const { app, runner } = setup();
     try {
-      for (const expectedBootId of [undefined, bootId]) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(
           (
             await app.inject({
               method: "POST",
               url: trafficExecutionStartPath,
               headers,
-              payload: { ...request, expectedBootId },
+              payload: { ...request, expectedBootId: bootId },
             })
           ).statusCode,
         ).toBe(202);

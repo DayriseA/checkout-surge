@@ -32,6 +32,9 @@ export interface ApiConfig {
   apiBaseUrl: string;
   loadOrchestratorBaseUrl: string;
   controlServiceToken: string;
+  /** This API's commit, for the version handshake with the runner. */
+  commitSha: string;
+  runnerHost: RunnerHostConfig;
   publicClientCookieSecret: string;
   deploymentHardCaps: DeploymentHardCaps;
   estimatorConstants: DurationEstimatorConstants;
@@ -50,6 +53,18 @@ export interface ApiConfig {
   readinessTimeoutMs: number;
   trustedProxyCidrs: string[];
 }
+
+/** Fly when the runner app is configured; otherwise the local, always-on runner. */
+export type RunnerHostConfig =
+  | { kind: "local" }
+  | {
+      kind: "fly";
+      appName: string;
+      machinesApiToken: string;
+      cpuKind: string;
+      cpus: number;
+      memoryMb: number;
+    };
 
 const unsafeControlServiceTokens = new Set([
   "change-me-shared-control-token",
@@ -123,6 +138,8 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       "http://localhost:4200",
     ),
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
+    commitSha: parseOptionalString(env.COMMIT_SHA) ?? "unknown",
+    runnerHost: parseRunnerHost(env),
     publicClientCookieSecret: requireStrongSecret(env, "PUBLIC_CLIENT_COOKIE_SECRET"),
     deploymentHardCaps: deploymentHardCapsSchema.parse({
       estimatedDemoOccupancyCeilingSeconds: parsePositiveInteger(
@@ -380,6 +397,19 @@ function parseCsv(value: string | undefined): string[] {
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0) ?? []
   );
+}
+
+function parseRunnerHost(env: NodeJS.ProcessEnv): RunnerHostConfig {
+  const appName = parseOptionalString(env.RUNNER_FLY_APP);
+  if (!appName) return { kind: "local" };
+  return {
+    kind: "fly",
+    appName,
+    machinesApiToken: requireEnv(env, "RUNNER_FLY_API_TOKEN"),
+    cpuKind: parseOptionalString(env.RUNNER_CPU_KIND) ?? "performance",
+    cpus: parsePositiveInteger(env.RUNNER_CPUS, "RUNNER_CPUS", 4),
+    memoryMb: parsePositiveInteger(env.RUNNER_MEMORY_MB, "RUNNER_MEMORY_MB", 8192),
+  };
 }
 
 /**

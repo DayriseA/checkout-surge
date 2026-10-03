@@ -283,6 +283,36 @@ describe("API runtime configuration", () => {
     ).toThrow(/PER_SOURCE.*must not exceed.*GLOBAL/);
   });
 
+  it("drives a local runner unless a Fly runner app is configured", () => {
+    const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" };
+    expect(loadApiConfig(env)).toMatchObject({
+      commitSha: "unknown",
+      runnerHost: { kind: "local" },
+    });
+    expect(() => loadApiConfig({ ...env, RUNNER_FLY_APP: "runner-app" })).toThrow(
+      "RUNNER_FLY_API_TOKEN is required.",
+    );
+    expect(
+      loadApiConfig({
+        ...env,
+        COMMIT_SHA: "abc123",
+        RUNNER_FLY_APP: "runner-app",
+        RUNNER_FLY_API_TOKEN: "runner-token",
+        RUNNER_CPUS: "8",
+      }),
+    ).toMatchObject({
+      commitSha: "abc123",
+      runnerHost: {
+        kind: "fly",
+        appName: "runner-app",
+        machinesApiToken: "runner-token",
+        cpuKind: "performance",
+        cpus: 8,
+        memoryMb: 8192,
+      },
+    });
+  });
+
   it("loads estimator allowance defaults and decimal overrides", () => {
     expect(
       loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" }).estimatorConstants,

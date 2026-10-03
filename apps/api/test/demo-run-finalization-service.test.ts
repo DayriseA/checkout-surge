@@ -250,11 +250,15 @@ describe("demo run finalization service", () => {
           return input;
         }),
     );
+    const releaseAfterRun = vi.fn();
     const service = createService(connection, redis, {
       terminalRunWriter: { writePrepared: writeTerminalRun },
+      runnerOperations: { releaseAfterRun },
     });
+    const runnerBootId = "99999999-9999-4999-8999-999999999999";
 
     await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await db.update(demoRuns).set({ runnerBootId }).where(eq(demoRuns.id, ids.run));
     await setArrivalAnchor(db);
     await db
       .update(demoRunFinalizations)
@@ -315,6 +319,10 @@ describe("demo run finalization service", () => {
 
     expect(first?.status).toBe("completed");
     expect(second?.status).toBe("completed");
+    expect(releaseAfterRun).toHaveBeenCalledExactlyOnceWith({
+      runId: ids.run,
+      bootId: runnerBootId,
+    });
     expect(summaries).toHaveLength(1);
     expect(summaries[0]?.status).toBe("completed");
     expect(summaries[0]?.replayPossible).toBe(false);
@@ -870,6 +878,7 @@ describe("demo run finalization service", () => {
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetService = new AdminDemoResetService({
+      runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
       terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
@@ -1544,9 +1553,13 @@ function createService(
     terminalInventoryReadTimeoutMs?: number;
     now?: () => Date;
     logger?: ConstructorParameters<typeof DemoRunFinalizationService>[0]["logger"];
+    runnerOperations?: ConstructorParameters<
+      typeof DemoRunFinalizationService
+    >[0]["runnerOperations"];
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    runnerOperations: { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: requireConnection(connection).db,
     terminalRunWriter:

@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "build:shared": "turbo run build --filter @checkout-surge/contracts --filter @checkout-surge/db --filter @checkout-surge/logger",
+    "build:shared": "turbo run build --filter @checkout-surge/contracts --filter @checkout-surge/db --filter @checkout-surge/fly-machines --filter @checkout-surge/logger",
     "type-check": "turbo run type-check && pnpm type-check:test",
     "type-check:test": "tsc -p tsconfig.test.json --noEmit",
     "lint": "biome lint .",

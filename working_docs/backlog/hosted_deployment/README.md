@@ -21,7 +21,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 02 | [Runner on Fly](02_runner_on_fly.md) | 01 | done |
 | 03 | [Unavailable traffic evidence](03_unavailable_traffic_evidence.md) | none | done |
 | 04 | [Runner control contract](04_runner_control_contract.md) | none | done |
-| 05 | [Runner lifecycle](05_runner_lifecycle.md) | 02, 04 | todo |
+| 05 | [Runner lifecycle](05_runner_lifecycle.md) | 02, 04 | done |
 | 06 | [Runner failure handling](06_runner_failure_handling.md) | 03, 05 | todo |
 | 07 | [Core idle stop](07_core_idle_stop.md) | 01 | todo |
 | 08 | [Deployment-cap message](08_deployment_cap_message.md) | none | done |
