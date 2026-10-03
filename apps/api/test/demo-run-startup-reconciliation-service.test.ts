@@ -18,6 +18,7 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
   DemoRunStartupReconciliationService,
@@ -40,6 +41,7 @@ describe("DemoRunStartupReconciliationService", () => {
     }));
     const activateStartingRun = vi.fn(async () => true);
     const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       ...unusedStartingRunOptions(),
       logger: createSilentLogger("api"),
       startingRunStore: {
@@ -70,6 +72,7 @@ describe("DemoRunStartupReconciliationService", () => {
     const closeRunSaleEligibility = vi.fn(async () => true);
     const completePendingEnrichment = vi.fn(async () => "completed" as const);
     const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       ...unusedStartingRunOptions(),
       logger: createSilentLogger("api"),
       listDrainingRuns: async () => [drainingRun],
@@ -91,6 +94,7 @@ describe("DemoRunStartupReconciliationService", () => {
 
   it("isolates each draining run's startup-owned failures", async () => {
     const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       ...unusedStartingRunOptions(),
       logger: createSilentLogger("api"),
       listDrainingRuns: async () => [drainingRun],
@@ -154,6 +158,7 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
       now: () => new Date("2026-07-20T00:00:11.000Z"),
     });
     const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       logger: createSilentLogger("api"),
       completionEnrichmentService: enrichmentService,
       startingRunStore: new PostgresStartingDemoRunReconciliationStore(activeConnection.db),

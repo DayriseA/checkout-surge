@@ -42,6 +42,7 @@ import {
   requireEstimatedDurationAdmission,
 } from "./demo-duration-admission-service.js";
 import type { DurationEstimatorConstants } from "./demo-duration-estimator.js";
+import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
 import {
   emptyBusinessOutcomeSummary,
@@ -107,6 +108,7 @@ export function isSingleNonTerminalRunViolation(error: unknown): boolean {
 export class DemoRunLifecycleService implements DemoRunLifecycleController {
   constructor(
     private readonly options: {
+      maintenanceAuthority: DemoMaintenanceAuthority;
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       trafficExecutionGateway: TrafficExecutionGateway;
@@ -126,6 +128,15 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   ) {}
 
   async startRun(
+    request: StartDemoRunCommand,
+    correlationId: string,
+  ): Promise<StartDemoRunResponse> {
+    return this.options.maintenanceAuthority.runExclusive(() =>
+      this.startRunExclusive(request, correlationId),
+    );
+  }
+
+  private async startRunExclusive(
     request: StartDemoRunCommand,
     correlationId: string,
   ): Promise<StartDemoRunResponse> {

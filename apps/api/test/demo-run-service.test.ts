@@ -52,6 +52,10 @@ import {
   isSingleNonTerminalRunViolation,
   validateAcceptedRunSnapshot,
 } from "../src/services/demo-run-service.js";
+import {
+  DemoRunStartupReconciliationService,
+  PostgresStartingDemoRunReconciliationStore,
+} from "../src/services/demo-run-startup-reconciliation-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import {
   DemoRunQueueLimits,
@@ -87,6 +91,7 @@ describe("demo-run lifecycle validation", () => {
     });
     const reserve = vi.fn();
     const service = new DemoRunLifecycleService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       queueLimits: { synchronize: async () => {} },
       db: { select } as never,
       redis: {} as never,
@@ -1606,13 +1611,51 @@ describe("demo-run lifecycle start gating", () => {
       synchronize: async () => {},
     });
     const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
+    const authority = new ProcessLocalDemoMaintenanceAuthority();
+    let setupEntered!: () => void;
+    const setupEntry = new Promise<void>((resolve) => {
+      setupEntered = resolve;
+    });
+    let releaseSetup!: () => void;
+    const setupRelease = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    const replayStart = vi.fn();
+    const reconciliation = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: authority,
+      logger: createSilentLogger("api"),
+      startingRunStore: new PostgresStartingDemoRunReconciliationStore(db),
+      trafficExecutionGateway: { start: replayStart },
+      apiBaseUrl: "http://api.test",
+      listDrainingRuns: async () => [],
+      closeRunSaleEligibility: async () => true,
+      completionEnrichmentService: { completePendingEnrichment: async () => "completed" },
+    });
     const service = createStartService(requireConnection(connection), redisUnavailable(), {
+      maintenanceAuthority: authority,
+      queueLimits: {
+        synchronize: async () => {
+          setupEntered();
+          await setupRelease;
+        },
+      },
       terminalRunWriter: { write: writeTerminalRun },
     });
 
-    await expect(
-      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
-    ).rejects.toThrow("Redis unavailable during initialization.");
+    const starting = service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+    const failedStart = expect(starting).rejects.toThrow(
+      "Redis unavailable during initialization.",
+    );
+    await setupEntry;
+    const replay = reconciliation.reconcileStartingRuns();
+    expect(replayStart).not.toHaveBeenCalled();
+    releaseSetup();
+    await failedStart;
+    await expect(replay).resolves.toBe(0);
+    expect(replayStart).not.toHaveBeenCalled();
 
     const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
 
@@ -1901,6 +1944,7 @@ function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
+    maintenanceAuthority?: ProcessLocalDemoMaintenanceAuthority;
     queueLimits?: OrderProcessQueueLimits;
     presetReader?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["presetReader"];
     trafficExecutionGateway?: ConstructorParameters<
@@ -1930,6 +1974,8 @@ function createStartService(
   };
   const logger = overrides.logger ?? createSilentLogger("api");
   return new DemoRunLifecycleService({
+    maintenanceAuthority:
+      overrides.maintenanceAuthority ?? new ProcessLocalDemoMaintenanceAuthority(),
     queueLimits: overrides.queueLimits ?? { synchronize: async () => {} },
     db: connection.db,
     presetReader: overrides.presetReader ?? new DemoPresetService({ db: connection.db }),
