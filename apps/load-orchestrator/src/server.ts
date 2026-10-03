@@ -5,6 +5,11 @@ import {
   healthReadyPath,
   healthResponseSchema,
   livenessResponseSchema,
+  runnerControlPath,
+  runnerIdentitySchema,
+  runnerShutdownPath,
+  runnerShutdownRequestSchema,
+  runnerShutdownResponseSchema,
   trafficExecutionAbortPath,
   trafficExecutionAbortRequestSchema,
   trafficExecutionAbortResponseSchema,
@@ -30,7 +35,10 @@ import {
   ExecutionSlotConflictError,
   TrafficTerminationUnconfirmedError,
 } from "./application/k6-runner.js";
+import type { RunnerLifecycleService } from "./application/runner-lifecycle-service.js";
 import {
+  RunnerBootMismatchError,
+  RunnerStoppingError,
   TrafficAbortConflictError,
   type TrafficExecutionService,
 } from "./application/traffic-execution-service.js";
@@ -43,6 +51,7 @@ export interface BuildLoadOrchestratorServerOptions {
   readiness: LoadOrchestratorReadiness;
   trafficExecutionService: TrafficExecutionService;
   startedAt?: Date;
+  runnerLifecycleService?: RunnerLifecycleService;
 }
 
 export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServerOptions) {
@@ -60,6 +69,15 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
         }),
       );
     }
+
+    if (error instanceof RunnerBootMismatchError)
+      return reply.status(409).send(
+        errorPayload("runner_boot_mismatch", error.message, correlationId, {
+          bootId: error.bootId,
+        }),
+      );
+    if (error instanceof RunnerStoppingError)
+      return reply.status(409).send(errorPayload("runner_stopping", error.message, correlationId));
 
     if (
       error instanceof ExecutionConflictError ||
@@ -109,6 +127,32 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
 
     return reply.status(response.status === "unavailable" ? 503 : 200).send(response);
   });
+
+  app.get(runnerControlPath, async (request, reply) => {
+    const unauthorized = requireControlServiceToken(
+      request,
+      reply,
+      options.config.controlServiceToken,
+    );
+    if (unauthorized) return unauthorized;
+    return runnerIdentitySchema.parse(options.trafficExecutionService.identity);
+  });
+
+  if (options.config.runnerLifecycleEnabled && options.runnerLifecycleService) {
+    const lifecycle = options.runnerLifecycleService;
+    app.post(runnerShutdownPath, async (request, reply) => {
+      const unauthorized = requireControlServiceToken(
+        request,
+        reply,
+        options.config.controlServiceToken,
+      );
+      if (unauthorized) return unauthorized;
+      const input = runnerShutdownRequestSchema.parse(request.body);
+      return reply
+        .status(202)
+        .send(runnerShutdownResponseSchema.parse(await lifecycle.shutdown(input)));
+    });
+  }
 
   app.post(trafficExecutionStartPath, async (request, reply) => {
     const unauthorized = requireControlServiceToken(
@@ -161,6 +205,7 @@ export function buildLoadOrchestratorServer(options: BuildLoadOrchestratorServer
     return trafficExecutionStatusResponseSchema.parse({
       runId: request.params.runId,
       ...snapshot,
+      ...options.trafficExecutionService.identity,
       correlationId: request.correlationId,
       observedAt: new Date().toISOString(),
     });

@@ -16,6 +16,8 @@ export interface LoadOrchestratorConfig {
   completionDeliveryRetryIntervalMs: number;
   controlServiceToken: string;
   stateDirectory: string;
+  runnerLifecycleEnabled: boolean;
+  commitSha: string;
 }
 
 const unsafeControlServiceTokens = new Set([
@@ -25,6 +27,8 @@ const unsafeControlServiceTokens = new Set([
 
 export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestratorConfig {
   return {
+    runnerLifecycleEnabled: parseBoolean(env.RUNNER_LIFECYCLE_ENABLED),
+    commitSha: env.COMMIT_SHA?.trim() || "unknown",
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4200),
     apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
@@ -89,4 +93,10 @@ function parseUrl(value: string | undefined, name: string, fallback: string): st
   } catch {
     throw new Error(`${name} must be a valid URL.`);
   }
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  if (!value?.trim() || value.trim() === "false") return false;
+  if (value.trim() === "true") return true;
+  throw new Error("RUNNER_LIFECYCLE_ENABLED must be true or false.");
 }

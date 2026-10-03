@@ -3,7 +3,12 @@ import { HttpLoadApiClient } from "./application/api-client.js";
 import { CompletionDeliveryCoordinator } from "./application/completion-delivery-coordinator.js";
 import { FileExecutionStore } from "./application/execution-store.js";
 import { SpawnK6Runner } from "./application/k6-runner.js";
-import { TrafficExecutionService } from "./application/traffic-execution-service.js";
+import { RunnerLifecycleService } from "./application/runner-lifecycle-service.js";
+import {
+  processBootId,
+  processBootStartedAt,
+  TrafficExecutionService,
+} from "./application/traffic-execution-service.js";
 import { loadLoadOrchestratorConfig } from "./runtime/config.js";
 import { createLoadOrchestratorReadiness } from "./runtime/readiness.js";
 import { buildLoadOrchestratorServer } from "./server.js";
@@ -31,19 +36,29 @@ export async function startLoadOrchestrator(): Promise<void> {
       executionStore,
       cancellationTimeoutMs: config.k6CancellationTimeoutMs,
     }),
+    { bootId: processBootId, version: config.commitSha },
   );
   await trafficExecutionService.initialize();
+  const lifecycle = new RunnerLifecycleService({
+    trafficExecutionService,
+    executionStore,
+    startedAt: processBootStartedAt,
+    requestExit: () => handleShutdown(),
+    onError: (error) => logger.error({ err: error }, "Runner idle check failed."),
+  });
   const server = buildLoadOrchestratorServer({
     config,
     logger,
     readiness: createLoadOrchestratorReadiness(config),
     trafficExecutionService,
     startedAt: new Date(),
+    runnerLifecycleService: lifecycle,
   });
 
   let closePromise: Promise<void> | null = null;
   const close = (): Promise<void> => {
     if (!closePromise) {
+      lifecycle.stop();
       closePromise = server.close().then(() => trafficExecutionService.close());
     }
     return closePromise;
@@ -59,6 +74,8 @@ export async function startLoadOrchestrator(): Promise<void> {
   };
   process.once("SIGTERM", handleShutdown);
   process.once("SIGINT", handleShutdown);
+
+  if (config.runnerLifecycleEnabled) lifecycle.start();
 
   try {
     await server.listen({

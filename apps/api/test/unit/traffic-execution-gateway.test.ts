@@ -62,6 +62,8 @@ function unknownStatusResponse(): Response {
   return Response.json({
     runId: request.runId,
     state: "unknown",
+    bootId: "11111111-1111-4111-8111-111111111111",
+    version: "unknown",
     observedAt: "2026-06-20T00:00:09.000Z",
     correlationId: request.correlationId,
   });
@@ -71,6 +73,8 @@ function acceptedStatusResponse(): Response {
   return Response.json({
     runId: request.runId,
     state: "accepted",
+    bootId: "11111111-1111-4111-8111-111111111111",
+    version: "unknown",
     acceptedAt: "2026-06-20T00:00:01.000Z",
     observedAt: "2026-06-20T00:00:09.000Z",
     correlationId: request.correlationId,
@@ -240,6 +244,8 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
           JSON.stringify({
             runId: request.runId,
             state: "accepted",
+            bootId: "11111111-1111-4111-8111-111111111111",
+            version: "unknown",
             acceptedAt: "2026-06-20T00:00:01.000Z",
             observedAt: "2026-06-20T00:00:09.000Z",
             correlationId: request.correlationId,
@@ -278,6 +284,8 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
           JSON.stringify({
             runId: request.runId,
             state: "unknown",
+            bootId: "11111111-1111-4111-8111-111111111111",
+            version: "unknown",
             observedAt: "2026-06-20T00:00:09.000Z",
             correlationId: request.correlationId,
           }),
@@ -319,6 +327,8 @@ describe("HttpTrafficExecutionGateway ambiguity recovery", () => {
         Response.json({
           runId: request.runId,
           state: "accepted",
+          bootId: "11111111-1111-4111-8111-111111111111",
+          version: "unknown",
           acceptedAt: "2026-06-20T00:00:01.000Z",
           observedAt: "2026-06-20T00:00:09.000Z",
           correlationId: request.correlationId,

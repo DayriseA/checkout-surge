@@ -18,6 +18,33 @@ import {
   transportAttemptCountsSchema,
 } from "./traffic-transport-counts.js";
 
+export const runnerControlPath = "/traffic/control" as const;
+export const runnerShutdownPath = "/traffic/shutdown" as const;
+export const runnerIdentitySchema = z
+  .object({
+    bootId: uuidSchema,
+    version: z.string().trim().min(1),
+  })
+  .strict();
+export type RunnerIdentity = z.infer<typeof runnerIdentitySchema>;
+export const runnerShutdownRequestSchema = z
+  .object({ runId: uuidSchema, bootId: uuidSchema })
+  .strict();
+export type RunnerShutdownRequest = z.infer<typeof runnerShutdownRequestSchema>;
+export const runnerShutdownResponseSchema = z
+  .object({
+    runId: uuidSchema,
+    bootId: uuidSchema,
+    outcome: z.enum([
+      "ignored_boot_mismatch",
+      "ignored_run_mismatch",
+      "shutdown_requested",
+      "deferred_busy",
+    ]),
+  })
+  .strict();
+export type RunnerShutdownResponse = z.infer<typeof runnerShutdownResponseSchema>;
+
 export const trafficExecutionStartPath = "/traffic/start" as const;
 export const trafficExecutionAbortPath = "/traffic/current/abort" as const;
 export const trafficExecutionStatusPath = "/traffic/status/:runId" as const;
@@ -200,6 +227,7 @@ export const trafficExecutionStartRequestSchema = z
     runId: uuidSchema,
     saleOfferId: uuidSchema,
     apiBaseUrl: z.string().url(),
+    expectedBootId: uuidSchema.optional(),
     correlationId: correlationIdSchema,
     configSnapshot: acceptedRunConfigSnapshotSchema,
   })
@@ -260,6 +288,8 @@ export type TrafficExecutionAbortResponse = z.infer<typeof trafficExecutionAbort
 
 export const trafficExecutionStatusResponseSchema = z
   .object({
+    bootId: uuidSchema,
+    version: z.string().trim().min(1),
     runId: uuidSchema,
     state: z.enum(["accepted", "executing", "completion_pending", "completed", "unknown"]),
     acceptedAt: isoTimestampSchema.optional(),
