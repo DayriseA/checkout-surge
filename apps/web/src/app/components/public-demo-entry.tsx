@@ -28,6 +28,7 @@ import {
 import {
   type ErrorPresentation,
   isInfrastructureRunLimitRejection,
+  largerRunsGuidance,
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
 import { fieldHints } from "../lib/presentation/field-hints";
@@ -82,7 +83,7 @@ interface CustomDraft {
 }
 
 type CustomSubmissionFailure =
-  | { kind: "validation"; entries: CustomRunSummaryEntry[] }
+  | { kind: "validation"; entries: CustomRunSummaryEntry[]; notice?: ErrorPresentation }
   | { kind: "operation"; presentation: ErrorPresentation };
 
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
@@ -383,14 +384,24 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
       if (
         isCustom &&
-        !isInfrastructureRunLimitRejection(result) &&
         (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
       ) {
         const entries = presentCustomRunIssues([customValidationPath(result.details?.path)]).filter(
           (entry) => customEntryAppliesToMode(entry, customModeRef.current),
         );
-        setCustomSubmissionFailure(entries.length > 0 ? { kind: "validation", entries } : null);
-        return;
+        const infrastructureLimit = isInfrastructureRunLimitRejection(result);
+        // An infrastructure limit with no form field to flag falls through to the operation notice.
+        if (entries.length > 0 || !infrastructureLimit) {
+          const notice = infrastructureLimit
+            ? mapErrorPresentation(result, { surface: "public-start", startRequestOutcome: true })
+            : undefined;
+          setCustomSubmissionFailure(
+            entries.length > 0
+              ? { kind: "validation", entries, ...(notice ? { notice } : {}) }
+              : null,
+          );
+          return;
+        }
       }
 
       const presentation = mapErrorPresentation(result, {
@@ -636,6 +647,10 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             }}
             noValidate
           >
+            <p className="m-0 border-b border-border px-5 py-3 text-sm leading-5 text-muted max-[560px]:px-4">
+              These limits were chosen for the infrastructure running this demo.{" "}
+              {largerRunsGuidance}
+            </p>
             <fieldset
               aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${groupError("traffic") ? " custom-traffic-validation-error" : ""}`}
               aria-invalid={totalRequestsError || groupError("traffic") ? true : undefined}
@@ -1152,6 +1167,12 @@ function CustomErrorSummary({
       <h3 className="m-0 text-base font-bold" id="custom-error-summary-title">
         Fix these settings
       </h3>
+      {failure.notice ? (
+        <div className="grid gap-1">
+          <strong>{failure.notice.headline}</strong>
+          {failure.notice.explanation ? <span>{failure.notice.explanation}</span> : null}
+        </div>
+      ) : null}
       <ul className="m-0 list-disc pl-5">
         {failure.entries.map((entry) => (
           <li key={entry.key}>

@@ -8,8 +8,8 @@ A visitor who hits a hosting limit understands that it is a deliberate hosting c
 
 ## Scope
 
-- **API:** check that it refuses to start when the persisted public policy exceeds the deployment caps, and add the check if it is missing.
-- **Web:** a message for `*_exceeds_deployment_cap` rejections only. It explains the hosting reason and invites the user to run the project locally or on larger infrastructure.
+- **API:** check that it refuses to start when the persisted public policy exceeds the deployment caps, and add the check if it is missing. Verified: `validateActivePolicyAtStartup` already refuses it; no change.
+- **Web:** a message for run rejections with `deployment_*_exceeded` codes and with the public load-size codes (buyers, duration, max VUs, preallocated VUs, request rate, total requests, start delay); never for ERP limits, starting stock, or invalid input. It explains the hosting reason and invites the user to run the project locally or on larger infrastructure. On a rejected custom run, the form still flags the offending field and shows the message alongside. The custom run form also carries a fixed hint line with the same invitation. `*_exceeds_deployment_cap` codes are admin policy-edit rejections and keep the ordinary validation message.
 
 ## Out of Scope
 
@@ -79,3 +79,13 @@ The environment's default pnpm 11.19.0 initially tried to auto-install dependenc
 - `pnpm --filter web exec vitest run --config vitest.config.ts test/error-presentation.test.ts`: passed, 51 tests after the test-only fixture correction.
 - `pnpm test`: passed (exit 0). The unit stage passed all 11 Turbo tasks; API passed 20 files / 334 tests including all eight runtime policy service tests; integration passed 17 files / 192 tests (DB 82, Mock ERP 7, worker 103), all six Turbo tasks.
 - `test:composition` and `test:characterization`: not run, as requested.
+
+### Integration (2026-10-03)
+
+Follow-ups applied when merging into `dev`:
+
+- The web allowlist of infrastructure-limit codes is typed with `PublicRuntimePolicyViolationCode`, so a renamed contract code breaks compilation.
+- A custom run rejected with an infrastructure-limit code again flags the offending field, and the summary also shows the hosting notice. The notice comes from the same `mapErrorPresentation` mapping.
+- The custom run form shows a fixed hint line: "These limits were chosen for the infrastructure running this demo. For larger runs, run the project locally or deploy it on larger infrastructure." The second sentence is shared with the hosting notice (`largerRunsGuidance`). Per-field input-error messages are unchanged.
+- Admin wording stays the shared message.
+- Task scope and design section 1.2 corrected to the owner's code rule.

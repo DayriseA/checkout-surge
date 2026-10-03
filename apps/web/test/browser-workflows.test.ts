@@ -595,10 +595,7 @@ describe("public browser starts", () => {
     ).toBe(true);
   });
 
-  it.each([
-    ["preset", "deployment_buyers_exceeded"],
-    ["custom", "public_total_requests_exceeded"],
-  ])("shows infrastructure guidance for a rejected public %s run", async (kind, violationCode) => {
+  function stubInfrastructureLimitRejection(violationCode: string) {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: string | URL | Request) => {
@@ -619,20 +616,36 @@ describe("public browser starts", () => {
         throw new Error(`Unexpected fetch: ${String(input)}`);
       }),
     );
+  }
+
+  it("shows infrastructure guidance for a rejected public preset run", async () => {
+    stubInfrastructureLimitRejection("deployment_buyers_exceeded");
     const user = userEvent.setup();
     render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
-    if (kind === "custom") await user.click(screen.getByText("Customize a scenario"));
-    await user.click(
-      screen.getByRole("button", {
-        name: kind === "custom" ? "Start custom run" : "Start Preview 1k",
-      }),
-    );
+    await user.click(screen.getByRole("button", { name: "Start Preview 1k" }));
     expect(
       (await screen.findAllByText("This run exceeds an infrastructure limit")).length,
     ).toBeGreaterThan(0);
-    expect(document.body.textContent).toContain(
-      "For larger runs, run the project locally or deploy it on larger infrastructure.",
-    );
+    expect(
+      screen.getAllByText(/^This limit was deliberately chosen for the infrastructure/).length,
+    ).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toContain("Private cap diagnostic");
+  });
+
+  it("flags the field and shows infrastructure guidance for a rejected custom run", async () => {
+    stubInfrastructureLimitRejection("public_buyers_exceeded");
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Customize a scenario"));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    const summary = await screen.findByRole("alert", { name: "Fix these settings" });
+    expect(within(summary).getByText("This run exceeds an infrastructure limit")).toBeTruthy();
+    expect(
+      within(summary).getByText(/^This limit was deliberately chosen for the infrastructure/),
+    ).toBeTruthy();
+    expect(within(summary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
+    expect(screen.getByLabelText("Buyer count (buyers)").getAttribute("aria-invalid")).toBe("true");
     expect(document.body.textContent).not.toContain("Private cap diagnostic");
   });
 

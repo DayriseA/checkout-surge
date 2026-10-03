@@ -1,4 +1,8 @@
-import type { ErrorPayloadCode, PublicRunFailureCategory } from "@checkout-surge/contracts";
+import type {
+  ErrorPayloadCode,
+  PublicRunFailureCategory,
+  PublicRuntimePolicyViolationCode,
+} from "@checkout-surge/contracts";
 import type { BackendRead } from "../backend-read";
 
 export type ErrorPresentationContextName =
@@ -70,7 +74,11 @@ const genericPresentation = {
   tone: "danger" as const,
 };
 
-const infrastructureRunLimitCodes = new Set([
+/** Shared by the infrastructure-limit notice and the custom run builder's limits hint. */
+export const largerRunsGuidance =
+  "For larger runs, run the project locally or deploy it on larger infrastructure.";
+
+const infrastructureRunLimitCodes: ReadonlySet<string> = new Set<PublicRuntimePolicyViolationCode>([
   "deployment_buyers_exceeded",
   "deployment_duration_exceeded",
   "deployment_max_vus_exceeded",
@@ -168,8 +176,7 @@ export function mapErrorPresentation(
   if (isInfrastructureRunLimitRejection(read)) {
     return {
       headline: "This run exceeds an infrastructure limit",
-      explanation:
-        "This limit was deliberately chosen for the infrastructure running this demo. For larger runs, run the project locally or deploy it on larger infrastructure.",
+      explanation: `This limit was deliberately chosen for the infrastructure running this demo. ${largerRunsGuidance}`,
       action: { kind: "edit", label: "Edit values" },
       tone: "warning",
       technicalDetails,

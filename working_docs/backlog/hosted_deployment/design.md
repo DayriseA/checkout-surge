@@ -92,7 +92,7 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 - Hosted run limits come from the existing deployment caps (`DEMO_MAX_*`).
 - `PUBLIC_CUSTOM_*` only bootstraps the public runtime policy on first seed. After that, the policy is edited from the admin UI, and the seed keeps the existing row.
 - The API refuses to start when the persisted public policy exceeds the deployment caps. Lower the policy before lowering the caps.
-- The UI explains that a limit was chosen for hosting reasons, inviting the user to run the project locally or on more ambitious infrastructure. It shows this message only for deployment-cap rejections (`*_exceeds_deployment_cap`), never for invalid input.
+- The UI explains that a limit was chosen for hosting reasons, inviting the user to run the project locally or on larger infrastructure. It shows this message for run rejections with `deployment_*_exceeded` codes and with the public load-size codes (buyers, duration, max VUs, preallocated VUs, request rate, total requests, start delay); never for ERP limits, starting stock, or invalid input. On a rejected custom run, the form still flags the offending field and shows the message alongside. The custom run form also carries a fixed hint line stating that its limits were chosen for the demo's infrastructure, with the same invitation. `*_exceeds_deployment_cap` codes are admin policy-edit rejections and keep the ordinary validation message.
 - `surge-10k` is the reference scenario. Caps, including those for constant-arrival runs, are tuned after measuring on the deployed infrastructure.
 
 ### 1.3 Hosted-only behavior and the local topology
