@@ -76,7 +76,7 @@ Check the effective limit as the process that actually spawns k6 sees it, not as
 ```bash
 ulimit -n      # soft
 ulimit -Hn     # hard
-cat /proc/1/limits
+cat /proc/<pid>/limits   # pid of the process that spawns k6
 ```
 
 Two behaviors are worth knowing before adding configuration:
@@ -147,7 +147,7 @@ Two commonly cited items are worth ruling out explicitly, because they appear on
 
 Persist these with each run, so a result can be interpreted later without re-deriving the environment it came from:
 
-- `ulimit -n` and `/proc/1/limits`, read from a child of the process that spawns k6
+- `ulimit -n`, read from a child of the process that spawns k6, and that process's own `/proc/self/limits`, which k6 inherits
 - `ip_local_port_range`, `tcp_tw_reuse`, and `tcp_timestamps`, from the generator's network namespace
 - host-visible CPU and memory, cgroup memory and CPU limits, and whether those limits are explicitly unlimited
 - sampled peak and mean CPU, peak process and cgroup memory, minimum available memory, peak swap, and memory pressure and OOM counters

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// Deploys the hosted core: builds the core service images, tags them with the commit SHA,
-// pushes them to the Fly registry, then creates or updates the stopped core Machine from
-// infra/fly/core/machine.json through the Machines API. The Machine is never started here.
+// Deploys one hosted Fly app: builds its images, tags them with the commit SHA, pushes them to
+// the app's Fly registry, then creates or updates its stopped Machine from
+// infra/fly/<target>/machine.json through the Machines API. The Machine is never started here.
 //
-// Usage, from anywhere: node infra/fly/core/deploy.mjs [--no-depot | --local-build]
+// Usage, from anywhere: node infra/fly/deploy.mjs <core|runner> [--no-depot | --local-build]
 //   default        Fly remote builder (Depot)
 //   --no-depot     Fly's previous remote builder, for a Depot incident
 //   --local-build  local `docker build` plus `docker push`
@@ -14,11 +14,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const app = "checkout-surge-core";
 const region = "cdg";
-const volumeName = "core_data";
-const volumeSizeGb = 3;
-const repoRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: operator script, not a Turborepo task.
 const flyctl = process.env.FLYCTL || "flyctl";
 const builder = process.argv.includes("--local-build")
@@ -27,17 +24,44 @@ const builder = process.argv.includes("--local-build")
     ? "no-depot"
     : "depot";
 
-const images = {
-  api: { dockerfile: "docker/Dockerfile.node-service", target: "runtime-fly", service: "api" },
-  worker: { dockerfile: "docker/Dockerfile.node-service", target: "runtime", service: "worker" },
-  "mock-erp": {
-    dockerfile: "docker/Dockerfile.node-service",
-    target: "runtime",
-    service: "mock-erp",
+// Image fields in machine.json hold an image name from `images`; the script replaces them.
+const targets = {
+  core: {
+    app: "checkout-surge-core",
+    volume: { name: "core_data", sizeGb: 3 },
+    images: {
+      api: { dockerfile: "docker/Dockerfile.node-service", target: "runtime-fly", service: "api" },
+      worker: {
+        dockerfile: "docker/Dockerfile.node-service",
+        target: "runtime",
+        service: "worker",
+      },
+      "mock-erp": {
+        dockerfile: "docker/Dockerfile.node-service",
+        target: "runtime",
+        service: "mock-erp",
+      },
+      web: { dockerfile: "apps/web/Dockerfile", target: "runtime" },
+      setup: { dockerfile: "packages/db/Dockerfile", target: "runtime" },
+    },
   },
-  web: { dockerfile: "apps/web/Dockerfile", target: "runtime" },
-  setup: { dockerfile: "packages/db/Dockerfile", target: "runtime" },
+  runner: {
+    app: "checkout-surge-runner",
+    images: {
+      "load-orchestrator": {
+        dockerfile: "apps/load-orchestrator/Dockerfile",
+        target: "runtime-fly",
+      },
+    },
+  },
 };
+
+const role = process.argv[2];
+const target = targets[role];
+if (!target) {
+  console.error("Usage: node infra/fly/deploy.mjs <core|runner> [--no-depot | --local-build]");
+  process.exit(64);
+}
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, { cwd: repoRoot, encoding: "utf8", ...options });
@@ -59,9 +83,9 @@ function buildAndPushRemotely(image, label) {
     [
       "deploy",
       "-a",
-      app,
+      target.app,
       "-c",
-      "infra/fly/core/build.toml",
+      `infra/fly/${role}/build.toml`,
       "--build-only",
       "--push",
       "--remote-only",
@@ -102,9 +126,9 @@ function buildAndPushLocally(image, ref) {
 function buildAndPushImages(version) {
   if (builder === "local") run(flyctl, ["auth", "docker"], { stdio: "inherit" });
   const refs = {};
-  for (const [name, image] of Object.entries(images)) {
+  for (const [name, image] of Object.entries(target.images)) {
     const label = `${name}-${version}`;
-    refs[name] = `registry.fly.io/${app}:${label}`;
+    refs[name] = `registry.fly.io/${target.app}:${label}`;
     console.log(`Building ${refs[name]} (${builder} builder)`);
     if (builder === "local") buildAndPushLocally(image, refs[name]);
     else buildAndPushRemotely(image, label);
@@ -113,10 +137,11 @@ function buildAndPushImages(version) {
 }
 
 function machineConfig(imageRefs) {
-  const config = JSON.parse(readFileSync(`${repoRoot}infra/fly/core/machine.json`, "utf8"));
-  for (const container of config.containers) {
-    container.image = imageRefs[container.name] ?? container.image;
-    for (const file of container.files ?? []) {
+  const config = JSON.parse(readFileSync(`${repoRoot}infra/fly/${role}/machine.json`, "utf8"));
+  // A multi-container Machine (core) sets images per container; a single-image one (runner) at the top.
+  for (const holder of [config, ...(config.containers ?? [])]) {
+    if (holder.image in imageRefs) holder.image = imageRefs[holder.image];
+    for (const file of holder.files ?? []) {
       if (!file.local_path) continue;
       file.raw_value = readFileSync(`${repoRoot}${file.local_path}`).toString("base64");
       delete file.local_path;
@@ -129,7 +154,7 @@ function createMachinesApi() {
   return async (method, path, body) => {
     // Read per call: a token read before the builds was refused (403) once they had finished.
     const token = run(flyctl, ["auth", "token"], { stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const response = await fetch(`https://api.machines.dev/v1/apps/${app}${path}`, {
+    const response = await fetch(`https://api.machines.dev/v1/apps/${target.app}${path}`, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -140,20 +165,23 @@ function createMachinesApi() {
   };
 }
 
-async function findCoreMachine(machinesApi) {
+async function findMachine(machinesApi) {
   const machines = await machinesApi("GET", "/machines");
-  const cores = machines.filter((machine) => machine.config?.metadata?.role === "core");
-  if (cores.length > 1) {
-    throw new Error(`Expected at most one core Machine, found ${cores.length}.`);
+  const matches = machines.filter((machine) => machine.config?.metadata?.role === role);
+  if (matches.length > 1) {
+    throw new Error(`Expected at most one ${role} Machine, found ${matches.length}.`);
   }
-  return cores[0];
+  return matches[0];
 }
 
-async function createCore(machinesApi, config) {
+async function createMachine(machinesApi, config) {
+  if (!target.volume) {
+    return machinesApi("POST", "/machines", { region, config, skip_launch: true });
+  }
   const volume = await machinesApi("POST", "/volumes", {
-    name: volumeName,
+    name: target.volume.name,
     region,
-    size_gb: volumeSizeGb,
+    size_gb: target.volume.sizeGb,
     compute: config.guest,
   });
   config.mounts[0].volume = volume.id;
@@ -165,28 +193,28 @@ async function createCore(machinesApi, config) {
   }
 }
 
-async function updateCore(machinesApi, core, config) {
-  config.mounts[0].volume = core.config.mounts[0].volume;
-  return machinesApi("POST", `/machines/${core.id}`, { region, config, skip_launch: true });
+async function updateMachine(machinesApi, machine, config) {
+  if (target.volume) config.mounts[0].volume = machine.config.mounts[0].volume;
+  return machinesApi("POST", `/machines/${machine.id}`, { region, config, skip_launch: true });
 }
 
 async function main() {
   const version = commitVersion();
   const machinesApi = createMachinesApi();
-  const existingCore = await findCoreMachine(machinesApi);
-  if (existingCore && existingCore.state !== "stopped" && existingCore.state !== "created") {
+  const existing = await findMachine(machinesApi);
+  if (existing && existing.state !== "stopped" && existing.state !== "created") {
     throw new Error(
-      `Core Machine ${existingCore.id} is ${existingCore.state}; stop it before deploying.`,
+      `${role} Machine ${existing.id} is ${existing.state}; stop it before deploying.`,
     );
   }
 
   const config = machineConfig(buildAndPushImages(version));
-  const core = existingCore
-    ? await updateCore(machinesApi, existingCore, config)
-    : await createCore(machinesApi, config);
+  const machine = existing
+    ? await updateMachine(machinesApi, existing, config)
+    : await createMachine(machinesApi, config);
   // Fly refuses to start the Machine until it has finished preparing its new configuration.
-  await machinesApi("GET", `/machines/${core.id}/wait?state=stopped&timeout=60`);
-  console.log(`Core Machine ${core.id} is stopped and ready to start at version ${version}.`);
+  await machinesApi("GET", `/machines/${machine.id}/wait?state=stopped&timeout=60`);
+  console.log(`${role} Machine ${machine.id} is stopped and ready to start at version ${version}.`);
 }
 
 main().catch((error) => {

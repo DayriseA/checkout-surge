@@ -250,7 +250,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **`somaxconn`** is set for the Machine's shared network namespace before the API listens (8192 measured; Fly's default is 4096). The entrypoint reads each setting back and fails the start if it was refused.
 - **IPv6 listening.** The API and the core's Caddy listen on IPv6 (`::`) as well as IPv4, so the runner and the gate can reach them over 6PN.
 - **No dependency on the load-orchestrator.** Unlike Compose, the core's web container does not depend on the load-orchestrator, which runs on another Machine.
-- **`apiBaseUrl`.** The API derives the `apiBaseUrl` it gives the runner from its own 6PN address at runtime, never `localhost`.
+- **`apiBaseUrl`.** The API derives the `apiBaseUrl` it gives the runner from its own 6PN address at runtime, never `localhost`: it reads `FLY_PRIVATE_IP`, which Fly sets in every container of a multi-container Machine. An explicit `API_BASE_URL` still wins (task 02).
 
 ---
 
@@ -264,7 +264,8 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **The API starts the runner** explicitly through the Machines API when a run starts. The runner has no autostart, neither public nor Flycast, which lets our code see and classify capacity errors.
 - **Every run starts from a stopped runner, with a fresh boot.**
   - If the runner is still running, it is shut down first, the API waits for `stopped`, then starts it.
-  - A fresh boot clears kernel socket state between runs: a `surge-10k` run leaves 10,000-20,000 sockets in TIME_WAIT.
+  - A fresh boot clears kernel socket state between runs: a `surge-10k` run leaves about 10,000 sockets in TIME_WAIT (measured on Fly in task 02; 10,000-20,000 locally for back-to-back runs).
+  - **Measured in task 02:** `start` to load-orchestrator ready takes 3.4 to 7.4 s. Node listens after about 3 s; the runner's first readiness probe to the API sometimes times out at its 2 s limit before the next one succeeds. Recreating a runner from the old config takes about 7 s to reach `stopped`.
 - **Before each start, the API sets:**
   - the runner's size (section 1.1);
   - the runner's `API_BASE_URL`, which is the core's current 6PN address for metrics and completion. That address is fixed at runner boot, independently of the `apiBaseUrl` k6 targets, and it changes when the core is recreated.
@@ -321,7 +322,10 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 
 - **Image.** A Fly variant of the load-orchestrator image uses a root entrypoint. It recreates what Compose configures today, then drops to `node`:
   - raise the `nofile` hard limit, which k6 inherits through Node;
-  - set `net.ipv4.ip_local_port_range` (`10240 65535`) and `net.ipv4.tcp_tw_reuse` (`1`).
+  - set `net.ipv4.ip_local_port_range` (`10240 65535`) and `net.ipv4.tcp_tw_reuse` (`1`);
+  - set `HOME=/home/node`, because `setpriv` keeps root's `HOME` and k6 refuses to start when it cannot stat `$HOME/.config/k6`.
+
+  Measured in task 02: k6 runs with `nofile` 1,048,576 soft and hard, and both sysctls take effect.
 - **IPv6 listening.** The load-orchestrator listens on IPv6 (`::`), so the API can reach it over 6PN.
 
 ---
@@ -372,7 +376,7 @@ Application secrets are stored as Fly secrets, per app:
   - generated PostgreSQL and Redis passwords.
 
   Each container lists only the secrets it needs, because Fly gives a container no app secret without an explicit list (task 01).
-- **Runner:** only `CONTROL_SERVICE_TOKEN`. It authenticates both directions: the API's control calls, and the runner's metrics and completion.
+- **Runner:** only `CONTROL_SERVICE_TOKEN`. It authenticates both directions: the API's control calls, and the runner's metrics and completion. The runner is a single-image Machine, so it gets the app secrets without a per-container list.
 
 ### 7.2 Machines API tokens
 
@@ -418,6 +422,7 @@ Machines API tokens are app-scoped deploy tokens:
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
   - The deploy script verifies both versions at the end.
 - **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime.
+- **Deploy script.** `infra/fly/deploy.mjs <core|runner>`. Each app's images live in its own registry repository. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**
   - During the build-out: a local script (for example `pnpm deploy:fly`), run from the owner's workstation with flyctl.
   - Near the end of the project: GitHub Actions, calling the same script.
@@ -481,6 +486,8 @@ This section lists the changes implied by the decisions above, grouped by owner.
 ## 10. Feasibility Test Checklist
 
 Run this before the full implementation. Every item is unverified until tested on the target Fly organization. Core-side results (task 01, 2026-10-03): every item passed except the runner items, which belong to task 02; details are in `01_core_on_fly.md`.
+
+**Verdict (task 02, 2026-10-03): the topology is confirmed.** A runner on its own performance-4x Machine ran `surge-10k` across hosts over 6PN IPv6 twice, including once on a recreated runner: 10,000 requests, 500 accepted and confirmed, 9,500 sold out, zero transport failures, and connection establishment under 0.6 s at p95. Transport and business behavior match the local reference. Points to revisit, none blocking: the generator saturates its 4 vCPU while creating VUs and dispatching (measured again in task 13), and two hosted evidence gaps fixed in task 02 (`processMaxOpenFiles` read from the wrong process, CPU utilisation unavailable without a cgroup quota). Details are in `02_runner_on_fly.md`.
 
 - **Access.** Multi-container Machines are available to the organization. The access requirement was lifted in April 2025, but the API model still mentions an organization restriction.
 - **Startup gate.** The `depends_on` barrier is reapplied on every start. A deliberately failing migration or seed leaves the API port closed, including on 6PN.

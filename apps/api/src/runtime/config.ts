@@ -116,7 +116,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
       pendingPersistenceRecoveryDefaults.maxConcurrentDirectAttempts,
     ),
     webOrigins: parseCsv(env.WEB_ORIGIN),
-    apiBaseUrl: parseUrl(env.API_BASE_URL, "API_BASE_URL", "http://localhost:4000"),
+    apiBaseUrl: parseApiBaseUrl(env),
     loadOrchestratorBaseUrl: parseUrl(
       env.LOAD_ORCHESTRATOR_BASE_URL,
       "LOAD_ORCHESTRATOR_BASE_URL",
@@ -380,6 +380,18 @@ function parseCsv(value: string | undefined): string[] {
       .map((entry) => entry.trim())
       .filter((entry) => entry.length > 0) ?? []
   );
+}
+
+/**
+ * The URL the load generator uses to reach this API. On Fly, the runner is another Machine, so
+ * without an explicit API_BASE_URL it is derived from this Machine's 6PN address.
+ */
+function parseApiBaseUrl(env: NodeJS.ProcessEnv): string {
+  const flyPrivateIp = env.FLY_PRIVATE_IP?.trim();
+  const fallback = flyPrivateIp
+    ? `http://[${flyPrivateIp}]:${parsePositiveInteger(env.PORT, "PORT", 4000)}`
+    : "http://localhost:4000";
+  return parseUrl(env.API_BASE_URL, "API_BASE_URL", fallback);
 }
 
 function parseUrl(value: string | undefined, name: string, fallback: string): string {

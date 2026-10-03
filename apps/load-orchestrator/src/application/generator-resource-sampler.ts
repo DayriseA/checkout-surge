@@ -52,24 +52,49 @@ export function startGeneratorResourceSampler(
     sampling = true;
     const observedAtMs = nowMs();
     try {
-      const [status, cgroupMemory, meminfo, cpuStat, cgroupSwap, memoryEvents] = await Promise.all([
+      const [
+        status,
+        cgroupMemory,
+        meminfo,
+        cpuStat,
+        v1CpuUsage,
+        cgroupSwap,
+        memoryEvents,
+        v1MemoryUsage,
+        v1MemoryStat,
+        v1MemoryFailcnt,
+        v1OomControl,
+      ] = await Promise.all([
         safeRead(readText, `/proc/${input.pid}/status`),
         safeRead(readText, "/sys/fs/cgroup/memory.current"),
         safeRead(readText, "/proc/meminfo"),
         safeRead(readText, "/sys/fs/cgroup/cpu.stat"),
+        // cgroup v1 fallbacks, as mounted on Fly Machines. CPU time is in nanoseconds.
+        safeRead(readText, "/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage"),
         safeRead(readText, "/sys/fs/cgroup/memory.swap.current"),
         safeRead(readText, "/sys/fs/cgroup/memory.events"),
+        safeRead(readText, "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
+        safeRead(readText, "/sys/fs/cgroup/memory/memory.stat"),
+        safeRead(readText, "/sys/fs/cgroup/memory/memory.failcnt"),
+        safeRead(readText, "/sys/fs/cgroup/memory/memory.oom_control"),
       ]);
       if (stopped) return;
 
       const k6RssBytes = parseKilobyteField(status, "VmRSS");
-      const cgroupMemoryBytes = parseNonnegativeInteger(cgroupMemory);
+      const cgroupMemoryBytes =
+        parseNonnegativeInteger(cgroupMemory) ?? parseNonnegativeInteger(v1MemoryUsage);
       const hostMemAvailableBytes = parseKilobyteField(meminfo, "MemAvailable");
-      const cpuUsageUsec = parseNamedBigInt(cpuStat, "usage_usec");
-      const cgroupSwapBytes = parseNonnegativeInteger(cgroupSwap);
+      const cpuUsageUsec =
+        parseNamedBigInt(cpuStat, "usage_usec") ?? parseNanosecondsAsMicroseconds(v1CpuUsage);
+      const cgroupSwapBytes =
+        parseNonnegativeInteger(cgroupSwap) ?? parseNamedInteger(v1MemoryStat, "swap");
+      // cgroup v1 has no memory.high, so the `high` counter has no v1 equivalent.
       const memoryEventsHighCount = parseNamedInteger(memoryEvents, "high");
-      const memoryEventsMaxCount = parseNamedInteger(memoryEvents, "max");
-      const memoryEventsOomKillCount = parseNamedInteger(memoryEvents, "oom_kill");
+      // v1 `failcnt` counts charges refused at the memory limit, like the v2 `max` event.
+      const memoryEventsMaxCount =
+        parseNamedInteger(memoryEvents, "max") ?? parseNonnegativeInteger(v1MemoryFailcnt);
+      const memoryEventsOomKillCount =
+        parseNamedInteger(memoryEvents, "oom_kill") ?? parseNamedInteger(v1OomControl, "oom_kill");
 
       const usable = [
         k6RssBytes,
@@ -196,6 +221,11 @@ function parseNamedInteger(value: string | null, field: string): number | null {
 function parseNamedBigInt(value: string | null, field: string): bigint | null {
   const match = new RegExp(`^${field}\\s+([0-9]+)\\s*$`, "m").exec(value ?? "");
   return match ? BigInt(match[1] ?? "") : null;
+}
+
+function parseNanosecondsAsMicroseconds(value: string | null): bigint | null {
+  const normalized = value?.trim() ?? "";
+  return /^[0-9]+$/.test(normalized) ? BigInt(normalized) / 1_000n : null;
 }
 
 function maximum(current: number | null, observed: number | null): number | null {

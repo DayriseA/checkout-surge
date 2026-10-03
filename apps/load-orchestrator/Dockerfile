@@ -46,3 +46,13 @@ RUN install -d -o node -g node /var/lib/checkout-surge/load-orchestrator
 USER node
 
 CMD ["node", "dist/index.js"]
+
+# Fly.io runner variant: a root entrypoint applies kernel limits, then drops to `node`.
+FROM runtime AS runtime-fly
+
+USER root
+
+COPY --chmod=0755 infra/fly/runner/load-orchestrator-entrypoint.sh /usr/local/bin/fly-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/fly-entrypoint.sh"]
+CMD ["node", "dist/index.js"]

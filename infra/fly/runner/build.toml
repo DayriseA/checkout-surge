@@ -1,0 +1,3 @@
+# Minimal app config that `flyctl deploy --build-only` requires to build the runner image.
+# The runner Machine itself is defined by machine.json and managed through the Machines API.
+app = "checkout-surge-runner"

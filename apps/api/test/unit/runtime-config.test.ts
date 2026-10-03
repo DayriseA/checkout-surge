@@ -333,4 +333,20 @@ describe("API runtime configuration", () => {
       }),
     ).toThrow(/API_READINESS_TIMEOUT_MS.*less than.*Compose API healthcheck timeout/);
   });
+
+  it("derives the generator-facing API base URL from the Fly private address", () => {
+    const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token", PORT: "4000" };
+
+    expect(loadApiConfig({ ...env, FLY_PRIVATE_IP: "fdaa:0:1:a7b:1::2" }).apiBaseUrl).toBe(
+      "http://[fdaa:0:1:a7b:1::2]:4000",
+    );
+    expect(
+      loadApiConfig({
+        ...env,
+        FLY_PRIVATE_IP: "fdaa:0:1:a7b:1::2",
+        API_BASE_URL: "http://api:4000",
+      }).apiBaseUrl,
+    ).toBe("http://api:4000");
+    expect(loadApiConfig(env).apiBaseUrl).toBe("http://localhost:4000");
+  });
 });

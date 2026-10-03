@@ -807,6 +807,35 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
+  it("reads an unlimited cgroup v1 CPU quota from a combined cpu,cpuacct mount", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us": "-1\n",
+        "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us": "100000\n",
+      }),
+    });
+    expect(diagnostics.generatorCapacity).toMatchObject({
+      cgroupCpuQuota: null,
+      cgroupCpuQuotaUnlimited: true,
+    });
+  });
+
+  it("reports the open-files limits of the load orchestrator process that spawns k6", async () => {
+    const plan = generateK6Script(startRequest).executionPlan;
+    const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
+      runCommand: async () => null,
+      readText: diagnosticReader({
+        "/proc/1/limits":
+          "Max open files            10240                10240                files\n",
+        "/proc/self/limits":
+          "Max open files            1048576              1048576              files\n",
+      }),
+    });
+    expect(diagnostics.processMaxOpenFiles).toEqual({ soft: 1_048_576, hard: 1_048_576 });
+  });
+
   it("degrades invalid quota and malformed or missing capacity files without throwing", async () => {
     const plan = generateK6Script(startRequest).executionPlan;
     await expect(

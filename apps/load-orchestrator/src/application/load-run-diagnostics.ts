@@ -37,6 +37,8 @@ export async function collectLoadRunDiagnostics(
     v1MemoryLimit,
     v1CpuQuota,
     v1CpuPeriod,
+    v1CombinedCpuQuota,
+    v1CombinedCpuPeriod,
     portRange,
     twReuse,
     timestamps,
@@ -44,13 +46,17 @@ export async function collectLoadRunDiagnostics(
   ] = await Promise.all([
     safeCommand(command, "nproc", []),
     safeCommand(command, "sh", ["-lc", "ulimit -n"]),
-    safeRead(reader, "/proc/1/limits"),
+    // This process's limits, which k6 inherits. It is not PID 1 on every host (Fly runs its own init).
+    safeRead(reader, "/proc/self/limits"),
     safeRead(reader, "/proc/meminfo"),
     safeRead(reader, "/sys/fs/cgroup/memory.max"),
     safeRead(reader, "/sys/fs/cgroup/cpu.max"),
     safeRead(reader, "/sys/fs/cgroup/memory/memory.limit_in_bytes"),
     safeRead(reader, "/sys/fs/cgroup/cpu/cpu.cfs_quota_us"),
     safeRead(reader, "/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    // Some cgroup v1 hosts (Fly Machines) mount the controller only as `cpu,cpuacct`, without a `cpu` alias.
+    safeRead(reader, "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us"),
+    safeRead(reader, "/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us"),
     safeRead(reader, "/proc/sys/net/ipv4/ip_local_port_range"),
     safeRead(reader, "/proc/sys/net/ipv4/tcp_tw_reuse"),
     safeRead(reader, "/proc/sys/net/ipv4/tcp_timestamps"),
@@ -60,7 +66,8 @@ export async function collectLoadRunDiagnostics(
   const memoryLimit = parseV2MemoryLimit(v2MemoryLimit) ??
     parseV1MemoryLimit(v1MemoryLimit) ?? { value: null, unlimited: null };
   const cpuQuota = parseV2CpuQuota(v2CpuQuota) ??
-    parseV1CpuQuota(v1CpuQuota, v1CpuPeriod) ?? { value: null, unlimited: null };
+    parseV1CpuQuota(v1CpuQuota, v1CpuPeriod) ??
+    parseV1CpuQuota(v1CombinedCpuQuota, v1CombinedCpuPeriod) ?? { value: null, unlimited: null };
   const capacity = {
     ...memory,
     cgroupMemoryLimitBytes: memoryLimit.value,

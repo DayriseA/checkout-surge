@@ -7,7 +7,7 @@ Work breakdown for the hosted deployment on Fly.io.
 
 ## Rules
 
-- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward.
+- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13.
 - **Notes stay in the task.** Findings, measurements and annotations go into the task's own "Working notes" section, never into another task or into `design.md`.
 - **Decisions stay in the design.** When a task changes or refines a decision, update `design.md` in the same change.
 - **Open points are not decided.** They are settled with the owner when the task starts.
@@ -18,7 +18,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | # | Task | Depends on | Status |
 | :-- | :-- | :-- | :-- |
 | 01 | [Core on Fly](01_core_on_fly.md) | none | done |
-| 02 | [Runner on Fly](02_runner_on_fly.md) | 01 | todo |
+| 02 | [Runner on Fly](02_runner_on_fly.md) | 01 | done |
 | 03 | [Unavailable traffic evidence](03_unavailable_traffic_evidence.md) | none | todo |
 | 04 | [Runner control contract](04_runner_control_contract.md) | none | todo |
 | 05 | [Runner lifecycle](05_runner_lifecycle.md) | 02, 04 | todo |
@@ -30,6 +30,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 11 | [Guard](11_guard.md) | 05, 09 | todo |
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | todo |
 | 13 | [Tuning and go-live](13_tuning_and_go_live.md) | all, plus the external prerequisite | todo |
+| 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | todo |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 
