@@ -1,0 +1,19 @@
+{
+	auto_https off
+}
+
+# Hosted core ingress on Fly.io. All core containers share one network namespace, so
+# upstreams are on loopback. `:8080` listens on IPv6 (6PN) as well as IPv4.
+:8080 {
+	@dashboard_events path /dashboard/events
+
+	# Browser EventSource uses this same-origin path; only the SSE stream bypasses Next.js.
+	handle @dashboard_events {
+		reverse_proxy 127.0.0.1:4000
+	}
+
+	handle {
+		encode gzip
+		reverse_proxy 127.0.0.1:3000
+	}
+}

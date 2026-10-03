@@ -47,3 +47,13 @@ COPY --from=build --chown=node:node /deploy/ ./
 USER node
 
 CMD ["node", "dist/index.js"]
+
+# Fly.io core variant of the API: a root entrypoint applies kernel limits, then drops to `node`.
+FROM runtime AS runtime-fly
+
+USER root
+
+COPY --chmod=0755 infra/fly/core/api-entrypoint.sh /usr/local/bin/fly-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/fly-entrypoint.sh"]
+CMD ["node", "dist/index.js"]

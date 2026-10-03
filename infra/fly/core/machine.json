@@ -1,0 +1,340 @@
+{
+  "guest": {
+    "cpu_kind": "performance",
+    "cpus": 4,
+    "memory_mb": 8192
+  },
+  "metadata": {
+    "role": "core"
+  },
+  "stop_config": {
+    "timeout": "30s"
+  },
+  "volumes": [
+    {
+      "name": "data"
+    }
+  ],
+  "mounts": [
+    {
+      "name": "data",
+      "path": "/persistent",
+      "volume": ""
+    }
+  ],
+  "containers": [
+    {
+      "name": "postgres",
+      "image": "postgres:17-alpine",
+      "cmd": [
+        "sh",
+        "-c",
+        "export PGDATA=/persistent/postgres && exec sh /fly/delayed-stop.sh INT docker-entrypoint.sh postgres -c listen_addresses=127.0.0.1"
+      ],
+      "env": {
+        "POSTGRES_DB": "checkout_surge",
+        "POSTGRES_USER": "postgres"
+      },
+      "secrets": [
+        {
+          "env_var": "POSTGRES_PASSWORD"
+        }
+      ],
+      "files": [
+        {
+          "guest_path": "/fly/delayed-stop.sh",
+          "local_path": "infra/fly/core/delayed-stop.sh"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": ["pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "checkout_surge"]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "redis",
+      "image": "redis:7-alpine",
+      "cmd": [
+        "sh",
+        "-c",
+        "mkdir -p /persistent/redis && cd /persistent/redis && exec sh /fly/delayed-stop.sh TERM docker-entrypoint.sh redis-server --dir /persistent/redis --appendonly yes --bind 127.0.0.1 --requirepass \"$REDIS_PASSWORD\""
+      ],
+      "secrets": [
+        {
+          "env_var": "REDIS_PASSWORD"
+        }
+      ],
+      "files": [
+        {
+          "guest_path": "/fly/delayed-stop.sh",
+          "local_path": "infra/fly/core/delayed-stop.sh"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "sh",
+              "-c",
+              "REDISCLI_AUTH=\"$REDIS_PASSWORD\" redis-cli -h 127.0.0.1 ping | grep -q PONG"
+            ]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "setup",
+      "image": "setup",
+      "secrets": [
+        {
+          "env_var": "DATABASE_URL"
+        }
+      ],
+      "restart": {
+        "policy": "no"
+      },
+      "depends_on": [
+        {
+          "name": "postgres",
+          "condition": "healthy"
+        }
+      ]
+    },
+    {
+      "name": "mock-erp",
+      "image": "mock-erp",
+      "env": {
+        "HOST": "127.0.0.1",
+        "PORT": "4100"
+      },
+      "secrets": [
+        {
+          "env_var": "DATABASE_URL"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "setup",
+          "condition": "exited_successfully"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "node",
+              "-e",
+              "fetch('http://127.0.0.1:4100/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            ]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "api",
+      "image": "api",
+      "env": {
+        "HOST": "::",
+        "PORT": "4000",
+        "API_LISTEN_BACKLOG": "8192",
+        "API_TRUSTED_PROXY_CIDRS": "127.0.0.0/8,::1/128",
+        "MOCK_ERP_BASE_URL": "http://127.0.0.1:4100",
+        "WEB_ORIGIN": "http://localhost:8080"
+      },
+      "secrets": [
+        {
+          "env_var": "DATABASE_URL"
+        },
+        {
+          "env_var": "REDIS_URL"
+        },
+        {
+          "env_var": "CONTROL_SERVICE_TOKEN"
+        },
+        {
+          "env_var": "PUBLIC_CLIENT_COOKIE_SECRET"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "setup",
+          "condition": "exited_successfully"
+        },
+        {
+          "name": "redis",
+          "condition": "healthy"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "node",
+              "-e",
+              "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            ]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "worker",
+      "image": "worker",
+      "env": {
+        "HEALTH_HOST": "127.0.0.1",
+        "HEALTH_PORT": "4300",
+        "MOCK_ERP_BASE_URL": "http://127.0.0.1:4100"
+      },
+      "secrets": [
+        {
+          "env_var": "DATABASE_URL"
+        },
+        {
+          "env_var": "REDIS_URL"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "setup",
+          "condition": "exited_successfully"
+        },
+        {
+          "name": "redis",
+          "condition": "healthy"
+        },
+        {
+          "name": "mock-erp",
+          "condition": "healthy"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "node",
+              "-e",
+              "fetch('http://127.0.0.1:4300/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            ]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "web",
+      "image": "web",
+      "cmd": ["sh", "-c", "HOSTNAME=127.0.0.1 exec node apps/web/server.js"],
+      "env": {
+        "PORT": "3000",
+        "API_BASE_URL": "http://127.0.0.1:4000",
+        "WEB_ORIGIN": "http://localhost:8080"
+      },
+      "secrets": [
+        {
+          "env_var": "CONTROL_SERVICE_TOKEN"
+        },
+        {
+          "env_var": "ADMIN_DASHBOARD_PASSPHRASE"
+        },
+        {
+          "env_var": "ADMIN_SESSION_SECRET"
+        },
+        {
+          "env_var": "PUBLIC_CLIENT_COOKIE_SECRET"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "api",
+          "condition": "healthy"
+        },
+        {
+          "name": "mock-erp",
+          "condition": "healthy"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "node",
+              "-e",
+              "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            ]
+          },
+          "interval": 2,
+          "timeout": 5
+        }
+      ]
+    },
+    {
+      "name": "caddy",
+      "image": "caddy:2-alpine",
+      "files": [
+        {
+          "guest_path": "/etc/caddy/Caddyfile",
+          "local_path": "infra/caddy/Caddyfile.fly"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "api",
+          "condition": "healthy"
+        },
+        {
+          "name": "web",
+          "condition": "healthy"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+          },
+          "interval": 2,
+          "timeout": 5
+        }
+      ]
+    }
+  ]
+}

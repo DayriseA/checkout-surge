@@ -17,7 +17,7 @@ Work breakdown for the hosted deployment on Fly.io.
 
 | # | Task | Depends on | Status |
 | :-- | :-- | :-- | :-- |
-| 01 | [Core on Fly](01_core_on_fly.md) | none | todo |
+| 01 | [Core on Fly](01_core_on_fly.md) | none | done |
 | 02 | [Runner on Fly](02_runner_on_fly.md) | 01 | todo |
 | 03 | [Unavailable traffic evidence](03_unavailable_traffic_evidence.md) | none | todo |
 | 04 | [Runner control contract](04_runner_control_contract.md) | none | todo |

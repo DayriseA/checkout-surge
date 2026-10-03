@@ -138,7 +138,7 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 - **Updating:** "update in progress, retry shortly". This is shown when a deployment holds the lease.
 - **Relocating:** "provider capacity issue, relocating the demo, please wait".
 - **No capacity in Europe:** a provider message linking to https://status.flyio.net/ and inviting the visitor to come back later.
-- **Setup failure:** a clear error when migrations or seed fail.
+- **Setup failure:** a clear error when migrations or seed fail. The Machine stays `started` in that case, so the gate detects the failure through `containers[].state` in the Machines API (the setup container `stopped` with a non-zero exit, its dependents never started).
 
 ### 2.4 Visitor IP propagation
 
@@ -167,8 +167,12 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 
 ### 3.1 Packaging
 
-- **Choice.** A Fly multi-container Machine that reuses the existing per-service images, with a dedicated Fly config. Images are built and pushed separately and referenced by version. The Compose-to-Fly conversion path is not used.
-- **Fallback.** A single image with `supervisord`, if multi-container needs heavy workarounds for the volume, the startup dependencies or the shutdown.
+- **Choice, verified in task 01.** A Fly multi-container Machine that reuses the existing per-service images, with a dedicated Fly config (`infra/fly/core/machine.json`). Images are built and pushed separately and referenced by version. The Compose-to-Fly conversion path is not used. PostgreSQL, Redis and Caddy use the same Docker Hub images as Compose.
+- **Workarounds it needs**, each a few lines and verified on Fly:
+  - **Delayed database stop.** Fly signals every container at once on stop, so PostgreSQL and Redis would stop before the applications and the Machine would hang until its stop timeout. A wrapper delays their shutdown by 10 s; the Machine then stops cleanly in about 11 s.
+  - **Image `ENV` wins over a container's `env`.** Keys an image already sets (`PGDATA`, the web image's `HOSTNAME`) are set in the container command instead.
+  - **Explicit secrets per container.** A container without a `secrets` list gets no app secret, so each container lists the secrets it needs.
+- **Fallback, not needed.** A single image with `supervisord` stays the answer if a future Fly change breaks multi-container.
 - **Rejected.**
   - Machine `config.processes`: it still needs a shared image and has no readiness dependencies.
   - `fly.toml` `[processes]` groups: each group gets its own Machines.
@@ -190,12 +194,12 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
   - the public runtime policy is inserted only when missing.
 
   Accepted runs are unaffected, because they use a frozen configuration snapshot.
-- **Setup failure.** If migrations or the seed fail, the API, worker and Mock ERP do not start. The API port stays closed, including on 6PN, and the gate shows a setup-failure page.
+- **Setup failure.** If migrations or the seed fail, the API, worker and Mock ERP do not start. The API port stays closed, including on 6PN, and the gate shows a setup-failure page. Verified in task 01: the barrier is reapplied on every start, and the Machine itself stays `started` (section 2.3).
 - **Incompatible pre-release changes** recreate a fresh core through the recovery path (section 3.5), triggered deliberately by the deploy command (section 8).
 
 ### 3.3 Storage
 
-- **Volume.** PostgreSQL and Redis data live on one Fly volume, in separate subdirectories (for example `/persistent/postgres` and `/persistent/redis`).
+- **Volume.** PostgreSQL and Redis data live on one Fly volume mounted at `/persistent`, in `/persistent/postgres` and `/persistent/redis`. Fly mounts the volume into every container of the Machine; each database owns its own subdirectory (uid 70 and uid 999, mode 700), and neither entrypoint touches the other's data.
 - **Why not rootfs.** A performance-4x volume gets up to 16,000 IOPS and 64 MiB/s, while rootfs is capped at 2,000 IOPS and 8 MiB/s. These are documented maxima, not guarantees.
 - **Persistence.** History and admin edits survive between sessions, but nothing depends on them.
 - **No restore path.** There is no volume fork and no snapshot restore. Fly's default daily snapshots stay enabled, but nothing relies on them.
@@ -237,12 +241,13 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **Lease coordination.** The gate (start, recovery) and the deploy script (update) coordinate through a Fly lease on the core Machine.
   - Whoever finds the lease held waits: the gate shows "updating", and the script retries.
   - The lease TTL is not documented, so we set it explicitly and renew it.
-  - Leases are advisory, not a security boundary. They work between our own cooperating clients: a start without the nonce is rejected (verified 2026-10-02).
+  - Leases are advisory, not a security boundary. They work between our own cooperating clients.
+  - **Measured behavior (task 01).** Without the nonce, `start`, `update` and a second lease request get a 409 immediately. `stop` and `destroy` are not refused: they block until the lease expires, then succeed. Callers of stop or destroy (guard, recovery) therefore use short client timeouts or check the lease first. An expired lease frees the Machine.
 
 ### 3.7 Kernel limits and networking
 
-- **`nofile` must be raised inside the API's own container,** because rlimits are not inherited across containers. That needs a small Fly variant of the API image: a root entrypoint raises the limit, then drops to `node`. Fly's historical default hard limit is 10,240, right at a 10k burst.
-- **`somaxconn`** is set for the Machine's shared network namespace before the API listens.
+- **`nofile` is raised inside the API's own container,** because rlimits are not inherited across containers. A small Fly variant of the API image (`runtime-fly` target) has a root entrypoint that raises the limit to 1,048,576, then drops to `node`. Measured in task 01: Fly's default is 102,400, not the historical 10,240, but the entrypoint stays because it pins an explicit value and is needed for `somaxconn` anyway.
+- **`somaxconn`** is set for the Machine's shared network namespace before the API listens (8192 measured; Fly's default is 4096). The entrypoint reads each setting back and fails the start if it was refused.
 - **IPv6 listening.** The API and the core's Caddy listen on IPv6 (`::`) as well as IPv4, so the runner and the gate can reach them over 6PN.
 - **No dependency on the load-orchestrator.** Unlike Compose, the core's web container does not depend on the load-orchestrator, which runs on another Machine.
 - **`apiBaseUrl`.** The API derives the `apiBaseUrl` it gives the runner from its own 6PN address at runtime, never `localhost`.
@@ -366,7 +371,7 @@ Application secrets are stored as Fly secrets, per app:
   - `PUBLIC_CLIENT_COOKIE_SECRET`;
   - generated PostgreSQL and Redis passwords.
 
-  Per-container secret selection (for example, Mock ERP without the admin secrets) is a nice-to-have.
+  Each container lists only the secrets it needs, because Fly gives a container no app secret without an explicit list (task 01).
 - **Runner:** only `CONTROL_SERVICE_TOKEN`. It authenticates both directions: the API's control calls, and the runner's metrics and completion.
 
 ### 7.2 Machines API tokens
@@ -399,7 +404,15 @@ Machines API tokens are app-scoped deploy tokens:
 ## 8. Deployment and Versioning
 
 - **One version is one commit.** Every image (core services, runner, gate) is built, tagged with the same commit SHA and pushed to the Fly registry.
+- **Remote builds by default.** Images are built by Fly's remote builder (Depot), not by the local Docker engine, both from the workstation and later from GitHub Actions. The deploy script builds and pushes without deploying (`fly deploy -a <app> --build-only --push --image-label <commit-sha> --dockerfile <path> --build-target <target>`, run from the repository root). An explicit option falls back to a local `docker build` plus `docker push`; `--depot=false` (Fly's previous builder) is the other fallback during a Depot incident.
+  - Why: local builds exhausted the owner's workstation memory, and remote builds always produce linux/amd64 with a build cache kept at Fly.
+  - Cost: 300 free build minutes per month, then $0.05 per minute (announced; effective billing unconfirmed). Expected cost for this project: zero.
+  - To verify on first use: the image really is in the registry after `--build-only --push` (a 2025 Depot bug skipped the push), `.dockerignore` is honored by the upload, and the Next.js build fits in the builder's memory (the builder can be resized from the dashboard's Builders page).
 - **Stopped Machines** are updated through the Machines API without being started (`skip_launch`). Updates take a freshly read full config. Migrations apply on the next core start.
+  - The deploy script sends the full Machine config through the Machines API, not `flyctl machine update`, which merges the JSON into the old config and would keep removed keys.
+  - After a create or an update, it waits for `stopped`: Fly refuses a start for about 9 s after a create (images being prepared) and about 3.5 s after an update.
+  - `flyctl deploy --build-only` needs a minimal `-c` config (`infra/fly/core/build.toml`) while the app has no Machine.
+  - One registry repository holds several images, so image labels are `<service>-<commit-sha>`, with a `-dirty` suffix when the work tree has uncommitted changes.
 - **Awake core.** Deployment waits until the core goes to sleep. With `--force`, it interrupts the session and updates immediately, and an in-progress run ends failed. The deploy script holds the core lease during the update (section 3.6).
 - **Version handshake.**
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
@@ -467,7 +480,7 @@ This section lists the changes implied by the decisions above, grouped by owner.
 
 ## 10. Feasibility Test Checklist
 
-Run this before the full implementation. Every item is unverified until tested on the target Fly organization.
+Run this before the full implementation. Every item is unverified until tested on the target Fly organization. Core-side results (task 01, 2026-10-03): every item passed except the runner items, which belong to task 02; details are in `01_core_on_fly.md`.
 
 - **Access.** Multi-container Machines are available to the organization. The access requirement was lifted in April 2025, but the API model still mentions an organization restriction.
 - **Startup gate.** The `depends_on` barrier is reapplied on every start. A deliberately failing migration or seed leaves the API port closed, including on 6PN.
