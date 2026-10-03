@@ -280,10 +280,16 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **Fenced shutdown.** A normal shutdown goes through the runner itself: `shutdown(runId, bootId)`.
   - The runner exits only if the request matches its current boot, and ignores it otherwise. Its restart policy is `no`, so the Machine stops.
   - A late stop for run N therefore cannot kill the runner of run N+1. Fly's `stop` has no fencing parameter (verified 2026-10-02).
+  - **Implemented in task 04.** `POST /traffic/shutdown` with `{runId, bootId}` and the control token always answers 202 with an `outcome`:
+    - `ignored_boot_mismatch` or `ignored_run_mismatch`: nothing happens;
+    - `deferred_busy`: a start is being admitted, k6 is running, or a completion report is still awaiting acknowledgement; the caller retries;
+    - `shutdown_requested`: the runner refuses new starts (`runner_stopping`, 409), then exits gracefully once the reply is sent. A report the API has already rejected (`completion_rejected`) does not block it.
 - **Fly `stop` is only a fallback** for an unreachable runner. It is issued by the same owner, so it always runs before any later start.
 - **Self-stop fallback.** The runner enforces it itself, so it still works when the API is down:
   - it exits after 3 minutes with no execution and no completion report awaiting acknowledgement (an arbitrary starting value);
   - its maximum lifetime is the automatic-reset deadline plus a small margin, read from the shared `automaticRunResetDeadlineSeconds` constant (900 s), never duplicated.
+  - **Implemented in task 04.** The margin is 30 s and the lifetime counts from process boot, not from run start, so a runner pre-start (section 4.1) would eat into the margin. At that point the runner shuts down gracefully even mid-run or with an unacknowledged report. That report is lost with the volume-less Machine (section 4.1); no persistent storage is added (owner decision, 2026-10-03).
+- **Off unless configured.** `RUNNER_LIFECYCLE_ENABLED=true` enables the shutdown endpoint and both self-exit timers together. They are off by default, so the local topology keeps a long-lived load-orchestrator (section 1.3). `infra/fly/runner/machine.json` sets it.
 - **Abort on a stopped runner.**
   - Admin and automatic resets call `abortCurrent` for every run they terminate. Today that call fails when the load-orchestrator is unreachable.
   - A stopped runner cannot emit traffic, so the abort path checks the Machine state first and treats a stopped runner as a confirmed abort.
@@ -296,6 +302,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - The runner generates a boot ID at process start. Fly provides no per-boot identifier.
   - Before sending `start`, the API reads the boot ID and persists it with the run.
   - Every start or replay carries the expected boot ID, and the runner rejects a mismatch. A rebooted runner can never relaunch traffic for a run.
+  - **Implemented in task 04.** `GET /traffic/control` (control token) returns `{bootId, version}`, and every traffic status response carries the same two fields. A start request carries `expectedBootId`; a mismatch answers 409 `runner_boot_mismatch` before any traffic. The field stays optional until task 05 makes the API send it, then becomes mandatory.
 - **Fast detection.**
   - While a run is active, the API monitors its runner.
   - The runner is declared lost if its Machine is stopped, or its boot ID changed, before a completion report was persisted.
@@ -421,6 +428,7 @@ Machines API tokens are app-scoped deploy tokens:
 - **Version handshake.**
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
   - The deploy script verifies both versions at the end.
+  - The runner reads its version from `COMMIT_SHA`, which the deploy script sets in the runner Machine env to the same string as the image label (with `-dirty` when applicable). Without it, the version is `unknown`; on Fly, `unknown` never counts as a match.
 - **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime.
 - **Deploy script.** `infra/fly/deploy.mjs <core|runner>`. Each app's images live in its own registry repository. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**

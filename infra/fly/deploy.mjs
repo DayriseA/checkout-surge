@@ -209,6 +209,8 @@ async function main() {
   }
 
   const config = machineConfig(buildAndPushImages(version));
+  // The runner exposes this as its version for the API's version handshake.
+  if (role === "runner") config.env.COMMIT_SHA = version;
   const machine = existing
     ? await updateMachine(machinesApi, existing, config)
     : await createMachine(machinesApi, config);

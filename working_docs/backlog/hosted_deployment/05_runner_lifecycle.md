@@ -38,6 +38,15 @@ The API starts a freshly booted runner for every run and stops it when the run r
 
 - None.
 
+## Inputs from Task 04
+
+- Read the boot ID from `GET /traffic/control` before start and send it as `expectedBootId` on every start and replay, including startup reconciliation. Then make the field mandatory in the contract.
+- Compare `status.bootId` with the persisted boot ID in the ambiguous-start recovery (`HttpTrafficExecutionGateway.recoverAmbiguousStart`).
+- Map the 409 codes `runner_boot_mismatch` and `runner_stopping` explicitly. Today every 4xx start rejection becomes a generic 502 `load_orchestrator_unavailable`.
+- Shutdown always answers 202 with an outcome. Retry `deferred_busy` within a bound (the runner may still be recording the acknowledgement of a report the API has just persisted), then fall back to Fly `stop`.
+- Confirm a shutdown by waiting for the Machine to reach `stopped`: the connection may drop once the runner exits.
+- Version handshake: never treat `unknown` as a match on Fly. The runner gets `COMMIT_SHA` from the deploy script; the API needs its own commit the same way (core Machine env set by the deploy script), which task 04 did not add.
+
 ## Working Notes
 
 _None yet._

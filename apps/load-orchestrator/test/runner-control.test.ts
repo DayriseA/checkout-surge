@@ -140,9 +140,12 @@ describe("runner control", () => {
       await app.close();
     }
   });
-  it("fences shutdown by boot and run, and prevents starts once accepted", async () => {
+  it.each([
+    "completed",
+    "completion_rejected",
+  ] as const)("fences shutdown by boot and run, and prevents starts once accepted in %s", async (state) => {
     const { app, lifecycle, exit, setExecution } = setup();
-    setExecution(journal("completed"));
+    setExecution(journal(state));
     try {
       const send = (runId: string, id: string) =>
         app.inject({
@@ -173,7 +176,6 @@ describe("runner control", () => {
     "accepted",
     "executing",
     "completion_pending",
-    "completion_rejected",
   ] as const)("defers explicit shutdown in %s without closing completion delivery", async (state) => {
     const { app, runner, exit, setExecution } = setup();
     setExecution(journal(state));
@@ -310,14 +312,17 @@ describe("runner control", () => {
       await app.close();
     }
   });
-  it("exits after three idle minutes, resetting the idle window while a report is unacknowledged", async () => {
+  it.each([
+    "completed",
+    "completion_rejected",
+  ] as const)("exits three idle minutes after a pending report becomes %s", async (state) => {
     vi.useFakeTimers();
     const { lifecycle, exit, setExecution, app } = setup();
     lifecycle.start();
     setExecution(journal("completion_pending"));
     await vi.advanceTimersByTimeAsync(runnerIdleTimeoutMs);
     expect(exit).not.toHaveBeenCalled();
-    setExecution(journal("completed"));
+    setExecution(journal(state));
     await vi.advanceTimersByTimeAsync(runnerIdleTimeoutMs - 1000);
     expect(exit).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1000);
@@ -328,7 +333,6 @@ describe("runner control", () => {
   it.each([
     "executing",
     "completion_pending",
-    "completion_rejected",
   ] as const)("requests bounded graceful shutdown at the shared maximum lifetime even in %s", async (state) => {
     vi.useFakeTimers();
     const { lifecycle, exit, setExecution, app } = setup();

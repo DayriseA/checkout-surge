@@ -18,6 +18,7 @@
     "API_BASE_URL": "http://checkout-surge-core.internal:4000",
     "K6_CANCELLATION_TIMEOUT_MS": "10000",
     "COMPLETION_DELIVERY_RETRY_INTERVAL_MS": "5000",
-    "LOAD_ORCHESTRATOR_STATE_DIR": "/var/lib/checkout-surge/load-orchestrator"
+    "LOAD_ORCHESTRATOR_STATE_DIR": "/var/lib/checkout-surge/load-orchestrator",
+    "RUNNER_LIFECYCLE_ENABLED": "true"
   }
 }

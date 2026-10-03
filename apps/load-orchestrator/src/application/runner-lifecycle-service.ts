@@ -80,17 +80,21 @@ export class RunnerLifecycleService {
   private busy(execution: Awaited<ReturnType<ExecutionStore["read"]>>): boolean {
     return (
       this.options.trafficExecutionService.hasExecution() ||
-      (execution !== null && execution.state !== "completed")
+      (execution !== null &&
+        execution.state !== "completed" &&
+        execution.state !== "completion_rejected")
     );
   }
 
   private async checkIdle(): Promise<void> {
     const traffic = this.options.trafficExecutionService;
+    if (traffic.hasExecution()) {
+      this.idleSince = Date.now();
+      return;
+    }
     const generation = traffic.admissionGeneration;
-    const hadExecution = traffic.hasExecution();
     const execution = await this.options.executionStore.read();
-    const unstable = hadExecution || generation !== traffic.admissionGeneration;
-    if (unstable || this.busy(execution)) {
+    if (generation !== traffic.admissionGeneration || this.busy(execution)) {
       this.idleSince = Date.now();
       return;
     }

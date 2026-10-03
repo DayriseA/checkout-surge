@@ -84,3 +84,12 @@ The load-orchestrator gains the identity and self-termination behavior that a pe
 - Follow-up review fix: a delayed journal read could return an old empty/completed slot after a fast admission had already published its pending completion. Admission-generation checks now span the read and the exit decision, including a late previous-run shutdown after a later completed admission. Three regression tests cover these complete interleavings.
 - Follow-up `pnpm exec biome check --write <three changed TypeScript files>`: passed; final `git diff --check`: passed.
 - Follow-up `pnpm --filter load-orchestrator test:unit`: passed, 179 tests in 8 files, including 16 runner-control tests. Follow-up `pnpm type-check`: passed, all 11 Turbo tasks plus test TypeScript checking. The earlier full Docker-backed suite remains the recorded integration result; infrastructure and unrelated integration suites were not repeated for this isolated runner lifecycle fix.
+
+### Integration (2026-10-03)
+
+- Merged into `dev` after review. All four owner decisions listed in the task stand: optional `expectedBootId` until task 05, endpoint and timers off by default, boot ID checks active everywhere, commit SHA exposed.
+- **Owner decision, answering the open question:** no persistent storage for a report still unacknowledged at the maximum lifetime. Design section 4.1 accepts its loss with the volume-less runner. By then the API has already auto-reset the run, and task 06 detects the loss.
+- **Review fix:** a `completion_rejected` report no longer blocks the fenced shutdown or the idle exit. The API has answered it definitively, so nothing awaits acknowledgement (design section 4.2). This supersedes the `completion_rejected` entries in the shutdown semantics above.
+- **Review fix:** the idle check returns before reading the journal while an execution is in memory, so the runner no longer reads the journal every second during traffic.
+- **Deployment:** `infra/fly/runner/machine.json` sets `RUNNER_LIFECYCLE_ENABLED=true`. `infra/fly/deploy.mjs` sets the runner's `COMMIT_SHA` to its image-label version, including `-dirty`. Nothing was deployed.
+- `design.md` sections 4.2, 4.3 and 8 record the routes, outcomes, error codes, flag, lifetime origin and version source. `05_runner_lifecycle.md` lists the inputs task 05 must handle.
