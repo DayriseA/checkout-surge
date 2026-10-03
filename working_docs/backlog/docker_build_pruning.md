@@ -1,6 +1,6 @@
 # Docker Build Pruning
 
-**Status:** in progress · implementation done and validated on a standard Docker daemon; only the owner's remote Fly builder check of the two `runtime-fly` targets remains before merge · **Independent of** the hosted deployment backlog (`working_docs/backlog/hosted_deployment/`), but it must preserve the build contract that backlog relies on (see "Contract to Preserve").
+**Status:** done · validated on a standard Docker daemon and on Fly (remote builder, hosted run), merged into `dev` · **Independent of** the hosted deployment backlog (`working_docs/backlog/hosted_deployment/`), but it must preserve the build contract that backlog relies on (see "Contract to Preserve").
 
 > **Obsolete requirement (owner decision):** the 32 GB VFS disk acceptance is abandoned. The owner no longer uses the VFS environment (too slow, runs out of space), so there will be no VFS validation and none is required to complete this task. The VFS context in "Problem" is kept as background only.
 
@@ -178,4 +178,25 @@ Do not run `pnpm test:composition` or `pnpm test:characterization`.
   1. Turbo is installed with `RUN npm install -g turbo@2.9.18` before `COPY . .`, and the prune step runs the installed `turbo prune <pkg> --docker`, so a source change no longer downloads Turbo again. The corepack line was removed from the four service/setup prune stages: the prune output (`out/json`, `out/full`, pruned `pnpm-lock.yaml`, contents and file modes) is identical to the `pnpm dlx` output with corepack for all seven scopes. The prune step also succeeds with networking disabled. The guard test now requires the pinned install and the executable prune command in each file.
   2. `.dockerignore` excludes the root `out` directory. Without it, a stale root `out/full/stale/file` reached the pruned output.
 - **Follow-up validation (standard Docker daemon, overlayfs):** Biome, contract test 7/7 and `git diff --check` clean; the guard test fails when one Dockerfile's Turbo version drifts, or when the prune command or the install is removed. All seven Compose images and both `runtime-fly` variants build; `SERVICE_NAME=bogus` still fails with the validation message (exit 64). The seven image configurations are unchanged. After a source-only change in `apps/api/src`, the Turbo install and dependency `pnpm install` layers are `CACHED` with no Turbo download, while the prune, source copy and build steps run again; the source edit was restored. With a stale root `out/full/stale/file`, the prune stage contains no stale file.
-- **Remaining:** the owner's remote Fly builder check of the two `runtime-fly` targets before merge.
+
+### Fly verification (2026-10-04)
+
+Commit `f54e9c8c0cb8d77fd4d8f7a15185fa5a85e6e695` (merge of PR #5 on `dev`), flyctl v0.4.111, Fly remote builder (Depot), deployed with `node infra/fly/deploy.mjs core` then `node infra/fly/deploy.mjs runner`, 2026-10-03 23:51 to 23:58 UTC. Image labels end in `-dirty` because of an untracked folder unrelated to this task.
+
+- **Builds: all six pass.** Labels `<image>-f54e9c8c0cb8d77fd4d8f7a15185fa5a85e6e695-dirty`; each image runs `turbo 2.9.18` prune with its own scope. Core deploy (5 images plus the Machine update) took 3 min 20 s, the runner deploy 36 s.
+
+  | Image (target) | App | Install / build step | Image size |
+  | :-- | :-- | :-- | :-- |
+  | `api` (`runtime-fly`) | core | 10.1 s / 17.1 s | 70 MB |
+  | `worker` (`runtime`) | core | 5.3 s / 15.1 s | 70 MB |
+  | `mock-erp` (`runtime`) | core | 5.1 s / 13.7 s | 69 MB |
+  | `web` (`runtime`) | core | 15.2 s / 24.2 s | 77 MB |
+  | `setup` (`runtime`) | core | 4.3 s / 9.6 s | 68 MB |
+  | `load-orchestrator` (`runtime-fly`) | runner | 3.7 s / 11.6 s | 98 MB |
+
+  Build warnings are pnpm's usual notices (ignored build scripts, deprecated `@esbuild-kit` subdependencies, legacy deploy) and Turbo's telemetry notice; no error.
+- **Deploy:** core Machine `8d14e3aee13038` and runner Machine `8d3327ce259918` updated and left `stopped`; `COMMIT_SHA` is the image label on the core's API container and on the runner. No schema change: the hosted database was kept (the setup container found the migrations applied and re-seeded idempotently, exit 0).
+- **Core start:** start request 23:56:08; postgres, redis, setup (exit 0), mock-erp, api, web, caddy and worker all healthy by 23:56:20 (about 12 s). The first health probes of each container failed before the services listened, as at every boot.
+- **Hosted run: pass.** Run `7d0e6bd7…`, `preview-1k`, admin mode through the API (control token read inside the API container, never printed). The API updated the runner config, started it (start 23:56:39.97, `started` 23:56:41.49, Node listening 23:56:42.65), read `GET /traffic/control` (version handshake passed, no `runner_version_mismatch`), and dispatched `/traffic/start`; the start request answered 202 in 7.5 s (first run after a deploy, which includes the runner config update; 8.1 s in task 05). Result: `completed`, 1,000 / 1,000 requests, 500 accepted, 500 sold out, 0 transport failures, 0 failed orders, 500 confirmed orders, remaining stock 0, `trafficDeliveryStatus` `complete`, `runnerRegion` `cdg`, finalized 23:57:16.1. The 5 generator warnings include `k6_outcome_counter_summary_export_unavailable`, the known clean-run warnings of hosted task 14.
+- **Runner stop:** fenced `POST /traffic/shutdown` at 23:57:16.5, Machine `exit` code 0 (`requested_stop=false`) at 23:57:18.0; no Fly `stop` fallback.
+- **Final state:** core Machine stopped by the operator at 23:58:16; both Machines `stopped`.
