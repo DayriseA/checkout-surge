@@ -2,6 +2,7 @@ import type { TrafficExecutionStartResponse } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
+import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
@@ -81,6 +82,7 @@ export class PostgresStartingDemoRunReconciliationStore
 export class DemoRunStartupReconciliationService {
   constructor(
     private readonly options: {
+      maintenanceAuthority: DemoMaintenanceAuthority;
       logger: CheckoutSurgeLogger;
       completionEnrichmentService: Pick<
         TrafficCompletionEnrichmentController,
@@ -96,6 +98,12 @@ export class DemoRunStartupReconciliationService {
   ) {}
 
   async reconcileStartingRuns(): Promise<number> {
+    return this.options.maintenanceAuthority.runExclusive(() =>
+      this.reconcileStartingRunsExclusive(),
+    );
+  }
+
+  private async reconcileStartingRunsExclusive(): Promise<number> {
     const runs = await this.options.startingRunStore.listStartingRuns();
     let reconciledCount = 0;
 

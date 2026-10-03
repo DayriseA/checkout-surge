@@ -308,6 +308,7 @@ export async function startApiServer(): Promise<void> {
     reservationTiming,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
+    maintenanceAuthority,
     logger,
     completionEnrichmentService: trafficCompletionEnrichmentService,
     startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
@@ -324,6 +325,7 @@ export async function startApiServer(): Promise<void> {
     deploymentHardCaps: config.deploymentHardCaps,
   });
   const demoRunLifecycleService = new DemoRunLifecycleService({
+    maintenanceAuthority,
     queueLimits,
     db: connection.db,
     redis,

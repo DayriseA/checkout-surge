@@ -37,6 +37,7 @@ export function syntheticTrafficDeliverySummary(
 export function syntheticFailedTrafficSummary(
   config: AcceptedRunConfigSnapshot,
   notes: string[],
+  evidence: "no_traffic_started" | "unavailable",
 ): {
   transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
@@ -44,22 +45,36 @@ export function syntheticFailedTrafficSummary(
 } {
   const plannedRequests = calculatePlannedRequests(config.trafficConfig);
 
+  const known = evidence === "no_traffic_started";
   return {
     transportAttemptCounts: {
       plannedRequests,
-      startedRequests: 0,
-      completedRequests: 0,
-      interruptedRequests: 0,
-      unstartedRequests: plannedRequests,
+      startedRequests: known ? 0 : null,
+      completedRequests: known ? 0 : null,
+      interruptedRequests: known ? 0 : null,
+      unstartedRequests: known ? plannedRequests : null,
     },
-    httpSummary: {
-      failedRequests: 0,
-      acceptedResponses: 0,
-      soldOutResponses: 0,
-      transportFailures: 0,
-      unexpectedResponses: 0,
-      failureRate: 0,
+    httpSummary: known
+      ? {
+          failedRequests: 0,
+          acceptedResponses: 0,
+          soldOutResponses: 0,
+          transportFailures: 0,
+          unexpectedResponses: 0,
+          failureRate: 0,
+        }
+      : {
+          failedRequests: null,
+          acceptedResponses: null,
+          soldOutResponses: null,
+          transportFailures: null,
+          unexpectedResponses: null,
+          failureRate: null,
+        },
+    trafficDeliverySummary: {
+      ...syntheticTrafficDeliverySummary(config, notes),
+      droppedIterations: known ? 0 : null,
+      completedIterations: known ? 0 : null,
     },
-    trafficDeliverySummary: syntheticTrafficDeliverySummary(config, notes),
   };
 }

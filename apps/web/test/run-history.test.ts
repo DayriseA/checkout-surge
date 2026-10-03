@@ -118,6 +118,13 @@ describe("run history", () => {
     const publicDetail = detailFixture("failed");
     publicDetail.summary.dataDiscarded = true;
     publicDetail.summary.failureCategory = category;
+    publicDetail.summary.transportAttemptCounts = {
+      plannedRequests: 1000,
+      startedRequests: null,
+      completedRequests: null,
+      interruptedRequests: null,
+      unstartedRequests: null,
+    };
     publicRunHistorySummarySchema.parse(publicDetail.summary);
     const publicMarkup = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, { detail: publicDetail }),
@@ -128,12 +135,14 @@ describe("run history", () => {
         : "cancelled by an admin reset",
     );
     expect(publicMarkup).toContain("experiment data was discarded");
+    expect(publicMarkup).toContain("Traffic counters and HTTP outcomes are unknown.");
     expect(publicMarkup).not.toContain("Final stock and orders");
     expect(publicMarkup).toContain("Back to run history");
 
     const adminDetail = adminDetailFixture();
     adminDetail.summary.dataDiscarded = true;
     adminDetail.summary.failureCategory = category;
+    adminDetail.summary.transportAttemptCounts = publicDetail.summary.transportAttemptCounts;
     adminDetail.summary.status = "failed";
     adminDetail.run = demoRunSnapshotSchema.parse({
       ...adminDetail.run,
@@ -155,6 +164,7 @@ describe("run history", () => {
         : "cancelled by an admin reset",
     );
     expect(adminMarkup).toContain("experiment data was discarded");
+    expect(adminMarkup).toContain("Traffic counters and HTTP outcomes are unknown.");
     expect(adminMarkup).toContain("Delete run");
     expect(adminMarkup).toContain("Back to admin history");
     expect(adminMarkup).not.toContain("Evidence and reconciliation proof");

@@ -287,12 +287,24 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
     classes.push("warning");
   }
 
-  if (durable && input.generator) {
-    const accepted = input.generator.httpSummary.acceptedResponses;
+  const generator =
+    input.generator?.transportAttemptCounts.startedRequests !== null &&
+    input.generator?.httpSummary.acceptedResponses !== null
+      ? input.generator
+      : null;
+  if (
+    durable &&
+    generator &&
+    generator.httpSummary.acceptedResponses !== null &&
+    generator.httpSummary.soldOutResponses !== null
+  ) {
+    const accepted = generator.httpSummary.acceptedResponses;
     const unique = durable.uniqueReservations;
     const generatorCoveragePartial =
-      input.generator.transportAttemptCounts.unstartedRequests > 0 ||
-      input.generator.transportAttemptCounts.interruptedRequests > 0;
+      (generator.transportAttemptCounts.unstartedRequests !== null &&
+        generator.transportAttemptCounts.unstartedRequests > 0) ||
+      (generator.transportAttemptCounts.interruptedRequests !== null &&
+        generator.transportAttemptCounts.interruptedRequests > 0);
     const classification =
       accepted >= unique && input.replayPossible === true
         ? generatorCoveragePartial
@@ -321,7 +333,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
     });
     classes.push(classification);
 
-    const soldOutObserved = input.generator.httpSummary.soldOutResponses;
+    const soldOutObserved = generator.httpSummary.soldOutResponses;
     const soldOutClassification = generatorCoveragePartial
       ? "evidence_incomplete"
       : soldOutObserved <= durable.soldOutDecisions
@@ -344,20 +356,20 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       reconciliations.push({
         code: "partial_generator_coverage",
         leftPopulation: "planned checkout attempts",
-        leftValue: input.generator.transportAttemptCounts.plannedRequests,
+        leftValue: generator.transportAttemptCounts.plannedRequests,
         rightPopulation: "attempts completed by generator",
-        rightValue: input.generator.transportAttemptCounts.completedRequests,
+        rightValue: generator.transportAttemptCounts.completedRequests,
         classification: "evidence_incomplete",
         incompleteReason: "partial",
       });
       classes.push("evidence_incomplete");
     }
-  } else if (input.generator && durable === null) {
+  } else if (generator && durable === null) {
     reconciliations.push(
       {
         code: "accepted_responses_vs_unique_reservations",
         leftPopulation: "accepted responses observed by generator",
-        leftValue: input.generator.httpSummary.acceptedResponses,
+        leftValue: generator.httpSummary.acceptedResponses,
         rightPopulation: "unique reservations secured",
         rightValue: null,
         classification: "evidence_incomplete",
@@ -366,7 +378,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       {
         code: "sold_out_decisions_vs_responses",
         leftPopulation: "sold-out responses observed by generator",
-        leftValue: input.generator.httpSummary.soldOutResponses,
+        leftValue: generator.httpSummary.soldOutResponses,
         rightPopulation: "sold-out decisions recorded by system",
         rightValue: null,
         classification: "evidence_incomplete",
@@ -374,7 +386,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       },
     );
     classes.push("evidence_incomplete", "evidence_incomplete");
-  } else if (input.generator === null) {
+  } else if (generator === null) {
     reconciliations.push({
       code: "generator_evidence_unavailable",
       leftPopulation: "accepted responses observed by generator",

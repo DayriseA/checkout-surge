@@ -14,8 +14,8 @@ import {
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 import {
+  measuredTransportAttemptCountsSchema,
   type TransportAttemptCounts,
-  transportAttemptCountsSchema,
 } from "./traffic-transport-counts.js";
 
 export const runnerControlPath = "/traffic/control" as const;
@@ -306,7 +306,7 @@ export const trafficCompletionAcknowledgementSchema = z
   })
   .strict();
 
-export const trafficHttpSummarySchema = z
+export const measuredTrafficHttpSummarySchema = z
   .object({
     failedRequests: nonnegativeIntegerSchema,
     acceptedResponses: nonnegativeIntegerSchema,
@@ -319,6 +319,41 @@ export const trafficHttpSummarySchema = z
   .strict()
   .superRefine((summary, context) => {
     if (summary.failedRequests !== summary.unexpectedResponses + summary.transportFailures) {
+      context.addIssue({
+        code: "custom",
+        path: ["failedRequests"],
+        message: "must equal unexpectedResponses plus transportFailures",
+      });
+    }
+  });
+export const trafficHttpSummarySchema = z
+  .object({
+    failedRequests: nonnegativeIntegerSchema.nullable(),
+    acceptedResponses: nonnegativeIntegerSchema.nullable(),
+    soldOutResponses: nonnegativeIntegerSchema.nullable(),
+    transportFailures: nonnegativeIntegerSchema.nullable(),
+    unexpectedResponses: nonnegativeIntegerSchema.nullable(),
+    failureRate: percentageSchema.nullable(),
+    p95LatencyMs: nonnegativeNumberSchema.optional(),
+  })
+  .strict()
+  .superRefine((summary, context) => {
+    const { p95LatencyMs, ...counts } = summary;
+    const values = Object.values(counts);
+    if (values.some((value) => value === null)) {
+      if (!values.every((value) => value === null) || p95LatencyMs !== undefined) {
+        context.addIssue({
+          code: "custom",
+          message:
+            "Unavailable HTTP evidence must have all counters and failure rate null and no latency",
+        });
+      }
+      return;
+    }
+    if (
+      summary.failedRequests !==
+      (summary.unexpectedResponses ?? 0) + (summary.transportFailures ?? 0)
+    ) {
       context.addIssue({
         code: "custom",
         path: ["failedRequests"],
@@ -423,7 +458,7 @@ export const trafficDeliverySummaryShape = {
   configuredDurationSeconds: positiveIntegerSchema.nullable(),
   preAllocatedVUs: positiveIntegerSchema.nullable(),
   maxVUs: positiveIntegerSchema.nullable(),
-  droppedIterations: nonnegativeIntegerSchema,
+  droppedIterations: nonnegativeIntegerSchema.nullable(),
   completedIterations: nonnegativeIntegerSchema.nullable(),
   requestArrivalSummary: requestArrivalSummarySchema,
   notes: z.array(z.string().trim().min(1)),
@@ -588,8 +623,9 @@ export const emptyServerReservationTimingSummary: ServerReservationTimingSummary
 
 export function deriveRecordedReplyCount(
   counts: TransportAttemptCounts,
-  transportFailures: number,
-): number {
+  transportFailures: number | null,
+): number | null {
+  if (counts.completedRequests === null || transportFailures === null) return null;
   return Math.max(counts.completedRequests - transportFailures, 0);
 }
 
@@ -821,8 +857,8 @@ export const trafficCompletionReportSchema = z
     status: trafficExecutionStatusSchema.extract(["succeeded", "failed"]),
     exitCode: z.number().int().optional(),
     errorMessage: z.string().trim().min(1).optional(),
-    transportAttemptCounts: transportAttemptCountsSchema,
-    httpSummary: trafficHttpSummarySchema,
+    transportAttemptCounts: measuredTransportAttemptCountsSchema,
+    httpSummary: measuredTrafficHttpSummarySchema,
     trafficOutcomeSummary: jsonObjectSchema,
     trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,

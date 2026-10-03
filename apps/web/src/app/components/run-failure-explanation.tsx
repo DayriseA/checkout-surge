@@ -26,7 +26,7 @@ export function RunFailureExplanation({
     business.pendingPersistenceCount === 0 &&
     business.retryingOrders === 0;
   const shortfall =
-    counts.plannedRequests > 0
+    counts.unstartedRequests !== null && counts.plannedRequests > 0
       ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
           (counts.unstartedRequests / counts.plannedRequests) * 100,
         )
@@ -36,12 +36,15 @@ export function RunFailureExplanation({
       <h2 className="type-title m-0 text-xl leading-tight text-ink">
         {known ? "Virtual user limit reached" : "Traffic failed — exact cause not identified"}
       </h2>
+      {counts.startedRequests === null ? (
+        <p>Traffic evidence unavailable: no completion report was recorded.</p>
+      ) : null}
       <p className="m-0 mt-2">
         {known
           ? `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent virtual users and could not maintain the requested traffic rate.`
           : "The recorded evidence does not identify a specific cause for this traffic failure."}
       </p>
-      {counts.unstartedRequests > 0 ? (
+      {counts.unstartedRequests !== null && counts.unstartedRequests > 0 ? (
         <div className="my-3 border-l-2 border-danger pl-3">
           <p className="m-0 font-semibold text-ink">
             {formatCount(counts.unstartedRequests)} planned requests were never sent.
@@ -52,17 +55,17 @@ export function RunFailureExplanation({
           </p>
         </div>
       ) : null}
-      {http.unexpectedResponses > 0 ? (
+      {http.unexpectedResponses !== null && http.unexpectedResponses > 0 ? (
         <p className="m-0 mt-2">
           Unexpected responses recorded: {formatCount(http.unexpectedResponses)}.
         </p>
       ) : null}
-      {http.transportFailures > 0 ? (
+      {http.transportFailures !== null && http.transportFailures > 0 ? (
         <p className="m-0 mt-2">
           {formatCount(http.transportFailures)} attempts ended in transport failure.
         </p>
       ) : null}
-      {counts.interruptedRequests > 0 ? (
+      {counts.interruptedRequests !== null && counts.interruptedRequests > 0 ? (
         <p className="m-0 mt-2">
           {formatCount(counts.interruptedRequests)} launched requests did not complete.
         </p>
@@ -79,7 +82,8 @@ export function RunFailureExplanation({
           {formatCount(business.notificationsRecorded)} notifications recorded.
         </p>
       )}
-      {counts.startedRequests > 0 &&
+      {counts.startedRequests !== null &&
+      counts.startedRequests > 0 &&
       counts.interruptedRequests === 0 &&
       http.transportFailures === 0 &&
       http.unexpectedResponses === 0 ? (
@@ -131,11 +135,17 @@ export function RunFailureExplanation({
       <details className="mt-2 border-t border-border pt-2">
         <summary className="disclosure font-semibold text-ink">Measurement coverage</summary>
         <p className="m-0 mt-2">
-          {formatCount(counts.unstartedRequests)} planned requests were never sent;{" "}
-          {formatCount(counts.interruptedRequests)} launched requests did not complete. Outcomes and
-          latency cover only recorded responses.
+          {counts.startedRequests === null ? (
+            "Traffic counters and HTTP outcomes are unavailable."
+          ) : (
+            <>
+              {formatCount(counts.unstartedRequests)} planned requests were never sent;{" "}
+              {formatCount(counts.interruptedRequests)} launched requests did not complete. Outcomes
+              and latency cover only recorded responses.
+            </>
+          )}
         </p>
-        {http.transportFailures > 0 ? (
+        {http.transportFailures !== null && http.transportFailures > 0 ? (
           <p className="m-0 mt-1">
             {formatCount(http.transportFailures)} completed attempts ended in transport failure.
           </p>

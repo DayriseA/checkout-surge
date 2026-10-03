@@ -16,6 +16,29 @@ import {
 } from "../src/app/components/transport-observation.js";
 
 describe("transport observation coverage", () => {
+  it("shows unavailable reset evidence without inventing coverage or no-traffic claims", () => {
+    const unknown = counts({
+      startedRequests: null,
+      completedRequests: null,
+      interruptedRequests: null,
+      unstartedRequests: null,
+    });
+    const summary = {
+      failedRequests: null,
+      acceptedResponses: null,
+      soldOutResponses: null,
+      transportFailures: null,
+      unexpectedResponses: null,
+      failureRate: null,
+    };
+    const markup = renderSection(unknown, summary);
+    expect(markup).toContain("Traffic evidence unavailable: no completion report was recorded.");
+    expect(markup).toContain("Unavailable");
+    expect(markup).not.toContain("<meter");
+    expect(markup).not.toContain("All sent requests completed");
+    expect(deriveTransportObservation(unknown, null).repliesRecorded).toBeNull();
+  });
+
   it("reports full coverage when every dispatched attempt recorded a reply", () => {
     const observation = deriveTransportObservation(counts({ completedRequests: 10 }), 0);
 

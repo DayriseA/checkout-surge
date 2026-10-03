@@ -52,6 +52,10 @@ import {
   isSingleNonTerminalRunViolation,
   validateAcceptedRunSnapshot,
 } from "../src/services/demo-run-service.js";
+import {
+  DemoRunStartupReconciliationService,
+  PostgresStartingDemoRunReconciliationStore,
+} from "../src/services/demo-run-startup-reconciliation-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import {
   DemoRunQueueLimits,
@@ -87,6 +91,7 @@ describe("demo-run lifecycle validation", () => {
     });
     const reserve = vi.fn();
     const service = new DemoRunLifecycleService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       queueLimits: { synchronize: async () => {} },
       db: { select } as never,
       redis: {} as never,
@@ -1606,13 +1611,51 @@ describe("demo-run lifecycle start gating", () => {
       synchronize: async () => {},
     });
     const writeTerminalRun = vi.fn(postgresTerminalRunWriter.write.bind(postgresTerminalRunWriter));
+    const authority = new ProcessLocalDemoMaintenanceAuthority();
+    let setupEntered!: () => void;
+    const setupEntry = new Promise<void>((resolve) => {
+      setupEntered = resolve;
+    });
+    let releaseSetup!: () => void;
+    const setupRelease = new Promise<void>((resolve) => {
+      releaseSetup = resolve;
+    });
+    const replayStart = vi.fn();
+    const reconciliation = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: authority,
+      logger: createSilentLogger("api"),
+      startingRunStore: new PostgresStartingDemoRunReconciliationStore(db),
+      trafficExecutionGateway: { start: replayStart },
+      apiBaseUrl: "http://api.test",
+      listDrainingRuns: async () => [],
+      closeRunSaleEligibility: async () => true,
+      completionEnrichmentService: { completePendingEnrichment: async () => "completed" },
+    });
     const service = createStartService(requireConnection(connection), redisUnavailable(), {
+      maintenanceAuthority: authority,
+      queueLimits: {
+        synchronize: async () => {
+          setupEntered();
+          await setupRelease;
+        },
+      },
       terminalRunWriter: { write: writeTerminalRun },
     });
 
-    await expect(
-      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
-    ).rejects.toThrow("Redis unavailable during initialization.");
+    const starting = service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-start",
+    );
+    const failedStart = expect(starting).rejects.toThrow(
+      "Redis unavailable during initialization.",
+    );
+    await setupEntry;
+    const replay = reconciliation.reconcileStartingRuns();
+    expect(replayStart).not.toHaveBeenCalled();
+    releaseSetup();
+    await failedStart;
+    await expect(replay).resolves.toBe(0);
+    expect(replayStart).not.toHaveBeenCalled();
 
     const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
 
@@ -1647,10 +1690,20 @@ describe("demo-run lifecycle start gating", () => {
     );
   });
 
-  it("writes a terminal summary when load-orchestrator traffic start fails", async () => {
+  it.each([
+    "definitive_rejection",
+    "unavailable",
+  ] as const)("writes %s evidence when load-orchestrator traffic start fails", async (evidence) => {
     const service = createStartService(requireConnection(connection), requireRedis(redis), {
       trafficExecutionGateway: {
         start: async () => {
+          if (evidence === "definitive_rejection")
+            throw new ApiHttpError({
+              statusCode: 502,
+              code: "load_orchestrator_unavailable",
+              message: "load orchestrator unavailable",
+              details: { statusCode: 409 },
+            });
           throw new Error("load orchestrator unavailable");
         },
       },
@@ -1667,6 +1720,13 @@ describe("demo-run lifecycle start gating", () => {
       runId: "77777777-7777-4777-8777-777777777777",
       status: "failed",
       failureReason: "load_orchestrator_unavailable",
+    });
+    expect(summaries[0]?.transportAttemptCounts).toEqual({
+      plannedRequests: 10_000,
+      startedRequests: evidence === "definitive_rejection" ? 0 : null,
+      completedRequests: evidence === "definitive_rejection" ? 0 : null,
+      interruptedRequests: evidence === "definitive_rejection" ? 0 : null,
+      unstartedRequests: evidence === "definitive_rejection" ? 10_000 : null,
     });
     expect(summaries[0]?.terminalInventorySnapshot).toMatchObject({
       saleOfferId: "77777777-7777-4777-8777-777777777778",
@@ -1749,23 +1809,71 @@ describe("demo-run lifecycle start gating", () => {
 
   it.each(
     destructiveResetReasonValues,
-  )("returns the %s run when delayed activation loses CAS and allows a successor", async (reason) => {
+  )("persists unavailable evidence for an active run reset by %s", async (reason) => {
     const startConnection = requireConnection(connection);
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
-    let releaseTrafficStart: (() => void) | undefined;
-    let trafficStartEntered: (() => void) | undefined;
-    const trafficStartEnteredPromise = new Promise<void>((resolve) => {
-      trafficStartEntered = resolve;
+    const service = createStartService(startConnection, requireRedis(redis));
+    const accepted = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "reset-active",
+    );
+    const resetService = new AdminDemoResetService({
+      queueLimits: { synchronize: async () => {} },
+      db: resetConnection.db,
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(resetConnection.db, {
+        synchronize: async () => {},
+      }),
+      redis: requireRedis(redis),
+      queueMaintenance: { cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }) },
+      trafficAborter: {
+        abortCurrent: async () => ({
+          outcome: "current_run_aborted",
+          abortedRunId: accepted.run.runId,
+        }),
+      },
+      dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      logger: createSilentLogger("api"),
     });
-    const trafficStartReleasePromise = new Promise<void>((resolve) => {
-      releaseTrafficStart = resolve;
-    });
+    try {
+      await resetService.reset("reset-active", reason);
+      const detail = await new RunHistoryService({ db: startConnection.db }).detail(
+        accepted.run.runId,
+      );
+      expect(detail?.summary.transportAttemptCounts).toEqual({
+        plannedRequests: 10_000,
+        startedRequests: null,
+        completedRequests: null,
+        interruptedRequests: null,
+        unstartedRequests: null,
+      });
+      expect(detail?.summary.httpSummary.transportFailures).toBeNull();
+      expect(detail?.summary.trafficDeliverySummary.droppedIterations).toBeNull();
+    } finally {
+      await resetConnection.close();
+    }
+  });
 
+  it.each(
+    destructiveResetReasonValues,
+  )("keeps an ambiguously accepted starting run unavailable after %s and allows a successor", async (reason) => {
+    const startConnection = requireConnection(connection);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
+    const authority = new ProcessLocalDemoMaintenanceAuthority();
+    let dispatched = false;
     const service = createStartService(startConnection, requireRedis(redis), {
+      maintenanceAuthority: authority,
       trafficExecutionGateway: {
         start: async (request) => {
-          trafficStartEntered?.();
-          await trafficStartReleasePromise;
+          if (!dispatched) {
+            dispatched = true;
+            throw new ApiHttpError({
+              statusCode: 502,
+              code: "load_orchestrator_start_ambiguous",
+              message: "Runner accepted traffic but the response was lost.",
+            });
+          }
           return {
             runId: request.runId,
             status: "active",
@@ -1788,31 +1896,23 @@ describe("demo-run lifecycle start gating", () => {
       trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
       dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(requireRedis(redis)),
       resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
-      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      maintenanceAuthority: authority,
       logger: createSilentLogger("api"),
       now: () => new Date("2026-06-20T00:15:11.000Z"),
     });
 
     try {
-      const startPromise = service.startRun(
-        { presetSlug: "preview-1k", operatorMode: "admin" },
-        "corr-delayed-start",
-      );
-      await trafficStartEnteredPromise;
-
-      const resetResponse = await resetService.reset("corr-reset-race", reason);
+      await expect(
+        service.startRun(
+          { presetSlug: "preview-1k", operatorMode: "admin" },
+          "corr-ambiguous-start",
+        ),
+      ).rejects.toMatchObject({ code: "load_orchestrator_start_ambiguous" });
+      const [pending] = await startConnection.db.select().from(demoRuns);
+      expect(pending).toMatchObject({ status: "starting", trafficStartedAt: null });
+      const resetResponse = await resetService.reset("corr-reset-ambiguous", reason);
       expect(resetResponse.failedRunCount).toBe(1);
 
-      releaseTrafficStart?.();
-      const startResponse = await startPromise;
-
-      expect(startResponse.run).toMatchObject({
-        runId: "77777777-7777-4777-8777-777777777777",
-        status: "failed",
-        trafficStatus: "failed",
-        failureCategory: reason === "auto_reset" ? "automatic_reset" : "operator",
-        finalizedAt: "2026-06-20T00:15:11.000Z",
-      });
       const [run] = await startConnection.db
         .select()
         .from(demoRuns)
@@ -1826,15 +1926,34 @@ describe("demo-run lifecycle start gating", () => {
         status: "failed",
         failureReason: reason,
         endedAt: new Date("2026-06-20T00:15:11.000Z"),
+        transportAttemptCounts: {
+          plannedRequests: 10_000,
+          startedRequests: null,
+          completedRequests: null,
+          interruptedRequests: null,
+          unstartedRequests: null,
+        },
+        httpSummary: {
+          failedRequests: null,
+          acceptedResponses: null,
+          soldOutResponses: null,
+          transportFailures: null,
+          unexpectedResponses: null,
+          failureRate: null,
+        },
+        trafficDeliverySummary: { droppedIterations: null, completedIterations: null },
       });
+      const detail = await new RunHistoryService({ db: startConnection.db }).detail(
+        "77777777-7777-4777-8777-777777777777",
+      );
+      expect(detail?.summary.transportAttemptCounts.startedRequests).toBeNull();
       const successor = await service.startRun(
         { presetSlug: "preview-1k", operatorMode: "admin" },
         "corr-successor",
       );
       expect(successor.run.status).toBe("active");
-      expect(successor.run.runId).not.toBe(startResponse.run.runId);
+      expect(successor.run.runId).not.toBe("77777777-7777-4777-8777-777777777777");
     } finally {
-      releaseTrafficStart?.();
       await resetConnection.close();
     }
   });
@@ -1901,6 +2020,7 @@ function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
+    maintenanceAuthority?: ProcessLocalDemoMaintenanceAuthority;
     queueLimits?: OrderProcessQueueLimits;
     presetReader?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["presetReader"];
     trafficExecutionGateway?: ConstructorParameters<
@@ -1930,6 +2050,8 @@ function createStartService(
   };
   const logger = overrides.logger ?? createSilentLogger("api");
   return new DemoRunLifecycleService({
+    maintenanceAuthority:
+      overrides.maintenanceAuthority ?? new ProcessLocalDemoMaintenanceAuthority(),
     queueLimits: overrides.queueLimits ?? { synchronize: async () => {} },
     db: connection.db,
     presetReader: overrides.presetReader ?? new DemoPresetService({ db: connection.db }),

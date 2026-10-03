@@ -20,6 +20,7 @@ export const failureShortfallRatio = 0.05;
 export function classifyTrafficDelivery(
   summary: Pick<TransportAttemptCounts, "plannedRequests" | "unstartedRequests">,
 ): TrafficDeliverySummary["trafficDeliveryStatus"] | null {
+  if (summary.unstartedRequests === null) return "failed";
   if (summary.plannedRequests <= 0) return null;
 
   const unstartedRatio = summary.unstartedRequests / summary.plannedRequests;
@@ -31,9 +32,10 @@ export function classifyTrafficDelivery(
 }
 
 export function classifyTrafficTransport(input: {
-  startedRequests: number;
-  transportFailures: number;
+  startedRequests: number | null;
+  transportFailures: number | null;
 }): TrafficDeliverySummary["trafficDeliveryStatus"] | null {
+  if (input.startedRequests === null || input.transportFailures === null) return null;
   if (input.startedRequests <= 0) return null;
 
   const lossRatio = input.transportFailures / input.startedRequests;

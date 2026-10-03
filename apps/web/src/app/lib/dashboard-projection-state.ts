@@ -76,8 +76,9 @@ export function projectRequestSurge(projection: DashboardProjection): RequestSur
     // their own explicit metadata and take precedence when present.
     arrivalWindowSeconds: terminal?.peakArrivalWindowSeconds ?? liveTrafficMetricWindowSeconds,
     responseCompletionRatePerSecond: responseCompletion?.value ?? null,
-    attemptsDispatched:
-      projection.transportAttemptCounts?.startedRequests ?? dispatchProgress?.value ?? null,
+    attemptsDispatched: projection.transportAttemptCounts
+      ? projection.transportAttemptCounts.startedRequests
+      : (dispatchProgress?.value ?? null),
     dispatchDurationSeconds: terminal?.dispatchDurationSeconds ?? null,
     arrivalRateSeries:
       terminal?.arrivalRateSeries ??

@@ -635,7 +635,8 @@ function adminResetTrafficSummary(
 
   const summary = syntheticFailedTrafficSummary(
     parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id} admin reset`),
-    ["Admin reset failed the run before traffic completion."],
+    ["Traffic evidence is unavailable: reset occurred before a completion report."],
+    "unavailable",
   );
 
   return {

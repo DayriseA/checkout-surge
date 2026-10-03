@@ -1209,7 +1209,7 @@ describe("focused demo maintenance workflows", () => {
         expect(terminal.currentRun).toBeNull();
         expect(terminal.recentMetrics).toEqual([]);
         expect((await db.select().from(demoRunSummaries))[0]?.transportAttemptCounts).toMatchObject(
-          { startedRequests: 0 },
+          { startedRequests: null },
         );
         expect(
           await db
@@ -1487,14 +1487,14 @@ describe("focused demo maintenance workflows", () => {
       expect(summaries.find((summary) => summary.runId === ids.drainingRun)).toMatchObject({
         transportAttemptCounts: {
           plannedRequests: 10,
-          startedRequests: 0,
-          completedRequests: 0,
-          interruptedRequests: 0,
-          unstartedRequests: 10,
+          startedRequests: null,
+          completedRequests: null,
+          interruptedRequests: null,
+          unstartedRequests: null,
         },
         trafficDeliverySummary: {
-          droppedIterations: 0,
-          completedIterations: 0,
+          droppedIterations: null,
+          completedIterations: null,
           trafficDeliveryStatus: "failed",
         },
       });

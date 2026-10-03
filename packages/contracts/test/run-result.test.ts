@@ -37,6 +37,44 @@ function evidence(overrides: Partial<RunResultEvidence> = {}): RunResultEvidence
   };
 }
 
+describe("unknown generator evidence", () => {
+  it("does not reconcile unknown transport and HTTP counts as zeros", () => {
+    const result = deriveRunResult(
+      evidence({
+        generator: {
+          transportAttemptCounts: {
+            plannedRequests: 10,
+            startedRequests: null,
+            completedRequests: null,
+            interruptedRequests: null,
+            unstartedRequests: null,
+          },
+          httpSummary: {
+            failedRequests: null,
+            acceptedResponses: null,
+            soldOutResponses: null,
+            transportFailures: null,
+            unexpectedResponses: null,
+            failureRate: null,
+          },
+        },
+      }),
+    );
+    expect(result.reconciliations).toContainEqual(
+      expect.objectContaining({
+        code: "generator_evidence_unavailable",
+        leftValue: null,
+        classification: "evidence_incomplete",
+      }),
+    );
+    expect(
+      result.reconciliations.some(
+        (item) => item.code === "accepted_responses_vs_unique_reservations",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("deriveRunResult", () => {
   it("holds the unit, order, and oversell invariants for a clean sellout", () => {
     const result = deriveRunResult(evidence());

@@ -50,8 +50,8 @@ export type ObservationSurface = "list" | "detail" | "dashboard";
 
 export interface TransportObservation {
   counts: TransportAttemptCounts;
-  transportFailures: number;
-  repliesRecorded: number;
+  transportFailures: number | null;
+  repliesRecorded: number | null;
   /** Share of dispatched attempts that recorded a reply; null when nothing was dispatched. */
   coveragePercent: number | null;
   hasUnrecordedReplies: boolean;
@@ -60,7 +60,7 @@ export interface TransportObservation {
 
 export function deriveTransportObservation(
   counts: TransportAttemptCounts,
-  transportFailures: number,
+  transportFailures: number | null,
 ): TransportObservation {
   const repliesRecorded = deriveRecordedReplyCount(counts, transportFailures);
   return {
@@ -68,16 +68,18 @@ export function deriveTransportObservation(
     transportFailures,
     repliesRecorded,
     coveragePercent: observationCoveragePercent(counts, repliesRecorded),
-    hasUnrecordedReplies: counts.interruptedRequests > 0 || transportFailures > 0,
-    hasUndispatchedAttempts: counts.unstartedRequests > 0,
+    hasUnrecordedReplies:
+      (counts.interruptedRequests !== null && counts.interruptedRequests > 0) ||
+      (transportFailures !== null && transportFailures > 0),
+    hasUndispatchedAttempts: counts.unstartedRequests !== null && counts.unstartedRequests > 0,
   };
 }
 
 function observationCoveragePercent(
   counts: TransportAttemptCounts,
-  repliesRecorded: number,
+  repliesRecorded: number | null,
 ): number | null {
-  if (counts.startedRequests === 0) {
+  if (counts.startedRequests === null || repliesRecorded === null || counts.startedRequests === 0) {
     return null;
   }
 
@@ -91,6 +93,8 @@ export function survivorshipWarningText(
   observation: TransportObservation,
   surface: ObservationSurface,
 ): string {
+  if (observation.counts.startedRequests === null)
+    return "Traffic evidence unavailable: no completion report was recorded. Outcomes and latency are unavailable.";
   const recorded = formatNumber(observation.repliesRecorded);
   const planned = formatNumber(observation.counts.plannedRequests);
 
@@ -174,23 +178,34 @@ export function TransportObservationSection({
           label={transportObservationLabels.repliesRecorded}
           value={formatNumber(observation.repliesRecorded)}
         />
-        {!hideZeroExceptions || observation.transportFailures > 0 ? (
+        {!hideZeroExceptions ||
+        (observation.transportFailures !== null && observation.transportFailures > 0) ? (
           <ObservationRow
             label={transportObservationLabels.transportFailures}
-            note={observation.transportFailures > 0 ? transportFailureNote : undefined}
+            note={
+              observation.transportFailures !== null && observation.transportFailures > 0
+                ? transportFailureNote
+                : undefined
+            }
             subordinate
             value={formatNumber(observation.transportFailures)}
           />
         ) : null}
-        {!hideZeroExceptions || counts.interruptedRequests > 0 ? (
+        {!hideZeroExceptions ||
+        (counts.interruptedRequests !== null && counts.interruptedRequests > 0) ? (
           <ObservationRow
             label={transportObservationLabels.repliesNotRecorded}
-            note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
+            note={
+              counts.interruptedRequests !== null && counts.interruptedRequests > 0
+                ? unrecordedReplyNote
+                : undefined
+            }
             subordinate
             value={formatNumber(counts.interruptedRequests)}
           />
         ) : null}
-        {!hideZeroExceptions || counts.unstartedRequests > 0 ? (
+        {!hideZeroExceptions ||
+        (counts.unstartedRequests !== null && counts.unstartedRequests > 0) ? (
           <ObservationRow
             label={transportObservationLabels.neverDispatched}
             note={observation.hasUndispatchedAttempts ? undispatchedNote : undefined}
@@ -210,7 +225,8 @@ export function TransportObservationSection({
             label={publicVocabulary.soldOutRejectionsSeen}
             value={formatNumber(httpSummary.soldOutResponses)}
           />
-          {!hideZeroExceptions || httpSummary.unexpectedResponses > 0 ? (
+          {!hideZeroExceptions ||
+          (httpSummary.unexpectedResponses !== null && httpSummary.unexpectedResponses > 0) ? (
             <ObservationRow
               label="Unexpected"
               value={formatNumber(httpSummary.unexpectedResponses)}
@@ -426,12 +442,20 @@ export function TransportObservationPanelBlock({
       <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[560px]:grid-cols-1">
         <PanelFact
           label={transportObservationLabels.transportFailures}
-          note={observation.transportFailures > 0 ? transportFailureNote : undefined}
+          note={
+            observation.transportFailures !== null && observation.transportFailures > 0
+              ? transportFailureNote
+              : undefined
+          }
           value={formatNumber(observation.transportFailures)}
         />
         <PanelFact
           label={transportObservationLabels.repliesNotRecorded}
-          note={counts.interruptedRequests > 0 ? unrecordedReplyNote : undefined}
+          note={
+            counts.interruptedRequests !== null && counts.interruptedRequests > 0
+              ? unrecordedReplyNote
+              : undefined
+          }
           value={formatNumber(counts.interruptedRequests)}
         />
         <PanelFact
@@ -483,7 +507,9 @@ function SurvivorshipWarning({
   surface: ObservationSurface;
 }) {
   return (
-    <ConditionalCaveat show={observation.hasUnrecordedReplies}>
+    <ConditionalCaveat
+      show={observation.counts.startedRequests === null || observation.hasUnrecordedReplies}
+    >
       {survivorshipWarningText(observation, surface)}
     </ConditionalCaveat>
   );
@@ -546,8 +572,8 @@ function PanelFact({
   );
 }
 
-function formatNumber(value: number): string {
-  return formatCount(value) ?? "n/a";
+function formatNumber(value: number | null): string {
+  return formatCount(value) ?? "Unavailable";
 }
 
 export function formatMilliseconds(value: number | null | undefined): string {

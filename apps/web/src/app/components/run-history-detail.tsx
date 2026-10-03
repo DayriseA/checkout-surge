@@ -49,6 +49,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
         actions={actions}
         navigation={navigation}
         presetName={summary.presetName}
+        trafficEvidenceUnavailable={summary.transportAttemptCounts.startedRequests === null}
         automatic={summary.failureCategory === "automatic_reset"}
       />
     );
@@ -436,6 +437,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           </Link>
         }
         presetName={summary.presetName}
+        trafficEvidenceUnavailable={summary.transportAttemptCounts.startedRequests === null}
         automatic={summary.failureCategory === "automatic_reset"}
       />
     );
@@ -784,7 +786,9 @@ function DiscardedRunDetail({
   actions,
   navigation,
   presetName,
+  trafficEvidenceUnavailable,
 }: {
+  trafficEvidenceUnavailable: boolean;
   actions?: ReactNode;
   navigation?: ReactNode;
   presetName: string;
@@ -802,6 +806,12 @@ function DiscardedRunDetail({
         This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
         data was discarded.
       </p>
+      {trafficEvidenceUnavailable ? (
+        <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
+          Traffic evidence unavailable: no completion report was recorded. Traffic counters and HTTP
+          outcomes are unknown.
+        </p>
+      ) : null}
     </section>
   );
 }

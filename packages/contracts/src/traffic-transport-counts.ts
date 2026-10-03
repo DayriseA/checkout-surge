@@ -20,21 +20,25 @@ import { nonnegativeIntegerSchema } from "./primitives.js";
  *
  *   plannedRequests = startedRequests + unstartedRequests
  *   startedRequests = completedRequests + interruptedRequests
+ *
+ * Planned requests remain known from the accepted configuration. When no
+ * report or definitive no-start evidence exists, all four observed counts
+ * must be null together; reconciliation equations apply only to known counts.
  */
 export const transportAttemptCountsShape = {
   plannedRequests: nonnegativeIntegerSchema,
-  startedRequests: nonnegativeIntegerSchema,
-  completedRequests: nonnegativeIntegerSchema,
-  interruptedRequests: nonnegativeIntegerSchema,
-  unstartedRequests: nonnegativeIntegerSchema,
+  startedRequests: nonnegativeIntegerSchema.nullable(),
+  completedRequests: nonnegativeIntegerSchema.nullable(),
+  interruptedRequests: nonnegativeIntegerSchema.nullable(),
+  unstartedRequests: nonnegativeIntegerSchema.nullable(),
 } as const;
 
 export interface TransportAttemptCounts {
   plannedRequests: number;
-  startedRequests: number;
-  completedRequests: number;
-  interruptedRequests: number;
-  unstartedRequests: number;
+  startedRequests: number | null;
+  completedRequests: number | null;
+  interruptedRequests: number | null;
+  unstartedRequests: number | null;
 }
 
 /** Reusable cross-field validation for the two transport reconciliation equations. */
@@ -42,6 +46,26 @@ export function refineTransportAttemptCounts(
   value: TransportAttemptCounts,
   context: z.RefinementCtx,
 ): void {
+  const observed = [
+    value.startedRequests,
+    value.completedRequests,
+    value.interruptedRequests,
+    value.unstartedRequests,
+  ];
+  if (
+    value.startedRequests === null ||
+    value.completedRequests === null ||
+    value.interruptedRequests === null ||
+    value.unstartedRequests === null
+  ) {
+    if (!observed.every((count) => count === null)) {
+      context.addIssue({
+        code: "custom",
+        message: "Observed transport counts must be all known or all unknown",
+      });
+    }
+    return;
+  }
   if (value.plannedRequests !== value.startedRequests + value.unstartedRequests) {
     context.addIssue({
       code: "custom",
@@ -62,3 +86,11 @@ export const transportAttemptCountsSchema = z
   .object(transportAttemptCountsShape)
   .strict()
   .superRefine(refineTransportAttemptCounts);
+
+/** Completion reports carry measured counts; only API synthetic summaries may be unknown. */
+export const measuredTransportAttemptCountsSchema = transportAttemptCountsSchema.safeExtend({
+  startedRequests: nonnegativeIntegerSchema,
+  completedRequests: nonnegativeIntegerSchema,
+  interruptedRequests: nonnegativeIntegerSchema,
+  unstartedRequests: nonnegativeIntegerSchema,
+});

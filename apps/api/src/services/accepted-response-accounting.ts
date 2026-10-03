@@ -8,8 +8,8 @@ import {
 } from "@checkout-surge/contracts";
 
 export interface AcceptedResponseAccounting {
-  rawAcceptedResponses: number;
-  normalizedExpectedCount: number;
+  rawAcceptedResponses: number | null;
+  normalizedExpectedCount: number | null;
   reservationCount: number;
   orderCount: number;
   duplicateNormalizationApplied: boolean;
@@ -29,9 +29,12 @@ export function reconcileAcceptedResponses(input: {
     input.transportAttemptCounts,
     input.delivery,
   );
-  const normalizedExpectedCount = duplicateNormalizationApplied
-    ? Math.ceil(input.http.acceptedResponses / 2)
-    : input.http.acceptedResponses;
+  const normalizedExpectedCount =
+    input.http.acceptedResponses === null
+      ? null
+      : duplicateNormalizationApplied
+        ? Math.ceil(input.http.acceptedResponses / 2)
+        : input.http.acceptedResponses;
   const orderCount =
     input.business.queuedOrders +
     input.business.processingOrders +
@@ -48,10 +51,12 @@ export function reconcileAcceptedResponses(input: {
     accounted:
       input.business.pendingPersistenceCount === 0 &&
       reservationCount === orderCount &&
+      normalizedExpectedCount !== null &&
       reservationCount >= normalizedExpectedCount,
     counterUnderreported:
       input.business.pendingPersistenceCount === 0 &&
       reservationCount === orderCount &&
+      normalizedExpectedCount !== null &&
       reservationCount > normalizedExpectedCount,
   };
 }

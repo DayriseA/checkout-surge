@@ -119,6 +119,32 @@ describe("dashboard projection state", () => {
     });
   });
 
+  it("retains explicitly unknown terminal counts instead of replacing them with live progress", () => {
+    const surge = projectRequestSurge(
+      runProjection({
+        transportAttemptCounts: {
+          plannedRequests: 500,
+          startedRequests: null,
+          completedRequests: null,
+          interruptedRequests: null,
+          unstartedRequests: null,
+        },
+        requestArrivalSummary: emptyRequestArrivalSummary,
+        recentMetrics: [
+          {
+            metricName: "traffic.attempts_dispatched",
+            value: 10,
+            unit: "requests",
+            timestamp: "2026-06-20T00:00:01.000Z",
+          },
+        ],
+      }),
+    );
+    expect(surge.attemptsDispatched).toBeNull();
+    expect(surge.arrivalRatePerSecond).toBeNull();
+    expect(surge.dispatchDurationSeconds).toBeNull();
+  });
+
   it("does not treat an unobserved arrival summary as terminal arrival evidence", () => {
     const surge = projectRequestSurge(
       runProjection({
