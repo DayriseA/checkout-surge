@@ -30,7 +30,9 @@ const baseSnapshot = {
 
 describe("synthetic traffic delivery plan", () => {
   it("builds one zero-attempt failed transport summary", () => {
-    expect(syntheticFailedTrafficSummary(baseSnapshot, ["not started"])).toEqual({
+    expect(
+      syntheticFailedTrafficSummary(baseSnapshot, ["not started"], "no_traffic_started"),
+    ).toEqual({
       transportAttemptCounts: {
         plannedRequests: 10_002,
         startedRequests: 0,
@@ -59,6 +61,23 @@ describe("synthetic traffic delivery plan", () => {
         trafficDeliveryStatus: "failed",
         notes: ["not started"],
       },
+    });
+  });
+
+  it("keeps missing report counts unavailable and the configured plan known", () => {
+    const summary = syntheticFailedTrafficSummary(baseSnapshot, ["reset"], "unavailable");
+    expect(summary.transportAttemptCounts).toEqual({
+      plannedRequests: 10_002,
+      startedRequests: null,
+      completedRequests: null,
+      interruptedRequests: null,
+      unstartedRequests: null,
+    });
+    expect(Object.values(summary.httpSummary)).toEqual([null, null, null, null, null, null]);
+    expect(summary.trafficDeliverySummary).toMatchObject({
+      droppedIterations: null,
+      completedIterations: null,
+      trafficDeliveryStatus: "failed",
     });
   });
 

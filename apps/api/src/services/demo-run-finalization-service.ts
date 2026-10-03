@@ -378,7 +378,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     if (input.delivery.trafficDeliveryStatus === "failed") {
       return "traffic_delivery_major_shortfall";
     }
-    if (input.http.unexpectedResponses > 0) {
+    if (input.http.unexpectedResponses !== null && input.http.unexpectedResponses > 0) {
       return "traffic_outcome_unexpected_responses";
     }
     if (

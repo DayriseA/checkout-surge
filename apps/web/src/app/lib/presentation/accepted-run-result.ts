@@ -20,7 +20,7 @@ export interface AcceptedRunReportEvidence {
   result: RunResult;
   trafficDeliveryStatus: TrafficDeliveryStatus;
   transportAttemptCounts: TransportAttemptCounts;
-  transportFailures: number;
+  transportFailures: number | null;
   failureExplanation: RunFailureExplanationEvidence | null;
 }
 

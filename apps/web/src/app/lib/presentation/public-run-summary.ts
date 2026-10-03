@@ -165,6 +165,14 @@ function publicRunCaveats(
 }
 
 function transportCaveats(observation: TransportObservation | null): PublicRunCaveat[] {
+  if (observation?.counts.startedRequests === null)
+    return [
+      {
+        message:
+          "Traffic evidence unavailable: no completion report was recorded. Traffic counters, outcomes and latency are unavailable.",
+        tone: "warning",
+      },
+    ];
   if (!observation || (!observation.hasUnrecordedReplies && !observation.hasUndispatchedAttempts)) {
     return [];
   }

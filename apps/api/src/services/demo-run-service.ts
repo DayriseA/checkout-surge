@@ -187,7 +187,12 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           run: { runId: accepted.run.runId, status: "accepting" },
         });
       } catch (error) {
-        await this.failRun(accepted.run.runId, "inventory_initialization_failed", correlationId);
+        await this.failRun(
+          accepted.run.runId,
+          "inventory_initialization_failed",
+          correlationId,
+          "no_traffic_started",
+        );
         throw error;
       }
 
@@ -209,7 +214,17 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         if (
           !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
         ) {
-          await this.failRun(accepted.run.runId, "load_orchestrator_unavailable", correlationId);
+          await this.failRun(
+            accepted.run.runId,
+            "load_orchestrator_unavailable",
+            correlationId,
+            error instanceof ApiHttpError &&
+              typeof error.details?.statusCode === "number" &&
+              error.details.statusCode >= 400 &&
+              error.details.statusCode < 500
+              ? "no_traffic_started"
+              : "unavailable",
+          );
         }
         throw error;
       }
@@ -474,6 +489,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     runId: string,
     failureReason: InternalRunFailureReason,
     correlationId: string,
+    evidence: "no_traffic_started" | "unavailable",
   ): Promise<void> {
     const now = this.now();
     const [run] = await this.options.db.select().from(demoRuns).where(eq(demoRuns.id, runId));
@@ -485,7 +501,12 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         : null;
       const trafficSummary = syntheticFailedTrafficSummary(
         parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id}`),
-        [`${failureReason}_before_traffic_start`],
+        [
+          evidence === "no_traffic_started"
+            ? `${failureReason}_before_traffic_start`
+            : "Traffic evidence is unavailable: start failed without a definitive rejection.",
+        ],
+        evidence,
       );
 
       await this.options.terminalRunWriter.write({
