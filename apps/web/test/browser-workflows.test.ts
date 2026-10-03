@@ -595,6 +595,47 @@ describe("public browser starts", () => {
     ).toBe(true);
   });
 
+  it.each([
+    ["preset", "deployment_buyers_exceeded"],
+    ["custom", "public_total_requests_exceeded"],
+  ])("shows infrastructure guidance for a rejected public %s run", async (kind, violationCode) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input) === demoRunStartProxyPath)
+          return jsonResponse(
+            errorPayloadSchema.parse({
+              code: "invalid_run_configuration",
+              message: "Private cap diagnostic",
+              details: { violationCode, path: ["trafficConfig", "buyerCount"] },
+              correlationId: "infrastructure-limit",
+              timestamp: "2026-06-20T00:00:00.000Z",
+            }),
+            400,
+          );
+        if (String(input) === healthReadyProxyPath) return jsonResponse(readinessFixture());
+        if (String(input).startsWith(dashboardRecoveryProxyPath))
+          return jsonResponse(dashboardRecoveryFixture());
+        throw new Error(`Unexpected fetch: ${String(input)}`);
+      }),
+    );
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    if (kind === "custom") await user.click(screen.getByText("Customize a scenario"));
+    await user.click(
+      screen.getByRole("button", {
+        name: kind === "custom" ? "Start custom run" : "Start Preview 1k",
+      }),
+    );
+    expect(
+      (await screen.findAllByText("This run exceeds an infrastructure limit")).length,
+    ).toBeGreaterThan(0);
+    expect(document.body.textContent).toContain(
+      "For larger runs, run the project locally or deploy it on larger infrastructure.",
+    );
+    expect(document.body.textContent).not.toContain("Private cap diagnostic");
+  });
+
   it("starts the surge-5k public preset through the accepted-run path", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === demoRunStartProxyPath) {

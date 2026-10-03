@@ -1660,6 +1660,32 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Duplicate attempts") as HTMLInputElement).checked).toBe(true);
   });
 
+  it("shows infrastructure guidance when an admin run hits a deployment cap", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        canonicalErrorResponse("Deployment limit", 400, "invalid_run_configuration", {
+          violationCode: "deployment_total_requests_exceeded",
+          path: ["trafficConfig"],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
+    expect(await screen.findByText("This run exceeds an infrastructure limit")).toBeTruthy();
+    expect(document.body.textContent).toContain(
+      "For larger runs, run the project locally or deploy it on larger infrastructure.",
+    );
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+
   it("sends a valid run start unchanged and keeps authoritative rejection guidance usable", async () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       canonicalErrorResponse("Rejected", 400, "invalid_run_configuration", {

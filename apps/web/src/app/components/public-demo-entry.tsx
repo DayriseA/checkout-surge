@@ -27,6 +27,7 @@ import {
 } from "../lib/presentation/custom-run-issue-presentation";
 import {
   type ErrorPresentation,
+  isInfrastructureRunLimitRejection,
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
 import { fieldHints } from "../lib/presentation/field-hints";
@@ -382,6 +383,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
       if (
         isCustom &&
+        !isInfrastructureRunLimitRejection(result) &&
         (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
       ) {
         const entries = presentCustomRunIssues([customValidationPath(result.details?.path)]).filter(

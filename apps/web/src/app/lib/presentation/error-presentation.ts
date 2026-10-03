@@ -70,6 +70,32 @@ const genericPresentation = {
   tone: "danger" as const,
 };
 
+const infrastructureRunLimitCodes = new Set([
+  "deployment_buyers_exceeded",
+  "deployment_duration_exceeded",
+  "deployment_max_vus_exceeded",
+  "deployment_preallocated_vus_exceeded",
+  "deployment_request_rate_exceeded",
+  "deployment_start_delay_exceeded",
+  "deployment_total_requests_exceeded",
+  "public_buyers_exceeded",
+  "public_duration_exceeded",
+  "public_max_vus_exceeded",
+  "public_preallocated_vus_exceeded",
+  "public_request_rate_exceeded",
+  "public_total_requests_exceeded",
+  "public_start_delay_exceeded",
+]);
+
+export function isInfrastructureRunLimitRejection(read: BackendRead<unknown>): boolean {
+  return (
+    read.status === "unavailable" &&
+    read.errorCode === "invalid_run_configuration" &&
+    typeof read.details?.violationCode === "string" &&
+    infrastructureRunLimitCodes.has(read.details.violationCode)
+  );
+}
+
 const publicStartActionCodes = new Set<ErrorPayloadCode>([
   "run_conflict",
   "public_run_budget_exceeded",
@@ -136,6 +162,17 @@ export function mapErrorPresentation(
       explanation: "The latest information is available.",
       action: { kind: "none", label: "" },
       tone: "ok",
+    };
+  }
+
+  if (isInfrastructureRunLimitRejection(read)) {
+    return {
+      headline: "This run exceeds an infrastructure limit",
+      explanation:
+        "This limit was deliberately chosen for the infrastructure running this demo. For larger runs, run the project locally or deploy it on larger infrastructure.",
+      action: { kind: "edit", label: "Edit values" },
+      tone: "warning",
+      technicalDetails,
     };
   }
 

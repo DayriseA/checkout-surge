@@ -2,6 +2,78 @@ import { describe, expect, it } from "vitest";
 import { mapErrorPresentation } from "../src/app/lib/presentation/error-presentation.js";
 
 describe("error presentation", () => {
+  it.each([
+    "deployment_buyers_exceeded",
+    "deployment_duration_exceeded",
+    "deployment_max_vus_exceeded",
+    "deployment_preallocated_vus_exceeded",
+    "deployment_request_rate_exceeded",
+    "deployment_start_delay_exceeded",
+    "deployment_total_requests_exceeded",
+    "public_buyers_exceeded",
+    "public_duration_exceeded",
+    "public_max_vus_exceeded",
+    "public_preallocated_vus_exceeded",
+    "public_request_rate_exceeded",
+    "public_total_requests_exceeded",
+    "public_start_delay_exceeded",
+  ])("explains the infrastructure choice for run violation %s on both surfaces", (violationCode) => {
+    for (const surface of ["public-start", "admin-operation"] as const) {
+      const presentation = mapErrorPresentation(
+        {
+          status: "unavailable",
+          errorCode: "invalid_run_configuration",
+          details: { violationCode },
+        },
+        surface,
+      );
+      expect(presentation.headline).toBe("This run exceeds an infrastructure limit");
+      expect(presentation.explanation).toBe(
+        "This limit was deliberately chosen for the infrastructure running this demo. For larger runs, run the project locally or deploy it on larger infrastructure.",
+      );
+    }
+  });
+
+  it.each([
+    "public_erp_tps_exceeded",
+    "public_erp_latency_exceeded",
+    "public_erp_error_rate_exceeded",
+    "public_starting_stock_exceeded",
+    "public_traffic_mode_not_allowed",
+  ])("keeps ordinary validation copy for run violation %s", (violationCode) => {
+    expect(
+      mapErrorPresentation(
+        {
+          status: "unavailable",
+          errorCode: "invalid_run_configuration",
+          details: { violationCode },
+        },
+        "public-start",
+      ).headline,
+    ).toBe("Check the values and try again");
+  });
+
+  it.each([
+    "invalid_request",
+    "invalid_runtime_policy",
+    "run_conflict",
+  ] as const)("does not infer infrastructure limits from the %s error", (errorCode) => {
+    expect(
+      mapErrorPresentation(
+        {
+          status: "unavailable",
+          errorCode,
+          ...(errorCode === "invalid_runtime_policy"
+            ? { details: { violationCode: "public_limit_buyers_exceeds_deployment_cap" } }
+            : errorCode === "run_conflict"
+              ? { details: { conflictReason: "active_run_exists" } }
+              : {}),
+        },
+        "admin-operation",
+      ).headline,
+    ).not.toBe("This run exceeds an infrastructure limit");
+  });
+
   it("distinguishes projection cleanup from malformed queue work", () => {
     const present = (conflictReason: string) =>
       mapErrorPresentation(
