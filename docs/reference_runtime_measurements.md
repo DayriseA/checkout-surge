@@ -4,7 +4,7 @@
 These measurements used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS).
 This document records the measurements taken from Checkout-Surge's reference runtime — generator-side network/resource limits and the adaptive-ERP acceptance observations — and the configuration decisions those measurements justify. It is a record of one environment, not guidance.
 
-For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](scope_and_caveats.md#connection-establishment-ceiling).
+For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](decisions/scope_and_caveats.md#connection-establishment-ceiling).
 
 Every figure below is indicative for this environment only. Prefer changes that are neutral-to-positive on any host, and record the deployed host's effective characteristics with each run instead of assuming they match these values.
 
@@ -22,7 +22,7 @@ net.core.somaxconn       4096          (before the API alignment)
 container nofile         1024 soft / 1048576 hard
 ```
 
-The API container's `net.core.somaxconn` once capped its requested `backlog: 8192` at 4096. Following every generator-side recommendation would not have prevented that cap; it is a system-under-test boundary, recorded in [Scope and Caveats](scope_and_caveats.md#connection-establishment-ceiling).
+The API container's `net.core.somaxconn` once capped its requested `backlog: 8192` at 4096. Following every generator-side recommendation would not have prevented that cap; it is a system-under-test boundary, recorded in [Scope and Caveats](decisions/scope_and_caveats.md#connection-establishment-ceiling).
 
 ## File-descriptor limit
 

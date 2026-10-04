@@ -18,7 +18,7 @@ This document records the implemented access-protection model for the local refe
 - No payment-grade security guarantees.
 - No hard deployment split between public and admin applications unless a later hosting decision requires it.
 
-These exclusions are classified in [Scope and Caveats](scope_and_caveats.md#intentional-non-goals); this section remains authoritative for the access-protection rationale.
+These exclusions are classified in [Scope and Caveats](decisions/scope_and_caveats.md#intentional-non-goals); this section remains authoritative for the access-protection rationale.
 
 ---
 

@@ -32,7 +32,7 @@ Traffic-completion enrichment closes run admission before reading inventory and 
 
 Payment authorization, customer cancel, payment timeout release, and automatic hold-expiry reconciliation are intentionally out of scope for this demo. A production implementation would add a payment/reconciliation worker that releases or expires holds atomically in Redis, defines and persists the corresponding lifecycle facts, and reconciles terminal Redis snapshots against the durable order/reservation ledger.
 
-The scope classification is recorded in [Scope and Caveats](scope_and_caveats.md#intentional-non-goals); this section remains authoritative for inventory ownership and the required reconciliation shape.
+The scope classification is recorded in [Scope and Caveats](decisions/scope_and_caveats.md#intentional-non-goals); this section remains authoritative for inventory ownership and the required reconciliation shape.
 
 ## Atomic Reservation Behavior
 

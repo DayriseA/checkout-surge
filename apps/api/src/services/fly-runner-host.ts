@@ -173,6 +173,8 @@ export class FlyRunnerHost implements RunnerHost {
         await this.sleep(delayMs);
       }
     }
+    // Accepted risk HD-19 (docs/decisions/hosted_deployment.md)
+    // (a failed wait fails the run before any traffic; the next start heals the runner).
     await this.requireState(machine.id, "started");
     return null;
   }

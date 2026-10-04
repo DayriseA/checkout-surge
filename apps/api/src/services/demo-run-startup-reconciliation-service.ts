@@ -127,6 +127,8 @@ export class DemoRunStartupReconciliationService {
         continue;
       }
       const correlationId = `traffic-reconcile-${run.id}`;
+      // Accepted risk HD-15 (docs/decisions/hosted_deployment.md)
+      // (the replay does not repeat the version handshake).
       try {
         const response = await this.options.trafficExecutionGateway.start({
           runId: run.id,

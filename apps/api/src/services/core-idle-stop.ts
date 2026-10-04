@@ -82,6 +82,8 @@ export class CoreIdleStop implements CoreIdleShutdown {
   private async checkOnce(): Promise<void> {
     this.runInProgress = await this.options.runs.hasNonterminalRun();
     if (this.runInProgress) {
+      // Known limitation HD-22 (docs/decisions/hosted_deployment.md)
+      // (a run started on the API that ends between two checks is never counted).
       this.recordActivity();
       return;
     }
@@ -91,6 +93,8 @@ export class CoreIdleStop implements CoreIdleShutdown {
       { idleSeconds: Math.round(idleMs / 1000) },
       "No counted activity for 10 minutes; stopping the core Machine.",
     );
+    // Accepted risk HD-21 (docs/decisions/hosted_deployment.md)
+    // (a run admitted before Fly's SIGINT is interrupted, then reconciled on the next wake).
     await this.options.stopCore();
   }
 

@@ -27,6 +27,8 @@ export function CoreIdleCountdown() {
   const [stayAwakePending, setStayAwakePending] = useState(false);
   const seenEnabledRef = useRef(false);
 
+  // Accepted risk HD-23 (docs/decisions/hosted_deployment.md)
+  // (reads apply in arrival order; a stale one is corrected by the next poll).
   const applyRead = useCallback((read: CompletedBackendRead<CoreIdleStatus>) => {
     const next = viewFromRead(read, seenEnabledRef.current, Date.now());
     if (next.kind === "awake" || next.kind === "run_in_progress") seenEnabledRef.current = true;

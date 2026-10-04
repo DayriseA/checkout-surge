@@ -510,7 +510,7 @@ This section lists the changes implied by the decisions above, grouped by owner.
   - the Fly image variants of the API and the load-orchestrator are extra `runtime-fly` targets built on top of the existing `runtime` targets, so nothing is duplicated and a refused kernel setting fails the start loudly;
   - a hosted Caddy variant (IPv6, trusting only the gate), kept with the other Caddyfiles in `infra/caddy/`;
   - the deploy script.
-- **Documentation:** once the design is implemented, update the hosted-deployment boundary in `docs/runtime_topology.md` and the caveats in `docs/scope_and_caveats.md`.
+- **Documentation:** once the design is implemented, update the hosted-deployment boundary in `docs/runtime_topology.md` and the caveats in `docs/decisions/scope_and_caveats.md`.
 
 ---
 

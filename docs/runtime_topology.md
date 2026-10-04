@@ -4,7 +4,7 @@ This document defines the delivered local reference runtime topology, the Dev Co
 
 The goal is to make the architecture-realistic topology easy to run locally without turning every development workspace startup into a full demo environment.
 
-The reference runtime uses Linux containers. Windows contributors run it through Docker Desktop or through Docker-in-Docker inside the Dev Container; see the [support boundary](scope_and_caveats.md#intentional-non-goals).
+The reference runtime uses Linux containers. Windows contributors run it through Docker Desktop or through Docker-in-Docker inside the Dev Container; see the [support boundary](decisions/scope_and_caveats.md#intentional-non-goals).
 
 ---
 
@@ -214,7 +214,7 @@ Local laptop, Dev Container, and Codespaces runs are not hosted benchmark runs. 
 
 Natural k6 completion persists a once-per-second, scalar-only `generatorUtilisation` observation in the load-run diagnostics. Use its quota-normalized CPU percentages, swap peak, and memory-pressure counters to identify generator saturation on the actual host; compare a benchmark run with an independent `docker stats load-orchestrator` observation when validating the sampler itself.
 
-This evidence limitation is listed in [Scope and Caveats](scope_and_caveats.md#current-caveats); this section remains authoritative for the local validation workflow.
+This evidence limitation is listed in [Scope and Caveats](decisions/scope_and_caveats.md#current-caveats); this section remains authoritative for the local validation workflow.
 
 Public, watch, and admin server rendering intentionally does not call dashboard recovery. It bootstraps authoritative run availability as pending, and the mounted browser converges through the same-origin `/api/dashboard/recovery` BFF. That BFF mints or reuses the HttpOnly signed visitor cookie and forwards only the verified credential, so separate visitors receive separate API per-source budget identities rather than sharing the web container's network identity. Caller-supplied visitor headers are ignored.
 
