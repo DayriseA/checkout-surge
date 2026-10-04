@@ -33,7 +33,28 @@ FROM workspace-install AS development-workspace
 
 RUN pnpm build
 
-FROM workspace-install AS runtime-tools-build
+FROM node-base AS runtime-tools-prune
+
+WORKDIR /build
+
+RUN npm install -g turbo@2.9.18
+
+COPY . .
+
+RUN turbo prune "@checkout-surge/contracts" --docker
+
+FROM node-base AS runtime-tools-build
+
+WORKDIR /build
+
+COPY --from=runtime-tools-prune /build/out/json/ ./
+
+RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
+  pnpm fetch --store-dir=/pnpm/store && \
+  pnpm install --frozen-lockfile --offline --store-dir=/pnpm/store
+
+COPY --from=runtime-tools-prune /build/out/full/ ./
+COPY tsconfig.base.json ./
 
 RUN --mount=type=cache,id=checkout-surge-pnpm-store,target=/pnpm/store \
   pnpm --filter="@checkout-surge/contracts" build && \

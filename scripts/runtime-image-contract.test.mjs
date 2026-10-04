@@ -6,6 +6,36 @@ const root = new URL("../", import.meta.url);
 const readText = (file) => readFileSync(new URL(file, root), "utf8");
 const readJson = (file) => JSON.parse(readText(file));
 
+test("Docker prune stages install and run the resolved root Turbo version", () => {
+  const rootImporter = readText("pnpm-lock.yaml").match(
+    /^ {2}\.:\n([\s\S]*?)(?=^ {2}\S|$(?![\s\S]))/m,
+  );
+  assert.ok(rootImporter, "root lockfile importer must exist");
+  const turbo = rootImporter[1].match(/^ {6}turbo:\n {8}specifier: [^\n]+\n {8}version: (\S+)/m);
+  assert.ok(turbo, "root importer must resolve Turbo");
+  const resolvedVersion = turbo[1];
+
+  for (const file of [
+    "docker/Dockerfile.node-service",
+    "apps/load-orchestrator/Dockerfile",
+    "apps/web/Dockerfile",
+    "packages/db/Dockerfile",
+    "Dockerfile",
+  ]) {
+    const dockerfile = readText(file);
+    const instructions = dockerfile.replace(/[ \t]*\\\n\s*/g, " ");
+    assert.match(instructions, /^RUN npm install -g turbo@\S+$/m, file);
+    assert.match(
+      instructions,
+      /^RUN (?:case "\$\{SERVICE_NAME\}" in .* esac && )?turbo prune \S+ --docker$/m,
+      file,
+    );
+    for (const [, version] of dockerfile.matchAll(/turbo@([^\s"']*)/g)) {
+      assert.equal(version, resolvedVersion, file);
+    }
+  }
+});
+
 test("production Dockerfiles use production artifacts and non-root direct entrypoints", () => {
   const nodeService = readText("docker/Dockerfile.node-service");
   assert.match(nodeService, /api\|worker\|mock-erp/);
