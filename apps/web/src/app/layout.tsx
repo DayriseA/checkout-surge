@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminSignOut } from "./components/admin-nav";
+import { CoreIdleCountdown } from "./components/core-idle-countdown";
 import { DashboardNav } from "./components/dashboard-nav";
 import { hasValidAdminPageSession } from "./lib/server/admin-page-session";
 import "./globals.css";
@@ -38,6 +39,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               <DashboardNav>{authenticated ? <AdminSignOut /> : null}</DashboardNav>
             </div>
           </header>
+          <CoreIdleCountdown />
           <main
             className="mx-auto max-w-[1280px] scroll-mt-20 px-6 pb-16 pt-6 max-[560px]:px-4 max-[560px]:pt-4"
             id="main-content"

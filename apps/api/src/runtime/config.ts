@@ -35,6 +35,7 @@ export interface ApiConfig {
   /** This API's commit, for the version handshake with the runner. */
   commitSha: string;
   runnerHost: RunnerHostConfig;
+  coreIdleStop: CoreIdleStopConfig;
   publicClientCookieSecret: string;
   deploymentHardCaps: DeploymentHardCaps;
   estimatorConstants: DurationEstimatorConstants;
@@ -66,6 +67,17 @@ export type RunnerHostConfig =
       cpuKind: string;
       cpus: number;
       memoryMb: number;
+    };
+
+/** Off unless configured: only the hosted core stops itself when idle. */
+export type CoreIdleStopConfig =
+  | { kind: "off" }
+  | {
+      kind: "fly";
+      /** This Machine's app and ID (`FLY_APP_NAME`, `FLY_MACHINE_ID`, set by Fly). */
+      appName: string;
+      machineId: string;
+      machinesApiToken: string;
     };
 
 const unsafeControlServiceTokens = new Set([
@@ -142,6 +154,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     commitSha: parseOptionalString(env.COMMIT_SHA) ?? "unknown",
     runnerHost: parseRunnerHost(env),
+    coreIdleStop: parseCoreIdleStop(env),
     publicClientCookieSecret: requireStrongSecret(env, "PUBLIC_CLIENT_COOKIE_SECRET"),
     deploymentHardCaps: deploymentHardCapsSchema.parse({
       estimatedDemoOccupancyCeilingSeconds: parsePositiveInteger(
@@ -412,6 +425,18 @@ function parseRunnerHost(env: NodeJS.ProcessEnv): RunnerHostConfig {
     cpuKind: parseOptionalString(env.RUNNER_CPU_KIND) ?? "performance",
     cpus: parsePositiveInteger(env.RUNNER_CPUS, "RUNNER_CPUS", 4),
     memoryMb: parsePositiveInteger(env.RUNNER_MEMORY_MB, "RUNNER_MEMORY_MB", 8192),
+  };
+}
+
+function parseCoreIdleStop(env: NodeJS.ProcessEnv): CoreIdleStopConfig {
+  const enabled = parseOptionalString(env.CORE_IDLE_STOP_ENABLED);
+  if (enabled === null || enabled === "false") return { kind: "off" };
+  if (enabled !== "true") throw new Error("CORE_IDLE_STOP_ENABLED must be true or false.");
+  return {
+    kind: "fly",
+    appName: requireEnv(env, "FLY_APP_NAME"),
+    machineId: requireEnv(env, "FLY_MACHINE_ID"),
+    machinesApiToken: requireEnv(env, "CORE_FLY_API_TOKEN"),
   };
 }
 

@@ -123,6 +123,7 @@ import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { type BuildApiServerOptions, buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
+import { disabledCoreIdleShutdown } from "../src/services/core-idle-stop.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
   DashboardProjectionService,
@@ -419,6 +420,7 @@ async function buildTestServer(options: {
       recreate: async () => ({ machineId: "runner-2", region: "cdg" }),
     },
     runHistoryService: options.runHistoryService ?? runHistoryControllerFixture(),
+    coreIdleShutdown: disabledCoreIdleShutdown,
     startedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
 }

@@ -1,5 +1,6 @@
 import {
   BusinessOutcomePublicationScheduler,
+  type CheckoutSurgeDatabase,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardProjectionDirtySubscriber,
@@ -36,6 +37,12 @@ import { createTerminalInventoryReadOperation } from "./runtime/terminal-invento
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
+import {
+  type CoreIdleShutdown,
+  CoreIdleStop,
+  disabledCoreIdleShutdown,
+  PostgresNonterminalRunReader,
+} from "./services/core-idle-stop.js";
 import { DashboardProjectionPublicationScheduler } from "./services/dashboard-projection-publication-scheduler.js";
 import { DashboardRecoveryAdmissionService } from "./services/dashboard-recovery-admission.js";
 import {
@@ -363,6 +370,7 @@ export async function startApiServer(): Promise<void> {
     lostRuns: demoRunLifecycleService,
     logger,
   });
+  const coreIdleShutdown = createCoreIdleShutdown(config, connection.db, logger);
   const trafficCompletionService = new TrafficCompletionService({
     db: connection.db,
     redis,
@@ -509,6 +517,9 @@ export async function startApiServer(): Promise<void> {
       void runnerLossMonitor.check().catch((error: unknown) => {
         logger.error({ err: error }, "Runner loss check failed.");
       });
+      void coreIdleShutdown.check().catch((error: unknown) => {
+        logger.error({ err: error }, "Core idle stop check failed.");
+      });
     }, config.demoRunFinalizationPollIntervalSeconds * 1000);
     finalizationPoller.unref();
 
@@ -533,6 +544,7 @@ export async function startApiServer(): Promise<void> {
       generatedRunTeardown,
       runnerRecreation: runnerOperations,
       runHistoryService,
+      coreIdleShutdown,
       startedAt: new Date(),
     });
     await dashboardProjectionDirtySubscriber.start();
@@ -586,6 +598,24 @@ function createRunnerHost(
     },
     apiBaseUrl: config.apiBaseUrl,
     coreRegion: config.runnerHost.coreRegion,
+    logger,
+  });
+}
+
+function createCoreIdleShutdown(
+  config: ApiConfig,
+  db: CheckoutSurgeDatabase,
+  logger: ReturnType<typeof createServiceLogger>,
+): CoreIdleShutdown {
+  const idleStop = config.coreIdleStop;
+  if (idleStop.kind === "off") return disabledCoreIdleShutdown;
+  const machines = new FlyMachinesClient({
+    appName: idleStop.appName,
+    token: idleStop.machinesApiToken,
+  });
+  return new CoreIdleStop({
+    runs: new PostgresNonterminalRunReader(db),
+    stopCore: () => machines.stopMachine(idleStop.machineId),
     logger,
   });
 }

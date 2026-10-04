@@ -7,6 +7,7 @@ import { ZodError } from "zod";
 import type { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
+import { registerCoreIdleRoutes } from "./routes/core-idle-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
 import { registerDemoRunRoutes } from "./routes/demo-run-routes.js";
 import { registerHealthRoutes } from "./routes/health-routes.js";
@@ -20,6 +21,7 @@ import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
 import type { AdminDemoResetWorkflow } from "./services/admin-demo-reset-service.js";
+import type { CoreIdleShutdown } from "./services/core-idle-stop.js";
 import type { DashboardRecoveryAdmissionController } from "./services/dashboard-recovery-admission.js";
 import type { DashboardProjectionService } from "./services/dashboard-recovery-service.js";
 import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
@@ -59,6 +61,7 @@ export interface BuildApiServerOptions {
   generatedRunTeardown: GeneratedRunTeardownWorkflow;
   runnerRecreation: Pick<RunnerOperations, "recreate">;
   runHistoryService: RunHistoryController;
+  coreIdleShutdown: CoreIdleShutdown;
   startedAt?: Date;
 }
 
@@ -131,6 +134,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
+  registerCoreIdleRoutes(app, { coreIdleShutdown: options.coreIdleShutdown });
   registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });

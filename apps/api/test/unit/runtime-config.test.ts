@@ -315,6 +315,27 @@ describe("API runtime configuration", () => {
     });
   });
 
+  it("keeps the core idle stop off unless it is enabled with its Fly identity and token", () => {
+    const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" };
+    expect(loadApiConfig(env).coreIdleStop).toEqual({ kind: "off" });
+    expect(() => loadApiConfig({ ...env, CORE_IDLE_STOP_ENABLED: "yes" })).toThrow(
+      "CORE_IDLE_STOP_ENABLED must be true or false.",
+    );
+    const flyEnv = {
+      ...env,
+      CORE_IDLE_STOP_ENABLED: "true",
+      FLY_APP_NAME: "core-app",
+      FLY_MACHINE_ID: "core-machine",
+    };
+    expect(() => loadApiConfig(flyEnv)).toThrow("CORE_FLY_API_TOKEN is required.");
+    expect(loadApiConfig({ ...flyEnv, CORE_FLY_API_TOKEN: "core-token" }).coreIdleStop).toEqual({
+      kind: "fly",
+      appName: "core-app",
+      machineId: "core-machine",
+      machinesApiToken: "core-token",
+    });
+  });
+
   it("loads estimator allowance defaults and decimal overrides", () => {
     expect(
       loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" }).estimatorConstants,

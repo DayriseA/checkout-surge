@@ -208,8 +208,8 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 
 - **Who stops the core.** The API stops its own Machine through the Machines API.
 - **Stop condition:** no nonterminal run, and no counted activity for 10 minutes.
-  - **Counted:** any HTTP request to the core, on any page, and the "stay awake" button.
-  - **Not counted:** healthchecks, the countdown widget's status polling, the gate's readiness probes, and open SSE connections.
+  - **Counted:** any HTTP request to the core, on any page, and the "stay awake" button. The end of a nonterminal run also counts, so the countdown restarts at 10 minutes when a run finishes.
+  - **Not counted:** healthchecks, the countdown widget's status polling, the demo page's recovery polling, the gate's readiness probes, and open SSE connections.
 - **Countdown widget, shown on every page.**
   - It says the system is awake and will sleep after mm:ss without activity.
   - A "stay awake" button resets the deadline.
@@ -218,6 +218,11 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
   - While a run is nonterminal, it shows "run in progress, the system stays awake" instead of the countdown.
   - It shows a visual alert during the last 2 minutes.
 - **Stopped core.** A page left open on a stopped core shows "Demo paused", with a link back to the gate.
+- **Implemented in task 07.**
+  - The owner keeps the last activity in memory and checks on the API's 5 s poll; it stops its own Machine by `FLY_APP_NAME` and `FLY_MACHINE_ID`, which Fly sets in every container. `CORE_IDLE_STOP_ENABLED=true` turns it on (off by default, so the local topology has neither the stop nor the widget).
+  - Counting happens in the web server, which receives every visitor request except SSE, including pages that never call the API: a Next.js Proxy reports each request to the API's `POST /core/activity`, except health checks, the widget's status polling and SSE. Requests made straight to the API (runner traffic, operator calls) never count. The gate's readiness probes must therefore use `/health` or the API's `/health/ready` (task 09).
+  - Endpoints: `GET /core/idle-status` (in memory, never counted) and `POST /core/activity` ("stay awake"). The widget sits under the header of every page and shows "Demo paused" when a status read fails after it has seen the core awake.
+  - Measured on Fly: the stop request followed the last counted request by 600.7 s, and the Machine was `stopped` 11 s later. An open page with SSE, polling and Fly healthchecks left the deadline unchanged, and a run that spanned the deadline kept the core up.
 
 ### 3.5 Automatic recovery
 
@@ -413,7 +418,7 @@ Machines API tokens are app-scoped deploy tokens:
 
 - **Narrower tokens.** Attenuate tokens to specific actions if Fly makes that simple. This is not required, because the caveat schema is undocumented.
 - **No broad tokens.** No personal or org-wide token ever goes into a Machine.
-- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05).
+- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05). Its core-app deploy token is the core secret `CORE_FLY_API_TOKEN`, also given only to the API container (task 07).
 
 ### 7.3 Accepted risk
 

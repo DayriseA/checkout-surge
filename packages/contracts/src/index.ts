@@ -1,4 +1,5 @@
 export * from "./buy.js";
+export * from "./core-idle.js";
 export * from "./dashboard-projection.js";
 export * from "./demo.js";
 export * from "./entities.js";
