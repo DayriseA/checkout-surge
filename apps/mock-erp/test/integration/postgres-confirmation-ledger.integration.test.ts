@@ -206,7 +206,7 @@ describe("PostgreSQL confirmation ledger", () => {
   it("adopts one canonical result after the caller deadline aborts a slower confirmation", async () => {
     const lateRequest = {
       ...request,
-      erpConfig: { ...request.erpConfig, latencyMs: 50 },
+      erpConfig: { ...request.erpConfig, latencyMs: 1000 },
       orderId: "83500000-0000-4000-8000-000000000001",
       publicOrderId: "ord-ledger-late-response",
       reservationId: "83500000-0000-4000-8000-000000000002",
@@ -214,15 +214,16 @@ describe("PostgreSQL confirmation ledger", () => {
     };
     const runtime = await startMockErpProcess(runtimes);
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5);
-    const aborted = await fetch(`${runtime.baseUrl}${erpConfirmationPath}`, {
+    const aborted = fetch(`${runtime.baseUrl}${erpConfirmationPath}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(lateRequest),
       signal: controller.signal,
     }).catch((error: unknown) => error);
-    clearTimeout(timeout);
-    expect(aborted).toMatchObject({ name: "AbortError" });
+
+    await runtime.waitForOutput("Mock ERP confirmation request received.");
+    controller.abort();
+    expect(await aborted).toMatchObject({ name: "AbortError" });
 
     await runtime.waitForOutput("Mock ERP confirmation request completed.");
     const lookup = await fetch(
