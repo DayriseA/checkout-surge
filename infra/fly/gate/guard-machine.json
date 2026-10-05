@@ -1,0 +1,23 @@
+{
+  "image": "gate",
+  "guest": {
+    "cpu_kind": "shared",
+    "cpus": 1,
+    "memory_mb": 256
+  },
+  "metadata": {
+    "role": "guard"
+  },
+  "schedule": "hourly",
+  "restart": {
+    "policy": "no"
+  },
+  "init": {
+    "cmd": ["node", "dist/guard-main.js"]
+  },
+  "env": {
+    "CORE_FLY_APP": "checkout-surge-core",
+    "RUNNER_FLY_APP": "checkout-surge-runner",
+    "LOG_LEVEL": "info"
+  }
+}

@@ -27,7 +27,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 08 | [Deployment-cap message](08_deployment_cap_message.md) | none | done |
 | 09 | [Gate](09_gate.md) | 01, 07 | done |
 | 10 | [Core recovery](10_core_recovery.md) | 06, 09 | done |
-| 11 | [Guard](11_guard.md) | 05, 09 | todo |
+| 11 | [Guard](11_guard.md) | 05, 09 | done |
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | todo |
 | 13 | [Tuning and go-live](13_tuning_and_go_live.md) | all, plus the external prerequisite | todo |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | todo |

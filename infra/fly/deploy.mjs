@@ -4,7 +4,9 @@
 // infra/fly/<target>/machine.json through the Machines API. The Machine is never started here.
 //
 // A core deploy also writes the core config it sent into the gate Machine, as a file the gate
-// recreates the core from (core recovery); a gate deploy carries that file over.
+// recreates the core from (core recovery); a gate deploy carries that file over. A gate deploy
+// also creates or updates the guard, a scheduled Machine of the gate app that runs the gate image
+// from infra/fly/gate/guard-machine.json.
 //
 // Usage, from anywhere: node infra/fly/deploy.mjs <core|runner|gate> [--no-depot | --local-build]
 //   default        Fly remote builder (Depot)
@@ -157,8 +159,8 @@ function buildAndPushImages(version) {
   return refs;
 }
 
-function machineConfig(imageRefs) {
-  const config = JSON.parse(readFileSync(`${repoRoot}infra/fly/${role}/machine.json`, "utf8"));
+function machineConfig(imageRefs, file = "machine.json") {
+  const config = JSON.parse(readFileSync(`${repoRoot}infra/fly/${role}/${file}`, "utf8"));
   // A multi-container Machine (core) sets images per container; a single-image one (runner) at the top.
   for (const holder of [config, ...(config.containers ?? [])]) {
     if (holder.image in imageRefs) holder.image = imageRefs[holder.image];
@@ -249,6 +251,23 @@ async function updateMachine(machinesApi, machine, config) {
   return machinesApi("POST", `/machines/${machine.id}`, { region, config, skip_launch: true });
 }
 
+/**
+ * The guard runs the gate image on its schedule; like the gate, it is updated in any state. It is
+ * sent without `skip_launch`, which keeps Fly's scheduler from ever starting it (observed): a
+ * create runs it once, and an update leaves a stopped guard stopped.
+ */
+async function deployGuard(machinesApi, imageRefs, version) {
+  const config = machineConfig(imageRefs, "guard-machine.json");
+  config.env.COMMIT_SHA = version;
+  const existing = await findMachine(machinesApi, "guard");
+  const machine = await machinesApi("POST", `/machines${existing ? `/${existing.id}` : ""}`, {
+    region,
+    config,
+  });
+  // No wait for `stopped`: a created guard runs its first pass, which can outlast Fly's wait.
+  console.log(`guard Machine ${machine.id} is scheduled ${config.schedule} at version ${version}.`);
+}
+
 async function main() {
   const version = commitVersion();
   const machinesApi = createMachinesApi(target.app);
@@ -264,7 +283,8 @@ async function main() {
     );
   }
 
-  const config = machineConfig(buildAndPushImages(version));
+  const imageRefs = buildAndPushImages(version);
+  const config = machineConfig(imageRefs);
   // The API and the runner compare these versions before every run (version handshake). The
   // gate's only identifies its deployment.
   const versioned =
@@ -283,6 +303,7 @@ async function main() {
   await machinesApi("GET", `/machines/${machine.id}/wait?state=stopped&timeout=60`);
   console.log(`${role} Machine ${machine.id} is stopped and ready to start at version ${version}.`);
   if (role === "core") await writeCoreConfigToGate(config);
+  if (role === "gate") await deployGuard(machinesApi, imageRefs, version);
 }
 
 main().catch((error) => {

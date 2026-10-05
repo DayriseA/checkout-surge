@@ -371,6 +371,74 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Rejected alternatives:** Remembering a failed placement to skip later attempts: state for a rare case, and the next run would keep the cross-region latency without trying again.
 - **Code:** `FlyRunnerHost.start` in `apps/api/src/services/fly-runner-host.ts`.
 
+## Guard
+
+### HD-37 The guard acts only under a Machine's lease, and skips a leased one
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The hourly guard stops and destroys Machines that a wake, a recovery, a deploy or a runner operation may be working on at the same moment. Fly does not refuse a stop or a destroy sent without the lease nonce: it blocks until the lease expires, then runs it.
+- **Decision:** Every stop and destroy takes the Machine's lease first, then reads the Machine again under it, and acts only if its state, its host status and its latest start are unchanged since the plan; a held lease or a changed Machine skips it until the next run. On a host that is not ok, where Fly grants no usable lease, a destroy takes none, as Fly's own tooling does ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)); the Machine is read again just before the destroy, which narrows the window but cannot close it.
+- **Consequences:** The old core of a recovery in progress is leased by the gate, so the guard never destroys it under the gate's feet. A plan can be minutes old after the core probes, so a core woken, a runner started or a host back since then is left alone. A Machine that stays leased, or keeps changing, is cleaned an hour later. Machines that carry no lease, such as a recovery's new core and volume, rely on the age-based grace period instead.
+- **Rejected alternatives:**
+  - Acting without the lease, with a short client timeout: the blocked call may still run once the lease expires, in the middle of the holder's next step.
+  - Reading the lease before acting: racy, and one more call for the same result.
+- **Code:** `Guard.withLease` in `apps/gate/src/guard.ts`.
+
+### HD-38 The guard probes a core several times within one run
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** A core saturated by a `surge-10k` burst can miss a readiness probe (measured on Fly: no answer within 2 s mid-burst, an answer in 18 ms two minutes later). The guard is a one-shot Machine started hourly, with no state between runs.
+- **Decision:** Within one run, a started core past its startup grace is stopped as unreachable only when it stays silent on several probes a few minutes apart. Only a started core is probed, so a run that finds the core asleep takes under a second.
+- **Consequences:** A run that finds a silent core lasts a few minutes. A guard that cannot reach a healthy core over the private network would stop it; the core can always be restarted through the gate. When a core stays silent, the guard lists the Machines again before planning, so a core woken by the gate during the probes is not taken for the silent one; every stop and destroy also re-reads its Machine first ([HD-37](#hd-37-the-guard-acts-only-under-a-machines-lease-and-skips-a-leased-one)).
+- **Rejected alternatives:**
+  - One probe per hourly run, with the count kept between runs (for example in the core's metadata): a dead core would stay up for hours, and the count is more state to maintain.
+  - A single probe: a burst would stop a working core.
+- **Code:** `Guard.unreachableCores` in `apps/gate/src/guard.ts`.
+
+### HD-39 The guard keeps the core the gate would use, not the newest
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** A recovery can leave a second `role=core` Machine: a new core whose setup failed or that never answered, or the old core on a dead host ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)). Unlike the runner's ([HD-18](#hd-18-the-newest-runner-machine-wins)), the newest core is not necessarily the one that can serve.
+- **Decision:** The guard keeps the core that the gate's own selection would use, where a core silent on every probe cannot serve either, and destroys every other `role=core` Machine past the grace period, then deletes its volume.
+- **Consequences:** The gate and the guard share one rule, so they agree on the core. A silent leftover past the grace period is destroyed rather than only stopped, so the gate cannot select it again on the next wake. When no core can serve, the gate's choice is still kept, so a dead core remains for a visitor's wake to recreate.
+- **Rejected alternatives:**
+  - Keeping the newest, as for the runner: a recovery's failed new core would win, and the working old core would be destroyed.
+  - Keeping the started one: the started core can be the failed one.
+- **Code:** `selectCore` in `apps/gate/src/core-machine.ts`, `Guard.planCore` in `apps/gate/src/guard.ts`.
+
+### HD-40 Accepted risk: the gate Machine holds the guard's runner token
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The guard runs in the gate app and needs a runner-app deploy token. A single-image Machine receives every secret of its app.
+- **Decision:** Keep the runner-app token as a gate-app secret, so the public gate Machine receives it too.
+- **Consequences:** The blast radius does not grow: a compromised gate already controls the core app and its secrets, which include the API's own runner-app token ([HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control)).
+- **Rejected alternatives:**
+  - Per-container secret lists, which would turn the gate into a container Machine and move the deployed core config file with it: work for no security gain.
+  - A separate app for the guard: another app, token and deploy target for the same result.
+
+### HD-41 The guard is deployed without `skip_launch`
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The deploy script creates and updates every other Machine with `skip_launch`, so a deploy never starts anything ([HD-24](#hd-24-deploys-build-remotely-and-replace-whole-machine-configs)). Observed on Fly: a scheduled Machine created or updated with `skip_launch` was never started by Fly's scheduler, while the same Machine updated without it ran on schedule. Fly documents no such rule.
+- **Decision:** The deploy script creates and updates the guard without `skip_launch`.
+- **Consequences:** Creating the guard runs it once at deploy time, which is harmless; an update leaves a stopped guard stopped. An operator who changes the guard by hand must not pass `--skip-start` (flyctl sets `skip_launch` with it), or the guard silently stops running.
+- **Rejected alternatives:** Starting the guard once after a `skip_launch` deploy: an update with `skip_launch` after a start also stopped the schedule.
+- **Code:** `deployGuard` in `infra/fly/deploy.mjs`.
+
+### HD-42 The guard leaves a role-less Machine on a down host alone
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** A Machine on a host that is not `ok` returns only a partial config, which may lack its `role` label; in practice it is a dead core. The gate already creates a fresh core when no core is listed ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
+- **Decision:** The guard never destroys a Machine it cannot identify on a host that is not `ok`; it logs a warning on each run.
+- **Consequences:** If the host never returns, the Machine and its volume linger (a few cents a month) until the owner removes them. If the host returns, the Machine shows its role again and the normal rules apply.
+- **Rejected alternatives:** Destroying it after the leftover grace like other unknown Machines: it cannot be told apart from a foreign Machine, and it may be the only real core on a host that comes back. Destroying it only once a usable core exists and after a long grace: more code for a case never observed.
+
 ## Deployment and Access
 
 ### HD-24 Deploys build remotely and replace whole Machine configs

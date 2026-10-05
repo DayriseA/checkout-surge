@@ -32,6 +32,11 @@ export interface FlyVolume {
   id: string;
   name: string;
   region: string;
+  /** `pending_destroy` once a deletion is accepted: Fly finishes it, even after a host outage. */
+  state: string;
+  attached_machine_id: string | null;
+  /** ISO 8601 creation time. */
+  created_at: string;
 }
 
 /** One entry of a Machine's event log, newest first. Fly omits a zero `exit_code`. */
@@ -134,6 +139,10 @@ export class FlyMachinesClient {
     compute: FlyMachineGuest;
   }): Promise<FlyVolume> {
     return this.request("POST", "/volumes", { body: volume });
+  }
+
+  listVolumes(): Promise<FlyVolume[]> {
+    return this.request("GET", "/volumes");
   }
 
   async deleteVolume(volumeId: string): Promise<void> {

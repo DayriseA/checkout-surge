@@ -66,6 +66,9 @@ importers:
 
   apps/gate:
     dependencies:
+      '@checkout-surge/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@checkout-surge/fly-machines':
         specifier: workspace:*
         version: link:../../packages/fly-machines

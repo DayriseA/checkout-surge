@@ -39,7 +39,14 @@ function setup(options: { probes?: ProbeResult[] } = {}) {
   const probes = [...(options.probes ?? ["no_answer", "ready"])];
   const machines = {
     refreshLease: vi.fn(async () => undefined),
-    createVolume: vi.fn(async () => ({ id: "vol_new", name: "core_data", region: "ams" })),
+    createVolume: vi.fn(async () => ({
+      id: "vol_new",
+      name: "core_data",
+      region: "ams",
+      state: "created",
+      attached_machine_id: null,
+      created_at: "2026-10-05T10:00:00Z",
+    })),
     deleteVolume: vi.fn(async () => undefined),
     createMachine: vi.fn(async () => newCore({ state: "created" })),
     getMachine: vi.fn(async () => newCore()),

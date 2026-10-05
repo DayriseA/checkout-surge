@@ -16,6 +16,7 @@
     "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage"
   },
   "dependencies": {
+    "@checkout-surge/contracts": "workspace:*",
     "@checkout-surge/fly-machines": "workspace:*",
     "@checkout-surge/logger": "workspace:*",
     "@fastify/reply-from": "^12.6.5",

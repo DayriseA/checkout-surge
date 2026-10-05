@@ -13,12 +13,28 @@ export type CoreMachineState = "started" | "booting" | "stopped" | "updating" | 
 export async function findCoreMachine(
   machines: Pick<FlyMachinesClient, "listMachines">,
 ): Promise<FlyMachine | undefined> {
-  const cores = (await machines.listMachines())
+  return selectCore(await machines.listMachines(), coreCanServe);
+}
+
+/**
+ * The core rule of `findCoreMachine` over listed Machines. The guard narrows `canServe` further,
+ * so the core it keeps is the one the gate would use.
+ */
+export function selectCore(
+  machines: FlyMachine[],
+  canServe: (machine: FlyMachine) => boolean,
+): FlyMachine | undefined {
+  const cores = machines
     .filter((machine) => machine.config.metadata?.role === "core")
     .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at));
-  const usable = cores.filter((machine) => !hostDown(machine) && !setupFailed(machine));
+  const usable = cores.filter(canServe);
   const pool = usable.length > 0 ? usable : cores;
   return pool.find((machine) => machine.state === "started") ?? pool[0];
+}
+
+/** A core on a host that is down, or whose setup failed, cannot serve. */
+export function coreCanServe(machine: FlyMachine): boolean {
+  return !hostDown(machine) && !setupFailed(machine);
 }
 
 export function coreMachineState(machine: FlyMachine): CoreMachineState {
