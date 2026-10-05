@@ -45,6 +45,12 @@ One command safely deploys one commit to the three apps.
 - `deploy.mjs` has no tests; add one only if this task extracts the deploy sequence anyway.
 - HD-29's context and consequences say the deploy side of the lease is not implemented yet; update them when it is.
 
+## Inputs from Task 10
+
+- The fresh-core command sets the mark (`metadata.recreate = "requested"`) in the full config it sends, or through the metadata endpoint under the core lease; the next wake recreates the core. `deploy.mjs` still refuses two `role=core` Machines, which happens only mid-recovery or after a failed retirement. Reword the relocating page for the deliberate case if needed.
+- **The core config copy in the gate.** `deploy.mjs core` writes the full versioned core config it sent into the gate Machine as a file (`CORE_MACHINE_CONFIG_FILE`), with its volume's name and size, and `deploy.mjs gate` carries that file over; the gate recreates the core only from it (HD-34). Keep both when completing the script.
+- **Runner recreation on a dead host does not work yet (HD-17).** The API's runner recreation copies the old runner's config and takes its lease, but Fly returns only a partial config for a Machine whose host is not ok (fly-go `GetConfig`), and flyctl skips leasing such Machines. The runner needs the same approach as the core: a deploy-provided copy of its full versioned config (for example in the core, to be designed with the version handshake), plus no lease on a host that is not ok (force destroy without a nonce, 404 counting as done).
+
 ## Working Notes
 
 _None yet._

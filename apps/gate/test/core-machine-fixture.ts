@@ -8,6 +8,7 @@ export function coreMachine(overrides: Partial<FlyMachine> = {}): FlyMachine {
     instance_id: "v1",
     private_ip: "fdaa::5",
     created_at: "2026-10-03T10:00:00Z",
+    host_status: "ok",
     config: {
       guest: { cpu_kind: "performance", cpus: 4, memory_mb: 8192 },
       metadata: { role: "core" },

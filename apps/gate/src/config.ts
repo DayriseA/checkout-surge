@@ -5,6 +5,8 @@ export interface GateConfig {
   coreAppName: string;
   /** A deploy token for the core app, used to find, start and lease the core Machine. */
   coreFlyApiToken: string;
+  /** Where the deploy script writes the core's deployed config, used to recreate the core. */
+  coreMachineConfigFile: string;
 }
 
 export function loadGateConfig(env: Record<string, string | undefined>): GateConfig {
@@ -13,6 +15,7 @@ export function loadGateConfig(env: Record<string, string | undefined>): GateCon
     port: Number(env.PORT?.trim() || "8080"),
     coreAppName: required(env, "CORE_FLY_APP"),
     coreFlyApiToken: required(env, "CORE_FLY_API_TOKEN"),
+    coreMachineConfigFile: required(env, "CORE_MACHINE_CONFIG_FILE"),
   };
 }
 

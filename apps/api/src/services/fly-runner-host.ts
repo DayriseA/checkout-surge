@@ -79,14 +79,23 @@ export class FlyRunnerHost implements RunnerHost {
 
   /**
    * Starts the runner where it is, retrying with back-off. When the provider still has no
-   * capacity, or the host is unreachable, the runner is recreated elsewhere.
+   * capacity, or the host is unreachable, the runner is recreated elsewhere. A runner outside the
+   * core's region, because the core was relocated, is recreated to follow it.
    */
   start(runId: string, hooks: RunnerStartHooks): Promise<RunnerPlacement> {
     return this.withLease("runner start", async (machine, nonce) => {
       if (classifyFlyMachine(machine) !== "host_unreachable") {
-        const failure = await this.startInPlace(runId, machine, nonce);
-        if (failure === null) return { machineId: machine.id, region: machine.region };
-        if (!relocatingFailures.has(classifyFlyError(failure))) throw failure;
+        if (machine.state !== "stopped") {
+          // No other run is in flight, so a running runner is stale: it never serves this run,
+          // even when it is about to be replaced.
+          const identity = await this.options.control.readIdentity().catch(() => null);
+          await this.stopMachine(machine, nonce, { runId, bootId: identity?.bootId ?? null }, true);
+        }
+        if (machine.region === this.options.coreRegion) {
+          const failure = await this.startInPlace(machine, nonce);
+          if (failure === null) return { machineId: machine.id, region: machine.region };
+          if (!relocatingFailures.has(classifyFlyError(failure))) throw failure;
+        }
       }
       await hooks.onRelocating();
       return this.replace(machine, nonce);
@@ -136,19 +145,10 @@ export class FlyRunnerHost implements RunnerHost {
   }
 
   /**
-   * Brings the Machine up in place. Returns the last start failure once the retries are spent, or
+   * Brings the stopped Machine up in place. Returns the last start failure once the retries are spent, or
    * null when it started.
    */
-  private async startInPlace(
-    runId: string,
-    machine: FlyMachine,
-    nonce: string,
-  ): Promise<unknown | null> {
-    if (machine.state !== "stopped") {
-      // No other run is in flight, so a running runner is stale: it never serves this run.
-      const identity = await this.options.control.readIdentity().catch(() => null);
-      await this.stopMachine(machine, nonce, { runId, bootId: identity?.bootId ?? null }, true);
-    }
+  private async startInPlace(machine: FlyMachine, nonce: string): Promise<unknown | null> {
     if (!this.hasRunSettings(machine.config)) {
       const updated = await this.options.machines.updateMachine(
         machine.id,

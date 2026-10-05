@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CoreStatus } from "../src/core-status.js";
-import type { WakeOutcome } from "../src/core-wake.js";
+import type { RecoveryPage, WakeOutcome } from "../src/core-wake.js";
 import { buildGateServer } from "../src/server.js";
 
 const closers: (() => Promise<unknown>)[] = [];
@@ -38,13 +38,17 @@ async function startCore() {
   return { received, target: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
 }
 
-async function setup(initial: CoreStatus, wakeOutcome: WakeOutcome = "starting") {
+async function setup(
+  initial: CoreStatus,
+  wakeOutcome: WakeOutcome = "starting",
+  recoveryPage?: RecoveryPage,
+) {
   let current = initial;
   const status = {
     current: vi.fn(async () => current),
     invalidate: vi.fn(),
   };
-  const wake = { wake: vi.fn(async () => wakeOutcome) };
+  const wake = { wake: vi.fn(async () => wakeOutcome), recoveryState: () => recoveryPage };
   const gate = await buildGateServer({ status, wake, logger: createSilentLogger("gate") });
   closers.push(() => gate.close());
   return { gate, status, wake, setStatus: (next: CoreStatus) => (current = next) };
@@ -92,6 +96,33 @@ describe("gate server", () => {
     const response = await gate.inject({ method: "GET", url: "//evil.example/" });
 
     expect(response.body).toContain('<a class="button" href="/">Try again</a>');
+  });
+
+  it("returns the visitor to their page while the core is recreated", async () => {
+    const { gate } = await setup({ state: "stopped" }, "relocating");
+
+    const response = await gate.inject({ method: "POST", url: "/__gate/start?return=%2Fdemo" });
+
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe("/demo");
+  });
+
+  it("answers any URL with the recovery page while one runs or found no capacity", async () => {
+    const relocating = await setup(
+      { state: "ready", target: "http://127.0.0.1:9" },
+      "starting",
+      "relocating",
+    );
+    const noCapacity = await setup({ state: "stopped" }, "starting", "no_capacity");
+
+    const moving = await relocating.gate.inject({ method: "GET", url: "/demo" });
+    const full = await noCapacity.gate.inject({ method: "GET", url: "/demo" });
+
+    expect(moving.statusCode).toBe(503);
+    expect(moving.body).toContain("Relocating the demo");
+    expect(relocating.status.current).not.toHaveBeenCalled();
+    expect(full.body).toContain('href="https://status.flyio.net/"');
+    expect(full.body).toContain('action="/__gate/start?return=%2Fdemo"');
   });
 
   it("shows the update page when a deploy holds the core", async () => {

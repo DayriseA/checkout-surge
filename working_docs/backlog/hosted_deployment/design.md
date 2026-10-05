@@ -133,7 +133,8 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 - Only the gate starts the core through the Machines API, after a deliberate visitor action: a button that sends a POST.
 - There is no wake quota.
 - Before starting or recovering the core, the gate takes a Fly lease on the core Machine (section 3.6).
-- **Implemented in task 09.** The button posts to the gate-owned path `/__gate/start?return=<path>`; every other path belongs to the core. Wakes are joined in-process, so visitors pressing together send one start. Under a 60 s lease, the gate reads the Machine again, waits up to 30 s for a core still `stopping` (its own idle stop), sends `start`, releases the lease, then answers 303 to the return path, which must be a same-site path (anything else returns to `/`). A held lease (409, `conflict`) shows the updating page. A failed start shows the unavailable page; retries and recreation are task 10. Measured: the POST answers in 1.5 s, and the demo page is relayed 12.1 s after it.
+- **Implemented in task 09.** The button posts to the gate-owned path `/__gate/start?return=<path>`; every other path belongs to the core. Wakes are joined in-process, so visitors pressing together send one start. Under a lease whose 180 s TTL covers the worst case of the wake's own calls at the client's timeouts (task 10 review; it was 60 s), the gate reads the Machine again, waits up to 30 s for a core still `stopping` (its own idle stop), sends `start`, releases the lease, then answers 303 to the return path, which must be a same-site path (anything else returns to `/`). A held lease (409, `conflict`) shows the updating page. A failed start shows the unavailable page. Measured: the POST answers in 1.5 s, and the demo page is relayed 12.1 s after it.
+- **Retries and recovery (task 10).** Under that lease, `start` is tried 3 times, with 1 s then 3 s back-off on capacity, dead-host and transient errors. Capacity and dead-host failures, or a core marked `recreate=requested`, start the recovery (section 3.5) in the background; the POST then answers 303 like a start, and every URL shows the relocating page until the recovery ends. A core whose `host_status` is not `ok` is recreated at once **without taking its lease**: Fly's own tooling skips leasing such Machines (flyctl `internal/machine/lease.go`: "Skip leasing for unreachable machines"). When the listing answers with no `role=core` Machine at all (a dead core whose partial config lost its metadata, or a core deleted by hand), the wake creates a core the same way, with no old Machine: no lease, nothing destroyed or deleted (owner decision, 2026-10-05). Without the deployed core config file in the gate, a recovery cannot start and the unavailable page shows; a failed listing also shows it. Any other failure shows the unavailable page.
 
 ### 2.3 Gate pages
 
@@ -146,15 +147,17 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 - **No capacity in Europe:** a provider message linking to https://status.flyio.net/ and inviting the visitor to come back later.
 - **Setup failure:** a clear error when migrations or seed fail. The Machine stays `started` in that case, so the gate detects the failure through `containers[].state` in the Machines API (the setup container `stopped` with a non-zero exit, its dependents never started).
 
-**Implemented in task 09** (relocating and no capacity are task 10). Every gate page answers 503 with `Cache-Control: no-store`, for any method and URL, and never starts the core.
+**Implemented in task 09**, relocating and no capacity in task 10. Every gate page answers 503 with `Cache-Control: no-store`, for any method and URL, and never starts the core.
 
 | Page | When |
 | :-- | :-- |
-| Stopped (start button) | The core Machine is `stopped` or `stopping` |
+| Stopped (start button) | The core Machine is `stopped` or `stopping`, or its `host_status` is not `ok`, or no `role=core` Machine is listed (the button then recreates it) |
 | Booting (reloads every 3 s) | `starting`, or `started` while Caddy's `/health` does not answer |
 | Updating (retry button) | `created` or `replacing` (a deploy is writing its config), or the wake found the lease held |
+| Relocating (reloads every 5 s) | A recovery runs in the gate (task 10), whatever the core's state |
+| No capacity (retry button, link to the Fly.io status page) | The last recovery was refused for capacity; held until the next wake |
 | Setup failure | `started`, and the `setup` container has an `exited` event with a non-zero `exit_code` no older than the Machine's latest `start` event |
-| Unavailable (try again) | No `role=core` Machine, another state, a Machines API failure, or a failed start |
+| Unavailable (try again) | Another state, a Machines API failure, a failed start, or a recovery without the deployed core config |
 
 The setup check reads container events rather than `containers[].state`, because `setup` is `stopped` after a successful run too. An open demo tab on a stopped core gets the gate page as the answer to its polling, which the countdown widget reads as "Demo paused".
 
@@ -261,6 +264,17 @@ The gate owns recovery, because the owner will not be around to repair manually.
 
 Live failure detection cannot be tested without a real Fly capacity incident. The recovery path can be tested by triggering it deliberately.
 
+**Implemented in task 10** (`apps/gate/src/core-recovery.ts`, HD-34, HD-35).
+
+- **Config source (owner decision, 2026-10-05).** The new core is built from the core config the deploy script last sent, never from the old Machine: Fly returns only a partial config for a Machine whose host is not ok (fly-go `machine_types.go`: `GetConfig` "returns IncompleteConfig if Config is unset which happens when HostStatus isn't ok"). `deploy.mjs core` writes that full versioned config, with its volume's name and size, into the gate Machine as a file (`files` entry, `CORE_MACHINE_CONFIG_FILE`) through a full-config update of the gate; `deploy.mjs gate` carries the file over from the gate's current config. The gate logs at startup whether the file is present; if it is missing, no recovery starts. The Machines client reads `incomplete_config` when `config` is unset, like `GetConfig`, so the core lookup still sees a dead core's metadata when Fly reports it.
+- **Under the lease.** The wake's lease on the old core is extended to 600 s with its nonce (Fly refreshes a lease when the nonce is sent; verified) and held until the recovery ends, then released (404 once the Machine is destroyed). On a host that is not ok, no lease is taken.
+- **Volume.** Same name and size as the old mount, `compute` set to the old guest, region `cdg,eu`. The volumes API takes a prioritized region list like Machines (verified: `cdg,eu` placed the volume in cdg, `eu` alone in ams, and an unknown first entry is refused with "target region … not found"). Fly placed the new volume in another zone (host) than the old one.
+- **Machine.** The deployed config (images, size, container files included), on the new volume, without a `recreate` mark, created and launched in the volume's region (a volume pins its Machine's region).
+- **Healthy.** Polled every 3 s for up to 300 s: `started`, setup not failed since the start, and Caddy's `/health` answering over 6PN. Then the old Machine is force-destroyed, with the nonce when a lease is held and without one otherwise (a 404 counts as done, as in flyctl's blue-green deploys), and the deletion of its volume is started without waiting: a volume can be deleted right after its Machine's destroy (verified), but on a host that is down Fly keeps it `pending_destroy` until the host returns (Fly staff, 2025: no way to force-delete it meanwhile); the guard cleans up. If the new core is not healthy, it is destroyed, then its volume deleted (kept attached when the destroy fails, for the guard), and the old core kept.
+- **Capacity.** A volume create refused with `volume_placement_capacity`, or a Machine create refused with `insufficient_capacity`, keeps the old core and shows the no-capacity page until the next wake. A failed Machine create deletes the new volume (verified live: the volume went to `pending_destroy`).
+- **Deliberate trigger (owner decision, 2026-10-05, HD-35).** Metadata `recreate=requested` on the core Machine, set through `POST /v1/apps/<core-app>/machines/<id>/metadata/recreate` with `{"value":"requested"}` (204, no new Machine version). The next visitor wake recreates instead of starting. The deploy command for incompatible changes (section 8) sets the same mark.
+- **Measured (2026-10-05).** Wake POST to recovery start 0.1 s; new Machine created 7 s later; image pulls and launch 12.7 s; fresh install (initdb, migrations, seed) 6 s; old core retired and the recovery logged 36 s after the POST; demo relayed 0.8 s later. The visitor saw the relocating page throughout.
+
 ### 3.6 Authoritative core and coordination
 
 - **One authoritative core.** It is the one started, healthy Machine with `role=core` metadata in the core app.
@@ -270,7 +284,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - Whoever finds the lease held waits: the gate shows "updating", and the script retries.
   - The lease TTL is not documented, so we set it explicitly and renew it.
   - Leases are advisory, not a security boundary. They work between our own cooperating clients.
-  - **Gate lookup (task 09).** Among the `role=core` Machines, the gate takes the `started` one, else the newest by `created_at` (the one to start). Several exist only during a recovery (task 10).
+  - **Gate lookup (task 09, refined in task 10).** The gate never touches a Machine it does not recognize as the core (no `role=core`); when none is listed, a wake creates one from the deployed config. Among the `role=core` Machines that can serve, the gate takes the `started` one, else the newest by `created_at` (the one to start). A core whose `host_status` is not `ok`, or with a failed setup, cannot serve; when no core can, all of them are considered, so a single dead or failed core still shows its own page. Several exist only during a recovery, or after one whose cleanup failed; the guard removes the extra ones.
   - **Measured behavior (task 01).** Without the nonce, `start`, `update` and a second lease request get a 409 immediately. `stop` and `destroy` are not refused: they block until the lease expires, then succeed. Callers of stop or destroy (guard, recovery) therefore use short client timeouts or check the lease first. An expired lease frees the Machine.
 
 ### 3.7 Kernel limits and networking
@@ -362,7 +376,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - While relocating, the run carries a flag (`runner_relocating`), so the dashboard projection shows the message during the start request.
   - Measured: a recreation takes about 14 s, including stopping the new runner (create to `started` in 5 s).
   - When several runners exist (a failed retirement or a lost create response), the API uses the newest, and the guard removes the others (section 5).
-- **The runner follows the core** if the core is relocated.
+- **The runner follows the core** if the core is relocated. **Implemented in task 10 (HD-36):** at run start, a runner whose region differs from the core's `FLY_REGION` is recreated like a capacity failure (relocation flag, region `"<core region>,eu"`). While the core's region has no room for the runner, this repeats at every run. Its `API_BASE_URL` already follows the core's 6PN address at every start (section 4.1).
 - **Region evidence.** The run records the runner's actual region, and the UI shows it, because a runner outside the core's region adds latency between k6 and the API. Measure it rather than assume it.
 - **UX.**
   - While relocating, show "provider capacity issue, relocating the load generator, please wait".
@@ -473,7 +487,8 @@ Machines API tokens are app-scoped deploy tokens:
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
   - The deploy script verifies both versions at the end.
   - The runner reads its version from `COMMIT_SHA`, which the deploy script sets in the runner Machine env to the commit version, `<commit-sha>` or `<commit-sha>-dirty` (the image label without its service prefix and build timestamp). Without it, the version is `unknown`; on Fly, `unknown` never counts as a match.
-- **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime.
+- **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime. The trigger is the `recreate=requested` mark on the core Machine (task 10, HD-35): the deploy sets it with the update, and the next visitor wake recreates the core.
+- **Core config copy in the gate (task 10, HD-34).** Every core deploy also updates the gate Machine with a file holding the core config it sent; every gate deploy keeps that file. The gate recreates the core only from it.
 - **Deploy script.** `infra/fly/deploy.mjs <core|runner|gate>`. Each app's images live in its own registry repository.
 - **Gate deploy (task 09).** The gate image is the shared `docker/Dockerfile.node-service` (`SERVICE_NAME=gate`, `runtime` target), and its Machine is managed like the others, from `infra/fly/gate/machine.json` through the Machines API, rather than with a `fly.toml` and `fly deploy`. The gate is stateless, so the script updates it in any state. One-time app setup, outside the script: `flyctl apps create checkout-surge-gate`, the token above, `flyctl ips allocate-v4 --shared` and `flyctl ips allocate-v6`. `.dockerignore` now excludes `**/*.env`: before, the gitignored `infra/fly/core/core-secrets.env` was part of every remote build context. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**

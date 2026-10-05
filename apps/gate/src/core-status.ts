@@ -5,7 +5,14 @@ import { coreMachineState, findCoreMachine, setupFailed } from "./core-machine.j
 /** The core's Caddy listens on this port, on its 6PN address. */
 export const corePort = 8080;
 
-export type GatePageState = "stopped" | "booting" | "updating" | "setup_failed" | "unavailable";
+export type GatePageState =
+  | "stopped"
+  | "booting"
+  | "updating"
+  | "relocating"
+  | "no_capacity"
+  | "setup_failed"
+  | "unavailable";
 
 /** Either a relay target on the core's Caddy, or the gate page to show instead. */
 export type CoreStatus = { state: "ready"; target: string } | { state: GatePageState };
@@ -30,7 +37,8 @@ export async function readCoreStatus(options: {
   previous?: CoreStatus | undefined;
 }): Promise<CoreStatus> {
   const machine = await findCoreMachine(options.machines);
-  if (!machine) return { state: "unavailable" };
+  // With no core listed, the start button creates one (core recovery).
+  if (!machine) return { state: "stopped" };
   const state = coreMachineState(machine);
   if (state !== "started") return { state };
   if (setupFailed(machine)) return { state: "setup_failed" };

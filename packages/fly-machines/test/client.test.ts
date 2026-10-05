@@ -62,6 +62,46 @@ describe("FlyMachinesClient", () => {
     });
   });
 
+  it("refreshes a held lease by sending its nonce", async () => {
+    const { client, fetch } = createClient([
+      { status: 201, body: { status: "success", data: { nonce: "nonce-1" } } },
+    ]);
+
+    await client.refreshLease("m1", "nonce-1", 600);
+
+    expect(requestAt(fetch, 0)).toMatchObject({
+      url: "https://machines.test/v1/apps/runner-app/machines/m1/lease",
+      method: "POST",
+      headers: { "fly-machine-lease-nonce": "nonce-1" },
+      body: { ttl: 600 },
+    });
+  });
+
+  it("reads the partial config Fly reports for a Machine on a host that is not ok", async () => {
+    const { client } = createClient([
+      {
+        status: 200,
+        body: [
+          {
+            id: "m1",
+            host_status: "unreachable",
+            incomplete_config: { metadata: { role: "core" } },
+          },
+        ],
+      },
+      { status: 200, body: { id: "m1", host_status: "unreachable" } },
+    ]);
+
+    await expect(client.listMachines()).resolves.toEqual([
+      { id: "m1", host_status: "unreachable", config: { metadata: { role: "core" } } },
+    ]);
+    await expect(client.getMachine("m1")).resolves.toEqual({
+      id: "m1",
+      host_status: "unreachable",
+      config: {},
+    });
+  });
+
   it("raises a non-2xx answer with its status and body", async () => {
     const { client } = createClient([{ status: 409, body: { error: "lease currently held" } }]);
 

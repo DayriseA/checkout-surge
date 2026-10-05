@@ -2,13 +2,13 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import replyFrom from "@fastify/reply-from";
 import { type FastifyReply, fastify } from "fastify";
 import type { CoreStatus, GatePageState } from "./core-status.js";
-import type { WakeOutcome } from "./core-wake.js";
+import type { RecoveryPage, WakeOutcome } from "./core-wake.js";
 import { renderGatePage, safeReturnPath, wakePath } from "./pages.js";
 import { relayRequestHeaders } from "./relay-headers.js";
 
 export interface BuildGateServerOptions {
   status: { current(): Promise<CoreStatus>; invalidate(): void };
-  wake: { wake(): Promise<WakeOutcome> };
+  wake: { wake(): Promise<WakeOutcome>; recoveryState(): RecoveryPage | undefined };
   logger: CheckoutSurgeLogger;
 }
 
@@ -33,11 +33,13 @@ export async function buildGateServer(options: BuildGateServerOptions) {
   app.post(wakePath, async (request, reply) => {
     const returnPath = safeReturnPath((request.query as { return?: unknown }).return);
     const outcome = await options.wake.wake();
-    if (outcome === "starting") return reply.redirect(returnPath, 303);
+    if (outcome === "starting" || outcome === "relocating") return reply.redirect(returnPath, 303);
     return sendPage(reply, outcome, returnPath);
   });
 
   app.all("/*", async (request, reply) => {
+    const recovery = options.wake.recoveryState();
+    if (recovery) return sendPage(reply, recovery, request.url);
     const status = await options.status.current();
     if (status.state !== "ready") return sendPage(reply, status.state, request.url);
     return reply.from(undefined, {

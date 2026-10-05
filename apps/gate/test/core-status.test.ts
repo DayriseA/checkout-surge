@@ -1,6 +1,7 @@
 import type { FlyMachine } from "@checkout-surge/fly-machines";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { findCoreMachine } from "../src/core-machine.js";
 import {
   type CoreStatus,
   CoreStatusCache,
@@ -57,7 +58,34 @@ describe("readCoreStatus", () => {
     );
 
     expect(states).toEqual(["stopped", "stopped", "updating", "unavailable"]);
-    await expect(read([]).status).resolves.toEqual({ state: "unavailable" });
+    // No core listed: the start button creates one.
+    await expect(read([]).status).resolves.toEqual({ state: "stopped" });
+  });
+
+  it("among several cores, skips one that cannot serve for the one that can", async () => {
+    const find = (machines: FlyMachine[]) =>
+      findCoreMachine({ listMachines: async () => machines }).then((machine) => machine?.id);
+    const deadButStarted = coreMachine({
+      id: "core-old",
+      state: "started",
+      host_status: "unreachable",
+    });
+    const recreated = coreMachine({ id: "core-new", created_at: "2026-10-05T10:00:00Z" });
+    const failedSetup = coreMachine({
+      ...started([{ type: "exited", exit_code: 1, timestamp: startedAt + 5 }]),
+      id: "core-newer",
+      created_at: "2026-10-06T10:00:00Z",
+    });
+
+    await expect(find([deadButStarted, recreated])).resolves.toBe("core-new");
+    await expect(find([failedSetup, deadButStarted, recreated])).resolves.toBe("core-new");
+    await expect(find([deadButStarted])).resolves.toBe("core-old");
+  });
+
+  it("offers the start button for a core on a dead host, so a visitor can recreate it", async () => {
+    const onDeadHost = coreMachine({ state: "started", host_status: "unreachable" });
+
+    await expect(read([onDeadHost]).status).resolves.toEqual({ state: "stopped" });
   });
 
   it("reports a setup that failed since the latest start, not an older failure", async () => {

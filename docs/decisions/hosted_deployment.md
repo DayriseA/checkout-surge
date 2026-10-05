@@ -183,7 +183,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-04
 - **Context:** A stopped Machine can fail to start when its host lacks capacity; the runner has no volume pinning it to that host.
 - **Decision:** Try `start` 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries, and a runner already on an unreachable host is recreated at once. The new runner reuses the current config and is created with region `"<core region>,eu"`; the old one is force-destroyed only once the new one has started, otherwise it is kept. A create refused for capacity fails the run before traffic (zero counters, 503 `runner_capacity_unavailable`) and the visitor sees a provider message. While relocating, the run carries `runner_relocating` so the dashboard can say so, and every run records the runner's region. `POST /admin/demo/runner/recreate` (control token) runs the same replacement deliberately, only while the runner is stopped, and leaves the new runner stopped.
-- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; the recorded region makes it visible.
+- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; the recorded region makes it visible. Accepted risk: the recreation copies the old runner's config and takes its lease, but Fly returns no full config and grants no usable lease for a Machine whose host is down, so a runner on a dead host cannot be recreated automatically until the runner gets a deploy-provided copy of its config, as the core has ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
 - **Rejected alternatives:** Recreating on transient errors: a new Machine would hit the same Machines API trouble.
 - **Code:** `FlyRunnerHost.start` and `FlyRunnerHost.recreate` in `apps/api/src/services/fly-runner-host.ts`.
 
@@ -285,10 +285,11 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-05
 - **Context:** The gate and the deploy script are meant to coordinate through the core Machine lease. The gate's side exists; the deploy script's side is planned, not yet implemented.
-- **Decision:** The gate holds the lease only around the start command, not through the boot until the core is ready: a started core is one the deploy script refuses to update, provided the script re-reads the core's state under the lease just before its update, so a longer hold would only block deploys. A held lease is shown as "updating", although a lease alone does not prove a deploy (it can also be a wake whose gate died before releasing it, until the lease expires); telling holders apart is not worth the code for a page that only asks the visitor to retry. Retrying a failed start and recreating the core belong to core recovery, not to the wake.
+- **Decision:** The gate holds the lease only around the start command, not through the boot until the core is ready: a started core is one the deploy script refuses to update, provided the script re-reads the core's state under the lease just before its update, so a longer hold would only block deploys. A held lease is shown as "updating", although a lease alone does not prove a deploy (it can also be a wake whose gate died before releasing it, until the lease expires); telling holders apart is not worth the code for a page that only asks the visitor to retry. Retrying a failed start and recreating the core are core recovery ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)), which the wake triggers and which keeps the lease until it ends.
 - **Consequences:**
   - A visitor may see "updating" while no deploy runs; a retry works once the lease is released or expires.
   - Until the deploy script takes the core lease around its update, it checks the state only before its builds, so a wake during the builds can be interrupted by the update.
+  - The wake's lease TTL covers the worst case of the wake's own calls (read, wait for a stopping core, start retries), so a gate dying mid-wake keeps "updating" up to that TTL, as a recovery keeps it up to its own longer lease ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
 - **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`.
 
 ### HD-30 Gate pages answer any request with HTML 503
@@ -321,6 +322,54 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
   - The gate's address, written at deploy time or resolved when Caddy starts: it goes stale when Fly moves the gate, and every visitor then silently shares one SSE cap.
   - The organization's prefix only: an organization-specific value with the same silent failure if the app changes organization, for a gain only against a failure of Fly's isolation.
 - **Code:** `infra/caddy/Caddyfile.fly`, `apps/gate/src/relay-headers.ts`.
+
+## Core Recovery
+
+### HD-34 Core recovery recreates a fresh core and retires the old one only once the new one is healthy
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The core is pinned to its volume's host, so a host without capacity, or a dead host, leaves it unable to start, and nobody is around to repair it. Its data is disposable ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path)).
+- **Decision:** On a visitor's wake, the gate retries `start` in place with back-off, like the runner ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)). Capacity and dead-host failures, and a core already on a host that is not ok, then recreate the core: a new empty volume placed by Fly in the core's home region or elsewhere in Europe, sized for the core's Machine, and a new Machine on it, which installs fresh. The new Machine is built from the core config the deploy script last sent, which it also writes into the gate Machine as a file; without that file there is no recovery. The old Machine and volume are destroyed only once the new core is healthy (setup succeeded, the readiness probe answers); otherwise the new ones are removed and the old core is kept. The gate holds the old core's lease for the whole recovery, except on a host that is not ok, where it takes no lease and force-destroys the old core without one, as Fly's own tooling does. Visitors see the relocating page meanwhile.
+- **Consequences:**
+  - A recovery loses run history and admin edits. The visitor waits under a minute (measured on Fly: 37 s from the start button to the demo).
+  - A capacity refusal keeps the old core and shows the no-capacity page until a visitor tries again; any other failure keeps the old core and returns visitors to the start page.
+  - A core on a host that is not ok shows the start button rather than the booting page, so a deliberate visitor action can recreate it.
+  - The old volume's deletion is only started: on a host that is down, Fly keeps it pending until the host returns, and the guard cleans up what remains.
+  - A recovery always rebuilds the last deployed config, so a core config changed by hand since the last deploy is not carried over.
+  - When the listing shows no core at all (a dead core whose partial config lost its metadata, or a core deleted by hand), a visitor's wake creates one from the deployed config, with no lease and nothing destroyed. The gate never touches a Machine it does not recognize as the core. Accepted risk: if the listing wrongly omitted an existing core, a duplicate core is created; the selection rule serves the usable one and the guard removes the surplus, and nothing unknown is ever destroyed.
+  - Accepted risk: the recovery runs inside the gate process. A gate stopped mid-recovery can leave a volume without a Machine, or two core Machines, for the guard to clean up, and visitors see "updating" until the lease expires.
+  - When several cores exist, the gate skips any that cannot serve (on a host that is not ok, or with a failed setup), so a leftover never hides the core that can. Accepted gap: a new core that starts but never becomes healthy without a setup failure, and whose removal also fails, can still be selected until the guard removes it.
+- **Rejected alternatives:**
+  - Destroying the old core before the new one is healthy: a failed recreation would leave no core at all.
+  - Recreating on transient errors: a new core would hit the same Machines API trouble.
+  - Releasing the lease after the start, as a normal wake does ([HD-29](#hd-29-the-gates-lease-covers-only-the-start-command)): a deploy could update the old core while it is being replaced.
+  - Copying the old Machine's config: Fly returns only a partial config for a Machine whose host is not ok, exactly when a dead-host recovery needs it.
+  - Taking a lease on a core whose host is not ok: Fly's own tooling skips leasing such Machines.
+  - Treating a core-app Machine without the `role` label on a down host as the core: the gate could destroy a Machine that is not the core.
+- **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`, `CoreRecovery` in `apps/gate/src/core-recovery.ts`, `writeCoreConfigToGate` in `infra/fly/deploy.mjs`.
+
+### HD-35 A fresh core is requested by a mark that the next wake acts on
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The recovery path must be triggerable on purpose, to test it and to give the deploy a fresh core after incompatible changes, while the gate is the only public component and holds no shared secret.
+- **Decision:** An operator, or the deploy script, sets `recreate=requested` in the core Machine's metadata. The next visitor wake then recreates the core instead of starting it; the mark is not copied to the new core.
+- **Consequences:** No new secret or privileged endpoint on the gate, and the visitor sees the same relocating page as in a real recovery. The fresh install happens at the next wake, not at deploy time, so the first visitor after it waits longer and the deploy script cannot confirm the new core itself. A marked core never starts again with incompatible data.
+- **Rejected alternatives:**
+  - An authenticated recovery endpoint on the gate: a new secret and an admin surface on the only public component ([HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control)).
+  - A recovery command run from a workstation or CI: no private network to probe the new core's health, and the gate would not know to show the relocating page.
+- **Code:** `recreationRequested` in `apps/gate/src/core-machine.ts`.
+
+### HD-36 The runner follows the core's region, even at one recreation per run
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** A recovered core can land outside its home region, and a runner in another region adds latency between k6 and the API.
+- **Decision:** When a run starts, a runner whose region differs from the core's is recreated in the core's region first, then elsewhere in Europe, through the runner's capacity recreation path.
+- **Consequences:** While the core's region has no room for the runner, the runner is recreated at every run start (about 14 s each) and may land outside it again; the recorded runner region shows it.
+- **Rejected alternatives:** Remembering a failed placement to skip later attempts: state for a rare case, and the next run would keep the cross-region latency without trying again.
+- **Code:** `FlyRunnerHost.start` in `apps/api/src/services/fly-runner-host.ts`.
 
 ## Deployment and Access
 

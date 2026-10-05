@@ -27,6 +27,16 @@ const pages: Record<GatePageState, PageContent> = {
     text: "A new version of the demo is being deployed. Please retry shortly.",
     action: "retry_start",
   },
+  relocating: {
+    title: "Relocating the demo",
+    text: "Our hosting provider had a capacity issue, so the demo is moving to new servers, where it starts as a fresh install. This takes a few minutes; this page reloads on its own and opens the demo as soon as it is ready.",
+    refreshSeconds: 5,
+  },
+  no_capacity: {
+    title: "No room at our hosting provider",
+    text: 'Fly.io, our hosting provider, has no capacity for the demo\'s servers in Europe at the moment. Nothing is broken on our side; please come back later, or check the <a href="https://status.flyio.net/">Fly.io status page</a>.',
+    action: "retry_start",
+  },
   setup_failed: {
     title: "The demo could not start",
     text: "Its database setup failed while the servers were starting. This needs a fix from the project owner; please come back later.",

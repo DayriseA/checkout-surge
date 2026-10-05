@@ -1,6 +1,7 @@
 import { FlyMachinesClient } from "@checkout-surge/fly-machines";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { loadGateConfig } from "./config.js";
+import { CoreRecovery, readDeployedCoreConfig } from "./core-recovery.js";
 import { CoreStatusCache, probeCore, readCoreStatus } from "./core-status.js";
 import { CoreWake } from "./core-wake.js";
 import { buildGateServer } from "./server.js";
@@ -27,7 +28,23 @@ export async function startGate(): Promise<void> {
     read: (previous) => readCoreStatus({ machines: statusMachines, probe: probeCore, previous }),
     logger,
   });
-  const wake = new CoreWake({ machines, onStarted: () => status.invalidate(), logger });
+  const recovery = new CoreRecovery({ machines, probe: probeCore, logger });
+  const readCoreConfig = () => readDeployedCoreConfig(config.coreMachineConfigFile);
+  if (await readCoreConfig()) {
+    logger.info({ path: config.coreMachineConfigFile }, "Deployed core config found.");
+  } else {
+    logger.error(
+      { path: config.coreMachineConfigFile },
+      "No deployed core config; the core cannot be recreated until the core is deployed.",
+    );
+  }
+  const wake = new CoreWake({
+    machines,
+    recovery,
+    readCoreConfig,
+    onStarted: () => status.invalidate(),
+    logger,
+  });
   const server = await buildGateServer({ status, wake, logger });
 
   const handleShutdown = () => {

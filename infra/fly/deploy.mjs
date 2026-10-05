@@ -3,6 +3,9 @@
 // the app's Fly registry, then creates or updates its stopped Machine from
 // infra/fly/<target>/machine.json through the Machines API. The Machine is never started here.
 //
+// A core deploy also writes the core config it sent into the gate Machine, as a file the gate
+// recreates the core from (core recovery); a gate deploy carries that file over.
+//
 // Usage, from anywhere: node infra/fly/deploy.mjs <core|runner|gate> [--no-depot | --local-build]
 //   default        Fly remote builder (Depot)
 //   --no-depot     Fly's previous remote builder, for a Depot incident
@@ -63,6 +66,11 @@ const targets = {
     },
   },
 };
+
+// Fly returns no full config for a Machine on a host that is down, so the gate keeps its own copy.
+const coreConfigGuestPath = JSON.parse(
+  readFileSync(`${repoRoot}infra/fly/gate/machine.json`, "utf8"),
+).env.CORE_MACHINE_CONFIG_FILE;
 
 const role = process.argv[2];
 const target = targets[role];
@@ -163,11 +171,11 @@ function machineConfig(imageRefs) {
   return config;
 }
 
-function createMachinesApi() {
+function createMachinesApi(app) {
   return async (method, path, body) => {
     // Read per call: a token read before the builds was refused (403) once they had finished.
     const token = run(flyctl, ["auth", "token"], { stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const response = await fetch(`https://api.machines.dev/v1/apps/${target.app}${path}`, {
+    const response = await fetch(`https://api.machines.dev/v1/apps/${app}${path}`, {
       method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -178,13 +186,43 @@ function createMachinesApi() {
   };
 }
 
-async function findMachine(machinesApi) {
+async function findMachine(machinesApi, machineRole) {
   const machines = await machinesApi("GET", "/machines");
-  const matches = machines.filter((machine) => machine.config?.metadata?.role === role);
+  const matches = machines.filter((machine) => machine.config?.metadata?.role === machineRole);
   if (matches.length > 1) {
-    throw new Error(`Expected at most one ${role} Machine, found ${matches.length}.`);
+    throw new Error(`Expected at most one ${machineRole} Machine, found ${matches.length}.`);
   }
   return matches[0];
+}
+
+/** The gate config with `file` replacing any file at the same guest path. */
+function withGateFile(config, file) {
+  const files = (config.files ?? []).filter((kept) => kept.guest_path !== file.guest_path);
+  return { ...config, files: [...files, file] };
+}
+
+/**
+ * Writes the core config just sent, with its volume's name and size, into the gate Machine
+ * through a full-config update. The gate is stateless, so it is updated in any state.
+ */
+async function writeCoreConfigToGate(coreConfig) {
+  const gateApi = createMachinesApi(targets.gate.app);
+  const gate = await findMachine(gateApi, "gate");
+  if (!gate) throw new Error("Deploy the gate first: the core config is written into it.");
+  const recoveryConfig = {
+    ...coreConfig,
+    mounts: [{ ...coreConfig.mounts[0], name: target.volume.name, size_gb: target.volume.sizeGb }],
+  };
+  const file = {
+    guest_path: coreConfigGuestPath,
+    raw_value: Buffer.from(JSON.stringify(recoveryConfig)).toString("base64"),
+  };
+  const updated = await gateApi("POST", `/machines/${gate.id}`, {
+    config: withGateFile(gate.config, file),
+    skip_launch: true,
+  });
+  await gateApi("GET", `/machines/${updated.id}/wait?state=stopped&timeout=60`);
+  console.log(`gate Machine ${gate.id} now holds the core config for recovery.`);
 }
 
 async function createMachine(machinesApi, config) {
@@ -213,8 +251,8 @@ async function updateMachine(machinesApi, machine, config) {
 
 async function main() {
   const version = commitVersion();
-  const machinesApi = createMachinesApi();
-  const existing = await findMachine(machinesApi);
+  const machinesApi = createMachinesApi(target.app);
+  const existing = await findMachine(machinesApi, role);
   if (
     existing &&
     !target.updatesRunning &&
@@ -232,12 +270,19 @@ async function main() {
   const versioned =
     role === "core" ? config.containers.find((container) => container.name === "api") : config;
   versioned.env.COMMIT_SHA = version;
+  if (role === "gate") {
+    const coreConfigFile = existing?.config.files?.find(
+      (file) => file.guest_path === coreConfigGuestPath,
+    );
+    if (coreConfigFile) config.files = [...(config.files ?? []), coreConfigFile];
+  }
   const machine = existing
     ? await updateMachine(machinesApi, existing, config)
     : await createMachine(machinesApi, config);
   // Fly refuses to start the Machine until it has finished preparing its new configuration.
   await machinesApi("GET", `/machines/${machine.id}/wait?state=stopped&timeout=60`);
   console.log(`${role} Machine ${machine.id} is stopped and ready to start at version ${version}.`);
+  if (role === "core") await writeCoreConfigToGate(config);
 }
 
 main().catch((error) => {

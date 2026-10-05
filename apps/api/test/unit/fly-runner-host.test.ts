@@ -235,6 +235,34 @@ describe("FlyRunnerHost capacity recovery", () => {
     expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 
+  it("recreates a runner left outside the core's region, so it follows a relocated core", async () => {
+    const { host, machines, hooks } = setup({ machine: runnerMachine({ region: "ams" }) });
+
+    await expect(host.start(runId, hooks)).resolves.toMatchObject({ machineId: "runner-2" });
+
+    expect(machines.startMachine).not.toHaveBeenCalled();
+    expect(hooks.onRelocating).toHaveBeenCalledOnce();
+    expect(machines.createMachine).toHaveBeenCalledWith(runnerMachine().config, "cdg,eu");
+    expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+  });
+
+  it("stops a live runner outside the core's region before replacing it", async () => {
+    const { host, machines, control, hooks } = setup({
+      machine: runnerMachine({ state: "started", region: "ams" }),
+    });
+
+    await host.start(runId, hooks);
+
+    expect(control.shutdown).toHaveBeenCalledWith({ runId, bootId });
+    expect(machines.waitForState).toHaveBeenCalledWith("runner-1", "stopped", {
+      timeoutSeconds: 30,
+    });
+    expect(machines.waitForState.mock.invocationCallOrder[0]).toBeLessThan(
+      machines.createMachine.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+  });
+
   it("never recreates the runner on a conflict", async () => {
     const { host, machines, hooks } = setup();
     machines.startMachine.mockRejectedValueOnce(

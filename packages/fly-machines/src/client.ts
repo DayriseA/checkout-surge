@@ -10,12 +10,28 @@ export interface FlyMachineGuest {
   [key: string]: unknown;
 }
 
+/** A volume mounted into a Machine. Fly reports the volume's name and size with it. */
+export interface FlyMachineMount {
+  volume: string;
+  path: string;
+  name?: string;
+  size_gb?: number;
+  [key: string]: unknown;
+}
+
 /** The full Machine config. Updates replace it entirely, so callers send a freshly read one. */
 export interface FlyMachineConfig {
   guest: FlyMachineGuest;
   env?: Record<string, string>;
   metadata?: Record<string, string>;
+  mounts?: FlyMachineMount[];
   [key: string]: unknown;
+}
+
+export interface FlyVolume {
+  id: string;
+  name: string;
+  region: string;
 }
 
 /** One entry of a Machine's event log, newest first. Fly omits a zero `exit_code`. */
@@ -41,6 +57,10 @@ export interface FlyMachine {
   instance_id: string;
   /** The Machine's 6PN (private IPv6) address. */
   private_ip: string;
+  /**
+   * On a host whose `host_status` is not `ok`, Fly returns only a partial config, which may lack
+   * any key (fly-go `GetConfig`); never copy it into a new Machine.
+   */
   config: FlyMachineConfig;
   /** ISO 8601 creation time. */
   created_at: string;
@@ -61,6 +81,17 @@ export class FlyMachinesApiError extends Error {
   }
 }
 
+/** A Machine as Fly reports it: `config` is unset on a host that is not ok. */
+type ReportedMachine = Omit<FlyMachine, "config"> & {
+  config?: FlyMachineConfig;
+  incomplete_config?: FlyMachineConfig;
+};
+
+/** Like fly-go's `GetConfig`: the full config, else the partial one, else an empty one. */
+function withConfig({ incomplete_config, ...machine }: ReportedMachine): FlyMachine {
+  return { ...machine, config: machine.config ?? incomplete_config ?? ({} as FlyMachineConfig) };
+}
+
 const defaultBaseUrl = "https://api.machines.dev";
 const defaultRequestTimeoutMs = 30_000;
 const leaseNonceHeaderName = "fly-machine-lease-nonce";
@@ -76,12 +107,12 @@ export class FlyMachinesClient {
     },
   ) {}
 
-  listMachines(): Promise<FlyMachine[]> {
-    return this.request("GET", "/machines");
+  async listMachines(): Promise<FlyMachine[]> {
+    return (await this.request<ReportedMachine[]>("GET", "/machines")).map(withConfig);
   }
 
-  getMachine(machineId: string): Promise<FlyMachine> {
-    return this.request("GET", `/machines/${machineId}`);
+  async getMachine(machineId: string): Promise<FlyMachine> {
+    return withConfig(await this.request<ReportedMachine>("GET", `/machines/${machineId}`));
   }
 
   /**
@@ -90,6 +121,23 @@ export class FlyMachinesClient {
    */
   createMachine(config: FlyMachineConfig, region: string): Promise<FlyMachine> {
     return this.request("POST", "/machines", { body: { config, region } });
+  }
+
+  /**
+   * Creates a volume. `compute` is the size of the Machine that will mount it, so Fly places the
+   * volume on a host that can run that Machine. `region` may be a prioritized list, like a Machine's.
+   */
+  createVolume(volume: {
+    name: string;
+    region: string;
+    size_gb: number;
+    compute: FlyMachineGuest;
+  }): Promise<FlyVolume> {
+    return this.request("POST", "/volumes", { body: volume });
+  }
+
+  async deleteVolume(volumeId: string): Promise<void> {
+    await this.request("DELETE", `/volumes/${volumeId}`);
   }
 
   /** Destroys a Machine, even a running one or one on a dead host. Pass the nonce of a held lease. */
@@ -144,6 +192,14 @@ export class FlyMachinesClient {
       { body: { ttl: ttlSeconds, description } },
     );
     return response.data.nonce;
+  }
+
+  /** Extends a held lease to `ttlSeconds` from now. */
+  async refreshLease(machineId: string, nonce: string, ttlSeconds: number): Promise<void> {
+    await this.request("POST", `/machines/${machineId}/lease`, {
+      body: { ttl: ttlSeconds },
+      nonce,
+    });
   }
 
   async releaseLease(machineId: string, nonce: string): Promise<void> {

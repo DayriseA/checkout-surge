@@ -15,6 +15,7 @@
     "HOST": "::",
     "PORT": "8080",
     "CORE_FLY_APP": "checkout-surge-core",
+    "CORE_MACHINE_CONFIG_FILE": "/fly/core-machine.json",
     "LOG_LEVEL": "info"
   },
   "services": [
