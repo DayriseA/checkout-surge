@@ -22,7 +22,16 @@ export interface FlyMachineConfig {
 export interface FlyMachineEvent {
   type: string;
   status?: string;
+  /** Milliseconds since the epoch. */
+  timestamp?: number;
   request?: { exit_event?: { exit_code?: number; requested_stop?: boolean } };
+}
+
+/** One container of a multi-container Machine, with its event log, newest first. */
+export interface FlyMachineContainer {
+  name: string;
+  state: string;
+  events?: { type: string; exit_code?: number; timestamp: number }[];
 }
 
 export interface FlyMachine {
@@ -30,11 +39,14 @@ export interface FlyMachine {
   state: string;
   region: string;
   instance_id: string;
+  /** The Machine's 6PN (private IPv6) address. */
+  private_ip: string;
   config: FlyMachineConfig;
   /** ISO 8601 creation time. */
   created_at: string;
   host_status?: string;
   events?: FlyMachineEvent[];
+  containers?: FlyMachineContainer[];
 }
 
 export class FlyMachinesApiError extends Error {

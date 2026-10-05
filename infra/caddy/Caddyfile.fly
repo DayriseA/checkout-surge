@@ -1,5 +1,12 @@
 {
 	auto_https off
+	servers {
+		# Visitors reach this Caddy only through the gate, over Fly's private network (6PN), which
+		# replaces their forwarding headers with a single X-Forwarded-For from Fly-Client-IP. The
+		# gate Machine's own 6PN address is not stable, so the whole 6PN range is trusted.
+		# Accepted risk HD-32 (docs/decisions/hosted_deployment.md).
+		trusted_proxies static fdaa::/16
+	}
 }
 
 # Hosted core ingress on Fly.io. All core containers share one network namespace, so
@@ -9,11 +16,16 @@
 
 	# Browser EventSource uses this same-origin path; only the SSE stream bypasses Next.js.
 	handle @dashboard_events {
-		reverse_proxy 127.0.0.1:4000
+		reverse_proxy 127.0.0.1:4000 {
+			# The visitor alone, not the gate's address appended to it: the API trusts only loopback.
+			header_up X-Forwarded-For {client_ip}
+		}
 	}
 
 	handle {
 		encode gzip
-		reverse_proxy 127.0.0.1:3000
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {client_ip}
+		}
 	}
 }

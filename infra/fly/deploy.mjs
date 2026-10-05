@@ -3,7 +3,7 @@
 // the app's Fly registry, then creates or updates its stopped Machine from
 // infra/fly/<target>/machine.json through the Machines API. The Machine is never started here.
 //
-// Usage, from anywhere: node infra/fly/deploy.mjs <core|runner> [--no-depot | --local-build]
+// Usage, from anywhere: node infra/fly/deploy.mjs <core|runner|gate> [--no-depot | --local-build]
 //   default        Fly remote builder (Depot)
 //   --no-depot     Fly's previous remote builder, for a Depot incident
 //   --local-build  local `docker build` plus `docker push`
@@ -54,12 +54,20 @@ const targets = {
       },
     },
   },
+  gate: {
+    app: "checkout-surge-gate",
+    // Stateless: updated in any state. Fly Proxy starts it again on the next request.
+    updatesRunning: true,
+    images: {
+      gate: { dockerfile: "docker/Dockerfile.node-service", target: "runtime", service: "gate" },
+    },
+  },
 };
 
 const role = process.argv[2];
 const target = targets[role];
 if (!target) {
-  console.error("Usage: node infra/fly/deploy.mjs <core|runner> [--no-depot | --local-build]");
+  console.error("Usage: node infra/fly/deploy.mjs <core|runner|gate> [--no-depot | --local-build]");
   process.exit(64);
 }
 
@@ -126,8 +134,13 @@ function buildAndPushLocally(image, ref) {
 function buildAndPushImages(version) {
   if (builder === "local") run(flyctl, ["auth", "docker"], { stdio: "inherit" });
   const refs = {};
+  // Uncommitted trees share one version, and Fly keeps a Machine's image when the reference is
+  // unchanged, so each dirty build gets its own label.
+  const buildStamp = version.endsWith("-dirty")
+    ? `-${new Date().toISOString().replace(/[-:]/g, "").slice(0, 15)}`
+    : "";
   for (const [name, image] of Object.entries(target.images)) {
-    const label = `${name}-${version}`;
+    const label = `${name}-${version}${buildStamp}`;
     refs[name] = `registry.fly.io/${target.app}:${label}`;
     console.log(`Building ${refs[name]} (${builder} builder)`);
     if (builder === "local") buildAndPushLocally(image, refs[name]);
@@ -202,16 +215,22 @@ async function main() {
   const version = commitVersion();
   const machinesApi = createMachinesApi();
   const existing = await findMachine(machinesApi);
-  if (existing && existing.state !== "stopped" && existing.state !== "created") {
+  if (
+    existing &&
+    !target.updatesRunning &&
+    existing.state !== "stopped" &&
+    existing.state !== "created"
+  ) {
     throw new Error(
       `${role} Machine ${existing.id} is ${existing.state}; stop it before deploying.`,
     );
   }
 
   const config = machineConfig(buildAndPushImages(version));
-  // The API and the runner compare these versions before every run (version handshake).
+  // The API and the runner compare these versions before every run (version handshake). The
+  // gate's only identifies its deployment.
   const versioned =
-    role === "runner" ? config : config.containers.find((container) => container.name === "api");
+    role === "core" ? config.containers.find((container) => container.name === "api") : config;
   versioned.env.COMMIT_SHA = version;
   const machine = existing
     ? await updateMachine(machinesApi, existing, config)

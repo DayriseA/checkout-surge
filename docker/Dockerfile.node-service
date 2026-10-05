@@ -11,8 +11,8 @@ COPY . .
 ARG SERVICE_NAME
 
 RUN case "${SERVICE_NAME}" in \
-    api|worker|mock-erp) ;; \
-    *) echo "SERVICE_NAME must be one of: api, worker, mock-erp" >&2; exit 64 ;; \
+    api|worker|mock-erp|gate) ;; \
+    *) echo "SERVICE_NAME must be one of: api, worker, mock-erp, gate" >&2; exit 64 ;; \
   esac && \
   turbo prune "${SERVICE_NAME}" --docker
 

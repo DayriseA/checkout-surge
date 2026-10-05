@@ -1,0 +1,27 @@
+{
+  "name": "gate",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome lint .",
+    "test": "pnpm test:unit",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
+    "test:unit:watch": "vitest --watch --config vitest.unit.config.ts",
+    "test:coverage:unit": "vitest run --config vitest.unit.config.ts --coverage"
+  },
+  "dependencies": {
+    "@checkout-surge/fly-machines": "workspace:*",
+    "@checkout-surge/logger": "workspace:*",
+    "@fastify/reply-from": "^12.6.5",
+    "fastify": "^5.8.5"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.9"
+  }
+}

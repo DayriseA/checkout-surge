@@ -25,7 +25,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 06 | [Runner failure handling](06_runner_failure_handling.md) | 03, 05 | done |
 | 07 | [Core idle stop](07_core_idle_stop.md) | 01 | done |
 | 08 | [Deployment-cap message](08_deployment_cap_message.md) | none | done |
-| 09 | [Gate](09_gate.md) | 01, 07 | todo |
+| 09 | [Gate](09_gate.md) | 01, 07 | done |
 | 10 | [Core recovery](10_core_recovery.md) | 06, 09 | todo |
 | 11 | [Guard](11_guard.md) | 05, 09 | todo |
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | todo |

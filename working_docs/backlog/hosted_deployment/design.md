@@ -121,6 +121,11 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 - **Rejected implementations.**
   - Caddy plus a separate program: two processes to supervise, and to keep in sync on the core's state and address.
   - `fly-replay`, where Fly Proxy routes to the core itself: its interaction with a no-autostart core and with SSE is undocumented, and visitors would see Fly's error pages instead of ours.
+- **Implemented in task 09.**
+  - A Fastify server relaying with `@fastify/reply-from` (undici). Request bodies pass through as raw streams; the library's default retries (GET answers 503 replayed up to 10 times) are turned off, so the core's own errors reach the visitor once. The relay target is `http://[<private_ip>]:8080`, the 6PN address the Machines API reports for the authoritative core, so no internal DNS is involved.
+  - The core status is read from the Machines API (3 s request timeout for these reads; the wake keeps the client's 30 s) plus a readiness probe of Caddy's `/health` (2 s timeout), and cached: 10 s while ready, 2 s otherwise. A failed relay (refused, reset, or the 3 s connect timeout, which is what a stopped Machine's 6PN address gives: it does not refuse, it stays silent) drops the cache and answers with the page for a fresh status.
+  - **The Machines API is not on the relay path of a ready core (owner decision, 2026-10-05, HD-28).** The API has no SLA on standard plans and roughly monthly outages, while running Machines and 6PN usually keep working. While the last status is ready, a failed or timed-out Fly read, or a probe with no answer at all, keeps that status and the read is retried on the next cycle; a probe that answers non-OK still means booting. During a Machines API outage, a stopped core cannot be woken.
+  - The gate is a `shared-cpu-1x` 256 MB Machine (`role=gate`) with a Fly Proxy service: ports 80 (forced HTTPS) and 443, `autostart`, `autostop: stop`, `min_machines_running: 0`, request concurrency 200 soft / 250 hard. Measured: the Node process uses about 93 MB (peak 102 MB) of 212 MB; a request on a stopped gate is answered in 4.3 to 4.9 s (Machine start 1.4 s, Node listening 2.5 s later), and Fly Proxy autostopped the gate about 5.5 minutes after its last request.
 
 ### 2.2 Waking the core
 
@@ -128,6 +133,7 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 - Only the gate starts the core through the Machines API, after a deliberate visitor action: a button that sends a POST.
 - There is no wake quota.
 - Before starting or recovering the core, the gate takes a Fly lease on the core Machine (section 3.6).
+- **Implemented in task 09.** The button posts to the gate-owned path `/__gate/start?return=<path>`; every other path belongs to the core. Wakes are joined in-process, so visitors pressing together send one start. Under a 60 s lease, the gate reads the Machine again, waits up to 30 s for a core still `stopping` (its own idle stop), sends `start`, releases the lease, then answers 303 to the return path, which must be a same-site path (anything else returns to `/`). A held lease (409, `conflict`) shows the updating page. A failed start shows the unavailable page; retries and recreation are task 10. Measured: the POST answers in 1.5 s, and the demo page is relayed 12.1 s after it.
 
 ### 2.3 Gate pages
 
@@ -139,6 +145,18 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 - **Relocating:** "provider capacity issue, relocating the demo, please wait".
 - **No capacity in Europe:** a provider message linking to https://status.flyio.net/ and inviting the visitor to come back later.
 - **Setup failure:** a clear error when migrations or seed fail. The Machine stays `started` in that case, so the gate detects the failure through `containers[].state` in the Machines API (the setup container `stopped` with a non-zero exit, its dependents never started).
+
+**Implemented in task 09** (relocating and no capacity are task 10). Every gate page answers 503 with `Cache-Control: no-store`, for any method and URL, and never starts the core.
+
+| Page | When |
+| :-- | :-- |
+| Stopped (start button) | The core Machine is `stopped` or `stopping` |
+| Booting (reloads every 3 s) | `starting`, or `started` while Caddy's `/health` does not answer |
+| Updating (retry button) | `created` or `replacing` (a deploy is writing its config), or the wake found the lease held |
+| Setup failure | `started`, and the `setup` container has an `exited` event with a non-zero `exit_code` no older than the Machine's latest `start` event |
+| Unavailable (try again) | No `role=core` Machine, another state, a Machines API failure, or a failed start |
+
+The setup check reads container events rather than `containers[].state`, because `setup` is `stopped` after a successful run too. An open demo tab on a stopped core gets the gate page as the answer to its polling, which the countdown widget reads as "Demo paused".
 
 ### 2.4 Visitor IP propagation
 
@@ -155,6 +173,11 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 - **Verified on 2026-10-02** with a live test against debug.fly.dev:
   - Fly Proxy overwrites a client-supplied `Fly-Client-IP`.
   - Fly Proxy appends to `X-Forwarded-For`, so that header can carry forged values.
+- **Implemented in task 09.**
+  - The gate drops `Forwarded`, `X-Forwarded-For`, `-Host`, `-Port`, `-Proto`, `-Ssl`, `X-Real-IP` and `Fly-Client-IP`, then sends `X-Forwarded-For: <Fly-Client-IP>` and `X-Forwarded-Proto: https`, and keeps the visitor's `Host`.
+  - **Step 3, settled (owner decision, 2026-10-05): the core's Caddy trusts the whole 6PN range (`fdaa::/16`), not the gate's address** (HD-32). A Machine's 6PN address is derived from its host (Fly documents that it can change when a Machine moves), and 6PN addresses carry no app prefix: the gate, core and runner all sit in the organization's `fdaa:ce:227b:a7b::/64`. 6PN is isolated per organization, and the trusted address feeds only the per-source SSE cap and the dashboard-recovery source key, so trusting the range gives nothing to an attacker who does not already hold an organization Machine. Caddy then sends the API `X-Forwarded-For: {client_ip}` (the visitor alone), because by default it would append the gate's address, and the API, trusting only loopback, would see the gate for every visitor.
+  - **Verified on Fly (2026-10-05):** SSE through the gate, plain and with forged `X-Forwarded-For`, `Fly-Client-IP`, `X-Real-IP`, `Forwarded` and `True-Client-IP`, reached the API with the same source, the visitor's real public IPv4 address.
+  - The core's `WEB_ORIGIN` (web and API) is the gate's public URL, `https://checkout-surge-gate.fly.dev`: the admin origin check compares it with the browser's `Origin`. The resulting operator limitation is in task 13.
 
 ### 2.5 Bot handling
 
@@ -220,7 +243,7 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 - **Stopped core.** A page left open on a stopped core shows "Demo paused", with a link back to the gate.
 - **Implemented in task 07.**
   - The owner keeps the last activity in memory and checks on the API's 5 s poll; it stops its own Machine by `FLY_APP_NAME` and `FLY_MACHINE_ID`, which Fly sets in every container. `CORE_IDLE_STOP_ENABLED=true` turns it on (off by default, so the local topology has neither the stop nor the widget).
-  - Counting happens in the web server, which receives every visitor request except SSE, including pages that never call the API: a Next.js Proxy reports each request to the API's `POST /core/activity`, except health checks, the widget's status polling and SSE. Requests made straight to the API (runner traffic, operator calls) never count. The gate's readiness probes must therefore use `/health` or the API's `/health/ready` (task 09).
+  - Counting happens in the web server, which receives every visitor request except SSE, including pages that never call the API: a Next.js Proxy reports each request to the API's `POST /core/activity`, except health checks, the widget's status polling and SSE. Requests made straight to the API (runner traffic, operator calls) never count. The gate's readiness probes must therefore use `/health` or the API's `/health/ready` (task 09). Verified in task 09: with a demo tab open through the gate, which probed Caddy's `/health` about every 15 s, the core stopped 602 s after the last counted request.
   - Endpoints: `GET /core/idle-status` (in memory, never counted) and `POST /core/activity` ("stay awake"). The widget sits under the header of every page and shows "Demo paused" when a status read fails after it has seen the core awake.
   - Measured on Fly: the stop request followed the last counted request by 600.7 s, and the Machine was `stopped` 11 s later. An open page with SSE, polling and Fly healthchecks left the deadline unchanged, and a run that spanned the deadline kept the core up.
 
@@ -247,6 +270,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - Whoever finds the lease held waits: the gate shows "updating", and the script retries.
   - The lease TTL is not documented, so we set it explicitly and renew it.
   - Leases are advisory, not a security boundary. They work between our own cooperating clients.
+  - **Gate lookup (task 09).** Among the `role=core` Machines, the gate takes the `started` one, else the newest by `created_at` (the one to start). Several exist only during a recovery (task 10).
   - **Measured behavior (task 01).** Without the nonce, `start`, `update` and a second lease request get a 409 immediately. `stop` and `destroy` are not refused: they block until the lease expires, then succeed. Callers of stop or destroy (guard, recovery) therefore use short client timeouts or check the lease first. An expired lease frees the Machine.
 
 ### 3.7 Kernel limits and networking
@@ -418,7 +442,7 @@ Machines API tokens are app-scoped deploy tokens:
 
 - **Narrower tokens.** Attenuate tokens to specific actions if Fly makes that simple. This is not required, because the caveat schema is undocumented.
 - **No broad tokens.** No personal or org-wide token ever goes into a Machine.
-- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05). Its core-app deploy token is the core secret `CORE_FLY_API_TOKEN`, also given only to the API container (task 07).
+- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05). Its core-app deploy token is the core secret `CORE_FLY_API_TOKEN`, also given only to the API container (task 07). The gate's core-app deploy token (`flyctl tokens create deploy -a checkout-surge-core -n gate-core-wake`) is the gate secret `CORE_FLY_API_TOKEN`, staged straight from the command output with no local copy; a lost token is simply replaced (task 09).
 
 ### 7.3 Accepted risk
 
@@ -443,14 +467,15 @@ Machines API tokens are app-scoped deploy tokens:
   - The deploy script sends the full Machine config through the Machines API, not `flyctl machine update`, which merges the JSON into the old config and would keep removed keys.
   - After a create or an update, it waits for `stopped`: Fly refuses a start for about 9 s after a create (images being prepared) and about 3.5 s after an update.
   - `flyctl deploy --build-only` needs a minimal `-c` config (`infra/fly/core/build.toml`) while the app has no Machine.
-  - One registry repository holds several images, so image labels are `<service>-<commit-sha>`, with a `-dirty` suffix when the work tree has uncommitted changes.
+  - One registry repository holds several images, so image labels are `<service>-<commit-sha>`, with a `-dirty` suffix and a UTC build timestamp when the work tree has uncommitted changes (the Machines API keeps a Machine's image when the reference string is unchanged, so repeated dirty deploys on one commit need distinct labels).
 - **Awake core.** Deployment waits until the core goes to sleep. With `--force`, it interrupts the session and updates immediately, and an in-progress run ends failed. The deploy script holds the core lease during the update (section 3.6).
 - **Version handshake.**
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
   - The deploy script verifies both versions at the end.
-  - The runner reads its version from `COMMIT_SHA`, which the deploy script sets in the runner Machine env to the same string as the image label (with `-dirty` when applicable). Without it, the version is `unknown`; on Fly, `unknown` never counts as a match.
+  - The runner reads its version from `COMMIT_SHA`, which the deploy script sets in the runner Machine env to the commit version, `<commit-sha>` or `<commit-sha>-dirty` (the image label without its service prefix and build timestamp). Without it, the version is `unknown`; on Fly, `unknown` never counts as a match.
 - **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime.
-- **Deploy script.** `infra/fly/deploy.mjs <core|runner>`. Each app's images live in its own registry repository. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
+- **Deploy script.** `infra/fly/deploy.mjs <core|runner|gate>`. Each app's images live in its own registry repository.
+- **Gate deploy (task 09).** The gate image is the shared `docker/Dockerfile.node-service` (`SERVICE_NAME=gate`, `runtime` target), and its Machine is managed like the others, from `infra/fly/gate/machine.json` through the Machines API, rather than with a `fly.toml` and `fly deploy`. The gate is stateless, so the script updates it in any state. One-time app setup, outside the script: `flyctl apps create checkout-surge-gate`, the token above, `flyctl ips allocate-v4 --shared` and `flyctl ips allocate-v6`. `.dockerignore` now excludes `**/*.env`: before, the gitignored `infra/fly/core/core-secrets.env` was part of every remote build context. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**
   - During the build-out: a local script (for example `pnpm deploy:fly`), run from the owner's workstation with flyctl.
   - Near the end of the project: GitHub Actions, calling the same script.
@@ -506,7 +531,7 @@ This section lists the changes implied by the decisions above, grouped by owner.
 - **New `packages/fly-machines`:** the Machines API client, its types, the leases and the error classifier.
 - **New gate app (`apps/gate`):** the gate server (relay, pages, wake, recovery, lease) and the guard entrypoint.
 - **Infrastructure:**
-  - everything Fly-specific lives under `infra/fly/`, with one subfolder per Fly app (`core/`, `runner/`, `gate/`): Machine config JSON files, entrypoint scripts, and the gate's `fly.toml`. No `fly.toml` sits at an app root. Every flyctl command passes `-a` and an explicit config path, never relying on current-directory discovery;
+  - everything Fly-specific lives under `infra/fly/`, with one subfolder per Fly app (`core/`, `runner/`, `gate/`): Machine config JSON files, entrypoint scripts, and each app's minimal `build.toml` for remote builds (the gate has no `fly.toml`, task 09). No `fly.toml` sits at an app root. Every flyctl command passes `-a` and an explicit config path, never relying on current-directory discovery;
   - the Fly image variants of the API and the load-orchestrator are extra `runtime-fly` targets built on top of the existing `runtime` targets, so nothing is duplicated and a refused kernel setting fails the start loudly;
   - a hosted Caddy variant (IPv6, trusting only the gate), kept with the other Caddyfiles in `infra/caddy/`;
   - the deploy script.

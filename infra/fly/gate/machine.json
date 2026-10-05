@@ -1,0 +1,45 @@
+{
+  "image": "gate",
+  "guest": {
+    "cpu_kind": "shared",
+    "cpus": 1,
+    "memory_mb": 256
+  },
+  "metadata": {
+    "role": "gate"
+  },
+  "restart": {
+    "policy": "on-failure"
+  },
+  "env": {
+    "HOST": "::",
+    "PORT": "8080",
+    "CORE_FLY_APP": "checkout-surge-core",
+    "LOG_LEVEL": "info"
+  },
+  "services": [
+    {
+      "protocol": "tcp",
+      "internal_port": 8080,
+      "autostart": true,
+      "autostop": "stop",
+      "min_machines_running": 0,
+      "ports": [
+        {
+          "port": 80,
+          "handlers": ["http"],
+          "force_https": true
+        },
+        {
+          "port": 443,
+          "handlers": ["tls", "http"]
+        }
+      ],
+      "concurrency": {
+        "type": "requests",
+        "soft_limit": 200,
+        "hard_limit": 250
+      }
+    }
+  ]
+}

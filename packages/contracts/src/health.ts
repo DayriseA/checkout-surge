@@ -3,7 +3,14 @@ import { isoTimestampSchema, nonnegativeNumberSchema } from "./primitives.js";
 
 export const healthReadyPath = "/health/ready" as const;
 
-export const serviceNameValues = ["api", "worker", "mock-erp", "load-orchestrator", "web"] as const;
+export const serviceNameValues = [
+  "api",
+  "worker",
+  "mock-erp",
+  "load-orchestrator",
+  "web",
+  "gate",
+] as const;
 export const serviceNameSchema = z.enum(serviceNameValues);
 export type ServiceName = z.infer<typeof serviceNameSchema>;
 

@@ -22,6 +22,7 @@ function runnerMachine(overrides: Partial<FlyMachine> = {}): FlyMachine {
     state: "stopped",
     region: "cdg",
     instance_id: "v1",
+    private_ip: "fdaa::2",
     created_at: "2026-10-03T10:00:00Z",
     config: {
       image: "registry.fly.io/runner:load-orchestrator-abc",

@@ -11,6 +11,7 @@ out
 **/dist
 **/coverage
 .env*
+**/*.env
 .checkout-surge
 **/*.log
 **/*.tsbuildinfo

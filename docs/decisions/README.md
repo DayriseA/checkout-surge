@@ -29,6 +29,8 @@ Domain documents in `docs/` keep explaining how things work, and their existing 
 - **Code:** paths or symbols where the decision lives (when relevant).
 ```
 
+- An entry earns its place only if, without it, someone could reasonably change the behavior believing it an improvement, without knowing why it was chosen.
+- Entries record the why (the trade-off, the rejected alternatives, the accepted risks), not how it works. They never copy configuration values, constants, ports, paths or URLs that live in code or config.
 - IDs are stable: never renumbered or reused.
 - Each entry is self-contained: write the context inline. Do not reference temporary working files, task numbers, or review sessions.
 - Keep entries short. Details of how something works belong in the domain documents.

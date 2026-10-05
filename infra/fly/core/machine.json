@@ -163,7 +163,7 @@
         "LOAD_ORCHESTRATOR_BASE_URL": "http://checkout-surge-runner.internal:4200",
         "RUNNER_FLY_APP": "checkout-surge-runner",
         "CORE_IDLE_STOP_ENABLED": "true",
-        "WEB_ORIGIN": "http://localhost:8080"
+        "WEB_ORIGIN": "https://checkout-surge-gate.fly.dev"
       },
       "secrets": [
         {
@@ -268,7 +268,7 @@
       "env": {
         "PORT": "3000",
         "API_BASE_URL": "http://127.0.0.1:4000",
-        "WEB_ORIGIN": "http://localhost:8080"
+        "WEB_ORIGIN": "https://checkout-surge-gate.fly.dev"
       },
       "secrets": [
         {

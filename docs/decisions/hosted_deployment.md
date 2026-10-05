@@ -254,6 +254,74 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Consequences:** Display only: the deadline itself lives in the API, and the next poll (at most 30 s later) corrects the widget.
 - **Code:** `CoreIdleCountdown` in `apps/web/src/app/components/core-idle-countdown.tsx`.
 
+## Gate
+
+### HD-27 The gate relays with `@fastify/reply-from`, retries off
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The gate relays through a proven library ([HD-02](#hd-02-the-gate-is-the-only-public-address-and-the-only-waker)). `@fastify/reply-from`, on the Fastify stack the other services use, replays some failed or 503-answered requests by default, after delays of up to tens of seconds.
+- **Decision:** Use it with retries turned off.
+- **Consequences:** The core's own errors, such as a dashboard recovery at capacity, reach the visitor once and at once, and no request is sent to the core twice.
+- **Rejected alternatives:** `http-proxy`: unmaintained.
+- **Code:** `apps/gate/src/server.ts`.
+
+### HD-28 The gate checks the core's state before relaying, but a Fly API failure does not block a ready core
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** For each request, the gate must choose between relaying to the core and showing its own page. Fly's Machines API has no SLA on standard plans and has had outages roughly monthly, while running Machines and 6PN usually keep working.
+- **Decision:** Before relaying, the gate reads the core's state from the Machines API plus a readiness probe that the core never counts as activity, and caches that status briefly: this discovers the core, chooses the page, and follows the boot. Once the core is ready, a failed Fly read, or a probe that gets no answer at all, keeps the last ready status and the read is retried on the next cycle; a probe that answers "not ready" still means not ready. A failed relay drops the status and forces a fresh read.
+- **Consequences:**
+  - Accepted staleness: a core that just stopped can still be relayed to until its status expires or a relay fails, and a core that just became ready can show the booting page a moment longer.
+  - Accepted limit: during a Machines API outage, a stopped core cannot be woken, and a relay failure shows the unavailable page.
+- **Rejected alternatives:**
+  - Relay first and consult Fly only on failure: a TCP connect to a stopped Machine's 6PN address is not refused but hangs (measured from the gate: no answer within 30 s), so each visit to a stopped core would wait for a connect timeout; and a reachable core whose web is down would go undetected.
+  - Refreshing the status in the background: more code and tests for little gain.
+- **Code:** `apps/gate/src/core-status.ts`.
+
+### HD-29 The gate's lease covers only the start command
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The gate and the deploy script are meant to coordinate through the core Machine lease. The gate's side exists; the deploy script's side is planned, not yet implemented.
+- **Decision:** The gate holds the lease only around the start command, not through the boot until the core is ready: a started core is one the deploy script refuses to update, provided the script re-reads the core's state under the lease just before its update, so a longer hold would only block deploys. A held lease is shown as "updating", although a lease alone does not prove a deploy (it can also be a wake whose gate died before releasing it, until the lease expires); telling holders apart is not worth the code for a page that only asks the visitor to retry. Retrying a failed start and recreating the core belong to core recovery, not to the wake.
+- **Consequences:**
+  - A visitor may see "updating" while no deploy runs; a retry works once the lease is released or expires.
+  - Until the deploy script takes the core lease around its update, it checks the state only before its builds, so a wake during the builds can be interrupted by the update.
+- **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`.
+
+### HD-30 Gate pages answer any request with HTML 503
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** Bookmarks, deep links and pages left open must all land on the gate's own page while the core is not ready.
+- **Decision:** While the core is not ready, the gate answers every method and URL, API calls included, with its HTML page and status 503, never cached.
+- **Consequences:** API calls and page polling get HTML instead of JSON while the core is not ready: the countdown widget reads it as "Demo paused", and the web treats it as a failed call.
+- **Rejected alternatives:** JSON answers on API paths: a second error format to keep in step with the contracts, for callers that already handle a failed call.
+- **Code:** `apps/gate/src/pages.ts`.
+
+### HD-31 The gate sleeps, and a visit wakes it
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The gate is the only public address, but it need not run while nobody visits.
+- **Decision:** Fly Proxy starts the gate Machine on an incoming request and stops it once traffic is gone.
+- **Consequences:** The first request to a sleeping gate takes a few seconds longer (measured: about 4 to 5 s).
+- **Rejected alternatives:** An always-running gate: a permanent cost for a demo used a few hours per month.
+
+### HD-32 Accepted risk: the core's Caddy trusts the whole private network for visitor addresses
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** The core's Caddy must take the visitor address from the gate's forwarding header. A Machine's 6PN address follows its host and carries no app prefix, so the gate's address is not a stable identity.
+- **Decision:** Caddy trusts forwarding headers from any address of Fly's private network (6PN). The gate overwrites every client-supplied forwarding header.
+- **Consequences:** 6PN is isolated per organization, so only the organization's Machines and WireGuard peers can claim a visitor address. The trusted address feeds only the API's per-source SSE cap and the dashboard-recovery source key, never authentication, admin access or run budgets, which use the signed cookie. An attacker holding a Machine of the organization can already call the API directly over 6PN and holds deploy tokens ([HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control)), so this trust gives nothing more.
+- **Rejected alternatives:**
+  - The gate's address, written at deploy time or resolved when Caddy starts: it goes stale when Fly moves the gate, and every visitor then silently shares one SSE cap.
+  - The organization's prefix only: an organization-specific value with the same silent failure if the app changes organization, for a gain only against a failure of Fly's isolation.
+- **Code:** `infra/caddy/Caddyfile.fly`, `apps/gate/src/relay-headers.ts`.
+
 ## Deployment and Access
 
 ### HD-24 Deploys build remotely and replace whole Machine configs
@@ -261,7 +329,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-03
 - **Context:** Local image builds exhausted the owner's workstation memory, and `flyctl machine update` merges the new JSON into the old Machine config.
-- **Decision:** The deploy script builds images on Fly's remote builder (Depot) and pushes them without deploying, labelled `<service>-<commit-sha>` (with a `-dirty` suffix for uncommitted changes). `--no-depot` (Fly's previous builder) covers a Depot incident, and `--local-build` falls back to a local build. Machines are created and updated through the Machines API with the full config and `skip_launch`; the deploy never starts them.
+- **Decision:** The deploy script builds images on Fly's remote builder (Depot) and pushes them without deploying, labelled by commit, with a unique label per build for uncommitted trees, because the Machines API keeps a Machine's image when the reference string is unchanged. `--no-depot` (Fly's previous builder) covers a Depot incident, and `--local-build` falls back to a local build. Machines are created and updated through the Machines API with the full config and `skip_launch`; the deploy never starts them.
 - **Consequences:** Images are always linux/amd64, with a build cache kept at Fly; the expected build cost is zero within the free build minutes. A key removed from the config does not survive an update. After a create or an update, the script waits for `stopped`, because Fly refuses a start for a few seconds then.
 - **Rejected alternatives:**
   - Local Docker builds by default: they exhausted the workstation's memory.
@@ -272,10 +340,10 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-03
-- **Context:** Hosted run limits come from the deployment caps (`DEMO_MAX_*`). A visitor who hits one must learn that it is a hosting choice, not a defect.
-- **Decision:** The web shows the infrastructure-limit message only for an explicit, contract-typed allowlist: the `deployment_*_exceeded` run codes and the public load-size codes (buyers, duration, max VUs, preallocated VUs, request rate, total requests, start delay). ERP limits, starting stock, invalid input, and admin policy-edit codes (`*_exceeds_deployment_cap`) keep their ordinary presentation. The wording stays provider-neutral, so it holds for local and hosted runtimes.
+- **Context:** Hosted run limits come from the deployment caps. A visitor who hits one must learn that it is a hosting choice, not a defect.
+- **Decision:** The web shows the infrastructure-limit message only for an explicit, contract-typed allowlist of run-limit codes. Every other rejection keeps its ordinary presentation. The wording stays provider-neutral, so it holds for local and hosted runtimes.
 - **Consequences:** A new limit code shows the message only once added to the list; a renamed code breaks compilation.
-- **Rejected alternatives:** Suffix or pattern matching on codes: it would catch policy-editing and ERP failures.
+- **Rejected alternatives:** A suffix or name rule on codes: it would also cover errors that must not show this message, such as admin policy edits against the caps and ERP limits.
 - **Code:** `infrastructureRunLimitCodes` in `apps/web/src/app/lib/presentation/error-presentation.ts`.
 
 ### HD-26 Accepted risk: deploy tokens give a compromised component wide control
@@ -285,3 +353,12 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Context:** Machine control needs Machines API tokens inside Machines: the API holds app-scoped deploy tokens for the runner app (`RUNNER_FLY_API_TOKEN`) and for its own core app (`CORE_FLY_API_TOKEN`), and the gate and guard hold core and runner tokens. Fly deploy access can run code that reads secrets.
 - **Decision:** Accept it. Tokens are app-scoped deploy tokens, given only to the containers that use them; no personal or organization-wide token ever goes into a Machine. Attenuating tokens to specific actions is optional, because the caveat schema is undocumented.
 - **Consequences:** A compromised gate, the only always-exposed component, means full control of the core app, its secrets included, and through the core's runner token, of the runner app. No sensitive data is involved, so the exposure is financial. Mitigations: a minimal gate surface, the guard's cleanup of unexpected Machines, and billing controls in the Fly dashboard.
+
+### HD-33 Accepted risk: core secrets reached Fly's build cache
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** `.dockerignore` excluded environment files only at the repository root, so the gitignored local copy of the core secrets went with every remote build context into the cached build stage on Fly's builder. Final images hold only the deployed packages or the Next.js standalone build, so no pushed image contains the file.
+- **Decision:** Rotate the core secrets before go-live rather than rely on the cache expiring. `.dockerignore` now excludes environment files at any depth.
+- **Consequences:** Until the rotation, the secrets also sit in a builder cache that Fly controls; Fly already holds them as app secrets.
+- **Code:** `.dockerignore`.

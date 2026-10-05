@@ -1,0 +1,179 @@
+import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { createSilentLogger } from "@checkout-surge/logger";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CoreStatus } from "../src/core-status.js";
+import type { WakeOutcome } from "../src/core-wake.js";
+import { buildGateServer } from "../src/server.js";
+
+const closers: (() => Promise<unknown>)[] = [];
+
+afterEach(async () => {
+  await Promise.all(closers.splice(0).map((close) => close()));
+});
+
+/** A stand-in for the core's Caddy that records what reaches it. */
+async function startCore() {
+  const received: { url: string; headers: IncomingHttpHeaders; body: string }[] = [];
+  const server: Server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk) => (body += chunk));
+    request.on("end", () => {
+      received.push({ url: request.url ?? "", headers: request.headers, body });
+      if (request.url === "/busy") {
+        response.writeHead(503, { "retry-after": "1" }).end("busy");
+      } else if (request.url === "/dashboard/events") {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        response.write("data: first\n\n");
+      } else {
+        response.writeHead(200, { "content-type": "text/plain" }).end("from the core");
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  closers.push(async () => {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  });
+  return { received, target: `http://127.0.0.1:${(server.address() as AddressInfo).port}` };
+}
+
+async function setup(initial: CoreStatus, wakeOutcome: WakeOutcome = "starting") {
+  let current = initial;
+  const status = {
+    current: vi.fn(async () => current),
+    invalidate: vi.fn(),
+  };
+  const wake = { wake: vi.fn(async () => wakeOutcome) };
+  const gate = await buildGateServer({ status, wake, logger: createSilentLogger("gate") });
+  closers.push(() => gate.close());
+  return { gate, status, wake, setStatus: (next: CoreStatus) => (current = next) };
+}
+
+describe("gate server", () => {
+  it("answers any URL with its own page while the core sleeps, and a GET never wakes it", async () => {
+    const { gate, wake } = await setup({ state: "stopped" });
+
+    const response = await gate.inject({ method: "GET", url: "/demo/watch?run=1" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.body).toContain("The demo is asleep");
+    expect(response.body).toContain('action="/__gate/start?return=%2Fdemo%2Fwatch%3Frun%3D1"');
+    expect(wake.wake).not.toHaveBeenCalled();
+  });
+
+  it("starts the core from the button, then returns to the visitor's page", async () => {
+    const { gate, wake } = await setup({ state: "stopped" });
+
+    const response = await gate.inject({ method: "POST", url: "/__gate/start?return=%2Fdemo" });
+
+    expect(wake.wake).toHaveBeenCalledOnce();
+    expect(response.statusCode).toBe(303);
+    expect(response.headers.location).toBe("/demo");
+  });
+
+  it("never returns the visitor to another site", async () => {
+    const { gate } = await setup({ state: "stopped" });
+
+    for (const returnPath of ["//evil.example/", "/\t/evil.example/", "/\t\\evil.example"]) {
+      const response = await gate.inject({
+        method: "POST",
+        url: `/__gate/start?return=${encodeURIComponent(returnPath)}`,
+      });
+
+      expect(response.headers.location).toBe("/");
+    }
+  });
+
+  it("never links the visitor to another site from its own page", async () => {
+    const { gate } = await setup({ state: "unavailable" });
+
+    const response = await gate.inject({ method: "GET", url: "//evil.example/" });
+
+    expect(response.body).toContain('<a class="button" href="/">Try again</a>');
+  });
+
+  it("shows the update page when a deploy holds the core", async () => {
+    const { gate } = await setup({ state: "stopped" }, "updating");
+
+    const response = await gate.inject({ method: "POST", url: "/__gate/start?return=%2F" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toContain("Update in progress");
+  });
+
+  it("relays to the ready core with the visitor's Fly address as the only forwarded source", async () => {
+    const core = await startCore();
+    const { gate } = await setup({ state: "ready", target: core.target });
+
+    const response = await gate.inject({
+      method: "POST",
+      url: "/api/demo/runs/start?preset=surge",
+      headers: {
+        host: "gate.example",
+        "content-type": "application/json",
+        "fly-client-ip": "203.0.113.9",
+        "x-forwarded-for": "198.51.100.1, 203.0.113.9",
+        forwarded: "for=198.51.100.1",
+        "x-real-ip": "198.51.100.1",
+        "x-forwarded-proto": "http",
+      },
+      payload: '{"presetSlug":"surge-10k"}',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toBe("from the core");
+    const [relayed] = core.received;
+    expect(relayed?.url).toBe("/api/demo/runs/start?preset=surge");
+    expect(relayed?.body).toBe('{"presetSlug":"surge-10k"}');
+    expect(relayed?.headers).toMatchObject({
+      host: "gate.example",
+      "x-forwarded-for": "203.0.113.9",
+      "x-forwarded-proto": "https",
+    });
+    expect(relayed?.headers).not.toHaveProperty("forwarded");
+    expect(relayed?.headers).not.toHaveProperty("x-real-ip");
+    expect(relayed?.headers).not.toHaveProperty("fly-client-ip");
+  });
+
+  it("passes the core's own errors through without replaying the request", async () => {
+    const core = await startCore();
+    const { gate } = await setup({ state: "ready", target: core.target });
+
+    const response = await gate.inject({ method: "GET", url: "/busy" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toBe("busy");
+    expect(core.received).toHaveLength(1);
+  });
+
+  it("streams server-sent events as the core writes them", async () => {
+    const core = await startCore();
+    const { gate } = await setup({ state: "ready", target: core.target });
+    const address = await gate.listen({ host: "127.0.0.1", port: 0 });
+    const abort = new AbortController();
+
+    const response = await fetch(`${address}/dashboard/events`, { signal: abort.signal });
+    const reader = response.body?.getReader();
+    const first = await reader?.read();
+    abort.abort();
+
+    expect(response.headers.get("content-type")).toBe("text/event-stream");
+    expect(new TextDecoder().decode(first?.value)).toBe("data: first\n\n");
+  });
+
+  it("shows the gate page, from a fresh status, when the core goes away", async () => {
+    const { gate, status, setStatus } = await setup({
+      state: "ready",
+      target: "http://127.0.0.1:9",
+    });
+    status.invalidate.mockImplementationOnce(() => setStatus({ state: "stopped" }));
+
+    const response = await gate.inject({ method: "GET", url: "/api/core/idle-status" });
+
+    expect(status.invalidate).toHaveBeenCalledOnce();
+    expect(response.statusCode).toBe(503);
+    expect(response.body).toContain("The demo is asleep");
+  });
+});
