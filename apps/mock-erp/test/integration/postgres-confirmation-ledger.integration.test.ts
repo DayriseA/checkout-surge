@@ -206,6 +206,8 @@ describe("PostgreSQL confirmation ledger", () => {
   it("adopts one canonical result after the caller deadline aborts a slower confirmation", async () => {
     const lateRequest = {
       ...request,
+      // Scheduling headroom, not an ordering guarantee: the caller must observe the receipt
+      // log and abort within this latency for the abort to land mid-confirmation.
       erpConfig: { ...request.erpConfig, latencyMs: 1000 },
       orderId: "83500000-0000-4000-8000-000000000001",
       publicOrderId: "ord-ledger-late-response",
