@@ -235,7 +235,7 @@ For the API gateway, `buildApiServer()` should follow this pattern by accepting 
 
 ## Future CI Integration
 
-No hosted CI workflow is checked in. A future CI system can call the existing local command contract without changing the test taxonomy.
+No CI test workflow is checked in; the only workflow deploys the hosted demo (see [continuous deployment](hosted_operations.md#continuous-deployment)). A future CI system can call the existing local command contract without changing the test taxonomy.
 
 Expected future CI behavior:
 

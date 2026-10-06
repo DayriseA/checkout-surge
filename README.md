@@ -165,6 +165,7 @@ The deployed-topology characterization is intentionally opt-in because it is slo
 - [Scope and caveats](docs/decisions/scope_and_caveats.md) - authoritative project boundary, intentional non-goals, current caveats, and deferred decisions
 - [Architecture](docs/architecture.md) - system design, flow boundaries, and failure-mode handling
 - [Runtime topology](docs/runtime_topology.md) and [repository layout](docs/repository_layout.md) - process, container, and package ownership
+- [Hosted runtime](docs/hosted_runtime.md) and [hosted operations](docs/hosted_operations.md) - the Fly.io deployment: gate, core, runner and guard behavior, deploys, and operator procedures
 - [Core business entities](docs/core_business_entities.md) and [cross-service conventions](docs/cross_service_conventions.md) - domain model and shared vocabulary
 - [Redis inventory hot path](docs/redis_inventory_hot_path.md) - atomic reservation, idempotency, and pending-persistence recovery
 - [Load generation and metrics streaming](docs/load_generation_metrics_streaming.md) - k6 execution, delivery, recovery, and finalization ownership

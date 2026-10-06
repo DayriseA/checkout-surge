@@ -1,0 +1,35 @@
+# Deploys every push to main to the hosted Fly.io apps with the workstation's script, which waits
+# for an awake core to sleep (docs/hosted_operations.md, HD-49).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+# One deploy at a time. A running deploy is never cancelled: killed, it would keep its Machine
+# lease until the lease expires. A newer push replaces a deploy still waiting to start.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - uses: superfly/flyctl-actions/setup-flyctl@ed8efb33836e8b2096c7fd3ba1c8afe303ebbff1 # master, 2026-04-08
+        with:
+          version: 0.4.111
+      - name: Deploy the runner, the core and the gate
+        run: node infra/fly/deploy.mjs all
+        env:
+          # An organization deploy token, created and stored by the owner (HD-50).
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

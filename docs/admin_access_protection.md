@@ -1,6 +1,6 @@
 # Admin Access Protection - Decisions & Rationale
 
-This document records the implemented access-protection model for the local reference demo and the boundary a future hosted adaptation must preserve. It is scoped to preventing abuse, accidental cost spikes, and unsafe failure-mode controls while preserving the public demo value of the dashboard; it does not claim production-grade identity or hosted deployment readiness.
+This document records the implemented access-protection model, shared by the local reference demo and the [hosted demo](hosted_runtime.md). It is scoped to preventing abuse, accidental cost spikes, and unsafe failure-mode controls while preserving the public demo value of the dashboard; it does not claim production-grade identity.
 
 ---
 

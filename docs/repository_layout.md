@@ -15,6 +15,7 @@ This is the current repository structure and ownership map.
 | Mock ERP placement | Separate `apps/mock-erp` | Must be a real HTTP service across a real network boundary for circuit breakers and backpressure patterns to be meaningful. |
 | Load orchestrator placement | Separate `apps/load-orchestrator` | Realistic load simulation is a first-class deliverable. Dashboard integration requires a wrapper service to trigger runs and stream metrics. |
 | Shared packages | `contracts`, `logger`, `db` | All three are blockers for parallel service work. See rationale per package below. |
+| Hosted deployment code | `apps/gate`, `packages/fly-machines`, and `infra/fly/` | The Fly.io deployment lives in the monorepo beside the services it deploys, with one Machines API client shared by the API and the gate. |
 | Docs home | `docs/` alongside `working_docs/` | Current architecture and operator/developer references need a stable home separate from in-progress planning notes and backlog records. |
 
 ---
@@ -28,16 +29,19 @@ checkout-surge/
 │   ├── api/                  # Fastify API gateway (Node.js)
 │   ├── worker/               # BullMQ background worker (Node.js)
 │   ├── mock-erp/             # Mock ERP service — configurable latency, TPS cap, error rate
-│   └── load-orchestrator/    # k6 wrapper — triggers runs, streams metrics to dashboard
+│   ├── load-orchestrator/    # k6 wrapper — triggers runs, streams metrics to dashboard
+│   └── gate/                 # Hosted public entry point (core wake, pages, relay) and hourly guard
 ├── packages/
 │   ├── contracts/            # Shared TypeScript types and Zod schemas
 │   ├── logger/               # Pino wrapper and Fastify request-correlation integration
-│   └── db/                   # Drizzle schema/migrations, PostgreSQL client, Redis adapters
-├── infra/                    # Caddy single-origin proxy configuration
+│   ├── db/                   # Drizzle schema/migrations, PostgreSQL client, Redis adapters
+│   └── fly-machines/         # Fly Machines API client, leases, and error classifier
+├── infra/                    # Caddy proxy configurations; Fly.io Machine configs and deploy script (infra/fly/)
 ├── scripts/                  # Environment, runtime, maintenance, smoke, and composition tooling
 ├── docs/                     # Current architecture, access, runtime, testing, and developer references
 ├── working_docs/             # Project vision, delivery constraints, planning, and agent working docs
 ├── .devcontainer/            # Dev Container/Codespaces definition and lifecycle helpers
+├── .github/workflows/        # Continuous deployment to Fly.io
 ├── docker-compose.yml        # Full local reference runtime
 ├── docker-compose.dev.yml    # Loopback-only debug/infra port overrides
 ├── docker-compose.test.yml   # Isolated PostgreSQL and Redis test infrastructure
@@ -114,6 +118,13 @@ checkout-surge/
 - Does not own API/business draining, demo-run finalization, dashboard recovery state, or run-summary persistence.
 - Exposes a traffic-execution control API consumed by `apps/api`; the dashboard starts demo runs through the API lifecycle rather than driving load scenarios directly.
 
+### `apps/gate`
+
+- Exists only in the hosted runtime: the public entry point of the Fly.io deployment. See [Hosted Runtime](hosted_runtime.md#gate).
+- Owns the core's wake, recovery and status pages, and relays visitor traffic to the core once it is ready; it renders no demo content itself.
+- Ships a second, one-shot entrypoint, the hourly guard, which bounds cost and cleans leftover Machines and volumes.
+- Consumes `packages/contracts`, `packages/logger`, and `packages/fly-machines`.
+
 ### `packages/contracts`
 
 - Single source of truth for buy requests/responses, demo-run and traffic snapshots, queue jobs and retry policy, dashboard projection/read models, ERP contracts, public visitor credentials, metrics, lifecycle vocabulary, and error shapes.
@@ -131,6 +142,12 @@ checkout-surge/
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
 - Shared by `apps/api` and `apps/worker` so durable checkout records and worker ERP-attempt semantics remain one source of truth.
 - `apps/load-orchestrator` deliberately does not use this package; its traffic execution journal is file-backed.
+
+### `packages/fly-machines`
+
+- Owns the Fly Machines API client, its types, Machine leases, and the Fly error classifier.
+- Holds no business rule: the runner and core recovery sequences stay with their owners in `apps/api` and `apps/gate`.
+- Used by `apps/api` (runner control and the core's idle stop) and `apps/gate`.
 
 ---
 
@@ -151,6 +168,7 @@ checkout-surge/
 | Local development guide (`local_development.md`) |
 | Domain model and cross-service conventions (`core_business_entities.md`, `cross_service_conventions.md`) |
 | Runtime topology, testing infrastructure, load/metrics, inventory hot path, and admin access references |
+| Hosted runtime and operations (`hosted_runtime.md`, `hosted_operations.md`) |
 | Agent quality checklists (`quality_checklists.md`) |
 
 There are currently no separate ADR, hosted benchmark-result, or portfolio-write-up directories under `docs/`. Add and label those artifact types only when concrete files and reproducible evidence exist; they are not part of the current repository layout.

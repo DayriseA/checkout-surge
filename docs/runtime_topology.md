@@ -29,7 +29,7 @@ The reference runtime uses Linux containers. Windows contributors run it through
 | Browser-facing dashboard URL | The containerized reference runtime uses the single-origin proxy on port `8080` | Public demo, live watch, admin controls, HTTP reads, and the public SSE stream at `/dashboard/events` should share one public origin; direct service ports are debug surfaces. |
 | Runtime setup | Runtime startup should not hide database mutations | `runtime:up` starts containers; an explicit setup command runs migrations and demo seed data. |
 | Routine runtime verification | `runtime:smoke` includes service readiness, dashboard reachability/recovery/SSE, one bounded load, terminal evidence, and exact cleanup | One routine command should prove the local reference runtime at its public and business boundaries. |
-| Hosted deployment boundary | Hosted deployment assets must coexist with the local topology | Production images or platform configs should be added separately or via separate Dockerfile targets, not by replacing local Dev Container/Codespaces behavior. |
+| Hosted deployment boundary | The hosted Fly.io deployment reuses the production images, adding the gate app, `runtime-fly` Dockerfile targets and platform configuration under `infra/fly/` | The local Dev Container, Codespaces and Compose paths keep working beside the hosted runtime, which runs the same code with hosted-only behavior switched on by configuration. |
 | Production image boundary | Each application and DB setup service has an independently buildable Node 22 Bookworm-slim production artifact and runs as the image's non-root `node` user | Runtime images contain only the selected deploy/standalone closure; build tools and unrelated workspace output stay in builder images. |
 | Operational tooling boundary | Repository operational scripts use a profile-gated `runtime-tools` service when API is running and host-local Node otherwise | Production API packaging does not carry repository scripts or development dependencies, and normal `runtime:up` does not start tooling. |
 
@@ -243,9 +243,16 @@ Use this checklist when implementing or changing the local runtime topology:
 
 ## Hosted Deployment Boundary
 
-This document covers the local development and demo topology only; it does not define hosted deployment packaging.
+This document covers the local development and demo topology. The hosted demo on Fly.io is described in [Hosted Runtime](hosted_runtime.md) and operated through [Hosted Operations](hosted_operations.md).
 
-Hosted deployment assets (production images, platform configuration, hosted-style deployment files) must coexist with the local topology. If Dockerfiles are shared between local and hosted paths, use separate build targets or separate deployment configuration instead of removing the local Dev Container/Codespaces path.
+The hosted runtime is the product's real runtime, and its needs take priority: the local topology keeps working, and adapts when the hosted runtime requires it. Both run the same production images and contracts:
+
+- Hosted assets live under `infra/fly/`, one folder per Fly app, plus the hosted Caddyfile `infra/caddy/Caddyfile.fly`. No `fly.toml` sits at an app root.
+- The Fly variants of the API and load-orchestrator images are separate `runtime-fly` targets built on the `runtime` targets, so nothing is duplicated and the local images are unchanged.
+- Hosted-only behavior (Machine control of the runner, the runner's per-run shutdown and self-exit timers, the core's idle stop and countdown) is selected by configuration and off by default, so Compose runs the same code without it. Boot-ID checks, `load_generator_lost` and the runner version handshake are active in both ([HD-06](decisions/hosted_deployment.md#hd-06-hosted-only-behavior-is-selected-by-configuration)).
+- Local tests never start or stop a real Machine: unit tests cover those paths with fakes, and the rest is verified on Fly.
+
+If a Dockerfile is shared between the local and hosted paths, add a separate build target or separate deployment configuration rather than removing the local Dev Container/Codespaces path.
 
 ---
 

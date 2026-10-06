@@ -556,3 +556,38 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Consequences:** A core deployed with incompatible changes never starts on its old data, even when another deploy follows before any visitor. A mark set by mistake is removed by hand, through the Machines API metadata endpoint.
 - **Rejected alternatives:** Setting the mark in a separate step after the deploy: a wake in between would start the new code on incompatible data.
 - **Code:** `deployCore` in `infra/fly/deploy.mjs`.
+
+### HD-49 GitHub Actions deploys every push to `main` with the workstation's script
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** Deploys ran only from the owner's workstation. The hosted demo should follow `main` without a manual step, while a deploy killed mid-run keeps its Machine lease until the lease expires ([HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds)).
+- **Decision:** A GitHub Actions workflow runs the deploy script's `all` target on every push to `main`, without `--force`, so it waits for an awake core to sleep. Deploys run one at a time: a running deploy is never cancelled, and a newer push replaces a deploy still waiting to start. Actions are pinned by commit SHA, and the flyctl version is pinned. Workstation deploys remain available for any commit. An incompatible change is deployed from the workstation with `--fresh-core` before it reaches `main`, and the CI deploy then carries the mark over ([HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)).
+- **Consequences:**
+  - A deploy can wait for a visitor's session to end, at most until the guard's awake cap, and consumes runner minutes meanwhile.
+  - A commit replaced while waiting is never deployed on its own. The deploy left waiting is usually the newest push, but GitHub does not guarantee the order, and each run deploys its triggering commit: accepted risk, since merges to `main` are rare and meant to update the demo. If the hosted version lags `main`, re-run the latest run or push again.
+  - After a workstation deploy, the hosted version differs from `main` until the next push. A workstation deploy and a CI deploy that overlap make the second one fail on a lease, or replace the first one's version.
+  - Re-running an older failed run deploys its older commit.
+  - Forgetting `--fresh-core` lets new code meet old data until the mark is set by hand.
+- **Rejected alternatives:**
+  - `--force` in CI: every merge would end the visitors' sessions and fail a run in progress.
+  - Cancelling a running deploy for a newer push: it would leave its lease, and possibly a partial deployment.
+  - Queuing every push: deploys superseded commits, each waiting for the core.
+  - A manual trigger: the owner chose automatic deploys only; re-running a failed run of the latest commit covers a retry.
+  - A `--fresh-core` flag carried by the commit: a replaced pending deploy would drop it.
+  - A separate CI deploy, such as `flyctl deploy`: the Machines API flow, leases and version check live in the script.
+  - Checking out the tip of `main` instead of the triggering commit: merges to `main` are rare and deliberate (owner, 2026-10-06).
+- **Code:** `.github/workflows/deploy.yml`, `infra/fly/deploy.mjs`.
+
+### HD-50 The CI deploy token is an organization deploy token
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** The CI deploy reaches the three apps and Fly's remote builder with one token, the one the deploy script gets from flyctl. A Fly deploy token covers a single app.
+- **Decision:** One organization deploy token, created by the owner with a one-year expiry and stored as a GitHub repository secret. It is renewed before it expires. The deploy script is unchanged.
+- **Consequences:** Beyond the three apps, the token can create apps and other resources in the organization, and covers any app added to it later; the organization holds only the demo's apps. A leaked token adds that to the control described in [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control), with billing controls as the mitigation. It never goes into a Machine. An expired token fails the deploy at its first Fly call.
+- **Rejected alternatives:**
+  - Three app deploy tokens: narrower, but three secrets to rotate and a per-app token choice in the deploy script.
+  - Several deploy tokens joined into one secret: Fly does not document it.
+  - The owner's personal token: access to everything the owner can reach.
+- **Code:** `.github/workflows/deploy.yml`.
