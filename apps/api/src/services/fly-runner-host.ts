@@ -54,7 +54,10 @@ const retriedStartFailures = new Set<FlyFailureClass>([
   "transient",
 ]);
 const relocatingFailures = new Set<FlyFailureClass>(["provider_capacity", "host_unreachable"]);
-/** Where a recreated runner may go after the core's own region (design section 4.4). */
+/**
+ * Where a recreated runner may go after the core's own region
+ * (HD-36, docs/decisions/hosted_deployment.md).
+ */
 const fallbackRegion = "eu";
 
 /**

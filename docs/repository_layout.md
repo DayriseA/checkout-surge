@@ -169,6 +169,7 @@ checkout-surge/
 | Domain model and cross-service conventions (`core_business_entities.md`, `cross_service_conventions.md`) |
 | Runtime topology, testing infrastructure, load/metrics, inventory hot path, and admin access references |
 | Hosted runtime and operations (`hosted_runtime.md`, `hosted_operations.md`) |
+| Decision records: project scope and caveats, and numbered domain decision logs (`decisions/`, see its [README](decisions/README.md)) |
 | Agent quality checklists (`quality_checklists.md`) |
 
-There are currently no separate ADR, hosted benchmark-result, or portfolio-write-up directories under `docs/`. Add and label those artifact types only when concrete files and reproducible evidence exist; they are not part of the current repository layout.
+There are currently no hosted benchmark-result or portfolio-write-up directories under `docs/`. Add and label those artifact types only when concrete files and reproducible evidence exist; they are not part of the current repository layout.

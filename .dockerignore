@@ -3,6 +3,8 @@
 .cache/
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Local agent worktrees: full copies of the repository, their local files included.
+.kilo
 .turbo
 **/.turbo
 out
@@ -10,12 +12,18 @@ out
 **/.next
 **/dist
 **/coverage
+# Secrets must never reach a build context: a remote build uploads it to Fly's builder and its
+# cache. Environment and private-key files are excluded at any depth, examples included, since no
+# build reads them.
 .env*
+**/.env*
 **/*.env
+*.pem
+**/*.pem
+*.key
+**/*.key
 .checkout-surge
 **/*.log
 **/*.tsbuildinfo
-*.pem
-*.key
 working_docs
 scripts/composition-characterization.mjs

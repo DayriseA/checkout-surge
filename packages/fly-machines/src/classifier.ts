@@ -1,9 +1,9 @@
 import { type FlyMachine, FlyMachinesApiError } from "./client.js";
 
 /**
- * Best-effort classification of Fly failures (design section 6). Fly has no error contract, so
- * the signals below are maintained over time. It holds no business rule: callers decide whether
- * to retry, recreate or give up.
+ * Best-effort classification of Fly failures (HD-16, docs/decisions/hosted_deployment.md). Fly
+ * has no error contract, so the signals below are maintained over time. It holds no business
+ * rule: callers decide whether to retry, recreate or give up.
  */
 export type FlyFailureClass =
   | "provider_capacity"

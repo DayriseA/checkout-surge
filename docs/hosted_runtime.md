@@ -138,7 +138,7 @@ The gate owns core recovery, because nobody is around to repair the core by hand
 
 1. A new empty volume and a new core Machine are created in the core's home region, or elsewhere in Europe, from the core config the deploy script last wrote into the gate Machine (`CORE_MACHINE_CONFIG_FILE`). Without that file, no recovery starts and visitors see the unavailable page.
 2. The new core installs fresh: migrations and seed on an empty database. Hosted run history and admin edits are lost.
-3. Once the new core is healthy, the old Machine is destroyed and its volume deletion is started. If the new core does not become healthy, it is removed and the old one is kept.
+3. Once the new core is healthy (its setup succeeded and its readiness probe answers), the old Machine is destroyed and its volume deletion is started; on a host that is down, Fly keeps that deletion pending until the host returns. If the new core does not become healthy, it is removed and the old one is kept.
 
 The gate holds the old core's lease for the whole recovery, except on a host that is not `ok`, where Fly grants no usable lease. Visitors see the relocating page, or the fresh-install page when the recovery was requested on purpose.
 
@@ -173,7 +173,7 @@ The runner Machine is stopped between runs and started by the API for each run, 
 ### Runner loss and missing evidence
 
 - The runner generates a boot ID at process start. The API records it with the run, and every start or replay must match it ([HD-12](decisions/hosted_deployment.md#hd-12-boot-id-fencing-and-immediate-load_generator_lost)).
-- On its poll, the API fails a `starting` or `active` run at once with `load_generator_lost` when its runner Machine stopped, booted again, or sits on an unreachable host.
+- On its poll, the API fails a `starting` or `active` run at once with `load_generator_lost` when its runner Machine stopped, booted again, or sits on an unreachable host. A runner that stays unreachable while its Machine is started is stopped through Fly after about a minute, then checked again.
 - Counters without a k6 report are unknown, never zero ([HD-13](decisions/hosted_deployment.md#hd-13-missing-traffic-evidence-is-unknown-never-zero), [HD-43](decisions/hosted_deployment.md#hd-43-every-k6-counter-is-initialized-so-an-absent-counter-is-unknown)). On Fly's cgroup v1, the memory `high` probe reads "Not applicable" ([HD-44](decisions/hosted_deployment.md#hd-44-only-an-observed-platform-gap-is-not-applicable)).
 
 ### Version handshake

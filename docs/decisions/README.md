@@ -48,6 +48,7 @@ Domain documents in `docs/` keep explaining how things work, and their existing 
 - **Shared rules.** A rule shared by several entries is stated once and linked from the others.
 - **Self-contained.** Write the context inline. No task numbers, working files, checkpoints, review sessions, attribution, roadmap or pending actions.
 - **Stable IDs.** IDs are never renumbered or reused.
+- **Index.** Each log starts with an ID-ordered index; a new entry is added to it too.
 - **Citing from code.** Code cites entries as `Accepted risk HD-NN (docs/decisions/<log>.md)`.
 - Keep entries short. Details of how something works belong in the domain documents.
 

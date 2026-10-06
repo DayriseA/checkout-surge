@@ -166,6 +166,12 @@ These observations come from the hosted deployment on Fly.io, not from the local
   - No run had a failed request, a transport failure, or a connection error: VU exhaustion broke first, not connections.
 - **Default VU allocation.** Without an explicit VU setting, k6 pre-allocates as many VUs as the rate per second and may grow to twice that. At 1,000 per second for 10 s, about 1 % of the iterations were then dropped during the first two seconds, while the latency jumped. At 500 per second, every run was complete with a p95 under 1.2 s.
 
+**Lifecycle timings** (measured while the deployment was built, on the earlier 4 vCPU / 8 GB Machines):
+
+- **Runner start.** A run started about 3.5 to 4 s later than with an always-on runner, and about 8 s later on the first run after a deploy.
+- **Runner loss.** 3.4 s from a SIGKILL of the runner to the terminal `load_generator_lost` run.
+- **Core recovery.** 37 s from the start button to the demo, with a fresh core installed on a new volume.
+
 ## Tuning deliberately not configured
 
 TCP Fast Open is not configured: k6's Go client does not provide the required client-side support, and `buyer-spike` deliberately gives each VU one request, so it has no repeated connection to accelerate.

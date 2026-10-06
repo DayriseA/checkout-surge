@@ -25,7 +25,7 @@ type RecoveryMachines = Pick<
 /** `no_capacity`: Fly refused the new volume or Machine for capacity; the old core is kept. */
 export type RecoveryOutcome = "recreated" | "no_capacity";
 
-/** The core's home region first, then anywhere in Europe (design section 3.5). */
+/** The core's home region first, then anywhere in Europe (docs/hosted_runtime.md, "Recovery"). */
 const coreRegions = "cdg,eu";
 // Covers the volume and Machine creation, image pulls on a new host and the fresh install, with a
 // wide margin. The lease stays on the old core until it is destroyed.

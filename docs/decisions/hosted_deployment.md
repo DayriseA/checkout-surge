@@ -4,6 +4,67 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 **Context for every entry.** The hosted demo runs on Fly.io as three apps: a public **gate**, a **core** Machine that holds the system under test (Caddy, web, API, worker, Mock ERP, PostgreSQL, Redis), and a **runner** Machine that holds the load-orchestrator and its k6 child process. The core and the runner talk over Fly's private IPv6 network (6PN). One API process is the sole maintenance authority. The demo runs a few hours per month at most, so idle cost must be near zero and waking must be fast.
 
+## Index
+
+Every entry in ID order. New entries are added here too.
+
+| ID | Decision | Section |
+| :-- | :-- | :-- |
+| [HD-01](#hd-01-flyio-with-the-load-generator-on-its-own-machine) | Fly.io, with the load generator on its own Machine | Platform and Topology |
+| [HD-02](#hd-02-the-gate-is-the-only-public-address-and-the-only-waker) | The gate is the only public address and the only waker | Platform and Topology |
+| [HD-03](#hd-03-accepted-risk-bots-can-keep-an-awake-core-up) | Accepted risk: bots can keep an awake core up | Platform and Topology |
+| [HD-04](#hd-04-the-core-is-one-fly-multi-container-machine) | The core is one Fly multi-container Machine | Platform and Topology |
+| [HD-05](#hd-05-core-data-is-disposable-with-no-restore-path) | Core data is disposable, with no restore path | Platform and Topology |
+| [HD-06](#hd-06-hosted-only-behavior-is-selected-by-configuration) | Hosted-only behavior is selected by configuration | Platform and Topology |
+| [HD-07](#hd-07-the-api-starts-and-stops-the-runner-for-each-run) | The API starts and stops the runner for each run | Runner |
+| [HD-08](#hd-08-the-runner-stops-at-the-terminal-state-not-at-draining) | The runner stops at the terminal state, not at `draining` | Runner |
+| [HD-09](#hd-09-fenced-shutdown-through-the-runner-fly-stop-only-as-a-fallback) | Fenced shutdown through the runner, Fly `stop` only as a fallback | Runner |
+| [HD-10](#hd-10-the-runner-exits-on-its-own-a-report-unacknowledged-at-maximum-lifetime-is-lost) | The runner exits on its own; a report unacknowledged at maximum lifetime is lost | Runner |
+| [HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process) | Runner operations and run starts are serialized in-process | Runner |
+| [HD-12](#hd-12-boot-id-fencing-and-immediate-load_generator_lost) | Boot-ID fencing and immediate `load_generator_lost` | Runner |
+| [HD-13](#hd-13-missing-traffic-evidence-is-unknown-never-zero) | Missing traffic evidence is unknown, never zero | Runner |
+| [HD-14](#hd-14-the-version-handshake-refuses-mismatched-runs) | The version handshake refuses mismatched runs | Runner |
+| [HD-15](#hd-15-accepted-risk-startup-replay-skips-the-version-handshake) | Accepted risk: startup replay skips the version handshake | Runner |
+| [HD-16](#hd-16-fly-error-classification-is-best-effort) | Fly error classification is best-effort | Runner |
+| [HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate) | Runner capacity failures: retry in place, then recreate | Runner |
+| [HD-18](#hd-18-the-newest-runner-machine-wins) | The newest runner Machine wins | Runner |
+| [HD-19](#hd-19-accepted-risk-post-start-wait-errors-are-not-retried) | Accepted risk: post-start wait errors are not retried | Runner |
+| [HD-20](#hd-20-the-api-stops-its-own-idle-core) | The API stops its own idle core | Core Idle Stop |
+| [HD-21](#hd-21-accepted-risk-idle-stop-races-a-run-start) | Accepted risk: idle stop races a run start | Core Idle Stop |
+| [HD-22](#hd-22-known-limitation-short-operator-runs-are-not-counted) | Known limitation: short operator runs are not counted | Core Idle Stop |
+| [HD-23](#hd-23-accepted-risk-stale-countdown-after-stay-awake) | Accepted risk: stale countdown after stay awake | Core Idle Stop |
+| [HD-24](#hd-24-deploys-build-remotely-and-replace-whole-machine-configs) | Deploys build remotely and replace whole Machine configs | Deployment and Access |
+| [HD-25](#hd-25-the-infrastructure-limit-message-uses-an-explicit-code-allowlist) | The infrastructure-limit message uses an explicit code allowlist | Deployment and Access |
+| [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control) | Accepted risk: deploy tokens give a compromised component wide control | Deployment and Access |
+| [HD-27](#hd-27-the-gate-relays-with-fastifyreply-from-retries-off) | The gate relays with `@fastify/reply-from`, retries off | Gate |
+| [HD-28](#hd-28-the-gate-checks-the-cores-state-before-relaying-but-a-fly-api-failure-does-not-block-a-ready-core) | The gate checks the core's state before relaying, but a Fly API failure does not block a ready core | Gate |
+| [HD-29](#hd-29-the-gates-lease-covers-only-the-start-command) | The gate's lease covers only the start command | Gate |
+| [HD-30](#hd-30-gate-pages-answer-any-request-with-html-503) | Gate pages answer any request with HTML 503 | Gate |
+| [HD-31](#hd-31-the-gate-sleeps-and-a-visit-wakes-it) | The gate sleeps, and a visit wakes it | Gate |
+| [HD-32](#hd-32-accepted-risk-the-cores-caddy-trusts-the-whole-private-network-for-visitor-addresses) | Accepted risk: the core's Caddy trusts the whole private network for visitor addresses | Gate |
+| [HD-33](#hd-33-accepted-risk-core-secrets-reached-flys-build-cache) | Accepted risk: core secrets reached Fly's build cache | Deployment and Access |
+| [HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy) | Core recovery recreates a fresh core and retires the old one only once the new one is healthy | Core Recovery |
+| [HD-35](#hd-35-a-fresh-core-is-requested-by-a-mark-that-the-next-wake-acts-on) | A fresh core is requested by a mark that the next wake acts on | Core Recovery |
+| [HD-36](#hd-36-the-runner-follows-the-cores-region-even-at-one-recreation-per-run) | The runner follows the core's region, even at one recreation per run | Core Recovery |
+| [HD-37](#hd-37-the-guard-acts-only-under-a-machines-lease-and-skips-a-leased-one) | The guard acts only under a Machine's lease, and skips a leased one | Guard |
+| [HD-38](#hd-38-the-guard-probes-a-core-several-times-within-one-run) | The guard probes a core several times within one run | Guard |
+| [HD-39](#hd-39-the-guard-keeps-the-core-the-gate-would-use-not-the-newest) | The guard keeps the core the gate would use, not the newest | Guard |
+| [HD-40](#hd-40-accepted-risk-the-gate-machine-holds-the-guards-runner-token) | Accepted risk: the gate Machine holds the guard's runner token | Guard |
+| [HD-41](#hd-41-the-guard-is-deployed-without-skip_launch) | The guard is deployed without `skip_launch` | Guard |
+| [HD-42](#hd-42-the-guard-leaves-a-role-less-machine-on-a-down-host-alone) | The guard leaves a role-less Machine on a down host alone | Guard |
+| [HD-43](#hd-43-every-k6-counter-is-initialized-so-an-absent-counter-is-unknown) | Every k6 counter is initialized, so an absent counter is unknown | Runner |
+| [HD-44](#hd-44-only-an-observed-platform-gap-is-not-applicable) | Only an observed platform gap is not applicable | Runner |
+| [HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds) | The deploy updates a sleeping core under its lease, read again after the builds | Deployment and Access |
+| [HD-46](#hd-46-one-command-deploys-the-runner-and-the-core-together-and-a-version-mismatch-fails-the-deploy) | One command deploys the runner and the core together, and a version mismatch fails the deploy | Deployment and Access |
+| [HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok) | The runner is recreated from a deployed config, without a lease on a host that is not ok | Runner |
+| [HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it) | A requested fresh core stays requested until a wake acts on it | Deployment and Access |
+| [HD-49](#hd-49-github-actions-deploys-every-push-to-main-with-the-workstations-script) | GitHub Actions deploys every push to `main` with the workstation's script | Deployment and Access |
+| [HD-50](#hd-50-the-ci-deploy-token-is-an-organization-deploy-token) | The CI deploy token is an organization deploy token | Deployment and Access |
+| [HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput) | One API process stays; the core is sized for headroom and the caps stay above its throughput | Platform and Topology |
+| [HD-52](#hd-52-core-healthchecks-end-on-their-own-before-flys-check-timeout) | Core healthchecks end on their own, before Fly's check timeout | Platform and Topology |
+| [HD-53](#hd-53-the-public-constant-arrival-limit-stays-below-what-the-core-sustains-until-vu-allocation-is-capacity-aware) | The public constant-arrival limit stays below what the core sustains, until VU allocation is capacity-aware | Platform and Topology |
+| [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch) | The runner is sized so k6 never saturates its CPU during dispatch | Runner |
+
 ## Platform and Topology
 
 ### HD-01 Fly.io, with the load generator on its own Machine
@@ -11,8 +72,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-02
 - **Context:** The load generator must never compete with the system under test for CPU or memory, and stopped infrastructure must cost almost nothing.
-- **Decision:** Host on Fly.io, region `cdg`. The core and the runner are separate Machines, both on dedicated (performance) CPUs, starting at 4 vCPU / 8 GB and resized after measurement.
-- **Consequences:** Stopped Machines start in seconds and are billed per second. Machine sizes are configuration, kept separate from run limits.
+- **Decision:** Host on Fly.io. The core and the runner are separate Machines, both on dedicated (performance) CPUs, each sized from measurement ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput), [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch)).
+- **Consequences:** Stopped Machines start in seconds and are billed per second.
 - **Rejected alternatives:**
   - AWS EC2 stop/start: slower to start, and not cheaper.
   - Generator on the core Machine: it would share CPU with the system under test and distort the evidence.
@@ -37,7 +98,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-02
 - **Context:** Once a visitor has woken the core, the gate relays every request, bot traffic included.
 - **Decision:** Accept it. Revisit only on evidence from gate logs and Fly metrics after real traffic: the wake button would then set a signed session cookie, and the gate would relay only requests that carry it. Stronger protection (for example Turnstile) only if metrics show a need.
-- **Consequences:** Bot requests count as activity ([HD-20](#hd-20-the-api-stops-its-own-idle-core)) and can extend the awake time up to the 3-hour awake cap enforced by the scheduled guard. Public run budgets, keyed on the signed visitor cookie, already bound what such traffic can trigger. The exposure is cost only.
+- **Consequences:** Bot requests count as activity ([HD-20](#hd-20-the-api-stops-its-own-idle-core)) and can extend the awake time up to the awake cap enforced by the scheduled guard. Public run budgets, keyed on the signed visitor cookie, already bound what such traffic can trigger. The exposure is cost only.
 
 ### HD-04 The core is one Fly multi-container Machine
 
@@ -45,12 +106,9 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-03
 - **Context:** The core's services must start in order: databases, then migrations and seed, then the applications.
 - **Decision:** One multi-container Machine that reuses the per-service images, with `depends_on` conditions (`healthy`, `exited_successfully`) that Fly reapplies on every start. A single image with `supervisord` stays the fallback if Fly breaks multi-container.
-- **Consequences:** Three small workarounds, each verified on Fly:
-  - Fly signals every container at once on stop, so PostgreSQL and Redis delay their shutdown by 10 s; otherwise the Machine hangs until its stop timeout.
+- **Consequences:** Workarounds, each verified on Fly:
   - An image `ENV` wins over a container's `env`, so keys an image already sets (`PGDATA`, the web image's `HOSTNAME`) are set in the container command.
-  - A container without a `secrets` list gets no app secret, so each container lists the secrets it needs.
-
-  A failed migration or seed keeps the API closed while the Machine still reports `started`; the failure shows in the Machines API `containers[].state`.
+  - Fly signals every container at once on stop, so PostgreSQL and Redis delay their own shutdown (`delayed-stop.sh`).
 - **Rejected alternatives:**
   - Machine `config.processes`: needs a shared image and has no readiness dependencies.
   - `fly.toml` `[processes]` groups: each group gets its own Machines.
@@ -132,7 +190,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-02
 - **Context:** A `surge-10k` run leaves about 10,000 sockets in TIME_WAIT. The runner must cost nothing while idle and stay free to move when a host lacks capacity.
 - **Decision:** One fixed runner Machine with no volume, restart policy `no`, and no autostart (neither public nor Flycast). The API starts it explicitly right before dispatch, always from a stopped state (a runner found running is stopped first), and stops it when the run reaches a terminal state.
-- **Consequences:** Every run gets a fresh boot and a clean kernel socket state. A run starts about 3.5 to 4 s later than with an always-on runner (about 8 s on the first run after a deploy). A runner crash mid-run can lose the final k6 report ([HD-12](#hd-12-boot-id-fencing-and-immediate-load_generator_lost), [HD-13](#hd-13-missing-traffic-evidence-is-unknown-never-zero)). Explicit starts let the API see and classify capacity errors ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)).
+- **Consequences:** Every run gets a fresh boot and a clean kernel socket state. A run starts a few seconds later than with an always-on runner ([lifecycle timings](../reference_runtime_measurements.md#hosted-flyio-observations)). A runner crash mid-run can lose the final k6 report ([HD-12](#hd-12-boot-id-fencing-and-immediate-load_generator_lost), [HD-13](#hd-13-missing-traffic-evidence-is-unknown-never-zero)). Explicit starts let the API see and classify capacity errors ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)).
 - **Rejected alternatives:**
   - An always-on runner: idle cost, and socket state carried from one run to the next.
   - Fly Proxy or Flycast autostart: hides capacity errors from our code.
@@ -153,7 +211,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-02
 - **Context:** Fly's `stop` has no fencing parameter, so a late stop for run N could kill the runner already booted for run N+1.
-- **Decision:** A normal stop is `POST /traffic/shutdown` with `{runId, bootId}`: the runner exits only when both match and nothing is in flight (`deferred_busy` is retried for 30 s). Fly `stop` is the fallback for an unreachable or stuck runner, issued by the same serialized owner ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)). That owner also skips a release, or an unreachable-runner stop, for any run other than its latest boot.
+- **Decision:** A normal stop is `POST /traffic/shutdown` with `{runId, bootId}`: the runner exits only when both match and nothing is in flight (a `deferred_busy` answer is retried). Fly `stop` is the fallback for an unreachable or stuck runner, issued by the same serialized owner ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)). That owner also skips a release, or an unreachable-runner stop, for any run other than its latest boot.
 - **Consequences:** A Fly `stop` sends SIGINT, so the runner still publishes an interrupted completion report and the run finalizes as a failed shortfall, not a silent loss.
 - **Code:** `apps/load-orchestrator/src/application/runner-lifecycle-service.ts`, `RunnerOperations` in `apps/api/src/services/runner-operations.ts`.
 
@@ -162,7 +220,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-03
 - **Context:** The runner must stop even when the API is down or its stop never arrives.
-- **Decision:** The runner exits after 3 minutes with no execution and no completion report awaiting acknowledgement. It also exits at a maximum lifetime, counted from process boot, of the automatic-reset deadline (`automaticRunResetDeadlineSeconds`, 900 s) plus 30 s, even mid-run or with an unacknowledged report.
+- **Decision:** The runner exits after an idle period with no execution and no completion report awaiting acknowledgement. It also exits at a maximum lifetime, counted from process boot, of the automatic-reset deadline (`automaticRunResetDeadlineSeconds`) plus a margin, even mid-run or with an unacknowledged report.
 - **Consequences:** Such a report is lost with the volume-less Machine; by then the API has already reset the run automatically with unknown counters ([HD-13](#hd-13-missing-traffic-evidence-is-unknown-never-zero)). A report the API rejected definitively (`completion_rejected`) blocks neither the shutdown nor the idle exit.
 - **Rejected alternatives:** Persistent storage for the runner's journal: cost and host pinning for a case the automatic reset already covers.
 - **Code:** `apps/load-orchestrator/src/application/runner-lifecycle-service.ts`.
@@ -172,7 +230,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-03
 - **Context:** Runner start, stop, update, and recreation must never interleave, and a starting-run replay must never race a start being set up.
-- **Decision:** One owner in the API runs every runner operation one at a time and holds a Fly lease on the runner Machine during each, to coordinate with the deploy script, except on a host that is not ok, where Fly grants no usable lease ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)). Run starts and starting-run reconciliation run inside the API maintenance authority, together with resets.
+- **Decision:** One owner in the API runs every runner operation one at a time and holds a Fly lease on the runner Machine during each, to coordinate with the deploy script, except on a host that is not ok ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)). Run starts and starting-run reconciliation run inside the API maintenance authority, together with resets.
 - **Consequences:** Correct only under the single-API-process contract ([Scope and Caveats](scope_and_caveats.md#intentional-non-goals)). Fly leases are advisory between our own cooperating clients, not a security boundary.
 - **Rejected alternatives:** Distributed coordination: unnecessary with one API process.
 - **Code:** `apps/api/src/services/runner-operations.ts`, `apps/api/src/services/demo-maintenance-authority.ts`.
@@ -181,9 +239,9 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-04
-- **Context:** A crashed or rebooted runner must never relaunch traffic for a run, and a lost run must not wait for the 900 s automatic reset.
-- **Decision:** The runner generates a boot ID at process start, since Fly has no per-boot identifier. The API records it with the run before dispatch, and every start or replay carries it as `expectedBootId`; a mismatch is refused before any traffic. On the API's 5 s poll, a `starting` or `active` run with a recorded boot is lost when its runner Machine is stopped, reports another boot ID, or sits on a host marked `unreachable`: the run fails at once with `load_generator_lost` and unknown counters. A runner unreachable for about 60 s while its Machine is started is stopped through Fly, then checked again.
-- **Consequences:** Detection takes seconds (3.4 s from SIGKILL to the terminal run, measured on Fly). A run already `draining` keeps its persisted report and finalizes normally. The API does not try to stop a runner on an unreachable host, because the stop could hang; the next start recreates it ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)). Only hard losses (crash, SIGKILL, host loss) are detected this way; a Fly `stop` yields an interrupted report instead ([HD-09](#hd-09-fenced-shutdown-through-the-runner-fly-stop-only-as-a-fallback)).
+- **Context:** A crashed or rebooted runner must never relaunch traffic for a run, and a lost run must not wait for the automatic reset.
+- **Decision:** The runner generates a boot ID at process start, since Fly has no per-boot identifier. The API records it with the run before dispatch, and every start or replay must match it; a mismatch is refused before any traffic. A `starting` or `active` run whose runner Machine stopped, booted again, or sits on an unreachable host fails at once with `load_generator_lost` and unknown counters, instead of waiting for the automatic reset.
+- **Consequences:** Detection takes seconds ([lifecycle timings](../reference_runtime_measurements.md#hosted-flyio-observations)). A run already `draining` keeps its persisted report and finalizes normally. The API does not try to stop a runner on an unreachable host, because the stop could hang; the next start recreates it ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)). Only hard losses (crash, SIGKILL, host loss) are detected this way; a Fly `stop` yields an interrupted report instead ([HD-09](#hd-09-fenced-shutdown-through-the-runner-fly-stop-only-as-a-fallback)).
 - **Rejected alternatives:** An automatic runner restart: a restarted runner could replay traffic silently.
 - **Code:** `apps/api/src/services/runner-loss-monitor.ts`, `RunnerOperations.checkRunner`, `failLostRun` in `apps/api/src/services/demo-run-service.ts`.
 
@@ -211,7 +269,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-03
 - **Context:** Startup reconciliation replays a starting run against its recorded boot without running the version handshake again.
 - **Decision:** Accept it.
-- **Consequences:** It matters only if the API crashes in the milliseconds between recording the boot and dispatching, and a deploy then lands within the runner's 3-minute idle window.
+- **Consequences:** It matters only if the API crashes in the milliseconds between recording the boot and dispatching, and a deploy then lands within the runner's idle window ([HD-10](#hd-10-the-runner-exits-on-its-own-a-report-unacknowledged-at-maximum-lifetime-is-lost)).
 - **Code:** `apps/api/src/services/demo-run-startup-reconciliation-service.ts`.
 
 ### HD-16 Fly error classification is best-effort
@@ -219,7 +277,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-02
 - **Context:** Fly publishes no error contract, yet recovery must tell provider capacity apart from our own errors.
-- **Decision:** One classifier, shared with the Machines API client, maps documented and observed signals to `provider_capacity` (a create refused with `insufficient_capacity` or `volume_placement_capacity`, or a start 409 with a known capacity phrase), `host_unreachable` (408, or `host_status: "unreachable"`), `transient` (429, 5xx), `conflict` (any other 409, such as a lease or version conflict; it never triggers a recreation), `own_error` (any other 4xx, or an unrequested non-zero exit), and `unclassified_provider_error`. The package holds no business rule; recovery sequences stay with their owners.
+- **Decision:** One classifier, shared with the Machines API client, maps Fly's documented and observed signals, capacity phrases included, to failure classes. A conflict that is not about capacity, such as a lease or version conflict, is a class of its own and never triggers a recreation. The package holds no business rule; recovery sequences stay with their owners.
 - **Consequences:** Phrase matching can drift as Fly changes its messages, so the classifier is maintained over time. An unknown signal falls to `unclassified_provider_error` and is shown as such, never guessed.
 - **Code:** `packages/fly-machines/src/classifier.ts`.
 
@@ -228,8 +286,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-04
 - **Context:** A stopped Machine can fail to start when its host lacks capacity; the runner has no volume pinning it to that host.
-- **Decision:** Try `start` 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries, and a runner already on a host that is not ok is recreated at once. The new runner is built from the deployed runner config ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)) and created with region `"<core region>,eu"`; the old one is force-destroyed only once the new one has started, otherwise it is kept. A create refused for capacity fails the run before traffic (zero counters, 503 `runner_capacity_unavailable`) and the visitor sees a provider message. While relocating, the run carries `runner_relocating` so the dashboard can say so, and every run records the runner's region. `POST /admin/demo/runner/recreate` (control token) runs the same replacement deliberately, only while the runner is stopped, and leaves the new runner stopped.
-- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; the recorded region makes it visible. A runner on a dead host is recreated without its lease and from the deployed config, since Fly returns neither a full config nor a usable lease there ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)).
+- **Decision:** Retry `start` in place with back-off first. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries, and a runner already on a host that is not ok is recreated at once, from the deployed runner config ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)). The old runner is destroyed only once the new one has started; otherwise it is kept. A create refused for capacity fails the run before any traffic, with zero counters and a provider message.
+- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; every run records the runner's region, so it stays visible.
 - **Rejected alternatives:** Recreating on transient errors: a new Machine would hit the same Machines API trouble.
 - **Code:** `FlyRunnerHost.start` and `FlyRunnerHost.recreate` in `apps/api/src/services/fly-runner-host.ts`.
 
@@ -258,14 +316,14 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-05
-- **Context:** k6 leaves out of its summary export any counter that never received a sample. Clean runs then lacked their zero-valued counters, which read as missing evidence and raised generator warnings on every run.
-- **Decision:** The generated script adds a zero sample to every counter the load orchestrator reads, k6 built-ins included, before traffic starts. A valid export therefore lists each one, and a counter absent from an export stays unknown. On the point stream, these zero samples are not evidence: they prove neither a total nor an arrival.
-- **Consequences:** Clean runs have no counter warnings, and the unknown-versus-zero rule (HD-13) stays strict at the field level. Without a usable export, a counter takes its streamed sum, or else stays unknown, so a completion report can carry unknown fields. Equations and comparisons apply only when their terms are known. Finalization does not wait for an unknown accepted-response counter, which can never become known. It still requires drained pending persistence and one order per reservation, and a known accepted count still sets the floor. A test ties the script's initialized counters to the parser's list, so a rename cannot become a silent zero.
+- **Context:** k6 leaves out of its summary export any counter that never received a sample, so a clean run lacked its zero-valued counters, which read as missing evidence and raised generator warnings on every run.
+- **Decision:** The generated script adds a zero sample to every counter the load orchestrator reads, k6 built-ins included, before traffic starts. A valid export therefore lists each one, and a counter absent from an export stays unknown.
+- **Consequences:** Clean runs have no counter warnings, and the unknown-versus-zero rule ([HD-13](#hd-13-missing-traffic-evidence-is-unknown-never-zero)) stays strict at the field level, so a completion report can carry unknown fields. Finalization does not wait for an unknown accepted-response counter, which can never become known; it still requires drained pending persistence and one order per reservation, and a known accepted count still sets the floor. A test ties the script's initialized counters to the parser's list, so a rename cannot become a silent zero.
 - **Rejected alternatives:**
   - Read a counter absent from a valid export as zero: it trusts that every counter is declared and named the same in the script and the parser, and a rename or an export divergence would become a silent zero.
   - Warn on each absent counter: k6's normal behavior flags every clean run.
   - Default missing evidence to zero: hides lost evidence.
-- **Code:** `generateK6Script` (`setup()`), `counterMetricFields` and `parseK6JsonLine` in `k6-output-parser.ts`, `reconcileAcceptedResponses`.
+- **Code:** `generateK6Script` (`setup()`) in `apps/load-orchestrator/src/application/k6-script.ts`, `counterMetricFields` and `parseK6JsonLine` in `apps/load-orchestrator/src/application/k6-output-parser.ts`, `reconcileAcceptedResponses` in `apps/api/src/services/accepted-response-accounting.ts`.
 
 ### HD-44 Only an observed platform gap is not applicable
 
@@ -284,8 +342,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-06
-- **Context:** Runner recreation copied the old Machine's config and took its lease. Fly returns only a partial config, and grants no usable lease, for a Machine whose host is not ok, which is exactly when a dead-host recreation needs both.
-- **Decision:** Every core deploy writes the runner Machine's full config, as last deployed, into the core's API container as a file, and the API builds a recreated runner from it, with the run's size and API address. On a runner whose host is not ok, the API takes no lease, as Fly's own tooling does: a start recreates the runner at once, a stop does nothing, and the old runner is force-destroyed without a nonce, a 404 counting as done.
+- **Context:** A recreation that copies the old Machine's config under its lease fails exactly when a dead-host recreation needs it: Fly returns only a partial config, and grants no usable lease, for a Machine whose host is not ok ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
+- **Decision:** The API builds a recreated runner from the runner config of the last core deploy, which the deploy writes into the core's API container. On a runner whose host is not ok, the API takes no lease: a start recreates the runner at once, and a stop does nothing.
 - **Consequences:** A recreation always rebuilds the runner config of the last core deploy, so a runner changed by hand, or deployed alone, since then is not carried over; the one-command deploy keeps both in step ([HD-46](#hd-46-one-command-deploys-the-runner-and-the-core-together-and-a-version-mismatch-fails-the-deploy)). A missing file fails the recreation, and with it the run, before any traffic.
 - **Rejected alternatives:**
   - Copying the old Machine's config: partial on a host that is not ok.
@@ -312,15 +370,13 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-04
 - **Context:** The core must sleep when nobody uses it, but never during a run that is still settling orders after its HTTP traffic ends.
-- **Decision:** The API stops its own Machine (`FLY_APP_NAME`, `FLY_MACHINE_ID`) after 10 minutes with no nonterminal run and no counted activity, checked on its 5 s poll. The deadline lives in API memory, and a countdown widget on every page displays it.
-  - Counted: every visitor request through the web server (the Next.js Proxy reports it to `POST /core/activity`), the "stay awake" button, and a nonterminal run, so the countdown restarts at 10 minutes when a run ends.
-  - Not counted: healthchecks, the widget's status polling, the demo page's recovery polling, open SSE connections, and requests made straight to the API (runner traffic, operator calls).
-- **Consequences:** The gate's readiness probes must use an uncounted path (`/health`, or the API's `/health/ready`). The stop targets the API's own Machine ID and takes no lease: while another client holds the core lease, the stop blocks up to the client's 30 s timeout and the next check retries. A failing idle stop is left to the guard's 3-hour awake cap.
+- **Decision:** The API stops its own Machine once the idle period passes with no nonterminal run and no counted activity. The deadline lives in API memory, and a countdown widget on every page displays it. Visitor activity is counted in the web server, which reports every request it serves; polling, SSE connections and requests made straight to the API are not counted. A nonterminal run counts, so the full idle period restarts when a run ends.
+- **Consequences:** The gate's readiness probes must use an uncounted path. The stop takes no lease, so while another client holds the core lease it blocks until the client times out, and the next check retries ([HD-21](#hd-21-accepted-risk-idle-stop-races-a-run-start)). A failing idle stop is left to the guard's awake cap.
 - **Rejected alternatives:**
   - Fly Proxy autostop: it sees only HTTP traffic and would cut a run still settling orders.
   - Counting in the API: it misses pages that never call the API.
   - Counting the recovery polling: an open demo tab would keep the core awake forever.
-  - A literal "no run and no activity for 10 minutes": the core could stop right after a long run while the visitor reads its result.
+  - A literal "no run and no activity for the idle period": the core could stop right after a long run while the visitor reads its result.
 - **Code:** `apps/api/src/services/core-idle-stop.ts`, `apps/web/src/proxy.ts`, `apps/web/src/app/components/core-idle-countdown.tsx`.
 
 ### HD-21 Accepted risk: idle stop races a run start
@@ -337,9 +393,9 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-04
-- **Context:** The end of a run counts as activity only when a 5 s check sees the run nonterminal.
+- **Context:** The end of a run counts as activity only when a periodic check (the run finalization polling interval) sees the run nonterminal.
 - **Decision:** Accept the limitation.
-- **Consequences:** A run started straight on the API (an operator with the control token) that ends before the next check is never counted, so an otherwise idle core can stop up to 10 minutes earlier than the rule says. Web starts are counted by the proxy, and no run is ever cut off by this.
+- **Consequences:** A run started straight on the API (an operator with the control token) and finished between two checks is never counted, so an otherwise idle core can stop up to a full idle period earlier than the rule says. Web starts are counted by the proxy, and no run is ever cut off by this.
 - **Code:** `CoreIdleStop` in `apps/api/src/services/core-idle-stop.ts`.
 
 ### HD-23 Accepted risk: stale countdown after stay awake
@@ -348,7 +404,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-04
 - **Context:** The widget applies status responses in arrival order, so a poll sent before "stay awake" can land after its response and show the older deadline.
 - **Decision:** Accept it.
-- **Consequences:** Display only: the deadline itself lives in the API, and the next poll (at most 30 s later) corrects the widget.
+- **Consequences:** Display only: the deadline itself lives in the API, and the next poll, at most one polling interval later, corrects the widget.
 - **Code:** `CoreIdleCountdown` in `apps/web/src/app/components/core-idle-countdown.tsx`.
 
 ## Gate
@@ -385,8 +441,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Decision:** The gate holds the lease only around the start command, not through the boot until the core is ready: a started core is one the deploy script refuses to update, provided the script re-reads the core's state under the lease just before its update, so a longer hold would only block deploys. A held lease is shown as "updating", although a lease alone does not prove a deploy (it can also be a wake whose gate died before releasing it, until the lease expires); telling holders apart is not worth the code for a page that only asks the visitor to retry. Retrying a failed start and recreating the core are core recovery ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)), which the wake triggers and which keeps the lease until it ends.
 - **Consequences:**
   - A visitor may see "updating" while no deploy runs; a retry works once the lease is released or expires.
-  - A wake during the deploy's builds is never interrupted: the script takes the core lease only after its builds, reads the core again under it, and waits for an awake core to sleep first.
-  - The wake's lease TTL covers the worst case of the wake's own calls (read, wait for a stopping core, start retries), so a gate dying mid-wake keeps "updating" up to that TTL, as a recovery keeps it up to its own longer lease ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
+  - A wake during the deploy's builds is never interrupted ([HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds)).
+  - A gate dying mid-wake keeps "updating" until the wake's lease expires, as a dying recovery does with its own longer lease ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
 - **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`.
 
 ### HD-30 Gate pages answer any request with HTML 503
@@ -427,22 +483,23 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-05
 - **Context:** The core is pinned to its volume's host, so a host without capacity, or a dead host, leaves it unable to start, and nobody is around to repair it. Its data is disposable ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path)).
-- **Decision:** On a visitor's wake, the gate retries `start` in place with back-off, like the runner ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)). Capacity and dead-host failures, and a core already on a host that is not ok, then recreate the core: a new empty volume placed by Fly in the core's home region or elsewhere in Europe, sized for the core's Machine, and a new Machine on it, which installs fresh. The new Machine is built from the core config the deploy script last sent, which it also writes into the gate Machine as a file; without that file there is no recovery. The old Machine and volume are destroyed only once the new core is healthy (setup succeeded, the readiness probe answers); otherwise the new ones are removed and the old core is kept. The gate holds the old core's lease for the whole recovery, except on a host that is not ok, where it takes no lease and force-destroys the old core without one, as Fly's own tooling does. Visitors see the relocating page meanwhile.
+- **Decision:**
+  - On a visitor's wake, the gate retries `start` in place, like the runner ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)). Capacity and dead-host failures, and a core already on a host that is not ok, then recreate the core: a new empty volume placed by Fly, and a new Machine on it, built from the core config of the last deploy, which the deploy writes into the gate Machine. The new core installs fresh.
+  - The old Machine and volume are destroyed only once the new core is healthy; otherwise the new ones are removed and the old core is kept. The gate holds the old core's lease for the whole recovery.
+  - **No lease on a host that is not ok.** For a Machine whose host is not ok, Fly grants no usable lease and returns only a partial config, and Fly's own tooling skips leasing such Machines. The gate, the API's runner operations and the guard therefore act on such a Machine without a lease; here, the gate force-destroys the old core without one.
 - **Consequences:**
-  - A recovery loses run history and admin edits. The visitor waits under a minute (measured on Fly: 37 s from the start button to the demo).
-  - A capacity refusal keeps the old core and shows the no-capacity page until a visitor tries again; any other failure keeps the old core and returns visitors to the start page.
+  - A recovery loses run history and admin edits. The visitor waits under a minute ([lifecycle timings](../reference_runtime_measurements.md#hosted-flyio-observations)).
+  - A failed recovery, for capacity or otherwise, keeps the old core, and nothing retries it until a visitor wakes the core again.
   - A core on a host that is not ok shows the start button rather than the booting page, so a deliberate visitor action can recreate it.
-  - The old volume's deletion is only started: on a host that is down, Fly keeps it pending until the host returns, and the guard cleans up what remains.
   - A recovery always rebuilds the last deployed config, so a core config changed by hand since the last deploy is not carried over.
-  - When the listing shows no core at all (a dead core whose partial config lost its metadata, or a core deleted by hand), a visitor's wake creates one from the deployed config, with no lease and nothing destroyed. The gate never touches a Machine it does not recognize as the core. Accepted risk: if the listing wrongly omitted an existing core, a duplicate core is created; the selection rule serves the usable one and the guard removes the surplus, and nothing unknown is ever destroyed.
+  - When the listing shows no core at all (a dead core whose partial config lost its metadata, or a core deleted by hand), a visitor's wake creates one from the deployed config, with no lease and nothing destroyed. The gate never touches a Machine it does not recognize as the core. Accepted risk: if the listing wrongly omitted an existing core, a duplicate core is created; the selection rule serves the usable one and the guard removes the surplus.
   - Accepted risk: the recovery runs inside the gate process. A gate stopped mid-recovery can leave a volume without a Machine, or two core Machines, for the guard to clean up, and visitors see "updating" until the lease expires.
-  - When several cores exist, the gate skips any that cannot serve (on a host that is not ok, or with a failed setup), so a leftover never hides the core that can. Accepted gap: a new core that starts but never becomes healthy without a setup failure, and whose removal also fails, can still be selected until the guard removes it.
+  - Accepted gap: a new core that starts but never becomes healthy without a setup failure, and whose removal also fails, can be selected until the guard removes it.
 - **Rejected alternatives:**
   - Destroying the old core before the new one is healthy: a failed recreation would leave no core at all.
   - Recreating on transient errors: a new core would hit the same Machines API trouble.
   - Releasing the lease after the start, as a normal wake does ([HD-29](#hd-29-the-gates-lease-covers-only-the-start-command)): a deploy could update the old core while it is being replaced.
   - Copying the old Machine's config: Fly returns only a partial config for a Machine whose host is not ok, exactly when a dead-host recovery needs it.
-  - Taking a lease on a core whose host is not ok: Fly's own tooling skips leasing such Machines.
   - Treating a core-app Machine without the `role` label on a down host as the core: the gate could destroy a Machine that is not the core.
 - **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`, `CoreRecovery` in `apps/gate/src/core-recovery.ts`, `writeCoreConfigToGate` in `infra/fly/deploy.mjs`.
 
@@ -475,7 +532,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-05
 - **Context:** The hourly guard stops and destroys Machines that a wake, a recovery, a deploy or a runner operation may be working on at the same moment. Fly does not refuse a stop or a destroy sent without the lease nonce: it blocks until the lease expires, then runs it.
-- **Decision:** Every stop and destroy takes the Machine's lease first, then reads the Machine again under it, and acts only if its state, its host status and its latest start are unchanged since the plan; a held lease or a changed Machine skips it until the next run. On a host that is not ok, where Fly grants no usable lease, a destroy takes none, as Fly's own tooling does ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)); the Machine is read again just before the destroy, which narrows the window but cannot close it.
+- **Decision:** Every stop and destroy takes the Machine's lease first, then reads the Machine again under it, and acts only if its state, its host status and its latest start are unchanged since the plan; a held lease or a changed Machine skips it until the next run. On a host that is not ok, a destroy takes no lease ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)); the Machine is read again just before the destroy, which narrows the window but cannot close it.
 - **Consequences:** The old core of a recovery in progress is leased by the gate, so the guard never destroys it under the gate's feet. A plan can be minutes old after the core probes, so a core woken, a runner started or a host back since then is left alone. A Machine that stays leased, or keeps changing, is cleaned an hour later. Machines that carry no lease, such as a recovery's new core and volume, rely on the age-based grace period instead.
 - **Rejected alternatives:**
   - Acting without the lease, with a short client timeout: the blocked call may still run once the lease expires, in the middle of the holder's next step.
@@ -542,9 +599,9 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-03
-- **Context:** Local image builds exhausted the owner's workstation memory, and `flyctl machine update` merges the new JSON into the old Machine config.
-- **Decision:** The deploy script builds images on Fly's remote builder (Depot) and pushes them without deploying, labelled by commit, with a unique label per build for uncommitted trees, because the Machines API keeps a Machine's image when the reference string is unchanged. `--no-depot` (Fly's previous builder) covers a Depot incident, and `--local-build` falls back to a local build. Machines are created and updated through the Machines API with the full config and `skip_launch`; the deploy never starts them.
-- **Consequences:** Images are always linux/amd64, with a build cache kept at Fly; the expected build cost is zero within the free build minutes. A key removed from the config does not survive an update. After a create or an update, the script waits for `stopped`, because Fly refuses a start for a few seconds then. The Machines API can refuse an image pushed seconds earlier as unknown (`MANIFEST_UNKNOWN`) while the registry already serves it, so the script retries that refusal.
+- **Context:** Local image builds exhausted the operator's workstation memory, and `flyctl machine update` merges the new JSON into the old Machine config.
+- **Decision:** The deploy script builds images on Fly's remote builder and pushes them without deploying, labelled by commit, with a unique label per build for uncommitted trees, because the Machines API keeps a Machine's image when the reference string is unchanged. Machines are created and updated through the Machines API with the full config and `skip_launch`; the deploy never starts them.
+- **Consequences:** A key removed from the config does not survive an update. After a create or an update, the script waits for `stopped`, because Fly refuses a start for a few seconds then.
 - **Rejected alternatives:**
   - Local Docker builds by default: they exhausted the workstation's memory.
   - `flyctl machine update` or `machine run --machine-config`: they merge into the old config and keep removed keys.
@@ -582,12 +639,11 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-06
 - **Context:** A deploy replaces whole Machine configs, and its builds take minutes. A visitor can wake the core through the gate at any time, and an update decided from a state read before the builds could cut that visitor's session.
-- **Decision:** The script builds first. It then waits for an awake core to sleep, takes the core lease, reads the core again under it, and updates it with the lease nonce only if it is stopped or was never started. It holds the lease through the wait for `stopped` and the write of the core config into the gate, and releases it in every case. A held lease fails the script, to be re-run. `--force` stops an awake core under the lease instead of waiting. The runner is updated the same way under its own lease, and a running runner is refused unless `--force` stops it.
-- **Consequences:** The lease TTLs cover the waits at Fly's 60 s cap and the full `MANIFEST_UNKNOWN` retry budget; a request that hangs beyond them is not covered, and no client deadline is added on purpose, because aborting a mutating call does not cancel it at Fly.
+- **Decision:** The script builds first. It then waits for an awake core to sleep, takes the core lease, reads the core again under it, and updates it with the lease nonce only if it is stopped or was never started. A held lease fails the script instead of waiting. The runner is updated the same way under its own lease, and a running runner is refused.
+- **Consequences:**
+  - No client deadline is added on purpose, because aborting a mutating call does not cancel it at Fly, so a request that hangs beyond the lease TTL is not covered.
   - A wake during the builds is never interrupted: the deploy waits for that session to end, at most until the guard's awake cap.
-  - A wake while the script holds the lease shows "updating" ([HD-29](#hd-29-the-gates-lease-covers-only-the-start-command)).
-  - A script killed while it holds the lease leaves "updating" until the lease expires, or until the operator clears it with flyctl.
-  - With `--force`, the visitors' session ends at once, and a run in progress ends failed.
+  - A wake while the script holds the lease shows "updating" ([HD-29](#hd-29-the-gates-lease-covers-only-the-start-command)), and a script killed while it holds the lease leaves "updating" until the lease expires or is cleared.
   - Fly keeps the lease across the update (verified), so a wake right after the update still shows "updating".
 - **Rejected alternatives:**
   - Taking the lease before the builds: wakes would be refused for minutes instead of seconds.
@@ -619,22 +675,21 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-06
-- **Context:** Deploys ran only from the owner's workstation. The hosted demo should follow `main` without a manual step, while a deploy killed mid-run keeps its Machine lease until the lease expires ([HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds)).
-- **Decision:** A GitHub Actions workflow runs the deploy script's `all` target on every push to `main`, without `--force`, so it waits for an awake core to sleep. Deploys run one at a time: a running deploy is never cancelled, and a newer push replaces a deploy still waiting to start. Actions are pinned by commit SHA, and the flyctl version is pinned. Workstation deploys remain available for any commit. An incompatible change is deployed from the workstation with `--fresh-core` before it reaches `main`, and the CI deploy then carries the mark over ([HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)).
+- **Context:** The hosted demo should follow `main` without a manual step, while a deploy killed mid-run keeps its Machine lease until the lease expires ([HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds)).
+- **Decision:** A GitHub Actions workflow runs the deploy script's `all` target on every push to `main`, without `--force`, so it waits for an awake core to sleep. Deploys run one at a time: a running deploy is never cancelled, and a newer push replaces a deploy still waiting to start. Workstation deploys remain available for any commit, and an incompatible change gets its fresh-core mark from a workstation deploy before it reaches `main` ([HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)).
 - **Consequences:**
   - A deploy can wait for a visitor's session to end, at most until the guard's awake cap, and consumes runner minutes meanwhile.
-  - A commit replaced while waiting is never deployed on its own. The deploy left waiting is usually the newest push, but GitHub does not guarantee the order, and each run deploys its triggering commit: accepted risk, since merges to `main` are rare and meant to update the demo. If the hosted version lags `main`, re-run the latest run or push again.
-  - After a workstation deploy, the hosted version differs from `main` until the next push. A workstation deploy and a CI deploy that overlap make the second one fail on a lease, or replace the first one's version.
-  - Re-running an older failed run deploys its older commit.
-  - Forgetting `--fresh-core` lets new code meet old data until the mark is set by hand.
+  - A commit replaced while waiting is never deployed on its own. The deploy left waiting is usually the newest push, but GitHub does not guarantee the order, and each run deploys its triggering commit: accepted risk, since merges to `main` are rare and meant to update the demo.
+  - After a workstation deploy, the hosted version differs from `main` until the next push.
+  - Forgetting the fresh-core mark lets new code meet old data until the mark is set by hand.
 - **Rejected alternatives:**
   - `--force` in CI: every merge would end the visitors' sessions and fail a run in progress.
   - Cancelling a running deploy for a newer push: it would leave its lease, and possibly a partial deployment.
   - Queuing every push: deploys superseded commits, each waiting for the core.
-  - A manual trigger: the owner chose automatic deploys only; re-running a failed run of the latest commit covers a retry.
+  - A manual trigger: the demo should follow `main` without one, and re-running the latest commit's failed run covers a retry.
   - A `--fresh-core` flag carried by the commit: a replaced pending deploy would drop it.
   - A separate CI deploy, such as `flyctl deploy`: the Machines API flow, leases and version check live in the script.
-  - Checking out the tip of `main` instead of the triggering commit: merges to `main` are rare and deliberate (owner, 2026-10-06).
+  - Checking out the tip of `main` instead of the triggering commit: merges to `main` are rare and deliberate, so the ordering risk above is accepted.
 - **Code:** `.github/workflows/deploy.yml`, `infra/fly/deploy.mjs`.
 
 ### HD-50 The CI deploy token is an organization deploy token
@@ -642,8 +697,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-06
 - **Context:** The CI deploy reaches the three apps and Fly's remote builder with one token, the one the deploy script gets from flyctl. A Fly deploy token covers a single app.
-- **Decision:** One organization deploy token, created by the owner with a one-year expiry and stored as a GitHub repository secret. It is renewed before it expires. The deploy script is unchanged.
-- **Consequences:** Beyond the three apps, the token can create apps and other resources in the organization, and covers any app added to it later; the organization holds only the demo's apps. A leaked token adds that to the control described in [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control), with billing controls as the mitigation. It never goes into a Machine. An expired token fails the deploy at its first Fly call.
+- **Decision:** One organization deploy token, stored as a GitHub repository secret, which the deploy script uses as it uses an operator's flyctl session.
+- **Consequences:** Beyond the three apps, the token can create apps and other resources in the organization, and covers any app added to it later; the organization holds only the demo's apps. A leaked token adds that to the control described in [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control), with billing controls as the mitigation. It never goes into a Machine.
 - **Rejected alternatives:**
   - Three app deploy tokens: narrower, but three secrets to rotate and a per-app token choice in the deploy script.
   - Several deploy tokens joined into one secret: Fly does not document it.
