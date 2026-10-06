@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import {
   BusinessOutcomePublicationScheduler,
   type CheckoutSurgeDatabase,
@@ -18,7 +19,7 @@ import {
   reverseReservation,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
-import { FlyMachinesClient } from "@checkout-surge/fly-machines";
+import { type FlyMachineConfig, FlyMachinesClient } from "@checkout-surge/fly-machines";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { createBullMqDemoQueueMaintenance } from "./queue/bullmq-demo-queue-maintenance.js";
@@ -585,6 +586,7 @@ function createRunnerHost(
   logger: ReturnType<typeof createServiceLogger>,
 ): RunnerHost {
   if (config.runnerHost.kind === "local") return alwaysOnRunnerHost;
+  const { deployedConfigFile } = config.runnerHost;
   return new FlyRunnerHost({
     machines: new FlyMachinesClient({
       appName: config.runnerHost.appName,
@@ -598,6 +600,8 @@ function createRunnerHost(
     },
     apiBaseUrl: config.apiBaseUrl,
     coreRegion: config.runnerHost.coreRegion,
+    readDeployedConfig: async () =>
+      JSON.parse(await readFile(deployedConfigFile, "utf8")) as FlyMachineConfig,
     logger,
   });
 }

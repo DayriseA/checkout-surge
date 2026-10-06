@@ -10,6 +10,7 @@ export type GatePageState =
   | "booting"
   | "updating"
   | "relocating"
+  | "refreshing"
   | "no_capacity"
   | "setup_failed"
   | "unavailable";

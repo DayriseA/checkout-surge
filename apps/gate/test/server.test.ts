@@ -113,14 +113,19 @@ describe("gate server", () => {
       "starting",
       "relocating",
     );
+    const refreshing = await setup({ state: "stopped" }, "starting", "refreshing");
     const noCapacity = await setup({ state: "stopped" }, "starting", "no_capacity");
 
     const moving = await relocating.gate.inject({ method: "GET", url: "/demo" });
+    const fresh = await refreshing.gate.inject({ method: "GET", url: "/demo" });
     const full = await noCapacity.gate.inject({ method: "GET", url: "/demo" });
 
     expect(moving.statusCode).toBe(503);
     expect(moving.body).toContain("Relocating the demo");
     expect(relocating.status.current).not.toHaveBeenCalled();
+    expect(fresh.statusCode).toBe(503);
+    expect(fresh.body).toContain("Installing a fresh demo");
+    expect(fresh.body).not.toContain("capacity");
     expect(full.body).toContain('href="https://status.flyio.net/"');
     expect(full.body).toContain('action="/__gate/start?return=%2Fdemo"');
   });

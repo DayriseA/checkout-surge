@@ -155,6 +155,7 @@ For any URL, including bookmarks and browser history, the gate serves its own pa
 | Booting (reloads every 3 s) | `starting`, or `started` while Caddy's `/health` does not answer |
 | Updating (retry button) | `created` or `replacing` (a deploy is writing its config), or the wake found the lease held |
 | Relocating (reloads every 5 s) | A recovery runs in the gate (task 10), whatever the core's state |
+| Fresh install (reloads every 5 s) | The recovery runs because the core carries the `recreate=requested` mark (task 12, owner decision 2026-10-06): the same recovery, without the provider-capacity wording |
 | No capacity (retry button, link to the Fly.io status page) | The last recovery was refused for capacity; held until the next wake |
 | Setup failure | `started`, and the `setup` container has an `exited` event with a non-zero `exit_code` no older than the Machine's latest `start` event |
 | Unavailable (try again) | Another state, a Machines API failure, a failed start, or a recovery without the deployed core config |
@@ -272,7 +273,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
 - **Machine.** The deployed config (images, size, container files included), on the new volume, without a `recreate` mark, created and launched in the volume's region (a volume pins its Machine's region).
 - **Healthy.** Polled every 3 s for up to 300 s: `started`, setup not failed since the start, and Caddy's `/health` answering over 6PN. Then the old Machine is force-destroyed, with the nonce when a lease is held and without one otherwise (a 404 counts as done, as in flyctl's blue-green deploys), and the deletion of its volume is started without waiting: a volume can be deleted right after its Machine's destroy (verified), but on a host that is down Fly keeps it `pending_destroy` until the host returns (Fly staff, 2025: no way to force-delete it meanwhile); the guard cleans up. If the new core is not healthy, it is destroyed, then its volume deleted (kept attached when the destroy fails, for the guard), and the old core kept.
 - **Capacity.** A volume create refused with `volume_placement_capacity`, or a Machine create refused with `insufficient_capacity`, keeps the old core and shows the no-capacity page until the next wake. A failed Machine create deletes the new volume (verified live: the volume went to `pending_destroy`).
-- **Deliberate trigger (owner decision, 2026-10-05, HD-35).** Metadata `recreate=requested` on the core Machine, set through `POST /v1/apps/<core-app>/machines/<id>/metadata/recreate` with `{"value":"requested"}` (204, no new Machine version). The next visitor wake recreates instead of starting. The deploy command for incompatible changes (section 8) sets the same mark.
+- **Deliberate trigger (owner decision, 2026-10-05, HD-35).** Metadata `recreate=requested` on the core Machine, set through `POST /v1/apps/<core-app>/machines/<id>/metadata/recreate` with `{"value":"requested"}` (204, no new Machine version). The next visitor wake recreates instead of starting. The deploy command for incompatible changes (section 8) sets the same mark. Visitors then see the fresh-install page rather than the relocating page, whose wording blames a provider capacity issue (task 12, owner decision 2026-10-06; a core on a host that is not ok, or with none listed, keeps the relocating page).
 - **Measured (2026-10-05).** Wake POST to recovery start 0.1 s; new Machine created 7 s later; image pulls and launch 12.7 s; fresh install (initdb, migrations, seed) 6 s; old core retired and the recovery logged 36 s after the POST; demo relayed 0.8 s later. The visitor saw the relocating page throughout.
 
 ### 3.6 Authoritative core and coordination
@@ -285,6 +286,7 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   - The lease TTL is not documented, so we set it explicitly and renew it.
   - Leases are advisory, not a security boundary. They work between our own cooperating clients.
   - **Gate lookup (task 09, refined in task 10).** The gate never touches a Machine it does not recognize as the core (no `role=core`); when none is listed, a wake creates one from the deployed config. Among the `role=core` Machines that can serve, the gate takes the `started` one, else the newest by `created_at` (the one to start). A core whose `host_status` is not `ok`, or with a failed setup, cannot serve; when no core can, all of them are considered, so a single dead or failed core still shows its own page. Several exist only during a recovery, or after one whose cleanup failed; the guard removes the extra ones.
+  - **Deploy side (task 12, HD-45).** After its builds, the deploy script waits for an awake core to sleep (or stops it with `--force`), takes the core lease (600 s TTL, description `deploy`), reads the core again under it, refuses any state but `stopped` or `created`, and sends the update with the nonce. It holds the lease through the wait for `stopped` and the write of the core config into the gate, and releases it in a `finally` (404 counts as released). A held lease (409) fails the script, to be re-run. Verified on Fly: the lease survives the update (same nonce, same expiry; another lease request and a start without the nonce still get 409).
   - **Measured behavior (task 01).** Without the nonce, `start`, `update` and a second lease request get a 409 immediately. `stop` and `destroy` are not refused: they block until the lease expires, then succeed. Callers of stop or destroy (guard, recovery) therefore use short client timeouts or check the lease first. An expired lease frees the Machine.
 
 ### 3.7 Kernel limits and networking
@@ -371,8 +373,9 @@ Live failure detection cannot be tested without a real Fly capacity incident. Th
   2. Recreate a fresh, volume-less runner with region list "the core's current region, then `eu`" (`cdg,eu` while the core is in cdg).
   3. Retire the old runner.
 - **Implemented in task 06.**
-  - `start` is tried 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries (owner decision, 2026-10-04). A runner already on an unreachable host is recreated at once.
-  - The new runner reuses the current config (image, size from section 1.1, `API_BASE_URL`) and is created with region `"<core region>,eu"`, which the Machines API accepts as a prioritized list (verified). The core region is `FLY_REGION`. The old runner is force-destroyed only once the new one has started; otherwise the old one is kept.
+  - `start` is tried 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries (owner decision, 2026-10-04). A runner already on a host that is not `ok` is recreated at once (task 12; it was `unreachable` only).
+  - The new runner is built from the deployed runner config (task 12, HD-47), with the size from section 1.1 and the current `API_BASE_URL`, and is created with region `"<core region>,eu"`, which the Machines API accepts as a prioritized list (verified). The core region is `FLY_REGION`. The old runner is force-destroyed only once the new one has started; otherwise the old one is kept.
+  - **Deployed runner config (task 12, HD-47).** Fly returns only a partial config for a Machine whose host is not ok, so the runner, like the core, is recreated from a copy: every core deploy reads the runner Machine's full config and writes it into the core's API container as a file (`files` entry at `RUNNER_MACHINE_CONFIG_FILE`, `/fly/runner-machine.json`). The API reads it at each recreation; a missing file fails the recreation, and the run, before traffic. On a runner whose `host_status` is not `ok`, the API takes no lease (flyctl skips leasing such Machines): a start recreates it at once, a stop does nothing, and the old runner is force-destroyed without a nonce, a 404 counting as done.
   - A create refused for capacity answers 503 `runner_capacity_unavailable`: the run fails with zero counters (`load_orchestrator_unavailable`), and the UI shows the provider message.
   - While relocating, the run carries a flag (`runner_relocating`), so the dashboard projection shows the message during the start request.
   - Measured: a recreation takes about 14 s, including stopping the new runner (create to `started` in 5 s).
@@ -468,7 +471,42 @@ Machines API tokens are app-scoped deploy tokens:
 
 - **Narrower tokens.** Attenuate tokens to specific actions if Fly makes that simple. This is not required, because the caveat schema is undocumented.
 - **No broad tokens.** No personal or org-wide token ever goes into a Machine.
-- **Rotation.** The procedure is documented. `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05). Its core-app deploy token is the core secret `CORE_FLY_API_TOKEN`, also given only to the API container (task 07). The gate's core-app deploy token (`flyctl tokens create deploy -a checkout-surge-core -n gate-core-wake`) is the gate secret `CORE_FLY_API_TOKEN`, staged straight from the command output with no local copy; a lost token is simply replaced (task 09). The guard shares it, and holds a runner-app deploy token as the gate secret `RUNNER_FLY_API_TOKEN` (task 11); as an app secret, the gate Machine receives it too (HD-40).
+- **Rotation.** The procedure is documented below (task 12). `CONTROL_SERVICE_TOKEN` changes on the core and the runner together. The API's runner-app deploy token is the core secret `RUNNER_FLY_API_TOKEN`, given only to the API container (task 05). Its core-app deploy token is the core secret `CORE_FLY_API_TOKEN`, also given only to the API container (task 07). The gate's core-app deploy token (`flyctl tokens create deploy -a checkout-surge-core -n gate-core-wake`) is the gate secret `CORE_FLY_API_TOKEN`, staged straight from the command output with no local copy; a lost token is simply replaced (task 09). The guard shares it, and holds a runner-app deploy token as the gate secret `RUNNER_FLY_API_TOKEN` (task 11); as an app secret, the gate Machine receives it too (HD-40).
+
+#### Rotation procedure (task 12)
+
+Machines read their app secrets when they start (task 01), so a staged secret takes effect at each holder's next start, and nothing is redeployed. The operator's own flyctl session does the work; no token or secret value is ever printed, written to a file, or committed.
+
+| Secret | Holder app (Machines) | Token for | Token name |
+| :-- | :-- | :-- | :-- |
+| `RUNNER_FLY_API_TOKEN` | core (API container) | runner app | `core api runner operations` |
+| `CORE_FLY_API_TOKEN` | core (API container) | core app | `core-idle-stop` |
+| `CORE_FLY_API_TOKEN` | gate (gate and guard) | core app | `gate-core-wake` |
+| `RUNNER_FLY_API_TOKEN` | gate (gate and guard) | runner app | `guard-runner` |
+| `CONTROL_SERVICE_TOKEN` | core and runner | (shared secret) | none |
+
+**A Machines API token**, one at a time:
+
+1. Pick a moment when the holder sleeps: the core stopped (the gate's start page shows), for a core secret; any moment for a gate secret.
+2. Create a new deploy token with a dated name, and stage it straight from the command output, for example for the guard's runner token:
+   `printf 'RUNNER_FLY_API_TOKEN=%s
+' "$(flyctl tokens create deploy -a checkout-surge-runner -n guard-runner-<date>)" | flyctl secrets import --stage -a checkout-surge-gate`
+   (as the tokens of tasks 09 and 11 were staged; the old token stays valid until step 5).
+3. Let every holder Machine restart: the core at its next wake; for the gate, stop the gate Machine (`flyctl machine stop <gate id> -a checkout-surge-gate`), which Fly Proxy starts again on the next request; the guard at its next hourly run.
+4. Check the holder with the new token: a wake through the gate and the core's idle stop (core-app tokens), a run (the API's runner token), a guard run without errors in its logs (`component: guard`).
+5. Revoke the old token: `flyctl tokens list -a <token app>`, then `flyctl tokens revoke <id>` for the old name. A holder still running with it then fails its Machines API calls until it restarts, which is why step 3 comes first.
+
+**`CONTROL_SERVICE_TOKEN`**, on the core and the runner together, since it authenticates both directions:
+
+1. Make sure both sleep: the core and the runner `stopped` (wait for the idle stop, or stop the core with `flyctl machine stop`; the runner stops at the end of each run).
+2. Generate the value in a shell variable and stage it on both apps, then drop it:
+   `t=$(openssl rand -hex 32); printf 'CONTROL_SERVICE_TOKEN=%s
+' "$t" | flyctl secrets import --stage -a checkout-surge-core; printf 'CONTROL_SERVICE_TOKEN=%s
+' "$t" | flyctl secrets import --stage -a checkout-surge-runner; unset t`
+3. The next wake starts the core with the new value, and the next run starts the runner with it. If one app was started in between with the other value, every run fails until both have restarted: stop both and try again.
+4. Update the owner's local copy in the gitignored `infra/fly/core/core-secrets.env` the same way, without printing it, or drop that entry: nothing reads it on Fly.
+
+Rotating the remaining core secrets (admin and cookie secrets, PostgreSQL and Redis passwords with their URLs) before go-live is task 13 (HD-33).
 
 ### 7.3 Accepted risk
 
@@ -492,22 +530,29 @@ Machines API tokens are app-scoped deploy tokens:
 - **Stopped Machines** are updated through the Machines API without being started (`skip_launch`). Updates take a freshly read full config. Migrations apply on the next core start.
   - The deploy script sends the full Machine config through the Machines API, not `flyctl machine update`, which merges the JSON into the old config and would keep removed keys.
   - After a create or an update, it waits for `stopped`: Fly refuses a start for about 9 s after a create (images being prepared) and about 3.5 s after an update.
+  - An update sent right after a remote build can be refused with `MANIFEST_UNKNOWN` although the registry already serves the tag (observed in task 12 on an existing repository, not only after the first push to a new one): the script retries that refusal up to 5 times, 10 s apart.
   - `flyctl deploy --build-only` needs a minimal `-c` config (`infra/fly/core/build.toml`) while the app has no Machine.
   - One registry repository holds several images, so image labels are `<service>-<commit-sha>`, with a `-dirty` suffix and a UTC build timestamp when the work tree has uncommitted changes (the Machines API keeps a Machine's image when the reference string is unchanged, so repeated dirty deploys on one commit need distinct labels).
 - **Awake core.** Deployment waits until the core goes to sleep. With `--force`, it interrupts the session and updates immediately, and an in-progress run ends failed. The deploy script holds the core lease during the update (section 3.6).
+  - **Implemented in task 12 (HD-45).** The script reads no Machine state before its builds, except to refuse two Machines of one role. After them, it polls the core every 15 s until it is `stopped` (or `created`), then takes the lease and reads it again (section 3.6). With `--force`, it skips the wait and stops a `started` or `starting` core under the lease, with the nonce, then waits for `stopped`. A wake during the builds is therefore never interrupted, and a wake while the lease is held shows the updating page.
+  - The runner gets the same treatment under its own lease (300 s TTL, covering the waits and the `MANIFEST_UNKNOWN` retry budget): read again, refused unless `stopped` or `created`, or stopped with `--force`; a held lease fails the script.
 - **Version handshake.**
   - Before starting a run, the API compares its own commit with the runner's and refuses the run with a clear message if they differ. A partial deployment therefore leaves the demo refusing runs, rather than producing wrong evidence, until a redeploy.
-  - The deploy script verifies both versions at the end.
+  - The deploy script verifies both versions at the end: it reads the `COMMIT_SHA` of the core's API container and of the runner from their Machine configs, in every case, even after a failed step, and exits 1 with "Partial deployment: …" when they differ (HD-46).
   - The runner reads its version from `COMMIT_SHA`, which the deploy script sets in the runner Machine env to the commit version, `<commit-sha>` or `<commit-sha>-dirty` (the image label without its service prefix and build timestamp). Without it, the version is `unknown`; on Fly, `unknown` never counts as a match.
 - **Incompatible changes** use the recovery path (section 3.5) to recreate a fresh, empty core. The same command deliberately tests that path. It replaces the manual wipe-and-rebuild procedure for the hosted runtime. The trigger is the `recreate=requested` mark on the core Machine (task 10, HD-35): the deploy sets it with the update, and the next visitor wake recreates the core.
+  - **Implemented in task 12 (HD-48).** `--fresh-core` on a deploy that includes the core sets the mark in the config it sends, under the core lease. A later deploy carries an existing mark over, so only a wake clears it. The gate's copy of the core config carries the mark too, and the recovery drops it from the new core (`freshConfig`). A mark set by mistake is removed with `DELETE /v1/apps/checkout-surge-core/machines/<id>/metadata/recreate`.
 - **Core config copy in the gate (task 10, HD-34).** Every core deploy also updates the gate Machine with a file holding the core config it sent; every gate deploy keeps that file. The gate recreates the core only from it.
-- **Deploy script.** `infra/fly/deploy.mjs <core|runner|gate>`. Each app's images live in its own registry repository.
+- **Deploy script.** `infra/fly/deploy.mjs <all|core|runner|gate> [--force] [--fresh-core] [--no-depot | --local-build]`. Each app's images live in its own registry repository.
+  - **`all` (task 12, HD-46)** builds every image (runner, the five core images, gate), then, under the core lease, updates the runner (under its own lease), the core and the gate's core config copy, releases the core lease, then updates the gate and the guard. Single-app targets remain; a runner-only or core-only deploy of a new commit ends with the partial-deployment report.
+  - A core deploy also embeds the runner Machine's current full config in the core (section 4.4, HD-47), so the runner must exist first; in `all`, it is the config just deployed.
+  - A deploy killed while it holds a lease leaves it until its TTL expires; `flyctl machine leases clear <id> -a <app>` frees it at once.
 - **Gate deploy (task 09).** The gate image is the shared `docker/Dockerfile.node-service` (`SERVICE_NAME=gate`, `runtime` target), and its Machine is managed like the others, from `infra/fly/gate/machine.json` through the Machines API, rather than with a `fly.toml` and `fly deploy`. The gate is stateless, so the script updates it in any state. One-time app setup, outside the script: `flyctl apps create checkout-surge-gate`, the token above, `flyctl ips allocate-v4 --shared` and `flyctl ips allocate-v6`. `.dockerignore` now excludes `**/*.env`: before, the gitignored `infra/fly/core/core-secrets.env` was part of every remote build context. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**
   - During the build-out: a local script (for example `pnpm deploy:fly`), run from the owner's workstation with flyctl.
   - Near the end of the project: GitHub Actions, calling the same script.
 - **Version mismatch outcome (task 05).** Besides the UI message, the refused run ends failed (`load_orchestrator_unavailable`) with zero counters, since no traffic was dispatched.
-- **Deploy and runner lease (task 05).** The deploy script does not take the runner lease: it fails with 409 while the API holds it during a run operation, and is simply re-run.
+- **Deploy and runner lease (task 05, changed in task 12).** The deploy script takes the runner lease for its update; a 409, while the API holds it during a run operation or the guard during a stop, fails the script, which is simply re-run. A runner-only deploy while the core is awake can conversely make a run start fail on the held lease; `all` avoids it, since the core sleeps under the deploy's lease.
 - **Runner recreation trigger (task 06).** `POST /admin/demo/runner/recreate` (control token) recreates the runner as a capacity failure would. It is refused with 409 while the runner Machine is not stopped, and leaves the new runner stopped (owner decision, 2026-10-04). It deliberately tests the runner path, and the deploy command can call it.
 
 ---

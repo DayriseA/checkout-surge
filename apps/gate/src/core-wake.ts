@@ -26,8 +26,11 @@ type WakeMachines = Pick<
  */
 export type WakeOutcome = "starting" | "relocating" | "updating" | "unavailable";
 
-/** The page a recovery shows instead of the core's state: in progress, or out of capacity. */
-export type RecoveryPage = "relocating" | "no_capacity";
+/**
+ * The page a recovery shows instead of the core's state: in progress (`relocating` after a
+ * provider failure, `refreshing` for a fresh core an operator requested), or out of capacity.
+ */
+export type RecoveryPage = "relocating" | "refreshing" | "no_capacity";
 
 // Covers the worst case of the wake's own calls under the lease, at the client's timeouts: the
 // read (30 s), the wait for a stopping core (40 s), three starts (90 s) and the back-off (4 s),
@@ -72,7 +75,9 @@ export class CoreWake {
 
   /** One wake at a time: visitors who press the button together join the same one. */
   wake(): Promise<WakeOutcome> {
-    if (this.recoveryPage === "relocating") return Promise.resolve("relocating");
+    if (this.recoveryPage === "relocating" || this.recoveryPage === "refreshing") {
+      return Promise.resolve("relocating");
+    }
     this.pending ??= this.wakeOnce().finally(() => {
       this.pending = undefined;
     });
@@ -128,7 +133,11 @@ export class CoreWake {
         }
         if (!recreatingFailures.has(classifyFlyError(failure))) throw failure;
       }
-      const outcome = await this.recover(current, nonce);
+      const outcome = await this.recover(
+        current,
+        nonce,
+        recreationRequested(current) ? "refreshing" : "relocating",
+      );
       recovering = outcome === "relocating";
       return outcome;
     } finally {
@@ -167,6 +176,7 @@ export class CoreWake {
   private async recover(
     old: FlyMachine | undefined,
     nonce: string | undefined,
+    page: "relocating" | "refreshing" = "relocating",
   ): Promise<WakeOutcome> {
     const config = await this.options.readCoreConfig();
     if (!config) {
@@ -176,7 +186,7 @@ export class CoreWake {
       );
       return "unavailable";
     }
-    this.recoveryPage = "relocating";
+    this.recoveryPage = page;
     void this.options.recovery
       .recreate(old, config, nonce)
       .then(

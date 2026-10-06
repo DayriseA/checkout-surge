@@ -162,6 +162,7 @@
         "MOCK_ERP_BASE_URL": "http://127.0.0.1:4100",
         "LOAD_ORCHESTRATOR_BASE_URL": "http://checkout-surge-runner.internal:4200",
         "RUNNER_FLY_APP": "checkout-surge-runner",
+        "RUNNER_MACHINE_CONFIG_FILE": "/fly/runner-machine.json",
         "CORE_IDLE_STOP_ENABLED": "true",
         "WEB_ORIGIN": "https://checkout-surge-gate.fly.dev"
       },

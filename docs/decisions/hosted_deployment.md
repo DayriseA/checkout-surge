@@ -126,7 +126,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-03
 - **Context:** Runner start, stop, update, and recreation must never interleave, and a starting-run replay must never race a start being set up.
-- **Decision:** One owner in the API runs every runner operation one at a time and holds a Fly lease on the runner Machine during each, to coordinate with the deploy script. Run starts and starting-run reconciliation run inside the API maintenance authority, together with resets.
+- **Decision:** One owner in the API runs every runner operation one at a time and holds a Fly lease on the runner Machine during each, to coordinate with the deploy script, except on a host that is not ok, where Fly grants no usable lease ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)). Run starts and starting-run reconciliation run inside the API maintenance authority, together with resets.
 - **Consequences:** Correct only under the single-API-process contract ([Scope and Caveats](scope_and_caveats.md#intentional-non-goals)). Fly leases are advisory between our own cooperating clients, not a security boundary.
 - **Rejected alternatives:** Distributed coordination: unnecessary with one API process.
 - **Code:** `apps/api/src/services/runner-operations.ts`, `apps/api/src/services/demo-maintenance-authority.ts`.
@@ -182,8 +182,8 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Status:** accepted
 - **Date:** 2026-10-04
 - **Context:** A stopped Machine can fail to start when its host lacks capacity; the runner has no volume pinning it to that host.
-- **Decision:** Try `start` 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries, and a runner already on an unreachable host is recreated at once. The new runner reuses the current config and is created with region `"<core region>,eu"`; the old one is force-destroyed only once the new one has started, otherwise it is kept. A create refused for capacity fails the run before traffic (zero counters, 503 `runner_capacity_unavailable`) and the visitor sees a provider message. While relocating, the run carries `runner_relocating` so the dashboard can say so, and every run records the runner's region. `POST /admin/demo/runner/recreate` (control token) runs the same replacement deliberately, only while the runner is stopped, and leaves the new runner stopped.
-- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; the recorded region makes it visible. Accepted risk: the recreation copies the old runner's config and takes its lease, but Fly returns no full config and grants no usable lease for a Machine whose host is down, so a runner on a dead host cannot be recreated automatically until the runner gets a deploy-provided copy of its config, as the core has ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
+- **Decision:** Try `start` 3 times in place, with 1 s then 3 s back-off. Transient errors are retried but never recreate the runner; capacity and dead-host errors recreate it after the retries, and a runner already on a host that is not ok is recreated at once. The new runner is built from the deployed runner config ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)) and created with region `"<core region>,eu"`; the old one is force-destroyed only once the new one has started, otherwise it is kept. A create refused for capacity fails the run before traffic (zero counters, 503 `runner_capacity_unavailable`) and the visitor sees a provider message. While relocating, the run carries `runner_relocating` so the dashboard can say so, and every run records the runner's region. `POST /admin/demo/runner/recreate` (control token) runs the same replacement deliberately, only while the runner is stopped, and leaves the new runner stopped.
+- **Consequences:** A recreation takes about 14 s. A runner placed outside the core's region adds k6-to-API latency; the recorded region makes it visible. A runner on a dead host is recreated without its lease and from the deployed config, since Fly returns neither a full config nor a usable lease there ([HD-47](#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok)).
 - **Rejected alternatives:** Recreating on transient errors: a new Machine would hit the same Machines API trouble.
 - **Code:** `FlyRunnerHost.start` and `FlyRunnerHost.recreate` in `apps/api/src/services/fly-runner-host.ts`.
 
@@ -233,6 +233,19 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
   - Derive not-applicable probes from controller metadata for every layout: covers hosts never seen, for more code.
   - Report zero: claims a measurement nobody made.
 - **Code:** `unsupportedCgroupProbes` in `load-run-diagnostics.ts`, `countUnavailableLoadRunDiagnosticProbes`.
+
+### HD-47 The runner is recreated from a deployed config, without a lease on a host that is not ok
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** Runner recreation copied the old Machine's config and took its lease. Fly returns only a partial config, and grants no usable lease, for a Machine whose host is not ok, which is exactly when a dead-host recreation needs both.
+- **Decision:** Every core deploy writes the runner Machine's full config, as last deployed, into the core's API container as a file, and the API builds a recreated runner from it, with the run's size and API address. On a runner whose host is not ok, the API takes no lease, as Fly's own tooling does: a start recreates the runner at once, a stop does nothing, and the old runner is force-destroyed without a nonce, a 404 counting as done.
+- **Consequences:** A recreation always rebuilds the runner config of the last core deploy, so a runner changed by hand, or deployed alone, since then is not carried over; the one-command deploy keeps both in step ([HD-46](#hd-46-one-command-deploys-the-runner-and-the-core-together-and-a-version-mismatch-fails-the-deploy)). A missing file fails the recreation, and with it the run, before any traffic.
+- **Rejected alternatives:**
+  - Copying the old Machine's config: partial on a host that is not ok.
+  - A copy in the gate, like the core's ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)): the API cannot read the gate's files.
+  - Building the config inside the API image from the repository: the runner image's label is known only once it is built.
+- **Code:** `FlyRunnerHost.replace` and `FlyRunnerHost.withLease` in `apps/api/src/services/fly-runner-host.ts`, `runnerConfigFile` in `infra/fly/deploy.mjs`.
 
 ## Core Idle Stop
 
@@ -310,11 +323,11 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 
 - **Status:** accepted
 - **Date:** 2026-10-05
-- **Context:** The gate and the deploy script are meant to coordinate through the core Machine lease. The gate's side exists; the deploy script's side is planned, not yet implemented.
+- **Context:** The gate and the deploy script coordinate through the core Machine lease ([HD-45](#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds)).
 - **Decision:** The gate holds the lease only around the start command, not through the boot until the core is ready: a started core is one the deploy script refuses to update, provided the script re-reads the core's state under the lease just before its update, so a longer hold would only block deploys. A held lease is shown as "updating", although a lease alone does not prove a deploy (it can also be a wake whose gate died before releasing it, until the lease expires); telling holders apart is not worth the code for a page that only asks the visitor to retry. Retrying a failed start and recreating the core are core recovery ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)), which the wake triggers and which keeps the lease until it ends.
 - **Consequences:**
   - A visitor may see "updating" while no deploy runs; a retry works once the lease is released or expires.
-  - Until the deploy script takes the core lease around its update, it checks the state only before its builds, so a wake during the builds can be interrupted by the update.
+  - A wake during the deploy's builds is never interrupted: the script takes the core lease only after its builds, reads the core again under it, and waits for an awake core to sleep first.
   - The wake's lease TTL covers the worst case of the wake's own calls (read, wait for a stopping core, start retries), so a gate dying mid-wake keeps "updating" up to that TTL, as a recovery keeps it up to its own longer lease ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)).
 - **Code:** `CoreWake` in `apps/gate/src/core-wake.ts`.
 
@@ -381,7 +394,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-05
 - **Context:** The recovery path must be triggerable on purpose, to test it and to give the deploy a fresh core after incompatible changes, while the gate is the only public component and holds no shared secret.
 - **Decision:** An operator, or the deploy script, sets `recreate=requested` in the core Machine's metadata. The next visitor wake then recreates the core instead of starting it; the mark is not copied to the new core.
-- **Consequences:** No new secret or privileged endpoint on the gate, and the visitor sees the same relocating page as in a real recovery. The fresh install happens at the next wake, not at deploy time, so the first visitor after it waits longer and the deploy script cannot confirm the new core itself. A marked core never starts again with incompatible data.
+- **Consequences:** No new secret or privileged endpoint on the gate. The visitor sees a fresh-install page, the same recovery without the provider-capacity wording of a real recovery's relocating page. The fresh install happens at the next wake, not at deploy time, so the first visitor after it waits longer and the deploy script cannot confirm the new core itself. A marked core never starts again with incompatible data.
 - **Rejected alternatives:**
   - An authenticated recovery endpoint on the gate: a new secret and an admin surface on the only public component ([HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control)).
   - A recovery command run from a workstation or CI: no private network to probe the new core's health, and the gate would not know to show the relocating page.
@@ -473,7 +486,7 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Date:** 2026-10-03
 - **Context:** Local image builds exhausted the owner's workstation memory, and `flyctl machine update` merges the new JSON into the old Machine config.
 - **Decision:** The deploy script builds images on Fly's remote builder (Depot) and pushes them without deploying, labelled by commit, with a unique label per build for uncommitted trees, because the Machines API keeps a Machine's image when the reference string is unchanged. `--no-depot` (Fly's previous builder) covers a Depot incident, and `--local-build` falls back to a local build. Machines are created and updated through the Machines API with the full config and `skip_launch`; the deploy never starts them.
-- **Consequences:** Images are always linux/amd64, with a build cache kept at Fly; the expected build cost is zero within the free build minutes. A key removed from the config does not survive an update. After a create or an update, the script waits for `stopped`, because Fly refuses a start for a few seconds then.
+- **Consequences:** Images are always linux/amd64, with a build cache kept at Fly; the expected build cost is zero within the free build minutes. A key removed from the config does not survive an update. After a create or an update, the script waits for `stopped`, because Fly refuses a start for a few seconds then. The Machines API can refuse an image pushed seconds earlier as unknown (`MANIFEST_UNKNOWN`) while the registry already serves it, so the script retries that refusal.
 - **Rejected alternatives:**
   - Local Docker builds by default: they exhausted the workstation's memory.
   - `flyctl machine update` or `machine run --machine-config`: they merge into the old config and keep removed keys.
@@ -505,3 +518,41 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Decision:** Rotate the core secrets before go-live rather than rely on the cache expiring. `.dockerignore` now excludes environment files at any depth.
 - **Consequences:** Until the rotation, the secrets also sit in a builder cache that Fly controls; Fly already holds them as app secrets.
 - **Code:** `.dockerignore`.
+
+### HD-45 The deploy updates a sleeping core under its lease, read again after the builds
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** A deploy replaces whole Machine configs, and its builds take minutes. A visitor can wake the core through the gate at any time, and an update decided from a state read before the builds could cut that visitor's session.
+- **Decision:** The script builds first. It then waits for an awake core to sleep, takes the core lease, reads the core again under it, and updates it with the lease nonce only if it is stopped or was never started. It holds the lease through the wait for `stopped` and the write of the core config into the gate, and releases it in every case. A held lease fails the script, to be re-run. `--force` stops an awake core under the lease instead of waiting. The runner is updated the same way under its own lease, and a running runner is refused unless `--force` stops it.
+- **Consequences:** The lease TTLs cover the waits at Fly's 60 s cap and the full `MANIFEST_UNKNOWN` retry budget; a request that hangs beyond them is not covered, and no client deadline is added on purpose, because aborting a mutating call does not cancel it at Fly.
+  - A wake during the builds is never interrupted: the deploy waits for that session to end, at most until the guard's awake cap.
+  - A wake while the script holds the lease shows "updating" ([HD-29](#hd-29-the-gates-lease-covers-only-the-start-command)).
+  - A script killed while it holds the lease leaves "updating" until the lease expires, or until the operator clears it with flyctl.
+  - With `--force`, the visitors' session ends at once, and a run in progress ends failed.
+  - Fly keeps the lease across the update (verified), so a wake right after the update still shows "updating".
+- **Rejected alternatives:**
+  - Taking the lease before the builds: wakes would be refused for minutes instead of seconds.
+  - Waiting on a held lease: a recovery holds it for minutes, and an operator at the terminal can simply re-run.
+  - Updating an awake core, which Fly allows: it restarts the core under its visitors.
+- **Code:** `deployCore`, `deployRunner`, `withLease` and `requireStopped` in `infra/fly/deploy.mjs`.
+
+### HD-46 One command deploys the runner and the core together, and a version mismatch fails the deploy
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** The version handshake refuses every run while the core and the runner run different commits ([HD-14](#hd-14-the-version-handshake-refuses-mismatched-runs)), so the gap between their two updates must stay invisible, and a partial deployment must never pass unnoticed.
+- **Decision:** `all` updates the runner, the core, then the gate, with the runner's update inside the core lease: a wake meanwhile shows "updating", and a sleeping core cannot start the runner. Single-app deploys remain, for example for a gate-only change. Every deploy ends by comparing the deployed core and runner versions, even after a failed step, and exits non-zero when they differ.
+- **Consequences:** A runner-only or core-only deploy of a new commit is reported as a failure on purpose. The gate's version is not compared: the gate takes no part in a run.
+- **Rejected alternatives:** Deploying each app with its own command: a wake between them meets a partial deployment and refused runs.
+- **Code:** `deploy` and `verifyVersions` in `infra/fly/deploy.mjs`.
+
+### HD-48 A requested fresh core stays requested until a wake acts on it
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** Incompatible changes are deployed with `--fresh-core`, which sets the recreation mark ([HD-35](#hd-35-a-fresh-core-is-requested-by-a-mark-that-the-next-wake-acts-on)) in the core config the deploy sends. Every later deploy replaces the whole config.
+- **Decision:** The mark is set in the same update as the incompatible code, and a deploy carries over a mark it finds, so only a wake clears it, by recreating the core.
+- **Consequences:** A core deployed with incompatible changes never starts on its old data, even when another deploy follows before any visitor. A mark set by mistake is removed by hand, through the Machines API metadata endpoint.
+- **Rejected alternatives:** Setting the mark in a separate step after the deploy: a wake in between would start the new code on incompatible data.
+- **Code:** `deployCore` in `infra/fly/deploy.mjs`.

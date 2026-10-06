@@ -171,6 +171,10 @@ describe("CoreWake recovery", () => {
 
     expect(machines.startMachine).not.toHaveBeenCalled();
     expect(recovery.recreate).toHaveBeenCalledWith(machine, deployedConfig, "nonce-1");
+    // The fresh install was asked for: no provider failure to report.
+    expect(wake.recoveryState()).toBe("refreshing");
+    await expect(wake.wake()).resolves.toBe("relocating");
+    expect(recovery.recreate).toHaveBeenCalledOnce();
   });
 
   it("recreates a core whose host is down at once, without taking its lease", async () => {

@@ -16,6 +16,20 @@ const noCapacity = () =>
     '{"error":"insufficient CPUs available"}',
   );
 
+// The config the deploy script last sent; a recreated runner is built from it, with the run's
+// size and API address.
+const deployedConfig = {
+  image: "registry.fly.io/runner:load-orchestrator-deployed",
+  guest: { cpu_kind: "performance", cpus: 2, memory_mb: 4096 },
+  env: { PORT: "4200", COMMIT_SHA: "deployed" },
+  metadata: { role: "runner" },
+};
+const recreatedConfig = {
+  ...deployedConfig,
+  guest: { cpu_kind: "performance", cpus: 4, memory_mb: 8192 },
+  env: { PORT: "4200", COMMIT_SHA: "deployed", API_BASE_URL: apiBaseUrl },
+};
+
 function runnerMachine(overrides: Partial<FlyMachine> = {}): FlyMachine {
   return {
     id: "runner-1",
@@ -24,6 +38,7 @@ function runnerMachine(overrides: Partial<FlyMachine> = {}): FlyMachine {
     instance_id: "v1",
     private_ip: "fdaa::2",
     created_at: "2026-10-03T10:00:00Z",
+    host_status: "ok",
     config: {
       image: "registry.fly.io/runner:load-orchestrator-abc",
       guest: { cpu_kind: "performance", cpus: 4, memory_mb: 8192 },
@@ -83,6 +98,7 @@ function setup(
     size,
     apiBaseUrl,
     coreRegion: "cdg",
+    readDeployedConfig: async () => structuredClone(deployedConfig),
     logger: createSilentLogger("api"),
     now: () => clock,
     sleep: async (ms) => {
@@ -217,22 +233,31 @@ describe("FlyRunnerHost capacity recovery", () => {
     expect(machines.startMachine).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([1_000, 3_000]);
     expect(hooks.onRelocating).toHaveBeenCalledOnce();
-    expect(machines.createMachine).toHaveBeenCalledWith(runnerMachine().config, "cdg,eu");
+    expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
     expect(machines.waitForState).toHaveBeenLastCalledWith("runner-2", "started", {
       timeoutSeconds: 60,
     });
     expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 
-  it("recreates the runner at once when its host is unreachable", async () => {
+  it("recreates the runner at once from the deployed config, without a lease, when its host is not ok", async () => {
     const { host, machines, hooks } = setup({
-      machine: runnerMachine({ host_status: "unreachable" }),
+      // A partial config, as Fly reports a Machine on a host that is not ok.
+      machine: runnerMachine({
+        host_status: "unreachable",
+        config: { metadata: { role: "runner" } } as unknown as FlyMachine["config"],
+      }),
     });
+    machines.destroyMachine.mockRejectedValueOnce(
+      new FlyMachinesApiError("DELETE", "/machines/runner-1?force=true", 404, "not found"),
+    );
 
     await expect(host.start(runId, hooks)).resolves.toMatchObject({ machineId: "runner-2" });
 
+    expect(machines.acquireLease).not.toHaveBeenCalled();
     expect(machines.startMachine).not.toHaveBeenCalled();
-    expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+    expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
+    expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", undefined);
   });
 
   it("recreates a runner left outside the core's region, so it follows a relocated core", async () => {
@@ -242,7 +267,7 @@ describe("FlyRunnerHost capacity recovery", () => {
 
     expect(machines.startMachine).not.toHaveBeenCalled();
     expect(hooks.onRelocating).toHaveBeenCalledOnce();
-    expect(machines.createMachine).toHaveBeenCalledWith(runnerMachine().config, "cdg,eu");
+    expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
     expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 
@@ -312,6 +337,7 @@ describe("FlyRunnerHost loss", () => {
     await expect(host.isLost()).resolves.toBe(true);
     await host.stop({ runId, bootId });
 
+    expect(machines.acquireLease).not.toHaveBeenCalled();
     expect(control.shutdown).not.toHaveBeenCalled();
     expect(machines.stopMachine).not.toHaveBeenCalled();
   });
@@ -335,7 +361,7 @@ describe("FlyRunnerHost recreate", () => {
 
     await expect(host.recreate()).resolves.toEqual({ machineId: "runner-2", region: "ams" });
 
-    expect(machines.createMachine).toHaveBeenCalledWith(runnerMachine().config, "cdg,eu");
+    expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
     expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
     expect(machines.stopMachine).toHaveBeenCalledWith("runner-2");
     expect(machines.waitForState).toHaveBeenLastCalledWith("runner-2", "stopped", {

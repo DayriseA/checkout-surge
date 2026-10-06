@@ -32,6 +32,11 @@ const pages: Record<GatePageState, PageContent> = {
     text: "Our hosting provider had a capacity issue, so the demo is moving to new servers, where it starts as a fresh install. This takes a few minutes; this page reloads on its own and opens the demo as soon as it is ready.",
     refreshSeconds: 5,
   },
+  refreshing: {
+    title: "Installing a fresh demo",
+    text: "This version of the demo needs a fresh install, so its servers are being recreated with an empty run history. This takes about a minute; this page reloads on its own and opens the demo as soon as it is ready.",
+    refreshSeconds: 5,
+  },
   no_capacity: {
     title: "No room at our hosting provider",
     text: 'Fly.io, our hosting provider, has no capacity for the demo\'s servers in Europe at the moment. Nothing is broken on our side; please come back later, or check the <a href="https://status.flyio.net/">Fly.io status page</a>.',

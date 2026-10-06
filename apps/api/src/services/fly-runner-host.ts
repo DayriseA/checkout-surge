@@ -59,7 +59,8 @@ const fallbackRegion = "eu";
 
 /**
  * The runner as one Fly Machine with no volume, stopped between runs. Each operation holds the
- * Machine lease, which coordinates with the deploy script.
+ * Machine lease, which coordinates with the deploy script, except on a host that is not ok, where
+ * Fly grants no usable lease.
  */
 export class FlyRunnerHost implements RunnerHost {
   constructor(
@@ -71,6 +72,11 @@ export class FlyRunnerHost implements RunnerHost {
       apiBaseUrl: string;
       /** The core's current region, where a recreated runner goes first. */
       coreRegion: string;
+      /**
+       * The runner config the deploy script last sent, which a recreated runner is built from: Fly
+       * returns no full config for a Machine on a host that is not ok.
+       */
+      readDeployedConfig: () => Promise<FlyMachineConfig>;
       logger: Pick<CheckoutSurgeLogger, "info" | "warn" | "error">;
       sleep?: (ms: number) => Promise<void>;
       now?: () => number;
@@ -84,7 +90,8 @@ export class FlyRunnerHost implements RunnerHost {
    */
   start(runId: string, hooks: RunnerStartHooks): Promise<RunnerPlacement> {
     return this.withLease("runner start", async (machine, nonce) => {
-      if (classifyFlyMachine(machine) !== "host_unreachable") {
+      // Without a lease, the host is not ok: the runner is recreated at once.
+      if (nonce) {
         if (machine.state !== "stopped") {
           // No other run is in flight, so a running runner is stale: it never serves this run,
           // even when it is about to be replaced.
@@ -104,12 +111,9 @@ export class FlyRunnerHost implements RunnerHost {
 
   stop(target: RunnerStopTarget): Promise<void> {
     return this.withLease("runner stop", async (machine, nonce) => {
-      if (classifyFlyMachine(machine) === "host_unreachable") {
+      if (!nonce) {
         // A stop could hang on a dead host; the next start recreates the runner instead.
-        this.options.logger.warn(
-          { ...target },
-          "The runner's host is unreachable; not stopping it.",
-        );
+        this.options.logger.warn({ ...target }, "The runner's host is not ok; not stopping it.");
         return;
       }
       await this.stopMachine(machine, nonce, target, false);
@@ -180,14 +184,15 @@ export class FlyRunnerHost implements RunnerHost {
   }
 
   /**
-   * Creates a fresh runner from the current config, in the core's region or else in Europe,
+   * Creates a fresh runner from the deployed config, in the core's region or else in Europe,
    * waits for it to start, then retires the old one. The old one stays when no new one starts.
    */
-  private async replace(old: FlyMachine, nonce: string): Promise<RunnerPlacement> {
+  private async replace(old: FlyMachine, nonce: string | undefined): Promise<RunnerPlacement> {
+    const config = this.withRunSettings(await this.options.readDeployedConfig());
     let created: FlyMachine;
     try {
       created = await this.options.machines.createMachine(
-        this.withRunSettings(old.config),
+        config,
         `${this.options.coreRegion},${fallbackRegion}`,
       );
     } catch (error) {
@@ -209,6 +214,8 @@ export class FlyRunnerHost implements RunnerHost {
       throw error;
     }
     await this.options.machines.destroyMachine(old.id, nonce).catch((error: unknown) => {
+      // Already gone, as Fly's own tooling counts it on a dead host.
+      if (error instanceof FlyMachinesApiError && error.status === 404) return;
       // Two runner Machines now exist; the newest is used and the guard removes the old one.
       this.options.logger.error(
         { err: error, machineId: old.id },
@@ -296,11 +303,22 @@ export class FlyRunnerHost implements RunnerHost {
     };
   }
 
+  /**
+   * Runs `operation` under the runner's lease. On a host that is not ok, Fly grants no usable lease
+   * (flyctl skips leasing such Machines), so `operation` runs without one and gets no nonce.
+   */
   private async withLease<T>(
     description: string,
-    operation: (machine: FlyMachine, nonce: string) => Promise<T>,
+    operation: (machine: FlyMachine, nonce: string | undefined) => Promise<T>,
   ): Promise<T> {
     const machine = await this.findRunnerMachine();
+    if (machine.host_status !== "ok") {
+      this.options.logger.warn(
+        { machineId: machine.id, hostStatus: machine.host_status },
+        "The runner's host is not ok; acting without its lease.",
+      );
+      return operation(machine, undefined);
+    }
     const nonce = await this.options.machines.acquireLease(
       machine.id,
       leaseTtlSeconds,

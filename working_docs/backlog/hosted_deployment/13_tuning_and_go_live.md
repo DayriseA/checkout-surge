@@ -34,6 +34,14 @@ The demo is measured, tuned, documented and opened to visitors.
 
 - None.
 
+## Inputs from Task 11
+
+- The guard's logs (`component: guard`) and its exit code are the only signal of a failed run; check them during the bot review.
+
+## Inputs from Task 12
+
+- **Slow core stop with a run starting (observed, not fixed).** A `deploy.mjs core --force` stopped the core while a public run start was in flight (the API had just started the runner). The core VM shut down only at its 30 s stop timeout instead of the usual 11 s: an application process kept retrying Redis (`ioredis` `ECONNREFUSED 127.0.0.1:6379`) after Redis had stopped on its 10 s delay. Which container did not exit on SIGINT is unknown (the earlier log lines had rotated out). Find it, and decide whether its shutdown needs fixing or whether the 30 s worst case is accepted; the idle stop meets it only through its accepted race with a run start (HD-21).
+
 ## Working Notes
 
 _None yet._

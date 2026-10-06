@@ -64,6 +64,8 @@ export type RunnerHostConfig =
       machinesApiToken: string;
       /** The core's current region (`FLY_REGION`, set by Fly), where a recreated runner goes. */
       coreRegion: string;
+      /** Where the deploy script writes the runner's deployed config, used to recreate the runner. */
+      deployedConfigFile: string;
       cpuKind: string;
       cpus: number;
       memoryMb: number;
@@ -422,6 +424,7 @@ function parseRunnerHost(env: NodeJS.ProcessEnv): RunnerHostConfig {
     appName,
     machinesApiToken: requireEnv(env, "RUNNER_FLY_API_TOKEN"),
     coreRegion: requireEnv(env, "FLY_REGION"),
+    deployedConfigFile: requireEnv(env, "RUNNER_MACHINE_CONFIG_FILE"),
     cpuKind: parseOptionalString(env.RUNNER_CPU_KIND) ?? "performance",
     cpus: parsePositiveInteger(env.RUNNER_CPUS, "RUNNER_CPUS", 4),
     memoryMb: parsePositiveInteger(env.RUNNER_MEMORY_MB, "RUNNER_MEMORY_MB", 8192),
