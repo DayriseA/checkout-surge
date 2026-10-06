@@ -1,9 +1,15 @@
 import {
   emptyHttpTimingBreakdownSummary,
   type TrafficExecutionStartRequest,
+  trafficCompletionReportSchema,
 } from "@checkout-surge/contracts";
 import { describe, expect, it } from "vitest";
-import { K6RunAccumulator, parseK6SummaryMetrics } from "../src/application/k6-output-parser.js";
+import {
+  counterMetricFields,
+  K6RunAccumulator,
+  parseK6JsonLine,
+  parseK6SummaryMetrics,
+} from "../src/application/k6-output-parser.js";
 import { generateK6Script } from "../src/application/k6-script.js";
 import { processBootId } from "../src/application/traffic-execution-service.js";
 
@@ -137,7 +143,107 @@ describe("parseK6SummaryMetrics", () => {
   });
 });
 
+describe("k6 counter initialization", () => {
+  it("initializes every counter the parser reads in the generated script's setup", () => {
+    const script = generateK6Script(request).contents;
+    const setupStart = script.indexOf("export function setup()");
+    const initialized = script.slice(setupStart, script.indexOf("counter.add(0)", setupStart));
+    const variables = new Map(
+      [...script.matchAll(/const (\w+) = new Counter\("(\w+)"\);/g)].map(([, variable, metric]) => [
+        metric,
+        variable,
+      ]),
+    );
+    for (const metric of Object.keys(counterMetricFields)) {
+      expect(variables.get(metric), metric).toBeDefined();
+      expect(initialized).toContain(`    ${variables.get(metric)},`);
+    }
+  });
+
+  it("drops zero counter samples from the point stream but keeps zero rate samples", () => {
+    const point = (metric: string, value: number) =>
+      parseK6JsonLine(JSON.stringify({ type: "Point", metric, data: { value } }));
+    expect(point("checkout_transport_failures", 0)).toBeNull();
+    expect(point("checkout_attempts_started", 0)).toBeNull();
+    expect(point("checkout_transport_failures", 1)).not.toBeNull();
+    expect(point("http_req_failed", 0)).not.toBeNull();
+  });
+});
+
 describe("K6RunAccumulator summary precedence", () => {
+  it("reports a clean run's initialized zero counters from the export without warnings", () => {
+    const summaryMetrics = parseK6SummaryMetrics(
+      JSON.stringify({
+        metrics: {
+          checkout_attempts_started: { count: 10 },
+          checkout_responses_completed: { count: 10 },
+          checkout_reservation_accepted: { count: 10 },
+          checkout_sold_out_rejections: { count: 0 },
+          checkout_transport_failures: { count: 0 },
+          checkout_unexpected_responses: { count: 0 },
+          http_reqs: { count: 10 },
+          iterations: { count: 10 },
+          dropped_iterations: { count: 0 },
+          http_req_failed: { value: 0 },
+        },
+      }),
+    );
+    if (!summaryMetrics) throw new Error("Expected a valid k6 export");
+    const report = createAccumulator().completionReport({
+      status: "succeeded",
+      completedAt,
+      summaryMetrics,
+    });
+    expect(trafficCompletionReportSchema.parse(report).httpSummary).toEqual({
+      failedRequests: 0,
+      acceptedResponses: 10,
+      soldOutResponses: 0,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    });
+    expect(report.trafficDeliverySummary.droppedIterations).toBe(0);
+    expect(Object.values(report.loadRunDiagnosticsSummary.terminalMetricSources)).toEqual(
+      Array(8).fill("summary_export"),
+    );
+    expect(report.loadRunDiagnosticsSummary.summaryExportWarnings).toEqual([]);
+  });
+
+  it("keeps unsourced counters unknown when the export is missing, retaining streamed evidence", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_reservation_accepted",
+      data: { value: 3 },
+    });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryExportWarning: "summary_export_missing",
+    });
+    expect(trafficCompletionReportSchema.parse(report).httpSummary).toEqual({
+      failedRequests: null,
+      acceptedResponses: 3,
+      soldOutResponses: null,
+      transportFailures: null,
+      unexpectedResponses: null,
+      failureRate: null,
+    });
+    expect(report.transportAttemptCounts).toEqual({
+      plannedRequests: 10,
+      startedRequests: null,
+      completedRequests: null,
+      interruptedRequests: null,
+      unstartedRequests: null,
+    });
+    expect(report.trafficDeliverySummary.droppedIterations).toBeNull();
+    expect(report.trafficDeliverySummary.completedIterations).toBeNull();
+    expect(report.loadRunDiagnosticsSummary.summaryExportWarnings).toContain(
+      "summary_export_missing",
+    );
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.transportFailures).toBeNull();
+  });
+
   it("selects each metric independently and preserves authoritative zero", () => {
     const accumulator = createAccumulator();
     accumulator.observe({ type: "Point", metric: "checkout_attempts_started", data: { value: 9 } });
@@ -172,7 +278,7 @@ describe("K6RunAccumulator summary precedence", () => {
     expect(report.httpSummary).toMatchObject({
       acceptedResponses: 7,
       soldOutResponses: 2,
-      unexpectedResponses: 0,
+      unexpectedResponses: null,
       p95LatencyMs: 18,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources).toEqual({

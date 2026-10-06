@@ -34,13 +34,13 @@ function samplerHarness(samples: SampleFiles[], effectiveCpuCores: number | null
     unref,
     clearInterval,
     async nextSample() {
-      await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes((sampleIndex + 1) * 11));
+      await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes((sampleIndex + 1) * 12));
       await new Promise<void>((resolve) => setImmediate(resolve));
       sampleIndex += 1;
       intervalCallback();
     },
     async settle() {
-      await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes((sampleIndex + 1) * 11));
+      await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes((sampleIndex + 1) * 12));
       await new Promise<void>((resolve) => setImmediate(resolve));
     },
   };
@@ -114,7 +114,7 @@ describe("generator resource sampler", () => {
       sampleCount: 3,
       effectiveIntervalMs: defaultGeneratorResourceSampleIntervalMs,
     });
-    expect(harness.readText).toHaveBeenCalledTimes(33);
+    expect(harness.readText).toHaveBeenCalledTimes(36);
   });
 
   it("falls back to the cgroup v1 layout when cgroup v2 files are absent", async () => {
@@ -146,6 +146,22 @@ describe("generator resource sampler", () => {
       finalMemoryEventsHighCount: null,
       finalMemoryEventsMaxCount: 2,
       finalMemoryEventsOomKillCount: 1,
+    });
+  });
+
+  it("reads CPU usage on separate cgroup v1 cpuacct mounts", async () => {
+    const first = files({});
+    const second = files({});
+    delete first["/sys/fs/cgroup/cpu.stat"];
+    delete second["/sys/fs/cgroup/cpu.stat"];
+    first["/sys/fs/cgroup/cpuacct/cpuacct.usage"] = "1000000000";
+    second["/sys/fs/cgroup/cpuacct/cpuacct.usage"] = "2000000000";
+    const harness = samplerHarness([first, second], 2);
+    await harness.nextSample();
+    await harness.settle();
+    expect(harness.sampler.stop()).toMatchObject({
+      peakCpuUtilisationPercent: 50,
+      meanCpuUtilisationPercent: 50,
     });
   });
 
@@ -205,7 +221,7 @@ describe("generator resource sampler", () => {
     expect(harness.unref).toHaveBeenCalledOnce();
     await harness.nextSample();
     await harness.settle();
-    expect(harness.readText).toHaveBeenCalledTimes(22);
+    expect(harness.readText).toHaveBeenCalledTimes(24);
 
     const first = harness.sampler.stop();
     const second = harness.sampler.stop();
@@ -240,16 +256,16 @@ describe("generator resource sampler", () => {
       },
     );
 
-    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(11));
+    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(12));
     nowMs = 1_000;
     intervalCallback();
-    expect(readText).toHaveBeenCalledTimes(11);
+    expect(readText).toHaveBeenCalledTimes(12);
     releaseReads();
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     nowMs = 3_000;
     intervalCallback();
-    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(22));
+    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(24));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(sampler.stop()).toMatchObject({ sampleCount: 2, effectiveIntervalMs: 3_000 });
@@ -266,8 +282,8 @@ describe("generator resource sampler", () => {
     const late = files({ rssKb: 999, memoryBytes: 999, memAvailableKb: 1 });
     const readText = vi.fn(async (file: string) => {
       readCount += 1;
-      if (readCount > 11) await lateReadsReleased;
-      const value = (readCount > 11 ? late : initial)[file];
+      if (readCount > 12) await lateReadsReleased;
+      const value = (readCount > 12 ? late : initial)[file];
       if (typeof value !== "string") throw new Error("missing");
       return value;
     });
@@ -283,11 +299,11 @@ describe("generator resource sampler", () => {
         clearInterval: vi.fn(),
       },
     );
-    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(11));
+    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(12));
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     intervalCallback();
-    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(22));
+    await vi.waitFor(() => expect(readText).toHaveBeenCalledTimes(24));
     const snapshot = sampler.stop();
     const serialized = JSON.stringify(snapshot);
     expect(snapshot).toMatchObject({
@@ -299,7 +315,7 @@ describe("generator resource sampler", () => {
     releaseLateReads();
     await new Promise<void>((resolve) => setImmediate(resolve));
     intervalCallback();
-    expect(readText).toHaveBeenCalledTimes(22);
+    expect(readText).toHaveBeenCalledTimes(24);
     expect(JSON.stringify(sampler.stop())).toBe(serialized);
   });
 });

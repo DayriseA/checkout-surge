@@ -32,7 +32,9 @@ describe("transport observation coverage", () => {
       failureRate: null,
     };
     const markup = renderSection(unknown, summary);
-    expect(markup).toContain("Traffic evidence unavailable: no completion report was recorded.");
+    expect(markup).toContain(
+      "Traffic evidence unavailable: no usable completion report was recorded.",
+    );
     expect(markup).toContain("Unavailable");
     expect(markup).not.toContain("<meter");
     expect(markup).not.toContain("All sent requests completed");

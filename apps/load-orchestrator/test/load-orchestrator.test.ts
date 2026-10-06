@@ -822,6 +822,55 @@ describe("load-orchestrator k6 mapping", () => {
     });
   });
 
+  it("marks the v1 high-event probe not applicable while supported read failures remain unavailable", async () => {
+    const diagnostics = await collectLoadRunDiagnostics(
+      "k6",
+      generateK6Script(startRequest).executionPlan,
+      {
+        runCommand: async () => null,
+        readText: diagnosticReader({
+          "/proc/mounts":
+            "cgroup /sys/fs/cgroup/memory cgroup rw,memory 0 0\ncgroup /sys/fs/cgroup/cpu,cpuacct cgroup rw,cpu,cpuacct 0 0\n",
+        }),
+      },
+    );
+    expect(diagnostics.notApplicableProbes).toEqual(["finalMemoryEventsHighCount"]);
+    expect(diagnostics.generatorCapacity).toBeNull();
+  });
+
+  it("keeps v1 memory-high events not applicable on hybrid cgroup hosts", async () => {
+    const diagnostics = await collectLoadRunDiagnostics(
+      "k6",
+      generateK6Script(startRequest).executionPlan,
+      {
+        runCommand: async () => null,
+        readText: diagnosticReader({
+          "/proc/mounts":
+            "cgroup2 /sys/fs/cgroup/unified cgroup2 rw 0 0\ncgroup /sys/fs/cgroup/memory cgroup rw,memory 0 0\ncgroup /sys/fs/cgroup/cpu cgroup rw,cpu 0 0\ncgroup /sys/fs/cgroup/cpuacct cgroup rw,cpuacct 0 0\n",
+          "/sys/fs/cgroup/memory/memory.limit_in_bytes": "1073741824",
+          "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "-1",
+          "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000",
+        }),
+      },
+    );
+    expect(diagnostics.notApplicableProbes).toEqual(["finalMemoryEventsHighCount"]);
+    expect(diagnostics.generatorCapacity).toMatchObject({
+      cgroupMemoryLimitBytes: 1_073_741_824,
+      cgroupCpuQuotaUnlimited: true,
+    });
+  });
+
+  it("marks nothing not applicable on cgroup v2 or without mount metadata", async () => {
+    const collect = (files: Record<string, string>) =>
+      collectLoadRunDiagnostics("k6", generateK6Script(startRequest).executionPlan, {
+        runCommand: async () => null,
+        readText: diagnosticReader(files),
+      });
+    const v2 = await collect({ "/proc/mounts": "cgroup2 /sys/fs/cgroup cgroup2 rw 0 0\n" });
+    expect(v2.notApplicableProbes).toBeUndefined();
+    expect((await collect({})).notApplicableProbes).toBeUndefined();
+  });
+
   it("reports the open-files limits of the load orchestrator process that spawns k6", async () => {
     const plan = generateK6Script(startRequest).executionPlan;
     const diagnostics = await collectLoadRunDiagnostics("k6", plan, {
@@ -1161,7 +1210,7 @@ describe("load-orchestrator k6 mapping", () => {
     expect(report.httpSummary).toMatchObject({
       acceptedResponses: 1,
       soldOutResponses: 1,
-      unexpectedResponses: 0,
+      unexpectedResponses: null,
     });
     expect(report.trafficDeliverySummary).toMatchObject({
       trafficMode: "buyer-spike",
@@ -1205,11 +1254,11 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(report.httpSummary).toMatchObject({
-      failedRequests: 0,
-      acceptedResponses: 0,
+      failedRequests: null,
+      acceptedResponses: null,
       soldOutResponses: 2,
-      transportFailures: 0,
-      unexpectedResponses: 0,
+      transportFailures: null,
+      unexpectedResponses: null,
       failureRate: 1,
     });
     expect(report.transportAttemptCounts).toMatchObject({
@@ -1248,9 +1297,9 @@ describe("load-orchestrator k6 mapping", () => {
     });
 
     expect(report.httpSummary).toMatchObject({
-      failedRequests: 1,
-      soldOutResponses: 0,
-      transportFailures: 0,
+      failedRequests: null,
+      soldOutResponses: null,
+      transportFailures: null,
       unexpectedResponses: 1,
       failureRate: 0,
     });
@@ -2649,9 +2698,9 @@ describe("SpawnK6Runner completion reporting", () => {
         unstartedRequests: 399,
       },
       httpSummary: {
-        failedRequests: 0,
+        failedRequests: null,
         acceptedResponses: 1,
-        unexpectedResponses: 0,
+        unexpectedResponses: null,
         failureRate: 0,
       },
       loadRunDiagnosticsSummary: {
@@ -2780,7 +2829,7 @@ describe("SpawnK6Runner completion reporting", () => {
         unstartedRequests: 399,
       },
       httpSummary: {
-        failedRequests: 1,
+        failedRequests: null,
         unexpectedResponses: 1,
         failureRate: 1,
       },
@@ -2828,13 +2877,13 @@ describe("SpawnK6Runner completion reporting", () => {
       completedAt: completionTimestamp,
       transportAttemptCounts: {
         plannedRequests: 400,
-        startedRequests: 0,
-        completedRequests: 0,
-        interruptedRequests: 0,
-        unstartedRequests: 400,
+        startedRequests: null,
+        completedRequests: null,
+        interruptedRequests: null,
+        unstartedRequests: null,
       },
       httpSummary: {
-        failedRequests: 0,
+        failedRequests: null,
       },
     });
     expect(report).not.toHaveProperty("exitCode");

@@ -14,8 +14,8 @@ import {
 } from "./primitives.js";
 import { orderProcessBullMqQueueName, orderProcessQueueName } from "./queue.js";
 import {
-  measuredTransportAttemptCountsSchema,
   type TransportAttemptCounts,
+  transportAttemptCountsSchema,
 } from "./traffic-transport-counts.js";
 
 export const runnerControlPath = "/traffic/control" as const;
@@ -306,19 +306,7 @@ export const trafficCompletionAcknowledgementSchema = z
   })
   .strict();
 
-export const measuredTrafficHttpSummarySchema = z
-  .object({
-    failedRequests: nonnegativeIntegerSchema,
-    acceptedResponses: nonnegativeIntegerSchema,
-    soldOutResponses: nonnegativeIntegerSchema,
-    transportFailures: nonnegativeIntegerSchema,
-    unexpectedResponses: nonnegativeIntegerSchema,
-    p95LatencyMs: nonnegativeNumberSchema.optional(),
-    failureRate: percentageSchema,
-  })
-  .strict()
-  .superRefine(refineFailedRequests);
-/** Stored HTTP outcomes: measured, or unavailable as a whole (no counters, rate or latency). */
+/** HTTP counters stay independently unknown when neither export nor stream supplies evidence. */
 export const trafficHttpSummarySchema = z
   .object({
     failedRequests: nonnegativeIntegerSchema.nullable(),
@@ -331,20 +319,13 @@ export const trafficHttpSummarySchema = z
   })
   .strict()
   .superRefine((summary, context) => {
-    const { p95LatencyMs, ...outcomes } = summary;
-    const values = Object.values(outcomes);
-    if (values.some((value) => value === null)) {
-      if (!values.every((value) => value === null) || p95LatencyMs !== undefined) {
-        context.addIssue({
-          code: "custom",
-          message:
-            "Unavailable HTTP evidence must have all counters and failure rate null and no latency",
-        });
-      }
-      return;
+    if (
+      summary.failedRequests !== null &&
+      summary.unexpectedResponses !== null &&
+      summary.transportFailures !== null
+    ) {
+      refineFailedRequests(summary as FailedRequestsParts, context);
     }
-    // Every outcome is known here.
-    refineFailedRequests(summary as FailedRequestsParts, context);
   });
 
 interface FailedRequestsParts {
@@ -441,7 +422,7 @@ export const trafficCompletionDeliverySummarySchema = z
     configuredDurationSeconds: positiveIntegerSchema.nullable(),
     preAllocatedVUs: positiveIntegerSchema.nullable(),
     maxVUs: positiveIntegerSchema.nullable(),
-    droppedIterations: nonnegativeIntegerSchema,
+    droppedIterations: nonnegativeIntegerSchema.nullable(),
     completedIterations: nonnegativeIntegerSchema.nullable().optional(),
     requestArrivalSummary: requestArrivalSummarySchema,
     notes: z.array(z.string().trim().min(1)).default([]),
@@ -667,6 +648,10 @@ export const liveMetricLossSchema = z
   .strict();
 export type LiveMetricLoss = z.infer<typeof liveMetricLossSchema>;
 
+/** Platform absence is distinct from a failed or unreadable supported probe. */
+export const notApplicableGeneratorProbeSchema = z.enum(["finalMemoryEventsHighCount"]);
+export type NotApplicableGeneratorProbe = z.infer<typeof notApplicableGeneratorProbeSchema>;
+
 export const loadRunDiagnosticsSummarySchema = z
   .object({
     startedAt: isoTimestampSchema,
@@ -764,6 +749,7 @@ export const loadRunDiagnosticsSummarySchema = z
     stderrRetainedLineLimit: z.literal(50),
     stderrLineTruncationLength: z.literal(500),
     stderrLineTruncatedCount: nonnegativeIntegerSchema,
+    notApplicableProbes: z.array(notApplicableGeneratorProbeSchema).optional(),
     terminalMetricSources: terminalMetricSourcesSchema.optional(),
     summaryExportWarnings: z.array(summaryExportWarningSchema).optional(),
     liveMetricLoss: liveMetricLossSchema.optional(),
@@ -816,6 +802,7 @@ const loadRunDiagnosticProbes = [
     summary.generatorUtilisation?.meanCpuUtilisationPercent != null,
   (summary: LoadRunDiagnosticsSummary) => summary.generatorUtilisation?.peakCgroupSwapBytes != null,
   (summary: LoadRunDiagnosticsSummary) =>
+    summary.notApplicableProbes?.includes("finalMemoryEventsHighCount") === true ||
     summary.generatorUtilisation?.finalMemoryEventsHighCount != null,
   (summary: LoadRunDiagnosticsSummary) =>
     summary.generatorUtilisation?.finalMemoryEventsMaxCount != null,
@@ -858,8 +845,8 @@ export const trafficCompletionReportSchema = z
     status: trafficExecutionStatusSchema.extract(["succeeded", "failed"]),
     exitCode: z.number().int().optional(),
     errorMessage: z.string().trim().min(1).optional(),
-    transportAttemptCounts: measuredTransportAttemptCountsSchema,
-    httpSummary: measuredTrafficHttpSummarySchema,
+    transportAttemptCounts: transportAttemptCountsSchema,
+    httpSummary: trafficHttpSummarySchema,
     trafficOutcomeSummary: jsonObjectSchema,
     trafficDeliverySummary: trafficCompletionDeliverySummarySchema,
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,

@@ -1,6 +1,10 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import type { LoadExecutionPlan, LoadRunDiagnosticsSummary } from "@checkout-surge/contracts";
+import type {
+  LoadExecutionPlan,
+  LoadRunDiagnosticsSummary,
+  NotApplicableGeneratorProbe,
+} from "@checkout-surge/contracts";
 
 export type InitialLoadRunDiagnostics = Omit<
   LoadRunDiagnosticsSummary,
@@ -43,6 +47,7 @@ export async function collectLoadRunDiagnostics(
     twReuse,
     timestamps,
     version,
+    mounts,
   ] = await Promise.all([
     safeCommand(command, "nproc", []),
     safeCommand(command, "sh", ["-lc", "ulimit -n"]),
@@ -61,6 +66,7 @@ export async function collectLoadRunDiagnostics(
     safeRead(reader, "/proc/sys/net/ipv4/tcp_tw_reuse"),
     safeRead(reader, "/proc/sys/net/ipv4/tcp_timestamps"),
     safeCommand(command, k6Binary, ["version"]),
+    safeRead(reader, "/proc/mounts"),
   ]);
   const memory = parseMeminfo(meminfo);
   const memoryLimit = parseV2MemoryLimit(v2MemoryLimit) ??
@@ -80,7 +86,9 @@ export async function collectLoadRunDiagnostics(
     tcpTwReuse: parseNonnegative(twReuse),
     tcpTimestamps: parseNonnegative(timestamps),
   };
+  const notApplicableProbes = unsupportedCgroupProbes(mounts);
   return {
+    ...(notApplicableProbes.length ? { notApplicableProbes } : {}),
     nproc: parsePositive(nprocText),
     ulimitNofile: parsePositive(nofileText),
     processMaxOpenFiles: parseOpenFiles(limits),
@@ -221,4 +229,19 @@ function parseOpenFiles(value: string | null) {
   const soft = parsePositive(match[1] ?? null);
   const hard = parsePositive(match[2] ?? null);
   return soft !== null && hard !== null ? { soft, hard } : null;
+}
+
+/**
+ * cgroup v1 has no memory.high boundary, so its `high` event count has no counterpart. Other
+ * absent probes stay unavailable: only this observed layout is known to lack one by design.
+ */
+function unsupportedCgroupProbes(mounts: string | null): NotApplicableGeneratorProbe[] {
+  const cgroupMounts = (mounts ?? "").split("\n").map((line) => line.split(/\s+/));
+  // A hybrid host mounts v2 under `unified`, while the memory probes still read v1.
+  const v2 = cgroupMounts.some(
+    (fields) => fields[1] === "/sys/fs/cgroup" && fields[2] === "cgroup2",
+  );
+  const v1 = cgroupMounts.some((fields) => fields[2] === "cgroup");
+  // Unreadable or empty mount metadata proves nothing about support.
+  return v1 && !v2 ? ["finalMemoryEventsHighCount"] : [];
 }

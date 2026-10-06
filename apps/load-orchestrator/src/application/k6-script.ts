@@ -61,6 +61,10 @@ const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const transportFailures = new Counter("checkout_transport_failures");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
+// k6 built-ins, declared again only to initialize them; k6 returns the existing metric.
+const httpRequests = new Counter("http_reqs");
+const completedIterations = new Counter("iterations");
+const droppedIterations = new Counter("dropped_iterations");
 const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
 
 export const options = ${JSON.stringify({
@@ -68,6 +72,25 @@ export const options = ${JSON.stringify({
       systemTags: ["scenario"],
       scenarios: { checkout: scenario },
     })};
+
+// k6 leaves a counter with no samples out of its summary export. A zero sample
+// makes every counter the load orchestrator reads appear, so an absent counter
+// always means missing evidence, never zero.
+export function setup() {
+  for (const counter of [
+    attemptsStarted,
+    responsesCompleted,
+    acceptedResponses,
+    soldOutResponses,
+    transportFailures,
+    unexpectedResponses,
+    httpRequests,
+    completedIterations,
+    droppedIterations,
+  ]) {
+    counter.add(0);
+  }
+}
 
 function readResponseHeader(response, headerName) {
   for (const [key, value] of Object.entries(response.headers)) {

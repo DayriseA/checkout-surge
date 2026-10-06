@@ -5,6 +5,20 @@ import { describe, expect, it } from "vitest";
 import { RunDiagnostics } from "../src/app/components/run-diagnostics.js";
 
 describe("run diagnostics", () => {
+  it("shows an unsupported platform probe as not applicable and a failed supported probe as unavailable", () => {
+    const summary = diagnostics();
+    if (!summary.generatorUtilisation) throw new Error("Expected sampled utilisation");
+    summary.generatorUtilisation.finalMemoryEventsHighCount = null;
+    summary.notApplicableProbes = ["finalMemoryEventsHighCount"];
+    const supportedFailure = render(summary);
+    expectFact(supportedFailure, "Generator cgroup memory high events", "Not applicable");
+    expect(supportedFailure).toContain("0 unavailable probes");
+    summary.notApplicableProbes = [];
+    const unavailable = render(summary);
+    expectFact(unavailable, "Generator cgroup memory high events", "Could not determine");
+    expect(unavailable).toContain("1 unavailable probes");
+  });
+
   it("renders every populated diagnostics group and stays collapsed by default", () => {
     const markup = render(diagnostics(), 4);
 

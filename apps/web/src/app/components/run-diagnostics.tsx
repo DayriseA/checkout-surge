@@ -41,7 +41,12 @@ export function RunDiagnostics({
         <div className="grid grid-cols-3 gap-4 border-t border-border p-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <GeneratorHost summary={summary} />
           <GeneratorCapacity capacity={summary.generatorCapacity} />
-          <GeneratorUtilisation utilisation={summary.generatorUtilisation} />
+          <GeneratorUtilisation
+            utilisation={summary.generatorUtilisation}
+            highEventsNotApplicable={
+              summary.notApplicableProbes?.includes("finalMemoryEventsHighCount") === true
+            }
+          />
           <GeneratorNetwork network={summary.networkDiagnostics} />
           <K6Process summary={summary} />
           <MetricProvenance summary={summary} />
@@ -127,8 +132,10 @@ function GeneratorCapacity({
 
 function GeneratorUtilisation({
   utilisation,
+  highEventsNotApplicable,
 }: {
   utilisation: LoadRunDiagnosticsSummary["generatorUtilisation"];
+  highEventsNotApplicable: boolean;
 }) {
   if (!utilisation) return <UnavailableGroup title="Generator utilisation" />;
 
@@ -147,7 +154,9 @@ function GeneratorUtilisation({
         ["Generator cgroup peak swap", byteValue(utilisation.peakCgroupSwapBytes)],
         [
           "Generator cgroup memory high events",
-          nullableNumber(utilisation.finalMemoryEventsHighCount),
+          highEventsNotApplicable && utilisation.finalMemoryEventsHighCount === null
+            ? "Not applicable"
+            : nullableNumber(utilisation.finalMemoryEventsHighCount),
         ],
         [
           "Generator cgroup memory max events",

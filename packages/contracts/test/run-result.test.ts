@@ -38,6 +38,63 @@ function evidence(overrides: Partial<RunResultEvidence> = {}): RunResultEvidence
 }
 
 describe("unknown generator evidence", () => {
+  it.each([
+    {
+      unavailable: "soldOutResponses",
+      comparison: "sold_out_decisions_vs_responses",
+      known: "accepted_responses_vs_unique_reservations",
+    },
+    {
+      unavailable: "acceptedResponses",
+      comparison: "accepted_responses_vs_unique_reservations",
+      known: "sold_out_decisions_vs_responses",
+    },
+  ] as const)("keeps independent comparisons when $unavailable is unavailable", ({
+    unavailable,
+    comparison,
+    known,
+  }) => {
+    const generator = completeGenerator();
+    generator.httpSummary[unavailable] = null;
+    const result = deriveRunResult(evidence({ generator }));
+    expect(result.reconciliations).toContainEqual(
+      expect.objectContaining({
+        code: comparison,
+        leftValue: null,
+        classification: "evidence_incomplete",
+        incompleteReason: "unavailable",
+      }),
+    );
+    expect(result.reconciliations).toContainEqual(
+      expect.objectContaining({
+        code: known,
+        classification: "expected_population_difference",
+      }),
+    );
+    expect(result.maximumClassification).toBe("evidence_incomplete");
+  });
+
+  it("retains partial coverage when a missing export leaves a zero-sample outcome unknown", () => {
+    const generator = completeGenerator({
+      transportAttemptCounts: {
+        plannedRequests: 10,
+        startedRequests: 10,
+        completedRequests: 9,
+        interruptedRequests: 1,
+        unstartedRequests: 0,
+      },
+    });
+    generator.httpSummary.soldOutResponses = null;
+    const result = deriveRunResult(evidence({ generator }));
+    expect(result.reconciliations).toContainEqual(
+      expect.objectContaining({
+        code: "partial_generator_coverage",
+        classification: "evidence_incomplete",
+        incompleteReason: "partial",
+      }),
+    );
+  });
+
   it("does not reconcile unknown transport and HTTP counts as zeros", () => {
     const result = deriveRunResult(
       evidence({

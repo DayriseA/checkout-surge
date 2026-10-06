@@ -290,37 +290,36 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
   }
 
   const generator =
-    input.generator?.transportAttemptCounts.startedRequests !== null &&
-    input.generator?.httpSummary.acceptedResponses !== null
+    input.generator &&
+    (input.generator.httpSummary.acceptedResponses !== null ||
+      input.generator.httpSummary.soldOutResponses !== null)
       ? input.generator
       : null;
-  if (
-    durable &&
-    generator &&
-    generator.httpSummary.acceptedResponses !== null &&
-    generator.httpSummary.soldOutResponses !== null
-  ) {
+  if (durable && generator) {
     const accepted = generator.httpSummary.acceptedResponses;
     const unique = durable.uniqueReservations;
+    const generatorCoverageUnavailable = generator.transportAttemptCounts.startedRequests === null;
     const generatorCoveragePartial =
       (generator.transportAttemptCounts.unstartedRequests !== null &&
         generator.transportAttemptCounts.unstartedRequests > 0) ||
       (generator.transportAttemptCounts.interruptedRequests !== null &&
         generator.transportAttemptCounts.interruptedRequests > 0);
     const classification =
-      accepted >= unique && input.replayPossible === true
-        ? generatorCoveragePartial
-          ? "evidence_incomplete"
-          : "expected_population_difference"
-        : accepted === unique
+      accepted === null || generatorCoverageUnavailable
+        ? "evidence_incomplete"
+        : accepted >= unique && input.replayPossible === true
           ? generatorCoveragePartial
             ? "evidence_incomplete"
             : "expected_population_difference"
-          : accepted < unique
+          : accepted === unique
             ? generatorCoveragePartial
               ? "evidence_incomplete"
-              : "warning"
-            : "warning";
+              : "expected_population_difference"
+            : accepted < unique
+              ? generatorCoveragePartial
+                ? "evidence_incomplete"
+                : "warning"
+              : "warning";
     reconciliations.push({
       code: "accepted_responses_vs_unique_reservations",
       leftPopulation: "accepted responses observed by generator",
@@ -328,7 +327,14 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightPopulation: "unique reservations secured",
       rightValue: unique,
       classification,
-      ...(classification === "evidence_incomplete" ? { incompleteReason: "partial" as const } : {}),
+      ...(classification === "evidence_incomplete"
+        ? {
+            incompleteReason:
+              accepted === null || generatorCoverageUnavailable
+                ? ("unavailable" as const)
+                : ("partial" as const),
+          }
+        : {}),
       ...(classification === "expected_population_difference"
         ? { replayPossible: input.replayPossible === true }
         : {}),
@@ -336,11 +342,12 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
     classes.push(classification);
 
     const soldOutObserved = generator.httpSummary.soldOutResponses;
-    const soldOutClassification = generatorCoveragePartial
-      ? "evidence_incomplete"
-      : soldOutObserved <= durable.soldOutDecisions
-        ? "expected_population_difference"
-        : "warning";
+    const soldOutClassification =
+      soldOutObserved === null || generatorCoverageUnavailable || generatorCoveragePartial
+        ? "evidence_incomplete"
+        : soldOutObserved <= durable.soldOutDecisions
+          ? "expected_population_difference"
+          : "warning";
     reconciliations.push({
       code: "sold_out_decisions_vs_responses",
       leftPopulation: "sold-out responses observed by generator",
@@ -349,7 +356,12 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       rightValue: durable.soldOutDecisions,
       classification: soldOutClassification,
       ...(soldOutClassification === "evidence_incomplete"
-        ? { incompleteReason: "partial" as const }
+        ? {
+            incompleteReason:
+              soldOutObserved === null || generatorCoverageUnavailable
+                ? ("unavailable" as const)
+                : ("partial" as const),
+          }
         : {}),
     });
     classes.push(soldOutClassification);

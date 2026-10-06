@@ -1499,6 +1499,61 @@ describe("demo run finalization service", () => {
     });
   });
 
+  it("finalizes a missing-export completion after durable work settles without inventing counters", async () => {
+    const db = requireConnection(connection).db;
+    const config = configSnapshotFixture(25);
+    await seedDrainingRun({
+      db,
+      redis: requireRedis(redis),
+      trafficDeliveryStatus: "complete",
+      configSnapshot: config,
+    });
+    await insertFailedReservationOrders(db, 25);
+    const http = {
+      failedRequests: null,
+      acceptedResponses: null,
+      soldOutResponses: null,
+      transportFailures: null,
+      unexpectedResponses: null,
+      failureRate: null,
+    };
+    const diagnostics = runnerDiagnosticsFixture(config);
+    diagnostics.terminalMetricSources = {
+      startedRequests: "point_stream",
+      completedRequests: "point_stream",
+      acceptedResponses: null,
+      soldOutResponses: null,
+      transportFailures: null,
+      unexpectedResponses: null,
+      droppedIterations: null,
+      completedIterations: "point_stream",
+    };
+    diagnostics.summaryExportWarnings = [
+      "summary_export_missing",
+      "k6_outcome_counter_summary_export_unavailable",
+    ];
+    await db
+      .update(demoRunFinalizations)
+      .set({ httpSummary: http, loadRunDiagnosticsSummary: diagnostics });
+
+    await expect(createService(connection, redis).finalizeRun(ids.run)).resolves.toMatchObject({
+      status: "completed",
+    });
+    const [summary] = await db
+      .select()
+      .from(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, ids.run));
+    expect(summary?.httpSummary).toEqual(http);
+    expect(summary?.businessOutcomeSummary).toMatchObject({
+      acceptedReservations: 25,
+      failedOrders: 25,
+      pendingPersistenceCount: 0,
+    });
+    expect(
+      (summary?.loadRunDiagnosticsSummary as { accountingWarnings?: unknown[] }).accountingWarnings,
+    ).toBeUndefined();
+  });
+
   it("preserves underreported durable rows and writes one structured diagnostic", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);

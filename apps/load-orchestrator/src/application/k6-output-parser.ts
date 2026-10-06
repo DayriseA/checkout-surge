@@ -121,7 +121,8 @@ const timingMetricFields = {
   http_req_receiving: "receiving",
 } as const satisfies Record<K6TimingMetric, keyof HttpTimingBreakdownSummary>;
 
-const counterMetricFields = {
+/** Counters read from k6. The generated script initializes each one with a zero sample. */
+export const counterMetricFields = {
   http_reqs: "httpRequests",
   checkout_attempts_started: "attemptsStarted",
   checkout_responses_completed: "responsesCompleted",
@@ -218,18 +219,22 @@ export class K6RunAccumulator {
       "iterations",
     );
     const pointFailureRate = this.pointAverage("http_req_failed");
-    const failureRate = input.summaryMetrics?.httpFailureRate ?? pointFailureRate ?? 0;
+    const failureRate = input.summaryMetrics?.httpFailureRate ?? pointFailureRate;
     // Failed requests are completed attempts that did not produce a permitted
     // application response: unexpected responses plus transport failures.
-    const failedRequests = unexpectedResponses.value + transportFailures.value;
+    const failedRequests =
+      unexpectedResponses.valueOrNull === null || transportFailures.valueOrNull === null
+        ? null
+        : unexpectedResponses.valueOrNull + transportFailures.valueOrNull;
+    const countsKnown = started.source !== null && completed.source !== null;
     const interruptedRequests = started.value - completed.value;
     const unstartedRequests = this.options.plannedRequests - started.value;
     const transportAttemptCounts = {
       plannedRequests: this.options.plannedRequests,
-      startedRequests: started.value,
-      completedRequests: completed.value,
-      interruptedRequests,
-      unstartedRequests,
+      startedRequests: countsKnown ? started.value : null,
+      completedRequests: countsKnown ? completed.value : null,
+      interruptedRequests: countsKnown ? interruptedRequests : null,
+      unstartedRequests: countsKnown ? unstartedRequests : null,
     };
     const trafficDeliverySummary = this.trafficDeliverySummary({
       droppedIterations,
@@ -261,17 +266,17 @@ export class K6RunAccumulator {
       transportAttemptCounts,
       httpSummary: {
         failedRequests,
-        acceptedResponses: acceptedResponses.value,
-        soldOutResponses: soldOutResponses.value,
-        transportFailures: transportFailures.value,
-        unexpectedResponses: unexpectedResponses.value,
+        acceptedResponses: acceptedResponses.valueOrNull,
+        soldOutResponses: soldOutResponses.valueOrNull,
+        transportFailures: transportFailures.valueOrNull,
+        unexpectedResponses: unexpectedResponses.valueOrNull,
         ...(durationP95 === undefined || durationP95 === null ? {} : { p95LatencyMs: durationP95 }),
         failureRate,
       },
       trafficOutcomeSummary: {
-        acceptedResponses: acceptedResponses.value,
-        soldOutResponses: soldOutResponses.value,
-        unexpectedResponses: unexpectedResponses.value,
+        acceptedResponses: acceptedResponses.valueOrNull,
+        soldOutResponses: soldOutResponses.valueOrNull,
+        unexpectedResponses: unexpectedResponses.valueOrNull,
       },
       trafficDeliverySummary,
       httpTimingBreakdownSummary: timingBreakdown,
@@ -366,7 +371,7 @@ export class K6RunAccumulator {
         plan.trafficMode === "constant-arrival-rate" ? plan.durationSeconds : null,
       preAllocatedVUs: plan.trafficMode === "constant-arrival-rate" ? plan.preAllocatedVus : null,
       maxVUs: plan.trafficMode === "constant-arrival-rate" ? plan.maxVus : null,
-      droppedIterations: input.droppedIterations.value,
+      droppedIterations: input.droppedIterations.valueOrNull,
       completedIterations: input.completedIterations.valueOrNull,
       requestArrivalSummary: input.requestArrivalSummary ?? emptyRequestArrivalSummary,
       notes,
@@ -497,7 +502,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function parseK6JsonLine(line: string): K6Point | null {
   try {
     const parsed = JSON.parse(line) as K6Point;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    // A zero counter sample is the script's initialization, not an observation:
+    // on the stream it must prove neither a zero total nor an arrival.
+    if (
+      parsed.metric &&
+      Object.hasOwn(counterMetricFields, parsed.metric) &&
+      Number(parsed.data?.value) === 0
+    )
+      return null;
+    return parsed;
   } catch {
     return null;
   }

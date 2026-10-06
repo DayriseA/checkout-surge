@@ -86,11 +86,3 @@ export const transportAttemptCountsSchema = z
   .object(transportAttemptCountsShape)
   .strict()
   .superRefine(refineTransportAttemptCounts);
-
-/** Completion reports carry measured counts; only API synthetic summaries may be unknown. */
-export const measuredTransportAttemptCountsSchema = transportAttemptCountsSchema.safeExtend({
-  startedRequests: nonnegativeIntegerSchema,
-  completedRequests: nonnegativeIntegerSchema,
-  interruptedRequests: nonnegativeIntegerSchema,
-  unstartedRequests: nonnegativeIntegerSchema,
-});

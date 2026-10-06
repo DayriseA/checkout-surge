@@ -58,6 +58,7 @@ export function startGeneratorResourceSampler(
         meminfo,
         cpuStat,
         v1CpuUsage,
+        v1SeparateCpuUsage,
         cgroupSwap,
         memoryEvents,
         v1MemoryUsage,
@@ -71,6 +72,7 @@ export function startGeneratorResourceSampler(
         safeRead(readText, "/sys/fs/cgroup/cpu.stat"),
         // cgroup v1 fallbacks, as mounted on Fly Machines. CPU time is in nanoseconds.
         safeRead(readText, "/sys/fs/cgroup/cpu,cpuacct/cpuacct.usage"),
+        safeRead(readText, "/sys/fs/cgroup/cpuacct/cpuacct.usage"),
         safeRead(readText, "/sys/fs/cgroup/memory.swap.current"),
         safeRead(readText, "/sys/fs/cgroup/memory.events"),
         safeRead(readText, "/sys/fs/cgroup/memory/memory.usage_in_bytes"),
@@ -85,7 +87,9 @@ export function startGeneratorResourceSampler(
         parseNonnegativeInteger(cgroupMemory) ?? parseNonnegativeInteger(v1MemoryUsage);
       const hostMemAvailableBytes = parseKilobyteField(meminfo, "MemAvailable");
       const cpuUsageUsec =
-        parseNamedBigInt(cpuStat, "usage_usec") ?? parseNanosecondsAsMicroseconds(v1CpuUsage);
+        parseNamedBigInt(cpuStat, "usage_usec") ??
+        parseNanosecondsAsMicroseconds(v1CpuUsage) ??
+        parseNanosecondsAsMicroseconds(v1SeparateCpuUsage);
       const cgroupSwapBytes =
         parseNonnegativeInteger(cgroupSwap) ?? parseNamedInteger(v1MemoryStat, "swap");
       // cgroup v1 has no memory.high, so the `high` counter has no v1 equivalent.

@@ -30,7 +30,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 11 | [Guard](11_guard.md) | 05, 09 | done |
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | todo |
 | 13 | [Tuning and go-live](13_tuning_and_go_live.md) | all, plus the external prerequisite | todo |
-| 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | todo |
+| 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 

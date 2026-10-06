@@ -51,8 +51,9 @@ export function reconcileAcceptedResponses(input: {
     accounted:
       input.business.pendingPersistenceCount === 0 &&
       reservationCount === orderCount &&
-      normalizedExpectedCount !== null &&
-      reservationCount >= normalizedExpectedCount,
+      // An unavailable immutable counter cannot become known during draining.
+      // Durable work must still settle; compare with generator evidence only when known.
+      (normalizedExpectedCount === null || reservationCount >= normalizedExpectedCount),
     counterUnderreported:
       input.business.pendingPersistenceCount === 0 &&
       reservationCount === orderCount &&

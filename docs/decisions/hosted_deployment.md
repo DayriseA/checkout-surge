@@ -208,6 +208,32 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Consequences:** Such an error fails the run cleanly before any traffic, with zero counters, and the next start heals the runner.
 - **Code:** `FlyRunnerHost.startInPlace` in `apps/api/src/services/fly-runner-host.ts`.
 
+### HD-43 Every k6 counter is initialized, so an absent counter is unknown
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** k6 leaves out of its summary export any counter that never received a sample. Clean runs then lacked their zero-valued counters, which read as missing evidence and raised generator warnings on every run.
+- **Decision:** The generated script adds a zero sample to every counter the load orchestrator reads, k6 built-ins included, before traffic starts. A valid export therefore lists each one, and a counter absent from an export stays unknown. On the point stream, these zero samples are not evidence: they prove neither a total nor an arrival.
+- **Consequences:** Clean runs have no counter warnings, and the unknown-versus-zero rule (HD-13) stays strict at the field level. Without a usable export, a counter takes its streamed sum, or else stays unknown, so a completion report can carry unknown fields. Equations and comparisons apply only when their terms are known. Finalization does not wait for an unknown accepted-response counter, which can never become known. It still requires drained pending persistence and one order per reservation, and a known accepted count still sets the floor. A test ties the script's initialized counters to the parser's list, so a rename cannot become a silent zero.
+- **Rejected alternatives:**
+  - Read a counter absent from a valid export as zero: it trusts that every counter is declared and named the same in the script and the parser, and a rename or an export divergence would become a silent zero.
+  - Warn on each absent counter: k6's normal behavior flags every clean run.
+  - Default missing evidence to zero: hides lost evidence.
+- **Code:** `generateK6Script` (`setup()`), `counterMetricFields` and `parseK6JsonLine` in `k6-output-parser.ts`, `reconcileAcceptedResponses`.
+
+### HD-44 Only an observed platform gap is not applicable
+
+- **Status:** accepted
+- **Date:** 2026-10-05
+- **Context:** cgroup v1 (Fly Machines) has no memory `high` boundary, so the `high` event count has no counterpart there. Counting it as unavailable flagged every hosted run.
+- **Decision:** That probe is marked not applicable only when the mount table shows cgroup v1 without cgroup v2 at the probed root. It keeps a null value, adds no warning, and reads "Not applicable". Every other missing or unreadable probe, on any layout, stays a warning.
+- **Consequences:** An unusual or new layout surfaces as warnings, never as silence; a new gap is added only once observed.
+- **Rejected alternatives:**
+  - Treat an absent probe file as not applicable: hides a broken probe.
+  - Derive not-applicable probes from controller metadata for every layout: covers hosts never seen, for more code.
+  - Report zero: claims a measurement nobody made.
+- **Code:** `unsupportedCgroupProbes` in `load-run-diagnostics.ts`, `countUnavailableLoadRunDiagnosticProbes`.
+
 ## Core Idle Stop
 
 ### HD-20 The API stops its own idle core
