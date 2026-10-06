@@ -181,7 +181,7 @@ The setup check reads container events rather than `containers[].state`, because
   - The gate drops `Forwarded`, `X-Forwarded-For`, `-Host`, `-Port`, `-Proto`, `-Ssl`, `X-Real-IP` and `Fly-Client-IP`, then sends `X-Forwarded-For: <Fly-Client-IP>` and `X-Forwarded-Proto: https`, and keeps the visitor's `Host`.
   - **Step 3, settled (owner decision, 2026-10-05): the core's Caddy trusts the whole 6PN range (`fdaa::/16`), not the gate's address** (HD-32). A Machine's 6PN address is derived from its host (Fly documents that it can change when a Machine moves), and 6PN addresses carry no app prefix: the gate, core and runner all sit in the organization's `fdaa:ce:227b:a7b::/64`. 6PN is isolated per organization, and the trusted address feeds only the per-source SSE cap and the dashboard-recovery source key, so trusting the range gives nothing to an attacker who does not already hold an organization Machine. Caddy then sends the API `X-Forwarded-For: {client_ip}` (the visitor alone), because by default it would append the gate's address, and the API, trusting only loopback, would see the gate for every visitor.
   - **Verified on Fly (2026-10-05):** SSE through the gate, plain and with forged `X-Forwarded-For`, `Fly-Client-IP`, `X-Real-IP`, `Forwarded` and `True-Client-IP`, reached the API with the same source, the visitor's real public IPv4 address.
-  - The core's `WEB_ORIGIN` (web and API) is the gate's public URL, `https://checkout-surge-gate.fly.dev`: the admin origin check compares it with the browser's `Origin`. The resulting operator limitation is in task 13.
+  - The core's `WEB_ORIGIN` (web and API) is the gate's public URL, `https://checkout-surge-gate.fly.dev`: the admin origin check compares it with the browser's `Origin`. The resulting operator limitation is documented in task 13b.
 
 ### 2.5 Bot handling
 
@@ -506,7 +506,7 @@ Machines read their app secrets when they start (task 01), so a staged secret ta
 3. The next wake starts the core with the new value, and the next run starts the runner with it. If one app was started in between with the other value, every run fails until both have restarted: stop both and try again.
 4. Update the owner's local copy in the gitignored `infra/fly/core/core-secrets.env` the same way, without printing it, or drop that entry: nothing reads it on Fly.
 
-Rotating the remaining core secrets (admin and cookie secrets, PostgreSQL and Redis passwords with their URLs) before go-live is task 13 (HD-33).
+Rotating the remaining core secrets (admin and cookie secrets, PostgreSQL and Redis passwords with their URLs) before go-live is task 13c (HD-33). It uses a fresh core (`--fresh-core`), so PostgreSQL initializes with the new password; the development run history is dropped (owner decision, 2026-10-06).
 
 ### 7.3 Accepted risk
 
@@ -550,7 +550,7 @@ Rotating the remaining core secrets (admin and cookie secrets, PostgreSQL and Re
 - **Gate deploy (task 09).** The gate image is the shared `docker/Dockerfile.node-service` (`SERVICE_NAME=gate`, `runtime` target), and its Machine is managed like the others, from `infra/fly/gate/machine.json` through the Machines API, rather than with a `fly.toml` and `fly deploy`. The gate is stateless, so the script updates it in any state. One-time app setup, outside the script: `flyctl apps create checkout-surge-gate`, the token above, `flyctl ips allocate-v4 --shared` and `flyctl ips allocate-v6`. `.dockerignore` now excludes `**/*.env`: before, the gitignored `infra/fly/core/core-secrets.env` was part of every remote build context. A Machine create right after the first push to a new repository can fail with `MANIFEST_UNKNOWN`; re-running the script succeeds.
 - **Where deployments run.**
   - During the build-out: a local script (for example `pnpm deploy:fly`), run from the owner's workstation with flyctl.
-  - Near the end of the project: GitHub Actions, calling the same script.
+  - Near the end of the project: GitHub Actions, calling the same script, automatically on every push to `main` (owner decision, 2026-10-06). It runs without `--force`, so it waits for the core to sleep; deploys run one at a time and a queued one is never cancelled mid-run.
 - **Version mismatch outcome (task 05).** Besides the UI message, the refused run ends failed (`load_orchestrator_unavailable`) with zero counters, since no traffic was dispatched.
 - **Deploy and runner lease (task 05, changed in task 12).** The deploy script takes the runner lease for its update; a 409, while the API holds it during a run operation or the guard during a stop, fails the script, which is simply re-run. A runner-only deploy while the core is awake can conversely make a run start fail on the held lease; `all` avoids it, since the core sleeps under the deploy's lease.
 - **Runner recreation trigger (task 06).** `POST /admin/demo/runner/recreate` (control token) recreates the runner as a capacity failure would. It is refused with 409 while the runner Machine is not stopped, and leaves the new runner stopped (owner decision, 2026-10-04). It deliberately tests the runner path, and the deploy command can call it.
