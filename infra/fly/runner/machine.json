@@ -2,8 +2,8 @@
   "image": "load-orchestrator",
   "guest": {
     "cpu_kind": "performance",
-    "cpus": 4,
-    "memory_mb": 8192
+    "cpus": 8,
+    "memory_mb": 16384
   },
   "metadata": {
     "role": "runner"

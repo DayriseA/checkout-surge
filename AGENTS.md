@@ -6,7 +6,7 @@
 - Use the checklist to identify the intended ownership boundary, phase scope, and relevant tests before editing.
 - Before handing work back, review the change against the final self-review checklist in that document.
 - If a task conflicts with the checklist, prefer the checklist by default and call out the conflict clearly to obtain explicit user instructions about it.
-- Settled decisions, accepted risks and arbitrated review findings live in `docs/decisions/`. When reviewing, check them first: re-raise an accepted entry only with new evidence, citing its ID. Record new decisions there.
+- Settled decisions, accepted risks and arbitrated review findings live in `docs/decisions/`. When reviewing, check them first: re-raise an accepted entry only with new evidence, citing its ID. Record there only what passes the inclusion test in `docs/decisions/README.md`.
 
 ## Guidelines
 

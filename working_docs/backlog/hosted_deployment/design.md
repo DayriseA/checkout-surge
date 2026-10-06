@@ -30,7 +30,7 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
                                    │ 6PN (IPv6), to the authoritative core Machine ID
                 ┌──────────────────▼──────────────────┐
   core app      │ Core Machine (multi-container,       │
-                │ performance 4 vCPU / 8 GB, volume)   │
+                │ performance 6 vCPU / 12 GB, volume)  │
                 │ Caddy ─▶ web (Next.js), API (SSE)    │
                 │ API, worker, Mock ERP, Redis,        │
                 │ PostgreSQL, setup (migrate + seed)   │
@@ -40,7 +40,7 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
                    completion      │
                 ┌──────────────────┴──────────────────┐
   runner app    │ Runner Machine (fixed, no volume,    │
-                │ performance 4 vCPU / 8 GB)           │
+                │ performance 8 vCPU / 16 GB)          │
                 │ load-orchestrator + k6 child process │
                 └──────────────────────────────────────┘
 ```
@@ -57,7 +57,7 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 | :-- | :-- | :-- |
 | Provider | Fly.io, region `cdg` | Fast start of stopped Machines, per-second billing, private networking. AWS EC2 stop/start was rejected: slower to start and not cheaper. |
 | Isolation | Separate core and runner Machines | The generator must never compete with the system under test. |
-| Sizes | Both Machines start at dedicated 4 vCPU / 8 GB | Shared CPUs are throttled past their baseline quota, which would distort a 10k burst. Sizes are adjusted after measurement. |
+| Sizes | Dedicated CPUs: runner 8 vCPU / 16 GB, core 6 vCPU / 12 GB (measured in task 13a) | Shared CPUs are throttled past their baseline quota, which would distort a 10k burst. The runner's size keeps the generator below saturation while it dispatches; the core's gives the burst headroom, since the single API process bounds the throughput. |
 | Run limits | `DEMO_MAX_*` deployment caps | The existing mechanism. `surge-10k` is the reference scenario. |
 | Entry point | The gate is the only public address and relays all traffic | Bots cannot wake the core. Any URL shows our own page while the core is not ready. |
 | Core wake | Only the gate starts the core, after a deliberate visitor action | No wake quota, so legitimate visitors are never refused. |
@@ -76,16 +76,16 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 
 ### 1.1 Machine sizes
 
-- Both Machines use dedicated (performance) CPUs and start at 4 vCPU / 8 GB.
-- Sizes are configuration, kept separate from run limits.
+- Both Machines use dedicated (performance) CPUs. They started at 4 vCPU / 8 GB; after measurement (task 13a), the runner is performance-8x / 16 GB and the core performance-6x / 12 GB (owner decisions, 2026-10-06).
+- Sizes are configuration, kept separate from run limits. They live in the repository's Machine configs, which every deploy sends whole: a size changed by hand on a Machine is reverted by the next deploy.
+- **Measured (task 13a).** The latency of a `surge-10k` is set by the core's single API process (about 1,000 requests per second), whatever the runner size. A larger runner only sharpens the burst: dispatch 1.25 to 1.82 s on 4x, 0.97 to 1.66 s on 6x (about 1.0 s in most runs), 0.74 to 1.35 s on 8x, where the generator stayed at 62 to 82 % CPU while it sent in the first sampled runs instead of saturating. k6 uses about 2.3 GB for a 10,000-buyer spike at every size, and about 3 GB at 10,000 constant-arrival VUs. A larger core did not measurably change latency or throughput either: on 6x, interleaved with 4x in one session, the API got about 25 % more CPU and the VM kept 15 to 30 % headroom during the burst instead of about 10 %, while the p95 stayed within the run-to-run spread (8.2 to 11.5 s against 9.4 to 10.6 s). The core is 6x for that headroom.
 - **Runner.**
-  - CPU kind, vCPU count and RAM come from API environment variables.
+  - CPU kind, vCPU count and RAM come from API environment variables (`RUNNER_CPU_KIND`, `RUNNER_CPUS`, `RUNNER_MEMORY_MB`), set in `infra/fly/core/machine.json`; the runner's own `guest` in `infra/fly/runner/machine.json` carries the same size, so a deploy does not leave a size the API then changes.
   - Before each start, the API compares the runner Machine's size with these values and updates only the size if they differ. That is safe because the runner has no volume. The image version is owned by deployments (section 8).
   - The same values are used when the runner is recreated after a capacity failure.
-  - Changing the variables takes effect on the next run, with no commit.
+  - Changing the size is a config edit plus a core and runner deploy (`deploy.mjs all`); the API then applies it from the next run.
 - **Core.**
-  - Resized manually with flyctl from the owner's workstation (`fly machine update --vm-size ...`), keeping the Machine stopped.
-  - This is not automated, because resizing a volume-pinned Machine can fail on a full host, and changes are rare.
+  - Its size is the `guest` of `infra/fly/core/machine.json`, applied by the next core deploy while the core sleeps. A resize can be refused on a full host, because the core is pinned to its volume's host (not observed; a 4x to 8x resize was accepted in task 13a).
 
 ### 1.2 Run limits
 
@@ -94,6 +94,11 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
 - The API refuses to start when the persisted public policy exceeds the deployment caps. Lower the policy before lowering the caps.
 - The UI explains that a limit was chosen for hosting reasons, inviting the user to run the project locally or on larger infrastructure. It shows this message for run rejections with `deployment_*_exceeded` codes and with the public load-size codes (buyers, duration, max VUs, preallocated VUs, request rate, total requests, start delay); never for ERP limits, starting stock, or invalid input. On a rejected custom run, the form still flags the offending field and shows the message alongside. The custom run form also carries a fixed hint line stating that its limits were chosen for the demo's infrastructure, with the same invitation. `*_exceeds_deployment_cap` codes are admin policy-edit rejections and keep the ordinary validation message.
 - `surge-10k` is the reference scenario. Caps, including those for constant-arrival runs, are tuned after measuring on the deployed infrastructure.
+- **Settled after measurement (task 13a, owner decisions 2026-10-06).**
+  - **Caps.** All eight `DEMO_MAX_*` are explicit in the API env of `infra/fly/core/machine.json`. `DEMO_MAX_BUYERS` is 10,000: one k6 VU per buyer, about 225 kB each, so 100,000 buyers would not fit the runner. The other seven keep their code defaults on purpose: admin runs may be pushed to failure, and the core, not the VUs, is the limit.
+  - **Public limits.** All `PUBLIC_CUSTOM_*` are explicit in the `setup` container env, so a fresh core seeds them. The public constant-arrival rate is 500 per second, and the others keep their seed defaults.
+  - **Why 500 per second.** The public form sends no VU setting, so k6 pre-allocates as many VUs as the rate. At 1,000 per second, the start transient then drops about 1 % of a run's iterations. The hardware itself sustains about 3,200 per second over reused connections.
+  - **Seed constraint.** The caps stay at or above the seed's fixed values (600 s occupancy, the 5,000-buyer / 80 s public defaults), since the API refuses to start on a policy above its caps.
 
 ### 1.3 Hosted-only behavior and the local topology
 
@@ -199,6 +204,7 @@ The setup check reads container events rather than `containers[].state`, because
   - **Delayed database stop.** Fly signals every container at once on stop, so PostgreSQL and Redis would stop before the applications and the Machine would hang until its stop timeout. A wrapper delays their shutdown by 10 s; the Machine then stops cleanly in about 11 s.
   - **Image `ENV` wins over a container's `env`.** Keys an image already sets (`PGDATA`, the web image's `HOSTNAME`) are set in the container command instead.
   - **Explicit secrets per container.** A container without a `secrets` list gets no app secret, so each container lists the secrets it needs.
+  - **Healthchecks end on their own (task 13a).** Fly's init never reaps an exec healthcheck it timed out. The zombie stays in the container's PID namespace, and when the container's main process exits, the kernel waits for it, so the container ends only at the Machine's 30 s stop timeout (measured: every stop after a `surge-10k`, whose burst made the API's check time out, took 31 s instead of 11 s). Each `node -e` check therefore aborts its own request after 2 s, below Fly's check timeout, and always exits by itself.
 - **Fallback, not needed.** A single image with `supervisord` stays the answer if a future Fly change breaks multi-container.
 - **Rejected.**
   - Machine `config.processes`: it still needs a shared image and has no readiness dependencies.

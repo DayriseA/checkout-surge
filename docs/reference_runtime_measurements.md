@@ -83,7 +83,7 @@ These are local observations of the dispatch, protection and settlement behaviou
 pnpm runtime:acceptance <scenario> <output-dir>
 ```
 
-Each run exits non-zero unless the harness's own accounting assertions pass, so the totals below are assertions rather than post-hoc readings. The generated JSON reports are deliberately not committed; they live under a git-ignored `.cache/` directory, with their correlation IDs and SHA-256 hashes recorded in the [verification handoff](../working_docs/backlog/adaptive_erp/20_verify_policy_against_code_bound_targets.md) that produced them.
+Each run exits non-zero unless the harness's own accounting assertions pass, so the totals below are assertions rather than post-hoc readings. The generated JSON reports are deliberately not committed; they live under a git-ignored `.cache/` directory.
 
 | Scenario | Planned attempts | Reservations = canonical ledger effects = confirmed orders = notifications | Sold out | Duplicate HTTP replays | Accepted-to-settlement (s) | Admission estimate (s) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -105,6 +105,66 @@ On every run, planned attempts equal started and completed attempts, and failed 
 **Restart behaviour.** On `original-incident-restart`, the worker container was killed mid-run with three externally accepted but locally unresolved ERP calls frozen. After restart the run still settled at exactly 888 reservations, 888 canonical ledger effects, 888 confirmations and 888 notifications, with zero outstanding orders and zero unresolved calls, and the configured queue rate/concurrency limits were restored.
 
 **Estimate error.** The admission estimate is intentionally pessimistic and is compared with the actual duration only after the fact; it is never a prediction. Across the eight runs above the reports' `estimateError.estimateToActualRatio` ranged from 0.863 to 6.103, or from 1.256 to 6.103 excluding `finite-outage`. `finite-outage` is the one run whose actual duration (81.304 s) exceeded its estimate (70.2 s), because a finite injected outage is not modelled by the estimator. The separate calibration repetitions (three per fixture, different runs) recorded ratios from 1.701 to 6.247. An overrun terminates nothing and fails no order; a run that settles normally releases its occupancy slot through ordinary finalization, and the automatic reset 900 seconds after acceptance is the elapsed-time fallback for a run that is still nonterminal. Re-measuring the four `ESTIMATOR_*` allowances on another host is covered by the [estimator calibration procedure](estimator_calibration.md).
+
+## Hosted Fly.io observations
+
+These observations come from the hosted deployment on Fly.io, not from the local reference runtime. Like the rest of this page, they record one environment: they are not a benchmark or a throughput guarantee, and each figure comes from one or a few runs.
+
+**Environment (2026-10-06).**
+
+- Region `cdg`, dedicated (performance) CPUs.
+- The core Machine has 6 vCPU and 12 GB (some figures below were taken on its earlier 4 vCPU / 8 GB size, and say so). It runs the API, the worker, the Mock ERP, PostgreSQL, Redis, the web app and Caddy as containers of one Machine, with a single API process.
+- The runner Machine has 8 vCPU and 16 GB and runs the load orchestrator and k6. It talks to the core over Fly's private IPv6 network.
+- **Sources:**
+  - every figure comes from the runs' public reports;
+  - resource use was sampled on the Machines: VM-wide CPU and per-container cgroup CPU and memory on the core every 0.5 s, and CPU, available memory and k6 resident memory on the runner every 0.25 s;
+  - the number of open connections to the API was counted on the core.
+
+**Public presets** (one run each on 6 vCPU / 12 GB):
+
+- Every run `completed` with delivery `complete`: every planned request started and completed, with zero transport failures and zero unexpected responses.
+- Every accepted order was confirmed and notified. `idempotency-check-200` answered its 200 replays without a second effect.
+- In the occupancy column, "conservative" is the estimate admission uses, and "shown" is the explanatory estimate the visitor sees.
+
+| Preset | Dispatch | Request p95 | Order queue peak; drain | Occupancy: actual vs conservative (shown) estimate | Core VM peak / mean |
+| --- | ---: | ---: | --- | --- | --- |
+| `preview-1k` | 0.20 s | 3.23 s | 487; 27.3 s | 34.6 s vs 71.3 s (30.0 s) | 76 / 24 % |
+| `surge-5k` | 0.61 s | 5.34 s | 495; 28.5 s | 34.9 s vs 121.3 s (80.0 s) | 84 / 26 % |
+| `surge-10k` | 1.20 s | 7.46 s | 500; 29.4 s | 39.8 s vs 161.3 s (120.0 s) | 76 / 26 % |
+| `slow-erp-5k` | 0.49 s | 5.69 s | 500; 107.7 s | 117.1 s vs 200.3 s (100.0 s) | 65 / 16 % |
+| `laggy-erp-5k` | 0.66 s | 5.20 s | 500; 104.8 s | 112.1 s vs 208.0 s (113.0 s) | 71 / 17 % |
+| `idempotency-check-200` | 1.32 s | 1.16 s | 196; 11.9 s | 19.7 s vs 36.5 s (11.0 s) | 79 / 20 % |
+
+- **Burst presets.** At their peaks in these runs, the API used up to about 1.7 cores, PostgreSQL up to about 1.5, the worker about 1, and Redis under 1.
+- **ERP-paced drains.** The core is mostly idle while orders drain at the ERP's pace: worker about 0.3 core and PostgreSQL about 0.3 core on average. Redis stays near 100 MB, and the core keeps at least 11 GB of memory available.
+- **Live stream.** The dashboard's live stream through the public entry point stayed connected for every run.
+- **Admission estimate.** Its conservative figure was 1.7 to 4.1 times the actual occupancy: pessimistic, as intended.
+
+**`surge-10k` across runs.**
+
+- The request p95 ranged from 7.5 to 13.9 s over about twenty runs, across several sessions and Machine sizes. Almost all of it is server time (`waiting`), and `connecting` stays under about 1 s.
+- About 1,000 requests are answered per second. Each buyer opens a new connection, whereas constant arrival reuses its connections (below); the two modes were observed to differ, without isolating the cause.
+- The transport and business behavior match the local reference: every request completed, with zero transport failures, and every accepted order was confirmed. The local reference records no latency figures to compare the p95 with.
+- **Generator size.** Dispatching the 10,000 buyers took:
+  - 1.25 to 1.82 s on a 4 vCPU runner, where k6 saturates its CPU while it initializes and sends;
+  - 0.97 to 1.66 s on 6 vCPU (about 1.0 s in most runs), at 74 to 91 % CPU while sending;
+  - 0.74 to 1.35 s on 8 vCPU, at 62 to 82 % CPU while sending in the first sampled runs.
+
+  The latency did not change with the runner size.
+- **k6 memory.** About 2.2 to 2.3 GB for a 10,000-buyer spike (about 225 kB per VU) on every size, and 2.8 to 3.0 GB at 10,000 constant-arrival VUs.
+- **Core size.**
+  - A 6 vCPU core, interleaved with 4 vCPU in one session, gave the API about 25 % more CPU and left 15 to 30 % of the VM free during the burst instead of about 10 %. The p95 stayed within the run-to-run spread.
+  - One run on an 8 vCPU core: p95 8.5 s, inside the spread, with the VM at 61 % at peak and the API at about 1.35 cores on average.
+
+**Constant arrival.**
+
+- **Throughput with reused connections.** With constant arrival, whose VUs reuse their connections, the same core answered about 3,200 requests per second.
+  - With 5,000 pre-allocated VUs (maximum 10,000), 10 s runs were complete at 1,000, 1,500 and 2,000 per second, with a p95 of 3.8, 5.2 and 8.3 s.
+  - With 10,000 pre-allocated and maximum VUs, 10 s runs were complete at 2,750 and 3,125 per second (twice), with a p95 of 11.8 to 12.8 s and 10,000 open connections.
+  - At 3,500 per second, all 10,000 VUs were busy and the run dropped about 8 % of its iterations, reported as a virtual-user limit.
+  - At 5,000 per second, the achieved rate settled near 3,200 per second.
+  - No run had a failed request, a transport failure, or a connection error: VU exhaustion broke first, not connections.
+- **Default VU allocation.** Without an explicit VU setting, k6 pre-allocates as many VUs as the rate per second and may grow to twice that. At 1,000 per second for 10 s, about 1 % of the iterations were then dropped during the first two seconds, while the latency jumped. At 500 per second, every run was complete with a p95 under 1.2 s.
 
 ## Tuning deliberately not configured
 

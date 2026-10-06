@@ -1,8 +1,8 @@
 {
   "guest": {
     "cpu_kind": "performance",
-    "cpus": 4,
-    "memory_mb": 8192
+    "cpus": 6,
+    "memory_mb": 12288
   },
   "metadata": {
     "role": "core"
@@ -100,6 +100,20 @@
     {
       "name": "setup",
       "image": "setup",
+      "env": {
+        "PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS": "10000",
+        "PUBLIC_CUSTOM_MAX_BUYERS": "10000",
+        "PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND": "500",
+        "PUBLIC_CUSTOM_MAX_TRAFFIC_DURATION_SECONDS": "120",
+        "PUBLIC_CUSTOM_MAX_TRAFFIC_START_DELAY_SECONDS": "10",
+        "PUBLIC_CUSTOM_MAX_PRE_ALLOCATED_VUS": "1000",
+        "PUBLIC_CUSTOM_MAX_VUS": "1000",
+        "PUBLIC_CUSTOM_MAX_STARTING_STOCK": "1000",
+        "PUBLIC_CUSTOM_MAX_ERP_LATENCY_MS": "2000",
+        "PUBLIC_CUSTOM_MIN_ERP_MAX_TPS": "1",
+        "PUBLIC_CUSTOM_MAX_ERP_MAX_TPS": "50",
+        "PUBLIC_CUSTOM_MAX_ERP_ERROR_RATE": "0.25"
+      },
       "secrets": [
         {
           "env_var": "DATABASE_URL"
@@ -143,7 +157,7 @@
             "command": [
               "node",
               "-e",
-              "fetch('http://127.0.0.1:4100/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              "fetch('http://127.0.0.1:4100/health/ready',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             ]
           },
           "interval": 2,
@@ -163,6 +177,16 @@
         "LOAD_ORCHESTRATOR_BASE_URL": "http://checkout-surge-runner.internal:4200",
         "RUNNER_FLY_APP": "checkout-surge-runner",
         "RUNNER_MACHINE_CONFIG_FILE": "/fly/runner-machine.json",
+        "RUNNER_CPUS": "8",
+        "RUNNER_MEMORY_MB": "16384",
+        "DEMO_MAX_BUYERS": "10000",
+        "DEMO_MAX_TOTAL_REQUESTS": "100000",
+        "DEMO_MAX_REQUESTS_PER_SECOND": "10000",
+        "DEMO_MAX_TRAFFIC_DURATION_SECONDS": "300",
+        "DEMO_MAX_TRAFFIC_START_DELAY_SECONDS": "30",
+        "DEMO_MAX_PRE_ALLOCATED_VUS": "10000",
+        "DEMO_MAX_VUS": "10000",
+        "DEMO_MAX_ESTIMATED_OCCUPANCY_SECONDS": "600",
         "CORE_IDLE_STOP_ENABLED": "true",
         "WEB_ORIGIN": "https://checkout-surge-gate.fly.dev"
       },
@@ -206,7 +230,7 @@
             "command": [
               "node",
               "-e",
-              "fetch('http://127.0.0.1:4000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              "fetch('http://127.0.0.1:4000/health/ready',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             ]
           },
           "interval": 2,
@@ -254,7 +278,7 @@
             "command": [
               "node",
               "-e",
-              "fetch('http://127.0.0.1:4300/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              "fetch('http://127.0.0.1:4300/health/ready',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             ]
           },
           "interval": 2,
@@ -305,7 +329,7 @@
             "command": [
               "node",
               "-e",
-              "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+              "fetch('http://127.0.0.1:3000/health',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             ]
           },
           "interval": 2,

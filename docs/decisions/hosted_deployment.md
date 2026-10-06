@@ -78,6 +78,52 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
 - **Rejected alternatives:** Hosted-or-local checks scattered through the code.
 - **Code:** `apps/api/src/index.ts`, `apps/api/src/services/runner-host.ts`, `apps/api/src/services/fly-runner-host.ts`, `apps/load-orchestrator/src/runtime/config.ts`.
 
+### HD-51 One API process stays; the core is sized for headroom and the caps stay above its throughput
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** On Fly, the single API process bounds the hosted throughput, while PostgreSQL, the worker and Redis share the rest of the core Machine, which a burst brings close to saturation ([hosted observations](../reference_runtime_measurements.md#hosted-flyio-observations)). A larger core Machine did not measurably change burst latency or throughput.
+- **Decision:**
+  - Keep one API process for this release.
+  - Size the core Machine for the other containers' headroom during a burst, not for throughput.
+  - Keep the deployment caps (`DEMO_MAX_*`) above what the core sustains, so an operator can push admin runs past it. The buyer cap is the exception: a buyer spike runs one k6 VU per buyer, so `DEMO_MAX_BUYERS` keeps it within the runner's memory.
+- **Consequences:** The core costs more per awake hour than the smallest size that runs the demo, for headroom rather than speed. Single-process optimizations of the API were not explored. An admin run above the core's throughput degrades or fails its delivery, reported as a virtual-user limit, without harming the infrastructure.
+- **Rejected alternatives:**
+  - Several API processes (a cluster or replicas) in this release: they break the single owner of run starts, resets and runner operations ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)).
+  - A larger core as the throughput lever: it gave the API more CPU, but no established gain in latency or throughput.
+  - The smallest core that runs the demo: a burst leaves its VM almost no headroom.
+  - Caps at the core's measured throughput: they would hide from the operator what happens past it.
+- **Code:** the core `guest` and the `DEMO_MAX_*` env in `infra/fly/core/machine.json`; `deploymentHardCaps` in `apps/api/src/runtime/config.ts`.
+
+### HD-52 Core healthchecks end on their own, before Fly's check timeout
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** Fly's init runs an exec healthcheck as a process inside the container and never reaps one it timed out, so the zombie stays in the container's PID namespace and the kernel holds the exiting main process until Fly tears the container down at the Machine's stop timeout. The API's check timed out during every 10,000-buyer burst, so every later stop, idle stop included, took 31 s instead of 11 s and ended with the API killed.
+- **Decision:** Each Node healthcheck of the core aborts its own request before Fly's check timeout, so it always exits by itself and is reaped.
+- **Consequences:**
+  - The API still reads unhealthy during a burst, as before; nothing acts on that state after boot.
+  - The fix relies on Fly reaping checks that exit in time, as it does for every passing check.
+  - The PostgreSQL and Redis checks are not Node checks and have never timed out; they are left as they are.
+- **Rejected alternatives:**
+  - A longer Fly timeout alone: a longer saturation still exceeds it, and a hung service at boot is detected later.
+  - A shutdown deadline in the application: the API already exits in under a second; the wait is in the kernel.
+  - An init process such as tini as the container's PID 1: it cannot reap processes whose parent is Fly's init.
+  - A shorter Machine stop timeout: it only shortens the wait, and leaves less margin for the databases' delayed stop.
+- **Code:** the `healthchecks` of `infra/fly/core/machine.json`.
+
+### HD-53 The public constant-arrival limit stays below what the core sustains, until VU allocation is capacity-aware
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** A visitor's custom run must complete, but the public form sends no VU setting, so k6 pre-allocates VUs in proportion to the rate, and the latency jump at the start of a run exhausts them well below what the core sustains. At twice the public limit, about 1 % of a run's iterations were dropped.
+- **Decision:** The public constant-arrival rate limit (`PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND`) is set where every measured run with the default VU allocation was complete. The public VU limits keep their defaults: they bind only callers who set VUs explicitly.
+- **Consequences:** Visitors cannot reach the rates the core sustains with enough VUs. Raising the limit needs the default VU allocation to become capacity-aware, or the form to send a VU setting.
+- **Rejected alternatives:**
+  - The previous, higher public rate with the default allocation: a run dropped iterations, so its delivery verdict was not clean.
+  - Raising only the public VU limits: the form does not use them.
+- **Code:** `PUBLIC_CUSTOM_*` in the `setup` container env of `infra/fly/core/machine.json`; `resolveConstantArrivalVus` in `packages/contracts/src/load.ts`.
+
 ## Runner
 
 ### HD-07 The API starts and stops the runner for each run
@@ -246,6 +292,18 @@ Decisions, accepted risks, and known limitations of the hosted deployment. The e
   - A copy in the gate, like the core's ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)): the API cannot read the gate's files.
   - Building the config inside the API image from the repository: the runner image's label is known only once it is built.
 - **Code:** `FlyRunnerHost.replace` and `FlyRunnerHost.withLease` in `apps/api/src/services/fly-runner-host.ts`, `runnerConfigFile` in `infra/fly/deploy.mjs`.
+
+### HD-54 The runner is sized so k6 never saturates its CPU during dispatch
+
+- **Status:** accepted
+- **Date:** 2026-10-06
+- **Context:** On a smaller runner, k6 saturates its CPU while it initializes and dispatches the VUs of a 10,000-buyer spike, which spreads the burst. The latency is set by the core whatever the runner size ([hosted observations](../reference_runtime_measurements.md#hosted-flyio-observations)).
+- **Decision:** The runner gets enough vCPUs that k6 stays below saturation while it sends, with the smallest memory Fly allows for them.
+- **Consequences:** A sharper burst, whose arrival profile is unlikely to be a generator limit. A run costs about half a cent instead of a quarter of a cent. The memory far exceeds k6's needs for a 10,000-buyer spike.
+- **Rejected alternatives:**
+  - Half the vCPUs: the cheapest, but CPU-bound during the dispatch.
+  - Three quarters of them: still close to saturation while dispatching.
+- **Code:** `RUNNER_CPUS` and `RUNNER_MEMORY_MB` in `infra/fly/core/machine.json`, and the runner `guest` in `infra/fly/runner/machine.json`.
 
 ## Core Idle Stop
 

@@ -2,7 +2,7 @@
 
 Work breakdown for the hosted deployment on Fly.io.
 
-- [design.md](design.md) is the source of truth for decisions. Tasks point to its sections instead of restating them.
+- [design.md](design.md) is the working design for this backlog. Tasks point to its sections instead of restating them. Choices that pass the inclusion test of `docs/decisions/README.md` are recorded in `docs/decisions/`, in its format.
 - Each numbered file is one task and its working document.
 
 ## Rules
@@ -29,11 +29,12 @@ Work breakdown for the hosted deployment on Fly.io.
 | 10 | [Core recovery](10_core_recovery.md) | 06, 09 | done |
 | 11 | [Guard](11_guard.md) | 05, 09 | done |
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | done |
-| 13a | [Measurement and tuning](13a_measurement_and_tuning.md) | 01–12, 14 | in progress |
+| 13a | [Measurement and tuning](13a_measurement_and_tuning.md) | 01–12, 14 | done |
 | 13b | [Documentation and continuous deployment](13b_docs_and_ci.md) | 01–12, 14 | done |
 | 13c | [Go-live](13c_go_live.md) | 13a, 13b, plus the external prerequisite | todo |
 | 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | todo |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
+| 15 | [Capacity-aware run admission](15_capacity_aware_run_admission.md) | 13c | todo |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 
