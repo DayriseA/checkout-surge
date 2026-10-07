@@ -739,7 +739,7 @@ Every entry in ID order. New entries are added here too.
 - **Status:** accepted
 - **Date:** 2026-10-07
 - **Context:** Fly.io offers no billing alerts or spending caps, and its managed Grafana has alerting disabled, so runaway awake time, from repeated re-waking ([HD-03](#hd-03-accepted-risk-bots-can-keep-an-awake-core-up)) or a guard that stopped acting, would show only on the invoice.
-- **Decision:** Alert rules on the core's and the runner's Machine-time run in a Grafana Cloud free stack, query Fly's Prometheus API with a read-only organization token, and email the owner. They also alert when their own query fails. The runbook holds the queries and thresholds.
+- **Decision:** Alert rules on the core's and the runner's Machine-time run in a Grafana Cloud free stack, query Fly's Prometheus API with a read-only organization token, and notify the owner. They also alert when their own query fails. The runbook holds the queries and thresholds.
 - **Consequences:**
   - The rules live in Grafana's state, outside the repository; the runbook is their reference.
   - One more account and one more token to keep. The token can read the whole organization, but change nothing.

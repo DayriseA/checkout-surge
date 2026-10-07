@@ -157,7 +157,7 @@ The [cost alerts](#cost-alerts) query Fly's metrics with a read-only organizatio
 | Grafana Cloud data source `Fly Prometheus` | read-only, organization `personal` | `grafana-cloud-<yyyymmdd>` |
 
 - **What it can do.** Read everything in the organization: apps, Machines and their configs, metrics. It cannot change anything, and Fly never returns secret values.
-- **Renew it before it expires,** one year after creation. An expired or revoked token makes both rules fail, and Grafana emails a `DatasourceError` alert. Create a new token as in [step 2 of the setup](#setting-up-grafana-cloud), paste it as the new value of the data source's `Authorization` header, and **Save & test**. Then revoke the old one: `flyctl tokens list -s org -o personal`, then `flyctl tokens revoke <id>`.
+- **Renew it before it expires,** one year after creation. An expired or revoked token makes every rule fail, and each sends a `DatasourceError` alert to its contact point. Create a new token as in [step 2 of the setup](#setting-up-grafana-cloud), paste it as the new value of the data source's `Authorization` header, and **Save & test**. Then revoke the old one: `flyctl tokens list -s org -o personal`, then `flyctl tokens revoke <id>`.
 
 ### `CONTROL_SERVICE_TOKEN`
 
@@ -293,18 +293,20 @@ A deploy killed while it holds a Machine lease (a cancelled workflow run, a clos
 
 ## Cost Alerts
 
-Fly.io has no billing alerts and no spending cap, so runaway awake time would otherwise show only on the invoice. Two alert rules in a Grafana Cloud free stack watch it and email the owner ([HD-57](decisions/hosted_deployment.md#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow)). Fly's own Grafana at fly-metrics.net has alerting disabled.
+Fly.io has no billing alerts and no spending cap, so runaway awake time would otherwise show only on the invoice. Alert rules in a Grafana Cloud free stack watch it and notify the owner ([HD-57](decisions/hosted_deployment.md#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow)). Fly's own Grafana at fly-metrics.net has alerting disabled.
 
 ### What they watch
 
-- **Machine-time.** A running Machine reports `fly_instance_up` every 15 seconds, and a stopped one reports nothing. The number of samples over a rolling 24 hours, times 15 seconds, is how long the app's Machines ran. Each Machine counts on its own, so two cores during a recovery count twice, as Fly bills them.
-- **Core above 6 hours.** That is twice the [guard](hosted_runtime.md#guard)'s awake cap and well above normal use, so one long visit never triggers it. Repeated re-waking ([HD-03](decisions/hosted_deployment.md#hd-03-accepted-risk-bots-can-keep-an-awake-core-up)) or a guard that stopped acting triggers it within the day.
-- **Runner above 60 minutes.** That is far above a normal day's runs, so only a runner left running or an unusual run volume triggers it.
+- **Machine-time.** A running Machine reports `fly_instance_up` every 15 seconds, and a stopped one reports nothing. The number of samples over a window, times 15 seconds, is how long the app's Machines ran in it. Each Machine counts on its own, so two cores during a recovery count twice, as Fly bills them.
+- **Core above 6 hours in 24 hours** (alert). That is twice the [guard](hosted_runtime.md#guard)'s awake cap and well above normal use, so one long visit never triggers it. Repeated re-waking ([HD-03](decisions/hosted_deployment.md#hd-03-accepted-risk-bots-can-keep-an-awake-core-up)) or a guard that stopped acting triggers it within the day.
+- **Runner above 60 minutes in 24 hours** (alert). That is far above a normal day's runs, so only a runner left running or an unusual run volume triggers it.
+- **Core at least 3 hours in the last 4 hours** (alert). It signals sustained heavy use that the guard is about to cap, or, if it keeps firing, a guard that failed to cap it. It reacts within hours, where the 24-hour rule may take the rest of the day.
+- **Demo in use: core above 2 minutes in the last 10 minutes** (information). It tells the owner that someone is using the demo, on a channel that can be muted.
 - **The watcher itself.** A failed query, such as an expired token, raises its own `DatasourceError` alert by default.
 
 ### Setting up Grafana Cloud
 
-1. **Account and stack.** Create a free account at grafana.com and a stack in an EU region. Open the stack's Grafana (`https://<stack>.grafana.net`). On a free account, alert emails reach only users of the instance, which includes the account owner.
+1. **Account and stack.** Create a free account at grafana.com and a stack in an EU region, then open the stack's Grafana.
 2. **Token.** Create a read-only organization token, valid for one year, and copy it to the clipboard without showing it. The `tr` strips the trailing line break, which would otherwise break the header.
    - Windows (Git Bash):
 
@@ -315,33 +317,51 @@ Fly.io has no billing alerts and no spending cap, so runaway awake time would ot
    - macOS: the same command ending with `| tr -d '\n' | pbcopy`. Linux: ending with `| tr -d '\n' | xclip -selection clipboard`, or `| wl-copy` on Wayland.
    - After step 3, empty the clipboard (`printf '' | clip.exe`, or the same into `pbcopy` or `xclip -selection clipboard`) and delete the entry from any clipboard history (Windows: `Win+V`).
 3. **Data source.** Connections → Data sources → Add new data source → Prometheus.
-   - Name: `Fly Prometheus`.
+   - Name: `Fly Prometheus`. The name is edited with the pencil beside the title, and its check mark saves the name at once.
    - Prometheus server URL: `https://api.fly.io/prometheus/personal/`.
    - Authentication: no authentication.
    - HTTP headers: add the header `Authorization` and paste the token as its value. The value is the full command output, starting with `FlyV1 `; add no `Bearer`.
    - **Save & test** must report that the Prometheus API was queried successfully. A 401 usually means a stray line break or a truncated paste.
-4. **Contact point.** Alerting → Contact points → create one named `owner-email`, integration Email, with the owner's address. Use **Test** to send a test email, then save.
-5. **Alert rules.** Alerting → Alert rules → New alert rule, twice:
+   - Leave the rest at its defaults. Under Alerting, "Manage alerts via Alerting UI" concerns rules stored in the data source itself, which Fly does not accept, so the alert rule list always shows "No rules found" under `Fly Prometheus`.
+4. **Contact points.** Alerting → Notification configuration → Contact points.
+   - **`owner-alerts`**, for alerts: a Discord integration posting to a dedicated channel, plus, with "Add contact point integration", an Email integration as a fallback.
+     - Discord: in the channel's settings, Integrations → Webhooks → New Webhook, then copy its URL into the integration's "Webhook URL". Treat that URL as a secret: anyone who has it can post in the channel.
+     - Email: on a free account, alert emails reach only users of the instance, so use the address of the account's own user.
+   - **`owner-info`**, for information: a Discord integration only, posting to a separate channel that can be muted.
+   - Use **Test** on each integration, then save.
+   - Telegram works the same way instead of Discord: create a bot with @BotFather, then give the Telegram integration the bot token and the chat ID of the conversation it posts to. The bot token is a secret too.
+5. **Alert rules.** Alerting → Alert rules → New alert rule, once per row. Each query uses data source `Fly Prometheus`, Code mode and type Instant.
 
-   | Field | Core rule | Runner rule |
-   | :-- | :-- | :-- |
-   | Name | `Core awake over 6 h in 24 h` | `Runner running over 60 min in 24 h` |
-   | Query (data source `Fly Prometheus`, Code mode, type Instant) | `sum(count_over_time(fly_instance_up{app="checkout-surge-core"}[24h])) * 15 / 3600 or vector(0)` | `sum(count_over_time(fly_instance_up{app="checkout-surge-runner"}[24h])) * 15 / 60 or vector(0)` |
-   | Alert condition | above `6` (hours) | above `60` (minutes) |
+   | Name | Query | Condition | Evaluation group | Contact point |
+   | :-- | :-- | :-- | :-- | :-- |
+   | `Core awake time (24h)` | `sum(count_over_time(fly_instance_up{app="checkout-surge-core"}[24h])) * 15 / 3600 or vector(0)` | is above `6` (hours) | `cost` | `owner-alerts` |
+   | `Runner run time (24h)` | `sum(count_over_time(fly_instance_up{app="checkout-surge-runner"}[24h])) * 15 / 60 or vector(0)` | is above `60` (minutes) | `cost` | `owner-alerts` |
+   | `Core awake 3h of last 4h` | `sum(count_over_time(fly_instance_up{app="checkout-surge-core"}[4h])) * 15 / 3600 or vector(0)` | is above or equal to `3` (hours) | `cost` | `owner-alerts` |
+   | `Demo in use (info)` | `sum(count_over_time(fly_instance_up{app="checkout-surge-core"}[10m])) * 15 / 60 or vector(0)` | is above `2` (minutes) | `info` | `owner-info` |
 
-   For both rules:
-   - Folder: a new folder `Cost alerts`. Evaluation group: a new group `cost`, evaluated every 5 minutes. Pending period: 5 minutes, so one odd evaluation does not email.
-   - No data and error handling: keep both defaults. `or vector(0)` turns a day without any awake Machine into `0` instead of no data. Without it, a quiet day would leave the query empty and email a `DatasourceNoData` alert; set "Alert state if no data" to Normal if you ever drop it. Keep the error default (Error), which emails a `DatasourceError` alert when the query fails.
-   - Notifications: contact point `owner-email`.
-   - Optional summary: `Awake time over the limit in the last 24 hours: {{ $values.A }}`.
+   For every rule:
+   - Folder: `Cost alerts`, created with "New folder" on the first rule. The folder is created at once.
+   - Evaluation groups: `cost`, evaluated every 30 minutes, and `info`, evaluated every 10 minutes, each created with "New evaluation group" on its first rule. A 10-minute window evaluated every 10 minutes catches every wake, since the core stays awake at least 10 minutes.
+   - Pending period: None. Grafana accepts only a pending period at least as long as the group's interval, or None, and a single evaluation already covers hours of data.
+   - No data and error handling: keep both defaults. `or vector(0)` turns a window without any awake Machine into `0` instead of no data. Without it, a quiet period would leave the query empty and send a `DatasourceNoData` alert; set "Alert state if no data" to Normal if you ever drop it. Keep the error default (Error), which sends a `DatasourceError` alert when the query fails.
+   - Summary: prefix it with `[Checkout-Surge]: `, or `[Checkout-Surge][info]: ` for the information rule, so a shared channel shows where a message comes from. For example, `[Checkout-Surge]: Core awake more than 6 h in the last 24 h`.
+   - Type into the summary only once the field has the focus. Outside a field, Grafana reads letters as keyboard shortcuts: `g` then `e` opens Explore, and the unsaved rule is lost.
 6. **Test.**
-   - In the rule editor, **Preview** runs the query and shows the current value and whether the condition holds.
-   - Lower one threshold to `0` on a day the core has woken, and save. A firing email arrives within about 10 minutes (evaluation interval plus pending period). Restore the threshold, and a resolved email follows.
+   - In the rule editor, **Preview alert rule condition** runs the query and shows the current value and whether the condition holds.
+   - Use **Test** on a contact point to check the channel.
+   - For an end-to-end check, lower one threshold to `0` on a day the core has woken, and save. A firing message arrives at the group's next evaluation. Restore the threshold, and a resolved message follows.
 7. **Export.** Alert rules → the `Cost alerts` folder → Export, as YAML. Keep it as a backup of the rules; it holds the data source's UID but no token. This section stays the reference for rebuilding them.
+
+### How notifications behave
+
+- **One message per state change.** A rule sends one Firing message when its condition starts to hold, and one Resolved message when it stops. While it keeps firing, Grafana's default notification policy repeats the Firing message after its repeat interval, 4 hours by default.
+- **24-hour and 4-hour rules** resolve only once the window has dropped back under the threshold, hours after the cause ends.
+- **Demo in use** resolves 10 to 20 minutes after the core sleeps: the 10-minute window first has to drop to 2 minutes of awake time or less, which takes about 8 minutes after the stop, and the next evaluation can come up to 10 minutes later.
+- **Watcher errors** go to the failing rule's contact point, so an expired token shows on both channels.
 
 ### Alternative: a scheduled GitHub Actions workflow
 
-For a copy of the demo whose repository stays private, or for an owner who wants no extra account, a scheduled workflow can run the same queries and open an issue. Change the organization slug and the app names to your own, and store a read-only token as the repository secret `FLY_METRICS_TOKEN`:
+For a copy of the demo whose repository stays private, or for an owner who wants no extra account, a scheduled workflow can run the two 24-hour checks and open an issue. Change the organization slug and the app names to your own, and store a read-only token as the repository secret `FLY_METRICS_TOKEN`:
 
 ```bash
 t=$(flyctl tokens create readonly -o personal -n "github-cost-watch-$(date +%Y%m%d)" -x 8760h) \

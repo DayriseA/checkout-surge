@@ -13,7 +13,7 @@ The demo runs with fresh secrets, is deployed by GitHub Actions, and is opened t
   - Use a fresh core (`--fresh-core`, owner decision, 2026-10-06) so PostgreSQL initializes with the new password. This drops the development run history; the owner gives the go at the moment.
 - **Review the public run budget** (`PUBLIC_RUN_BUDGET_*`) before opening: it bounds how many runs visitors can start, hence the cost (not reviewed in 13a).
 - **First deploy through GitHub Actions** (13b's workflow), from a merge into `main`.
-- **Open the demo:** the portfolio link to the gate (added by the owner).
+- **Open the demo:** the gate URL is public and shareable. The portfolio link is the owner's separate project, not part of this backlog (owner, 2026-10-07).
 
 ## Out of Scope
 
@@ -21,7 +21,7 @@ The demo runs with fresh secrets, is deployed by GitHub Actions, and is opened t
 
 ## Done When
 
-- The demo is reachable from the portfolio link, with rotated secrets, deployed by GitHub Actions.
+- The demo is reachable at the gate URL, with rotated secrets, deployed by GitHub Actions, and cost alerts are in place.
 
 ## Open Points
 
@@ -222,3 +222,9 @@ Times are UTC. I checked the facts read-only on Fly and GitHub at about 16:00.
 1. **The batched push to `main`:** this documentation batch plus task 17's fix (`5e6f48bc` on `dev`), by fast-forward. Then check that the CI run succeeds, and run task 17's manual verification on Fly.
 2. **A Fly billing alert** (owner).
 3. **The portfolio link** to the gate (owner), after 1 and 2.
+
+### Closure (2026-10-07)
+
+- Cost alerts: Grafana Cloud free stack with four rules (core 24 h and 4 h, runner 24 h, demo in use) on Discord plus email and an informational Discord channel; documented in `docs/hosted_operations.md` (Cost Alerts) and HD-57. Fly has no billing alerts or caps.
+- Verified after the task 17 deploy (`176c517b`): a public `preview-1k` completed; the runner took the run settings in place.
+- Done. The portfolio link is out of scope (owner's separate project).
