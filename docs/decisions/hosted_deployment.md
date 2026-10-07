@@ -66,6 +66,7 @@ Every entry in ID order. New entries are added here too.
 | [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch) | The runner is sized so k6 never saturates its CPU during dispatch | Runner |
 | [HD-55](#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once) | A host that refuses the runner's new config relocates the runner at once | Runner |
 | [HD-56](#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation) | A core whose host refuses the deploy is marked for a fresh recreation | Deployment and Access |
+| [HD-57](#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow) | Cost alerts run in an external Grafana Cloud, not in a scheduled GitHub workflow | Deployment and Access |
 
 ## Platform and Topology
 
@@ -637,7 +638,7 @@ Every entry in ID order. New entries are added here too.
 - **Date:** 2026-10-02
 - **Context:** Machine control needs Machines API tokens inside Machines: the API holds app-scoped deploy tokens for the runner app (`RUNNER_FLY_API_TOKEN`) and for its own core app (`CORE_FLY_API_TOKEN`), and the gate and guard hold core and runner tokens. Fly deploy access can run code that reads secrets.
 - **Decision:** Accept it. Tokens are app-scoped deploy tokens, given only to the containers that use them; no personal or organization-wide token ever goes into a Machine. Attenuating tokens to specific actions is optional, because the caveat schema is undocumented.
-- **Consequences:** A compromised gate, the only always-exposed component, means full control of the core app, its secrets included, and through the core's runner token, of the runner app. No sensitive data is involved, so the exposure is financial. Mitigations: a minimal gate surface, the guard's cleanup of unexpected Machines, and billing controls in the Fly dashboard.
+- **Consequences:** A compromised gate, the only always-exposed component, means full control of the core app, its secrets included, and through the core's runner token, of the runner app. No sensitive data is involved, so the exposure is financial. Mitigations: a minimal gate surface, the guard's cleanup of unexpected Machines, and the cost alerts ([HD-57](#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow)); Fly has no billing controls or spending caps.
 
 ### HD-33 Accepted risk: core secrets reached Fly's build cache
 
@@ -726,9 +727,25 @@ Every entry in ID order. New entries are added here too.
 - **Date:** 2026-10-06
 - **Context:** The CI deploy reaches the three apps and Fly's remote builder with one token, the one the deploy script gets from flyctl. A Fly deploy token covers a single app.
 - **Decision:** One organization deploy token, stored as a GitHub repository secret, which the deploy script uses as it uses an operator's flyctl session.
-- **Consequences:** Beyond the three apps, the token can create apps and other resources in the organization, and covers any app added to it later; the organization holds only the demo's apps. A leaked token adds that to the control described in [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control), with billing controls as the mitigation. It never goes into a Machine.
+- **Consequences:** Beyond the three apps, the token can create apps and other resources in the organization, and covers any app added to it later; the organization holds only the demo's apps. A leaked token adds that to the control described in [HD-26](#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control), with the cost alerts ([HD-57](#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow)) as the mitigation. It never goes into a Machine.
 - **Rejected alternatives:**
   - Three app deploy tokens: narrower, but three secrets to rotate and a per-app token choice in the deploy script.
   - Several deploy tokens joined into one secret: Fly does not document it.
   - The owner's personal token: access to everything the owner can reach.
 - **Code:** `.github/workflows/deploy.yml`.
+
+### HD-57 Cost alerts run in an external Grafana Cloud, not in a scheduled GitHub workflow
+
+- **Status:** accepted
+- **Date:** 2026-10-07
+- **Context:** Fly.io offers no billing alerts or spending caps, and its managed Grafana has alerting disabled, so runaway awake time, from repeated re-waking ([HD-03](#hd-03-accepted-risk-bots-can-keep-an-awake-core-up)) or a guard that stopped acting, would show only on the invoice.
+- **Decision:** Alert rules on the core's and the runner's Machine-time run in a Grafana Cloud free stack, query Fly's Prometheus API with a read-only organization token, and email the owner. They also alert when their own query fails. The runbook holds the queries and thresholds.
+- **Consequences:**
+  - The rules live in Grafana's state, outside the repository; the runbook is their reference.
+  - One more account and one more token to keep. The token can read the whole organization, but change nothing.
+  - Free-tier terms can change without notice; email alerts already reach only the stack's own users.
+- **Rejected alternatives:**
+  - A scheduled GitHub Actions workflow in this repository: once the repository is public, GitHub disables it after 60 days without activity, which is when a finished demo goes quiet, and a keepalive commit would deploy ([HD-49](#hd-49-github-actions-deploys-every-push-to-main-with-the-workstations-script)). Its hourly runs can also be delayed or dropped.
+  - Alerting from the guard: it needs an outbound mail channel and one more secret in a Machine, and it cannot report its own failure.
+  - Fly's managed Grafana: alerting is disabled there, and Fly's Prometheus takes no custom rules.
+  - A self-hosted Grafana on Fly: it runs on the platform it watches, and needs a mail provider to maintain.

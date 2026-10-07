@@ -148,6 +148,17 @@ Rotate one token at a time:
 4. Check each holder with the new token: a wake through the gate and the core's idle stop for core-app tokens, a run for the API's runner token, and a guard run without errors ([guard logs](#guard-logs-and-switches)).
 5. Revoke the old token: `flyctl tokens list -a <token app>`, then `flyctl tokens revoke <id>`. A holder still running with it fails its Machines API calls until it restarts, which is why step 3 comes first.
 
+### Grafana Cloud metrics token
+
+The [cost alerts](#cost-alerts) query Fly's metrics with a read-only organization token, held only by the Grafana Cloud data source. It is not a Fly secret, so nothing on Fly restarts when it changes.
+
+| Holder | Token type | Current token name |
+| :-- | :-- | :-- |
+| Grafana Cloud data source `Fly Prometheus` | read-only, organization `personal` | `grafana-cloud-<yyyymmdd>` |
+
+- **What it can do.** Read everything in the organization: apps, Machines and their configs, metrics. It cannot change anything, and Fly never returns secret values.
+- **Renew it before it expires,** one year after creation. An expired or revoked token makes both rules fail, and Grafana emails a `DatasourceError` alert. Create a new token as in [step 2 of the setup](#setting-up-grafana-cloud), paste it as the new value of the data source's `Authorization` header, and **Save & test**. Then revoke the old one: `flyctl tokens list -s org -o personal`, then `flyctl tokens revoke <id>`.
+
 ### `CONTROL_SERVICE_TOKEN`
 
 It authenticates both directions between the core and the runner, so it changes on both apps together:
@@ -274,6 +285,136 @@ A deploy killed while it holds a Machine lease (a cancelled workflow run, a clos
 ## Guard Logs and Switches
 
 - **Logs.** The guard logs in the gate app with `component: guard`: `flyctl logs -a checkout-surge-gate`. Each run logs `The guard started.` and, per app, `The guard checked the app.` with its action count. Every action logs `The guard acted.` or `Leased or changed since the plan; the guard skipped it.`. Errors read `The guard could not read the app.`, `The guard could not act.` or `The guard failed.`, and the run then exits non-zero (`flyctl machine status <guard id> -a checkout-surge-gate` shows its recent events, exits included).
-- **No alerting.** These logs and the guard Machine's exits are the only signal of a failed guard run. Check them after rotating a token the guard holds, and when reviewing the demo's traffic.
+- **No alerting.** These logs and the guard Machine's exits are the only direct signal of a failed guard run. Check them after rotating a token the guard holds, and when reviewing the demo's traffic. The [cost alerts](#cost-alerts) catch only its effect, a core or a runner left awake.
 - **Switches,** for demonstrations only, in the guard Machine's env: `GUARD_DRY_RUN=true` logs the plan without acting; `GUARD_CORE_MAX_AWAKE_SECONDS`, `GUARD_CORE_STARTUP_GRACE_SECONDS`, `GUARD_RUNNER_MAX_STARTED_SECONDS` and `GUARD_LEFTOVER_GRACE_SECONDS` override the thresholds. Set them in `infra/fly/gate/guard-machine.json` and deploy the gate from the workstation; the next deploy of `main` resets them.
 - **Never change the guard with `flyctl machine update --skip-start`.** A guard updated with `skip_launch` is never started by Fly's scheduler again ([HD-41](decisions/hosted_deployment.md#hd-41-the-guard-is-deployed-without-skip_launch)).
+
+---
+
+## Cost Alerts
+
+Fly.io has no billing alerts and no spending cap, so runaway awake time would otherwise show only on the invoice. Two alert rules in a Grafana Cloud free stack watch it and email the owner ([HD-57](decisions/hosted_deployment.md#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow)). Fly's own Grafana at fly-metrics.net has alerting disabled.
+
+### What they watch
+
+- **Machine-time.** A running Machine reports `fly_instance_up` every 15 seconds, and a stopped one reports nothing. The number of samples over a rolling 24 hours, times 15 seconds, is how long the app's Machines ran. Each Machine counts on its own, so two cores during a recovery count twice, as Fly bills them.
+- **Core above 6 hours.** That is twice the [guard](hosted_runtime.md#guard)'s awake cap and well above normal use, so one long visit never triggers it. Repeated re-waking ([HD-03](decisions/hosted_deployment.md#hd-03-accepted-risk-bots-can-keep-an-awake-core-up)) or a guard that stopped acting triggers it within the day.
+- **Runner above 60 minutes.** That is far above a normal day's runs, so only a runner left running or an unusual run volume triggers it.
+- **The watcher itself.** A failed query, such as an expired token, raises its own `DatasourceError` alert by default.
+
+### Setting up Grafana Cloud
+
+1. **Account and stack.** Create a free account at grafana.com and a stack in an EU region. Open the stack's Grafana (`https://<stack>.grafana.net`). On a free account, alert emails reach only users of the instance, which includes the account owner.
+2. **Token.** Create a read-only organization token, valid for one year, and copy it to the clipboard without showing it. The `tr` strips the trailing line break, which would otherwise break the header.
+   - Windows (Git Bash):
+
+     ```bash
+     flyctl tokens create readonly -o personal -n "grafana-cloud-$(date +%Y%m%d)" -x 8760h | tr -d '\r\n' | clip.exe
+     ```
+
+   - macOS: the same command ending with `| tr -d '\n' | pbcopy`. Linux: ending with `| tr -d '\n' | xclip -selection clipboard`, or `| wl-copy` on Wayland.
+   - After step 3, empty the clipboard (`printf '' | clip.exe`, or the same into `pbcopy` or `xclip -selection clipboard`) and delete the entry from any clipboard history (Windows: `Win+V`).
+3. **Data source.** Connections → Data sources → Add new data source → Prometheus.
+   - Name: `Fly Prometheus`.
+   - Prometheus server URL: `https://api.fly.io/prometheus/personal/`.
+   - Authentication: no authentication.
+   - HTTP headers: add the header `Authorization` and paste the token as its value. The value is the full command output, starting with `FlyV1 `; add no `Bearer`.
+   - **Save & test** must report that the Prometheus API was queried successfully. A 401 usually means a stray line break or a truncated paste.
+4. **Contact point.** Alerting → Contact points → create one named `owner-email`, integration Email, with the owner's address. Use **Test** to send a test email, then save.
+5. **Alert rules.** Alerting → Alert rules → New alert rule, twice:
+
+   | Field | Core rule | Runner rule |
+   | :-- | :-- | :-- |
+   | Name | `Core awake over 6 h in 24 h` | `Runner running over 60 min in 24 h` |
+   | Query (data source `Fly Prometheus`, Code mode, type Instant) | `sum(count_over_time(fly_instance_up{app="checkout-surge-core"}[24h])) * 15 / 3600 or vector(0)` | `sum(count_over_time(fly_instance_up{app="checkout-surge-runner"}[24h])) * 15 / 60 or vector(0)` |
+   | Alert condition | above `6` (hours) | above `60` (minutes) |
+
+   For both rules:
+   - Folder: a new folder `Cost alerts`. Evaluation group: a new group `cost`, evaluated every 5 minutes. Pending period: 5 minutes, so one odd evaluation does not email.
+   - No data and error handling: keep both defaults. `or vector(0)` turns a day without any awake Machine into `0` instead of no data. Without it, a quiet day would leave the query empty and email a `DatasourceNoData` alert; set "Alert state if no data" to Normal if you ever drop it. Keep the error default (Error), which emails a `DatasourceError` alert when the query fails.
+   - Notifications: contact point `owner-email`.
+   - Optional summary: `Awake time over the limit in the last 24 hours: {{ $values.A }}`.
+6. **Test.**
+   - In the rule editor, **Preview** runs the query and shows the current value and whether the condition holds.
+   - Lower one threshold to `0` on a day the core has woken, and save. A firing email arrives within about 10 minutes (evaluation interval plus pending period). Restore the threshold, and a resolved email follows.
+7. **Export.** Alert rules → the `Cost alerts` folder → Export, as YAML. Keep it as a backup of the rules; it holds the data source's UID but no token. This section stays the reference for rebuilding them.
+
+### Alternative: a scheduled GitHub Actions workflow
+
+For a copy of the demo whose repository stays private, or for an owner who wants no extra account, a scheduled workflow can run the same queries and open an issue. Change the organization slug and the app names to your own, and store a read-only token as the repository secret `FLY_METRICS_TOKEN`:
+
+```bash
+t=$(flyctl tokens create readonly -o personal -n "github-cost-watch-$(date +%Y%m%d)" -x 8760h) \
+  && printf '%s' "$t" | gh secret set FLY_METRICS_TOKEN; unset t
+```
+
+Caveats:
+
+- **60-day disable on public repositories.** GitHub disables scheduled workflows in a public repository after 60 days without activity. Pushes, merges and releases count; issue comments, stars and the workflow's own runs do not. Owners report a warning email beforehand, and the workflow is re-enabled from the Actions tab. Here, a keepalive commit to `main` would also deploy ([continuous deployment](#continuous-deployment)).
+- **Hourly and late.** Scheduled runs are delayed at busy times, especially on the hour, and some are dropped. An alert can come an hour or two late.
+- **Who is emailed.** A failed scheduled run notifies the user who last changed the `cron` line, subject to that user's notification settings. While a limit is exceeded, the workflow comments on its issue and fails every hour.
+- **Minutes.** On a private repository, every run bills at least one minute of the plan's Actions quota.
+
+Place it in `.github/workflows/` only in your own copy:
+
+```yaml
+name: Cost watch
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+concurrency:
+  group: cost-watch
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      FLY_METRICS_TOKEN: ${{ secrets.FLY_METRICS_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PROMETHEUS_QUERY_URL: https://api.fly.io/prometheus/personal/api/v1/query
+      CORE_APP: checkout-surge-core
+      RUNNER_APP: checkout-surge-runner
+      CORE_MAX_SECONDS: "21600" # 6 h
+      RUNNER_MAX_SECONDS: "3600" # 60 min
+    steps:
+      - name: Check awake time
+        run: |
+          set -euo pipefail
+
+          # Seconds the app's Machines ran over the last 24 hours. Any query error fails the job.
+          awake_seconds() {
+            printf 'Authorization: %s\n' "$FLY_METRICS_TOKEN" \
+              | curl -fsS --max-time 30 -H @- "$PROMETHEUS_QUERY_URL" \
+                  --data-urlencode "query=sum(count_over_time(fly_instance_up{app=\"$1\"}[24h])) * 15 or vector(0)" \
+              | jq -er '.data.result[0].value[1] | tonumber | floor'
+          }
+
+          core=$(awake_seconds "$CORE_APP")
+          runner=$(awake_seconds "$RUNNER_APP")
+          message="Last 24 h: core awake $((core / 60)) min (limit $((CORE_MAX_SECONDS / 60))), runner running $((runner / 60)) min (limit $((RUNNER_MAX_SECONDS / 60)))."
+          echo "$message"
+
+          if (( core <= CORE_MAX_SECONDS && runner <= RUNNER_MAX_SECONDS )); then
+            exit 0
+          fi
+
+          gh label create cost-alert --force --color B60205 --description "Hosted demo awake time over its limit"
+          issue=$(gh issue list --label cost-alert --state open --limit 1 --json number --jq '.[0].number // empty')
+          if [ -n "$issue" ]; then
+            gh issue comment "$issue" --body "$message"
+          else
+            gh issue create --title "Hosted demo awake time over its limit" --label cost-alert --body "$message"
+          fi
+          echo "::error::$message"
+          exit 1
+```
+
+It uses no third-party action: `curl`, `jq` and the GitHub CLI are preinstalled on GitHub's runners. Test it with **Run workflow** and a temporarily low limit.
