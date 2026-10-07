@@ -1,6 +1,6 @@
 # 15b — Capacity-Aware Admission
 
-**Design:** section 1.2 · **Depends on:** 15a
+**Design:** section 1.2 · **Depends on:** 15a, 18
 
 ## Goal
 
@@ -20,7 +20,7 @@ A run is admitted only when it is expected to complete, or, for the owner, after
     - expected to fail above C, unless the run is short enough for its backlog to fit within the VUs.
   - **Buyer spike:** the time to serve, buyers divided by C', is compared with the safety cutoff.
   - **Stock** enters only if 15a shows an effect.
-  - **Success** means no dropped iteration. Latency is not a criterion.
+  - **Success** means every planned request is started and answered: none dropped, unstarted or interrupted (owner decision, 2026-10-08, after cloud VM A). Latency is not a criterion.
   - **ERP settings** do not hold VUs (13a).
 - **Capacity per deployment** (owner decision, 2026-10-08). C, C' and the latency budget are API env values, next to the caps and the estimator constants:
   - Fly: `infra/fly/core/machine.json`;

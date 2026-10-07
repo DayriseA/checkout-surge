@@ -35,10 +35,11 @@ Work breakdown for the hosted deployment on Fly.io.
 | 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | todo |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
 | 15a | [Capacity measurement](15a_capacity_measurement.md) | 13c | todo |
-| 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a | todo |
+| 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a, 18 | todo |
 | 15c | [Public limits and visitor explanations](15c_public_limits_and_explanations.md) | 15b, deployed | todo |
 | 16 | [Gate pages and messages](16_gate_pages_and_messages.md) | 17 | todo |
 | 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
+| 18 | [Interrupted requests in the run outcome](18_interrupted_requests_in_run_outcome.md) | none | todo |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 
