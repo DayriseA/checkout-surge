@@ -169,6 +169,7 @@ checkout-surge/
 | Domain model and cross-service conventions (`core_business_entities.md`, `cross_service_conventions.md`) |
 | Runtime topology, testing infrastructure, load/metrics, inventory hot path, and admin access references |
 | Hosted runtime and operations (`hosted_runtime.md`, `hosted_operations.md`) |
+| Fly.io primer for readers new to Fly, a standalone EN/FR page (`fly_primer.html`) |
 | Decision records: project scope and caveats, and numbered domain decision logs (`decisions/`, see its [README](decisions/README.md)) |
 | Agent quality checklists (`quality_checklists.md`) |
 

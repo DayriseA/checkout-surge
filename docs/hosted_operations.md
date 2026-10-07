@@ -128,8 +128,8 @@ Machines read their app's secrets when they start, so a staged secret takes effe
 
 | Secret | Holder app (Machines) | Token for app | Current token name |
 | :-- | :-- | :-- | :-- |
-| `RUNNER_FLY_API_TOKEN` | core (API) | runner | `core api runner operations` |
-| `CORE_FLY_API_TOKEN` | core (API) | core | `core-idle-stop` |
+| `RUNNER_FLY_API_TOKEN` | core (API) | runner | `core-api-runner-20261007` |
+| `CORE_FLY_API_TOKEN` | core (API) | core | `core-idle-stop-20261007` |
 | `CORE_FLY_API_TOKEN` | gate (gate and guard) | core | `gate-core-wake` |
 | `RUNNER_FLY_API_TOKEN` | gate (gate and guard) | runner | `guard-runner` |
 
@@ -172,6 +172,70 @@ It authenticates both directions between the core and the runner, so it changes 
   - Generate the other values with `openssl rand -hex`, so they are URL-safe. The session secret and the cookie secret must differ, and the cookie secret takes at least 16 bytes; placeholder values are refused. A refused value keeps the web container unhealthy, and the gate shows the booting page until the guard stops the core.
   - PostgreSQL and Redis listen on `127.0.0.1` only, so the URLs use that host: `DATABASE_URL` as `postgresql://postgres:<password>@127.0.0.1:5432/checkout_surge`, `REDIS_URL` as `redis://:<password>@127.0.0.1:6379`, each with the password staged beside it.
 - **PostgreSQL password with `DATABASE_URL`.** PostgreSQL applies its password only when it initializes an empty data directory. Stage both while the core sleeps, then [set the recreation mark](#recreation-mark): the next wake installs a fresh core with the new password, and hosted run history and admin edits are lost.
+
+### Rotating every core secret at once
+
+Use this procedure when every core secret must change, for example after they leaked. The new values go in with a fresh core, so PostgreSQL takes the new password. Hosted run history and admin edits are lost. The gate's tokens are rotated separately ([Machines API tokens](#machines-api-tokens)).
+
+1. **Stage the secrets.**
+   - Check that the core and the runner are `stopped` (`flyctl machine list -a checkout-surge-core`, and the same for the runner).
+   - Note the digests of both apps (`flyctl secrets list`).
+   - Then run the block below. It reads the [admin passphrase](#other-core-secrets) from the terminal, creates the core's two Machines API tokens, generates the other values, and stages them on the core, with `CONTROL_SERVICE_TOKEN` on the runner too. The values live only in the subshell. Nothing restarts.
+
+   ```bash
+   ( set -euo pipefail; d=$(date +%Y%m%d)
+     read -rsp 'Admin passphrase: ' ap; echo
+     ct=$(openssl rand -hex 32); ss=$(openssl rand -hex 32); cs=$(openssl rand -hex 32)
+     pg=$(openssl rand -hex 24); rp=$(openssl rand -hex 24)
+     rt=$(flyctl tokens create deploy -a checkout-surge-runner -n "core-api-runner-$d")
+     it=$(flyctl tokens create deploy -a checkout-surge-core -n "core-idle-stop-$d")
+     printf '%s\n' "CONTROL_SERVICE_TOKEN=$ct" "ADMIN_DASHBOARD_PASSPHRASE=$ap" \
+       "ADMIN_SESSION_SECRET=$ss" "PUBLIC_CLIENT_COOKIE_SECRET=$cs" \
+       "POSTGRES_PASSWORD=$pg" "DATABASE_URL=postgresql://postgres:$pg@127.0.0.1:5432/checkout_surge" \
+       "REDIS_PASSWORD=$rp" "REDIS_URL=redis://:$rp@127.0.0.1:6379" \
+       "RUNNER_FLY_API_TOKEN=$rt" "CORE_FLY_API_TOKEN=$it" \
+       | flyctl secrets import --stage -a checkout-surge-core
+     printf 'CONTROL_SERVICE_TOKEN=%s\n' "$ct" | flyctl secrets import --stage -a checkout-surge-runner )
+   ```
+
+   Check: every core digest and the runner's have changed; the core's and the runner's `CONTROL_SERVICE_TOKEN` digests are equal; and `flyctl tokens list -a <app>` shows the two new token names.
+2. **Deploy a fresh core from the workstation,** right after step 1.
+   - Deploy the commit that is, or is about to be, on `main`: set `ref` to `origin/main`, or to the branch about to be fast-forwarded into it.
+   - To create or renew the [CI token](#ci-token) at the same time, create it in the same subshell, store it, and run the deploy with `FLY_API_TOKEN="$t"`, so the deploy proves the token before CI uses it.
+
+   ```bash
+   ( set -euo pipefail; ref=origin/main
+     git fetch -q origin
+     test -z "$(git status --porcelain)" && test "$(git rev-parse HEAD)" = "$(git rev-parse "$ref")"
+     node infra/fly/deploy.mjs all --fresh-core )
+   ```
+
+   Check: the deploy prints `The next wake recreates the core fresh and empty` and `The core and the runner both run version …`.
+3. **Push, if the deployed commit is not on `main` yet:** `git push origin <branch>:main`.
+   - A fast-forward gives `main` the deployed commit. The CI deploy then carries the mark over ([incompatible changes](#incompatible-changes)), or finds the core already fresh.
+   - A failed CI deploy is retried with GitHub's "Re-run" on the latest run ([continuous deployment](#continuous-deployment)).
+   - Wait for the run to finish before the first wake. Otherwise the deploy waits for the core to sleep.
+4. **Wake the core** from the gate's start page.
+   - The fresh-install page shows, then the demo.
+   - `flyctl machine list -a checkout-surge-core` lists a new core with a new volume and no `recreate` mark. The old core and its volume are gone.
+5. **Verify.**
+   - `COMMIT_SHA` matches on the core's API container and on the runner (`flyctl machine status <id> -a <app> -d`).
+   - Sign in to `/admin` with the new passphrase.
+   - A public preset run completes, and the runner returns to `stopped`. This proves the runner token, the control token in both directions, the cookie secret, and the database and Redis URLs.
+   - With every tab closed, the core stops after the idle period (the core token).
+   - The guard's next run is clean ([guard logs](#guard-logs-and-switches)).
+6. **Revoke the old tokens** of the core's API: `flyctl tokens list -a checkout-surge-runner` and `-a checkout-surge-core`, then `flyctl tokens revoke <id>` for each old name. Only the stopped core held them, so revoking earlier is also safe; until it is done, the old tokens can read the new secrets.
+7. **Remove local copies** of the secrets. Keep only the admin passphrase, in a password manager.
+
+What can go wrong:
+
+- **A visitor wakes the core between steps 1 and 2.** The old core starts with the new secrets on its old data: it either works, or shows the setup-failure page until the guard stops it. Step 2 waits for it to sleep, then sets the mark. A wake after step 2 is the recreation itself.
+- **A bad value.** The fresh core's setup or web container fails ([values](#other-core-secrets)). Read `flyctl logs -a checkout-surge-core`, stop the core if it is up, stage the corrected secret, and wake again. A new `POSTGRES_PASSWORD` needs the [recreation mark](#recreation-mark) again.
+- **Step 1 half applied** (the core imported, the runner failed). The control token digests differ, and every run fails. Run step 1 again, then revoke the extra tokens it created.
+- **A full host refuses the deploy's update.** The script recreates the runner on another host and marks the core for recreation ([HD-55](decisions/hosted_deployment.md#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once), [HD-56](decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation)). Any other failure is re-run ([when a deploy fails](#when-a-deploy-fails)).
+- **The first run cannot start its runner, and the runner stays stuck.** [Recreate the runner](#runner-recreation) from the API container, then start again.
+- **A mark set by mistake.** [Remove it](#recreation-mark) before any wake.
+- **The wrong token revoked.** Create a new token for that holder and stage it as in [Machines API tokens](#machines-api-tokens).
 
 ---
 

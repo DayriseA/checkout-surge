@@ -31,10 +31,12 @@ Work breakdown for the hosted deployment on Fly.io.
 | 12 | [Deployment and versioning](12_deployment_and_versioning.md) | 09, 10 | done |
 | 13a | [Measurement and tuning](13a_measurement_and_tuning.md) | 01–12, 14 | done |
 | 13b | [Documentation and continuous deployment](13b_docs_and_ci.md) | 01–12, 14 | done |
-| 13c | [Go-live](13c_go_live.md) | 13a, 13b, plus the external prerequisite | todo |
+| 13c | [Go-live](13c_go_live.md) | 13a, 13b, plus the external prerequisite | in progress |
 | 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | todo |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
 | 15 | [Capacity-aware run admission](15_capacity_aware_run_admission.md) | 13c | todo |
+| 16 | [Gate pages and messages](16_gate_pages_and_messages.md) | 17 | todo |
+| 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 

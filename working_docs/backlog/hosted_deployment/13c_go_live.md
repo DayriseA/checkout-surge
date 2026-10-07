@@ -187,3 +187,38 @@ The demo is not linked yet, and the start button needs a POST.
   - The loss of run history is accepted and cannot be undone.
 - **Code rollback:** push a revert to `main`, or deploy the previous commit from the workstation. Secrets need no rollback: stage new values.
 - **Step 8, the wrong token revoked.** If `gate-core-wake` is revoked, the gate can no longer wake the core. Create a new gate core token, stage it on the gate, and stop the gate Machine.
+
+### Go-live log (2026-10-07)
+
+Times are UTC. I checked the facts read-only on Fly and GitHub at about 16:00.
+
+- **Block S** (about 12:52) staged every secret.
+  - All 10 core digests and the runner's changed, and the `CONTROL_SERVICE_TOKEN` digests are equal on the core and the runner.
+  - New tokens: `core-api-runner-20261007` (runner app) and `core-idle-stop-20261007` (core app).
+- **Block D** (about 12:57) created `github-actions-20261007` (org token, expires 2027-10-07) and stored `FLY_API_TOKEN`.
+  - The deploy with that token built every image.
+  - Fly then refused the runner update for host memory (409, "could not reserve resource … insufficient memory"). The deploy stopped cleanly with consistent versions.
+  - The owner approved destroying the stopped runner. `deploy.mjs all --fresh-core` was re-run with the owner's session: OK at `d81384b2`, mark set, new runner `875e99b0504198`.
+- **`git push origin dev:main`** (fast-forward to `d81384b2`).
+  - The first Actions run (`37627219858`, 13:16) failed on the same runner update, refused this time for host CPU (409 "insufficient CPUs").
+  - The versions stayed consistent ("both run version d81384b2…").
+  - The org token is proven for the builds and for Machines API authentication from GitHub.
+- **First wake:** the core was recreated in about 45 s.
+  - New core `863e11ceed4408` (created 13:27) on volume `vol_vz8l0zn2n7q1y8qv`.
+  - The old core `8d4070aed50068` and its volume are gone.
+- **Admin sign-in** with the new passphrase: OK.
+- **First admin `preview-1k`:** failed with 503 `load_orchestrator_unavailable`.
+  - Cause: the API's pre-start runner update was refused or reverted for capacity, outside the relocation path (fixed by task 17).
+  - Unblocked with `POST /admin/demo/runner/recreate` from the API container. The new runner `807244c6672338` (cdg) was created 13:38.
+  - `preview-1k` then completed, and the runner returned to `stopped`.
+- **Idle stop** at 13:56: the core stopped itself, which proves the new `core-idle-stop-20261007` token.
+- **Revoked** `core api runner operations` and `core-idle-stop` at 14:01. `gate-core-wake` and `guard-runner` are unchanged.
+- **Local secrets file** deleted by the owner (`infra/fly/core/` no longer holds it).
+- **Guard** passes at 13:47, 14:47 and 15:47: no actions, exit 0. The old volume is gone.
+- **Current state:** core, runner, gate and guard are all `stopped` and all at `d81384b2`. `main` is `d81384b2`, and its only deploy run failed (see above).
+
+### Remaining
+
+1. **The batched push to `main`:** this documentation batch plus task 17's fix (`5e6f48bc` on `dev`), by fast-forward. Then check that the CI run succeeds, and run task 17's manual verification on Fly.
+2. **A Fly billing alert** (owner).
+3. **The portfolio link** to the gate (owner), after 1 and 2.

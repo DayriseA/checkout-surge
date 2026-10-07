@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Fly.io Primer</title>
+<script>
+  // Applies a remembered language before the page paints. Without JavaScript the page stays in English.
+  (() => {
+    try {
+      if (window.localStorage.getItem("checkout-surge.fly-primer.lang") === "fr") {
+        document.documentElement.setAttribute("data-lang", "fr");
+        document.documentElement.setAttribute("lang", "fr");
+      }
+    } catch {
+      // Storage unavailable: keep English.
+    }
+  })();
+</script>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --surface-2: #f2f0ea;
+    --text: #1d1f23;
+    --muted: #4f5560;
+    --border: #d9d5cb;
+    --accent: #0a5aa8;
+    --accent-soft: #e3eefa;
+    --warn-bg: #fff4dc;
+    --warn-border: #c98a12;
+    --code-bg: #efece4;
+    --svg-box: #ffffff;
+    --svg-group: #f2f0ea;
+    --svg-line: #0a5aa8;
+    --svg-ctrl: #6a4fb0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121417;
+      --surface: #1a1d21;
+      --surface-2: #22262b;
+      --text: #e7e9ec;
+      --muted: #aab1ba;
+      --border: #383d44;
+      --accent: #7fb8ff;
+      --accent-soft: #1d2a3a;
+      --warn-bg: #2d2617;
+      --warn-border: #d9a640;
+      --code-bg: #262a30;
+      --svg-box: #1f2328;
+      --svg-group: #181b1f;
+      --svg-line: #7fb8ff;
+      --svg-ctrl: #c3a8ff;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121417;
+    --surface: #1a1d21;
+    --surface-2: #22262b;
+    --text: #e7e9ec;
+    --muted: #aab1ba;
+    --border: #383d44;
+    --accent: #7fb8ff;
+    --accent-soft: #1d2a3a;
+    --warn-bg: #2d2617;
+    --warn-border: #d9a640;
+    --code-bg: #262a30;
+    --svg-box: #1f2328;
+    --svg-group: #181b1f;
+    --svg-line: #7fb8ff;
+    --svg-ctrl: #c3a8ff;
+  }
+
+  /* Language switching: English shows by default and without JavaScript. */
+  html:not([data-lang="fr"]) .fr { display: none; }
+  html[data-lang="fr"] .en { display: none; }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    overflow-wrap: break-word;
+  }
+  .page { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  h1, h2, h3 { line-height: 1.25; }
+  h1 { font-size: 2rem; margin: 8px 0 12px; }
+  h2 { font-size: 1.5rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--border); }
+  h3 { font-size: 1.15rem; margin: 28px 0 8px; }
+  p, ul, ol, dl { margin: 0 0 14px; }
+  li { margin: 4px 0; }
+  code {
+    font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .eyebrow { margin: 0; color: var(--muted); font-size: 0.9rem; }
+  .lede { font-size: 1.1rem; color: var(--muted); }
+  .lang-switch { display: inline-flex; margin: 0; padding: 0; min-inline-size: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .lang-switch[hidden] { display: none; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+  .lang-switch button {
+    font: inherit; font-size: 0.9rem; font-weight: 600;
+    min-width: 48px; min-height: 40px; padding: 6px 12px;
+    border: 0; background: transparent; color: var(--text); cursor: pointer;
+  }
+  .lang-switch button + button { border-left: 1px solid var(--border); }
+  .lang-switch button[aria-pressed="true"] { background: var(--accent); color: var(--bg); }
+  nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 20px 0; }
+  nav.toc ol { margin: 0; padding-left: 22px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin: 0 0 14px; }
+  .note { background: var(--accent-soft); border-left: 4px solid var(--accent); border-radius: 6px; padding: 10px 14px; margin: 0 0 14px; }
+  .warn { background: var(--warn-bg); border-left: 4px solid var(--warn-border); border-radius: 6px; padding: 10px 14px; margin: 0 0 14px; }
+  dl.terms dt { font-weight: 700; margin-top: 14px; }
+  dl.terms dd { margin: 4px 0 0 0; }
+  .table-wrap { overflow-x: auto; margin: 0 0 14px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; background: var(--surface); }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { background: var(--surface-2); }
+  tr:last-child td { border-bottom: 0; }
+  .states { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
+  .state { font-family: ui-monospace, Consolas, monospace; font-size: 0.9rem; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); }
+  .arrow { color: var(--muted); }
+  figure { margin: 0 0 16px; }
+  .diagram { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); padding: 8px; }
+  .diagram svg { display: block; width: 100%; min-width: 480px; max-width: 640px; height: auto; margin: 0 auto; }
+  figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 6px; }
+  svg .box { fill: var(--svg-box); stroke: var(--border); stroke-width: 1.5; }
+  svg .group { fill: var(--svg-group); stroke: var(--muted); stroke-width: 1; stroke-dasharray: 5 4; }
+  svg .label { fill: var(--text); font: 600 15px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  svg .small { fill: var(--muted); font: 12.5px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  svg .group-label { fill: var(--muted); font: 600 12px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; letter-spacing: 0.04em; }
+  svg .flow { stroke: var(--svg-line); stroke-width: 2.2; fill: none; }
+  svg .ctrl { stroke: var(--svg-ctrl); stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+  svg .flow-text { fill: var(--svg-line); font: 600 12.5px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  svg .ctrl-text { fill: var(--svg-ctrl); font: 12px system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  svg .head-flow { fill: var(--svg-line); }
+  svg .head-ctrl { fill: var(--svg-ctrl); }
+  svg .disk { fill: var(--surface-2); stroke: var(--muted); stroke-width: 1.4; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.9rem; border-top: 1px solid var(--border); padding-top: 12px; }
+  @media (max-width: 560px) {
+    h1 { font-size: 1.6rem; }
+    h2 { font-size: 1.3rem; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="topbar">
+    <p class="eyebrow">checkout-surge · docs</p>
+    <fieldset id="lang-switch" class="lang-switch" hidden>
+      <legend class="visually-hidden">Language / Langue</legend>
+      <button type="button" data-lang="en" lang="en" aria-label="English" aria-pressed="true">EN</button>
+      <button type="button" data-lang="fr" lang="fr" aria-label="Français" aria-pressed="false">FR</button>
+    </fieldset>
+  </div>
+  <div class="en" lang="en">
+    <h1>Fly.io primer</h1>
+    <p class="lede">How Fly.io works, and how this project uses it, for an owner who has never used Fly. Each idea comes in plain words first, then with its precise term.</p>
+  </div>
+  <div class="fr" lang="fr">
+    <h1>Fly.io, l'essentiel</h1>
+    <p class="lede">Comment fonctionne Fly.io et comment ce projet s'en sert, pour un propriétaire qui n'a jamais utilisé Fly. Chaque idée est d'abord dite simplement, puis avec son terme exact.</p>
+  </div>
+  <div class="en" lang="en">
+    <p class="note">Project statements come from the repository's own documents: <a href="hosted_runtime.md">Hosted Runtime</a>, <a href="hosted_operations.md">Hosted Operations</a>, the <a href="decisions/hosted_deployment.md">hosted deployment decision log</a> (entries <code>HD-NN</code>) and <a href="runtime_topology.md">Runtime Topology</a>. Those documents win if this page ever disagrees with them. Sizes, limits, timeouts and regions are not copied here: the page points to the file that holds each one.</p>
+  </div>
+  <div class="fr" lang="fr">
+    <p class="note">Ce qui concerne le projet vient des documents du dépôt : <a href="hosted_runtime.md">Hosted Runtime</a>, <a href="hosted_operations.md">Hosted Operations</a>, le <a href="decisions/hosted_deployment.md">journal des décisions d'hébergement</a> (entrées <code>HD-NN</code>) et <a href="runtime_topology.md">Runtime Topology</a>. En cas de désaccord, ces documents font foi. Les tailles, limites, délais et régions ne sont pas recopiés ici : la page indique le fichier qui contient chaque valeur.</p>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#fly-basics"><span class="en" lang="en">Fly.io in two minutes</span><span class="fr" lang="fr">Fly.io en deux minutes</span></a></li>
+    <li><a href="#lifecycle"><span class="en" lang="en">Machine lifecycle</span><span class="fr" lang="fr">Cycle de vie d'une Machine</span></a></li>
+    <li><a href="#project"><span class="en" lang="en">How this project uses Fly</span><span class="fr" lang="fr">Comment ce projet utilise Fly</span></a></li>
+    <li><a href="#glossary"><span class="en" lang="en">Glossary (EN / FR)</span><span class="fr" lang="fr">Glossaire (EN / FR)</span></a></li>
+    <li><a href="#official-docs"><span class="en" lang="en">Read the official documentation</span><span class="fr" lang="fr">Lire la documentation officielle</span></a></li>
+  </ol>
+</nav>
+
+<main>
+
+<!-- 1. Fly.io in two minutes -->
+<section id="fly-basics">
+<div class="en" lang="en">
+  <h2>1. Fly.io in two minutes</h2>
+  <p>Fly.io rents small virtual machines in datacenters around the world, and starts or stops them in seconds through an API. You pay mostly for the time they run. Everything else (networking, secrets, disks) is organized around those machines.</p>
+  <dl class="terms">
+    <dt>The account space: <em>organization</em></dt>
+    <dd>The top-level container that owns apps, billing, tokens and one private network. This project uses one organization that holds only the demo's apps (named in <a href="hosted_operations.md#before-you-start">Hosted Operations</a>).</dd>
+
+    <dt>A named group of machines: <em>app</em></dt>
+    <dd>An app is not a running thing by itself. It is a name plus shared resources: its Machines, secrets, public IP addresses, certificates and volumes. Every <code>flyctl</code> command names its app with <code>-a</code>.</dd>
+
+    <dt>A small virtual computer: <em>Machine</em> (a Firecracker microVM)</dt>
+    <dd>A lightweight virtual machine that runs a container image. Each Machine has an ID, a <em>config</em> (image, size called <code>guest</code>, environment variables, files, services, metadata) and a <em>state</em> such as <code>started</code> or <code>stopped</code>. A stopped Machine starts fast because its root filesystem is already assembled on its server. A Machine can also run several containers side by side (a <em>multi-container Machine</em>), which is how the core is packaged.</dd>
+
+    <dt>Where it runs: <em>region</em> and <em>host</em></dt>
+    <dd>A region is a datacenter location with a three-letter code. A host (Fly also says worker) is one physical server in a region. Every Machine lives on exactly one host. When creating a Machine you can give a prioritized list such as <code>&lt;region&gt;,eu</code>: Fly tries the first region, then any region of the <code>eu</code> group.</dd>
+
+    <dt>What it runs: <em>image</em> and <em>registry</em></dt>
+    <dd>Code ships as a container image. Images are pushed to Fly's registry (<code>registry.fly.io/&lt;app&gt;:&lt;label&gt;</code>) and a Machine config points at one image reference.</dd>
+
+    <dt>A disk that survives restarts: <em>volume</em></dt>
+    <dd>A slice of an NVMe drive on the same physical server as its Machine. One volume attaches to one Machine. Because the disk is physically in that server, the volume pins its Machine to that host: the Machine cannot start anywhere else. Fly takes daily snapshots of volumes by default.</dd>
+
+    <dt>The private network: <em>6PN</em></dt>
+    <dd>All Machines of an organization share a private IPv6 network (a WireGuard mesh). Each Machine gets a private address, visible to it as <code>FLY_PRIVATE_IP</code>, and names under <code>.internal</code> resolve to those addresses. This traffic goes Machine to Machine directly, without Fly Proxy.</dd>
+
+    <dt>The front door: <em>Fly Proxy</em> and <em>public IPs</em></dt>
+    <dd>Public traffic reaches Fly's edge on Anycast addresses (shared IPv4, routed by hostname, and a dedicated IPv6), where Fly Proxy terminates TLS and forwards each request to a Machine whose config declares a <em>service</em> for that port. Nothing is exposed without a service. Fly Proxy can also <em>autostart</em> a stopped Machine when a request arrives and <em>autostop</em> it when traffic is gone. Every app gets a <code>&lt;app&gt;.fly.dev</code> hostname.</dd>
+
+    <dt>Passwords and keys: <em>secrets</em></dt>
+    <dd>Each app has an encrypted vault. Fly injects the secrets as environment variables when a Machine boots, so a Machine sees a new value only at its next start. <code>flyctl secrets set --stage</code> stores a value without restarting anything.</dd>
+    <dd><strong>Why <code>flyctl secrets list</code> shows "Staged".</strong> Its status column follows Fly <em>releases</em>, which <code>fly deploy</code> or <code>fly secrets deploy</code> create. This project deploys through the Machines API and never makes a release, so every secret shows <code>Staged</code>, always. That is normal: compare the <code>DIGEST</code> column to see a change, and never run <code>flyctl secrets deploy</code> (<a href="hosted_operations.md#rotating-secrets-and-tokens">Hosted Operations</a>).</dd>
+
+    <dt>Who may act: <em>tokens</em></dt>
+    <dd>Programs authenticate to Fly with a token sent as <code>Authorization: Bearer …</code>. A <em>deploy token</em> covers one app; an <em>organization token</em> covers every app of the organization; <code>flyctl auth login</code> gives you a personal session. Tokens can be listed and revoked with <code>flyctl tokens</code>.</dd>
+
+    <dt>What it costs: <em>billing</em></dt>
+    <dd>A started Machine is billed per second, by size. A stopped Machine costs only the storage of its root filesystem. A volume is billed for its provisioned size whether its Machine runs or not; snapshots are billed by the data they store. Shared IPv4 and IPv6 addresses are free; outbound traffic is metered. Prices are on Fly's <a href="https://docs.fly.io/about/pricing">pricing page</a>; this project's own observations are in <a href="reference_runtime_measurements.md#hosted-flyio-observations">Reference Runtime Measurements</a>.</dd>
+  </dl>
+
+  <h3>Two dashboard messages that look alarming and are not</h3>
+  <div class="card">
+    <p><strong>"Suspended" on an app.</strong> In the dashboard, an app whose Machines are all stopped is shown as <em>Suspended</em>. It only means nothing is running; it is not an administrative suspension (a Fly staff answer on the <a href="https://community.fly.io/t/app-suspended/24387">community forum</a>). Here it is the normal resting state of the core and runner apps, and of the gate app between visits. Do not confuse it with the Machine state <code>suspended</code> (a Machine paused with its memory saved to disk), which this project does not use.</p>
+  </div>
+  <div class="card">
+    <p><strong>"Run at least 2 machines".</strong> Fly recommends at least two Machines per app so that one failed host does not take the app down (<a href="https://docs.fly.io/apps/app-availability">App availability</a>). The dashboard's banner repeats that general advice. It does not fit this demo, by design:</p>
+    <ul>
+      <li>The core is one authoritative Machine whose data is disposable (<a href="decisions/hosted_deployment.md#hd-05-core-data-is-disposable-with-no-restore-path">HD-05</a>). When its host fails, the gate recreates a fresh core elsewhere (<a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>). A second core would double the cost and need data replication, and one API process stays the sole maintenance authority (<a href="decisions/hosted_deployment.md#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput">HD-51</a>).</li>
+      <li>The runner exists to run one load test at a time and is recreated on another host when its own fails (<a href="decisions/hosted_deployment.md#hd-17-runner-capacity-failures-retry-in-place-then-recreate">HD-17</a>).</li>
+      <li>The gate holds no state and sleeps between visits (<a href="decisions/hosted_deployment.md#hd-31-the-gate-sleeps-and-a-visit-wakes-it">HD-31</a>); the guard is a one-shot scheduled job.</li>
+    </ul>
+    <p>The trade-off is deliberate: a demo used a few hours per month accepts a slower visit after a host failure in exchange for near-zero idle cost. The banner can be ignored.</p>
+  </div>
+</div>
+
+<div class="fr" lang="fr">
+  <h2>1. Fly.io en deux minutes</h2>
+  <p>Fly.io loue de petites machines virtuelles dans des centres de données du monde entier, et les démarre ou les arrête en quelques secondes par une API. On paie surtout le temps où elles tournent. Tout le reste (réseau, secrets, disques) s'organise autour de ces machines.</p>
+  <dl class="terms">
+    <dt>L'espace du compte : <em>organization</em> (organisation)</dt>
+    <dd>Le conteneur de plus haut niveau, qui possède les apps, la facturation, les jetons et un réseau privé. Ce projet utilise une organisation qui ne contient que les apps de la démo (nommée dans <a href="hosted_operations.md#before-you-start">Hosted Operations</a>).</dd>
+
+    <dt>Un groupe nommé de machines : <em>app</em></dt>
+    <dd>Une app ne tourne pas en elle-même. C'est un nom plus des ressources partagées : ses Machines, ses secrets, ses adresses IP publiques, ses certificats et ses volumes. Chaque commande <code>flyctl</code> désigne son app avec <code>-a</code>.</dd>
+
+    <dt>Un petit ordinateur virtuel : <em>Machine</em> (une microVM Firecracker)</dt>
+    <dd>Une machine virtuelle légère qui exécute une image de conteneur. Chaque Machine a un identifiant, une <em>config</em> (image, taille appelée <code>guest</code>, variables d'environnement, fichiers, services, métadonnées) et un <em>état</em> comme <code>started</code> (démarrée) ou <code>stopped</code> (arrêtée). Une Machine arrêtée redémarre vite, car son système de fichiers racine est déjà assemblé sur son serveur. Une Machine peut aussi faire tourner plusieurs conteneurs côte à côte (<em>multi-container Machine</em>) : c'est ainsi qu'est empaqueté le core.</dd>
+
+    <dt>Où elle tourne : <em>region</em> (région) et <em>host</em> (hôte)</dt>
+    <dd>Une région est un centre de données identifié par un code de trois lettres. Un hôte (Fly dit aussi <em>worker</em>) est un serveur physique dans une région. Chaque Machine vit sur un seul hôte. À la création d'une Machine, on peut donner une liste par ordre de préférence comme <code>&lt;région&gt;,eu</code> : Fly essaie la première région, puis n'importe quelle région du groupe <code>eu</code>.</dd>
+
+    <dt>Ce qu'elle exécute : <em>image</em> et <em>registry</em> (registre)</dt>
+    <dd>Le code est livré sous forme d'image de conteneur. Les images sont poussées dans le registre de Fly (<code>registry.fly.io/&lt;app&gt;:&lt;étiquette&gt;</code>) et la config d'une Machine désigne une référence d'image.</dd>
+
+    <dt>Un disque qui survit aux redémarrages : <em>volume</em></dt>
+    <dd>Une portion d'un disque NVMe sur le même serveur physique que sa Machine. Un volume se rattache à une seule Machine. Comme le disque est physiquement dans ce serveur, le volume épingle sa Machine à cet hôte : elle ne peut démarrer nulle part ailleurs. Par défaut, Fly prend un instantané (<em>snapshot</em>) quotidien des volumes.</dd>
+
+    <dt>Le réseau privé : <em>6PN</em></dt>
+    <dd>Toutes les Machines d'une organisation partagent un réseau privé IPv6 (un maillage WireGuard). Chaque Machine reçoit une adresse privée, qu'elle voit dans <code>FLY_PRIVATE_IP</code>, et les noms en <code>.internal</code> se résolvent vers ces adresses. Ce trafic va directement de Machine à Machine, sans passer par Fly Proxy.</dd>
+
+    <dt>La porte d'entrée : <em>Fly Proxy</em> et <em>IP publiques</em></dt>
+    <dd>Le trafic public arrive à la périphérie de Fly sur des adresses Anycast (IPv4 partagée, routée par nom d'hôte, et IPv6 dédiée). Fly Proxy y termine le TLS et transmet chaque requête à une Machine dont la config déclare un <em>service</em> pour ce port. Rien n'est exposé sans service. Fly Proxy peut aussi démarrer automatiquement (<em>autostart</em>) une Machine arrêtée quand une requête arrive, et l'arrêter (<em>autostop</em>) quand le trafic cesse. Chaque app reçoit un nom <code>&lt;app&gt;.fly.dev</code>.</dd>
+
+    <dt>Mots de passe et clés : <em>secrets</em></dt>
+    <dd>Chaque app a un coffre chiffré. Fly injecte les secrets comme variables d'environnement au démarrage d'une Machine : une Machine ne voit une nouvelle valeur qu'à son prochain démarrage. <code>flyctl secrets set --stage</code> enregistre une valeur sans rien redémarrer.</dd>
+    <dd><strong>Pourquoi <code>flyctl secrets list</code> affiche « Staged ».</strong> Sa colonne de statut suit les <em>releases</em> de Fly, que créent <code>fly deploy</code> ou <code>fly secrets deploy</code>. Ce projet déploie par l'API Machines et ne crée jamais de release : chaque secret reste <code>Staged</code>, toujours. C'est normal : comparez la colonne <code>DIGEST</code> pour voir un changement, et ne lancez jamais <code>flyctl secrets deploy</code> (<a href="hosted_operations.md#rotating-secrets-and-tokens">Hosted Operations</a>).</dd>
+
+    <dt>Qui a le droit d'agir : <em>tokens</em> (jetons)</dt>
+    <dd>Les programmes s'authentifient auprès de Fly avec un jeton envoyé dans <code>Authorization: Bearer …</code>. Un <em>deploy token</em> (jeton de déploiement) couvre une app ; un <em>organization token</em> (jeton d'organisation) couvre toutes les apps de l'organisation ; <code>flyctl auth login</code> ouvre une session personnelle. <code>flyctl tokens</code> liste et révoque les jetons.</dd>
+
+    <dt>Ce que ça coûte : <em>facturation</em></dt>
+    <dd>Une Machine démarrée est facturée à la seconde, selon sa taille. Une Machine arrêtée ne coûte que le stockage de son système de fichiers racine. Un volume est facturé pour sa taille provisionnée, que sa Machine tourne ou non ; les instantanés sont facturés selon les données stockées. Les IPv4 partagées et les IPv6 sont gratuites ; le trafic sortant est mesuré. Les prix sont sur la <a href="https://docs.fly.io/about/pricing">page de tarifs</a> de Fly ; les observations du projet sont dans <a href="reference_runtime_measurements.md#hosted-flyio-observations">Reference Runtime Measurements</a>.</dd>
+  </dl>
+
+  <h3>Deux messages du tableau de bord, inquiétants en apparence seulement</h3>
+  <div class="card">
+    <p><strong>« Suspended » sur une app.</strong> Dans le tableau de bord, une app dont toutes les Machines sont arrêtées apparaît <em>Suspended</em>. Cela veut seulement dire que rien ne tourne ; ce n'est pas une suspension administrative (réponse d'un membre de l'équipe Fly sur le <a href="https://community.fly.io/t/app-suspended/24387">forum</a>). Ici, c'est l'état de repos normal des apps core et runner, et de l'app gate entre deux visites. À ne pas confondre avec l'état de Machine <code>suspended</code> (Machine mise en pause avec sa mémoire sauvegardée sur disque), que ce projet n'utilise pas.</p>
+  </div>
+  <div class="card">
+    <p><strong>« Run at least 2 machines ».</strong> Fly recommande au moins deux Machines par app, pour qu'un hôte en panne ne fasse pas tomber l'app (<a href="https://docs.fly.io/apps/app-availability">App availability</a>). Le bandeau du tableau de bord répète ce conseil général. Il ne convient pas à cette démo, par choix :</p>
+    <ul>
+      <li>Le core est une Machine unique qui fait autorité, et ses données sont jetables (<a href="decisions/hosted_deployment.md#hd-05-core-data-is-disposable-with-no-restore-path">HD-05</a>). Quand son hôte tombe, la gate recrée un core neuf ailleurs (<a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>). Un second core doublerait le coût et demanderait de répliquer les données, et un seul processus API reste l'unique autorité de maintenance (<a href="decisions/hosted_deployment.md#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput">HD-51</a>).</li>
+      <li>Le runner sert à un test de charge à la fois, et il est recréé sur un autre hôte quand le sien tombe (<a href="decisions/hosted_deployment.md#hd-17-runner-capacity-failures-retry-in-place-then-recreate">HD-17</a>).</li>
+      <li>La gate ne garde aucun état et dort entre les visites (<a href="decisions/hosted_deployment.md#hd-31-the-gate-sleeps-and-a-visit-wakes-it">HD-31</a>) ; le guard est une tâche planifiée ponctuelle.</li>
+    </ul>
+    <p>Le compromis est voulu : une démo utilisée quelques heures par mois accepte une visite plus lente après une panne d'hôte, en échange d'un coût quasi nul au repos. Le bandeau peut être ignoré.</p>
+  </div>
+</div>
+</section>
+
+<!-- 2. Machine lifecycle -->
+<section id="lifecycle">
+<div class="en" lang="en">
+  <h2>2. Machine lifecycle</h2>
+  <p>A Machine moves between a few lasting states. The Machines API (<code>https://api.machines.dev</code>) and <code>flyctl machine …</code> drive every move.</p>
+  <div class="states" role="img" aria-label="created, then started, then stopped, which can start again, then destroyed">
+    <span class="state">created</span><span class="arrow" aria-hidden="true">→</span>
+    <span class="state">started</span><span class="arrow" aria-hidden="true">⇄</span>
+    <span class="state">stopped</span><span class="arrow" aria-hidden="true">→</span>
+    <span class="state">destroyed</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">State</th><th scope="col">Plain meaning</th></tr></thead>
+      <tbody>
+        <tr><td><code>created</code></td><td>The Machine exists but has never been started.</td></tr>
+        <tr><td><code>started</code></td><td>Running and reachable. Billed per second.</td></tr>
+        <tr><td><code>stopped</code></td><td>Exited, on its own or on request. It stays on its host with its root filesystem and can start again.</td></tr>
+        <tr><td><code>destroyed</code></td><td>Deleted for good. A new Machine gets a new ID.</td></tr>
+        <tr><td><code>starting</code>, <code>stopping</code>, <code>replacing</code>, …</td><td>Short transitions. <code>replacing</code> means an update is being applied; the gate shows its "updating" page then.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Prepared, not started: <code>skip_launch</code></h3>
+  <p>Creating or updating a Machine with <code>skip_launch</code> writes its config without booting it. The deploy script uses it for every Machine, so a deploy never starts anything, then waits for the Machine to settle in <code>stopped</code> (<a href="decisions/hosted_deployment.md#hd-24-deploys-build-remotely-and-replace-whole-machine-configs">HD-24</a>). One exception: the guard, because a scheduled Machine created or updated with <code>skip_launch</code> was observed never to run on schedule again (<a href="decisions/hosted_deployment.md#hd-41-the-guard-is-deployed-without-skip_launch">HD-41</a>). <code>flyctl machine update --skip-start</code> sets the same flag.</p>
+
+  <h3>Why a stopped Machine reserves nothing</h3>
+  <p>A stopped Machine keeps its place on its host (its root filesystem stays there, which is why it starts fast), but no CPU or memory is held for it. Others can fill the host meanwhile. So Fly can refuse a <em>start</em> for lack of capacity, and can refuse an <em>update</em> that needs more room, either with an error or by reverting it after accepting it. This project has seen both: refused starts (<a href="decisions/hosted_deployment.md#hd-17-runner-capacity-failures-retry-in-place-then-recreate">HD-17</a>, <a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>) and refused or reverted updates (<a href="decisions/hosted_deployment.md#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once">HD-55</a>, <a href="decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation">HD-56</a>).</p>
+  <p>A Machine without a volume can simply be recreated on a host with room. A Machine with a volume cannot move, because its disk is in that server: this is why the core, when its host is full or dead, is recreated fresh and empty elsewhere instead.</p>
+
+  <h3>Locks: <em>leases</em>, <em>nonces</em> and <em>TTLs</em></h3>
+  <p>A lease is a temporary lock on changing one Machine, so that two programs do not modify it at once. Taking a lease returns a <em>nonce</em>, a random value that proves you hold it; the holder sends it in the <code>fly-machine-lease-nonce</code> header with each change. Fly fails an update sent without the nonce while the Machine is leased; the project observed that a stop or destroy sent without it waits until the lease ends, then runs (<a href="decisions/hosted_deployment.md#hd-37-the-guard-acts-only-under-a-machines-lease-and-skips-a-leased-one">HD-37</a>).</p>
+  <p>Every lease has a <em>TTL</em> (time to live, in seconds) and expires on its own. If its holder dies, the lease stays until then: <code>flyctl machine leases view</code> shows it, and <code>flyctl machine leases clear</code> frees it, only when you know the holder is gone (<a href="hosted_operations.md#freeing-a-lease">Hosted Operations</a>). In this project, leases are advisory coordination between our own programs, not a security boundary; who holds which lease, and what the others do when they meet it, is in <a href="hosted_runtime.md#authoritative-core-and-leases">Hosted Runtime</a>. The TTLs are set in <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a> and in the gate and API code.</p>
+
+  <h3>Is the server reachable: <em>host status</em></h3>
+  <p>Each Machine reports <code>host_status</code>: <code>ok</code>, <code>unreachable</code> (the Machines API cannot reach the host) or <code>unknown</code>. When it is not <code>ok</code>, Fly returns only part of the config (metadata can be missing), grants no usable lease, and changes will probably fail. The gate, the API and the guard therefore act on such a Machine without a lease, and never destroy one they cannot identify (<a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>, <a href="decisions/hosted_deployment.md#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok">HD-47</a>, <a href="decisions/hosted_deployment.md#hd-42-the-guard-leaves-a-role-less-machine-on-a-down-host-alone">HD-42</a>).</p>
+
+  <h3>Labels: <em>metadata</em></h3>
+  <p>A Machine carries key–value metadata. The project finds its Machines by <code>role</code> (<code>core</code>, <code>runner</code>, …), never by a hardcoded ID, and uses <code>recreate=requested</code> as the recreation mark on the core.</p>
+
+  <h3>Cron-like Machines: <em>scheduled Machines</em></h3>
+  <p>A Machine with a <code>schedule</code> (<code>hourly</code>, <code>daily</code>, <code>weekly</code> or <code>monthly</code>) is started by Fly's scheduler at roughly that interval, counted from its creation, not at a precise time. It runs, exits, and waits stopped for the next interval. The guard is one (<a href="../infra/fly/gate/guard-machine.json">infra/fly/gate/guard-machine.json</a>).</p>
+</div>
+
+<div class="fr" lang="fr">
+  <h2>2. Cycle de vie d'une Machine</h2>
+  <p>Une Machine passe par quelques états durables. L'API Machines (<code>https://api.machines.dev</code>) et <code>flyctl machine …</code> pilotent chaque passage.</p>
+  <div class="states" role="img" aria-label="created, puis started, puis stopped, qui peut redémarrer, puis destroyed">
+    <span class="state">created</span><span class="arrow" aria-hidden="true">→</span>
+    <span class="state">started</span><span class="arrow" aria-hidden="true">⇄</span>
+    <span class="state">stopped</span><span class="arrow" aria-hidden="true">→</span>
+    <span class="state">destroyed</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">État</th><th scope="col">En clair</th></tr></thead>
+      <tbody>
+        <tr><td><code>created</code></td><td>La Machine existe mais n'a jamais démarré.</td></tr>
+        <tr><td><code>started</code></td><td>Elle tourne et répond. Facturée à la seconde.</td></tr>
+        <tr><td><code>stopped</code></td><td>Elle s'est arrêtée, d'elle-même ou sur demande. Elle reste sur son hôte avec son système de fichiers racine et peut redémarrer.</td></tr>
+        <tr><td><code>destroyed</code></td><td>Supprimée définitivement. Une nouvelle Machine reçoit un nouvel identifiant.</td></tr>
+        <tr><td><code>starting</code>, <code>stopping</code>, <code>replacing</code>, …</td><td>Transitions brèves. <code>replacing</code> signifie qu'une mise à jour s'applique ; la gate affiche alors sa page « mise à jour ».</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Préparée, pas démarrée : <code>skip_launch</code></h3>
+  <p>Créer ou mettre à jour une Machine avec <code>skip_launch</code> écrit sa config sans la démarrer. Le script de déploiement l'utilise pour chaque Machine, si bien qu'un déploiement ne démarre jamais rien, puis il attend que la Machine se pose en <code>stopped</code> (<a href="decisions/hosted_deployment.md#hd-24-deploys-build-remotely-and-replace-whole-machine-configs">HD-24</a>). Une exception : le guard, car une Machine planifiée créée ou mise à jour avec <code>skip_launch</code> n'a plus jamais été lancée par le planificateur (<a href="decisions/hosted_deployment.md#hd-41-the-guard-is-deployed-without-skip_launch">HD-41</a>). <code>flyctl machine update --skip-start</code> pose le même drapeau.</p>
+
+  <h3>Pourquoi une Machine arrêtée ne réserve rien</h3>
+  <p>Une Machine arrêtée garde sa place sur son hôte (son système de fichiers racine y reste, d'où son démarrage rapide), mais aucun processeur ni aucune mémoire ne lui est réservé. D'autres peuvent remplir l'hôte entre-temps. Fly peut donc refuser un <em>démarrage</em> faute de capacité, et refuser une <em>mise à jour</em> qui demande plus de place, soit par une erreur, soit en l'annulant après l'avoir acceptée. Le projet a vu les deux : démarrages refusés (<a href="decisions/hosted_deployment.md#hd-17-runner-capacity-failures-retry-in-place-then-recreate">HD-17</a>, <a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>) et mises à jour refusées ou annulées (<a href="decisions/hosted_deployment.md#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once">HD-55</a>, <a href="decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation">HD-56</a>).</p>
+  <p>Une Machine sans volume peut simplement être recréée sur un hôte qui a de la place. Une Machine avec volume ne peut pas bouger, car son disque est dans ce serveur : c'est pourquoi le core, quand son hôte est plein ou mort, est recréé neuf et vide ailleurs.</p>
+
+  <h3>Verrous : <em>leases</em>, <em>nonces</em> et <em>TTL</em></h3>
+  <p>Un verrou (<em>lease</em>) est un verrou temporaire sur la modification d'une Machine, pour que deux programmes ne la modifient pas en même temps. Prendre un verrou renvoie un <em>nonce</em>, une valeur aléatoire qui prouve qu'on le détient ; le détenteur l'envoie dans l'en-tête <code>fly-machine-lease-nonce</code> à chaque modification. Fly fait échouer une mise à jour envoyée sans le nonce tant que la Machine est verrouillée ; le projet a constaté qu'un arrêt ou une suppression envoyés sans lui attendent la fin du verrou, puis s'exécutent (<a href="decisions/hosted_deployment.md#hd-37-the-guard-acts-only-under-a-machines-lease-and-skips-a-leased-one">HD-37</a>).</p>
+  <p>Chaque verrou a un <em>TTL</em> (durée de vie, en secondes) et expire de lui-même. Si son détenteur meurt, le verrou reste jusque-là : <code>flyctl machine leases view</code> l'affiche, et <code>flyctl machine leases clear</code> le libère, seulement quand on sait le détenteur disparu (<a href="hosted_operations.md#freeing-a-lease">Hosted Operations</a>). Dans ce projet, les verrous coordonnent nos propres programmes ; ce ne sont pas une barrière de sécurité. Qui tient quel verrou, et ce que font les autres quand ils le rencontrent, est décrit dans <a href="hosted_runtime.md#authoritative-core-and-leases">Hosted Runtime</a>. Les TTL sont fixés dans <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a> et dans le code de la gate et de l'API.</p>
+
+  <h3>Le serveur répond-il : <em>host status</em></h3>
+  <p>Chaque Machine indique <code>host_status</code> : <code>ok</code>, <code>unreachable</code> (l'API Machines ne joint pas l'hôte) ou <code>unknown</code>. Quand il n'est pas <code>ok</code>, Fly ne renvoie qu'une partie de la config (les métadonnées peuvent manquer), n'accorde aucun verrou utilisable, et les modifications échoueront probablement. La gate, l'API et le guard agissent donc sur une telle Machine sans verrou, et ne suppriment jamais une Machine qu'ils ne savent pas identifier (<a href="decisions/hosted_deployment.md#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy">HD-34</a>, <a href="decisions/hosted_deployment.md#hd-47-the-runner-is-recreated-from-a-deployed-config-without-a-lease-on-a-host-that-is-not-ok">HD-47</a>, <a href="decisions/hosted_deployment.md#hd-42-the-guard-leaves-a-role-less-machine-on-a-down-host-alone">HD-42</a>).</p>
+
+  <h3>Étiquettes : <em>metadata</em> (métadonnées)</h3>
+  <p>Une Machine porte des métadonnées clé–valeur. Le projet retrouve ses Machines par leur <code>role</code> (<code>core</code>, <code>runner</code>, …), jamais par un identifiant codé en dur, et utilise <code>recreate=requested</code> comme marque de recréation du core.</p>
+
+  <h3>Des Machines façon cron : <em>scheduled Machines</em> (Machines planifiées)</h3>
+  <p>Une Machine dotée d'un <code>schedule</code> (<code>hourly</code>, <code>daily</code>, <code>weekly</code> ou <code>monthly</code>) est démarrée par le planificateur de Fly à peu près à cet intervalle, compté depuis sa création, pas à heure précise. Elle tourne, se termine, et attend arrêtée l'intervalle suivant. Le guard en est une (<a href="../infra/fly/gate/guard-machine.json">infra/fly/gate/guard-machine.json</a>).</p>
+</div>
+</section>
+
+<!-- 3. How this project uses Fly -->
+<section id="project">
+<div class="en" lang="en">
+  <h2>3. How this project uses Fly</h2>
+  <p>The demo runs a few hours per month at most, so every Machine sleeps when unused and wakes on demand. The hosted runtime runs the same production images as the local topology, plus Fly configuration under <code>infra/fly/</code> (<a href="runtime_topology.md#hosted-deployment-boundary">Runtime Topology</a>).</p>
+
+  <h3>Three apps and a guard</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">App</th><th scope="col">What it is</th><th scope="col">Started by</th></tr></thead>
+      <tbody>
+        <tr><td><strong>gate</strong><br><code>checkout-surge-gate</code></td><td>The only public address. A small web server that shows its own pages, wakes the core on a visitor's click, then relays traffic to it (<a href="decisions/hosted_deployment.md#hd-02-the-gate-is-the-only-public-address-and-the-only-waker">HD-02</a>).</td><td>Fly Proxy, on a request</td></tr>
+        <tr><td><strong>guard</strong><br>(in the gate app)</td><td>A scheduled Machine, same image as the gate. Each hour it cleans leftovers and stops anything awake too long, then exits. It bounds cost; it is not protection against an attacker.</td><td>Fly's scheduler, hourly</td></tr>
+        <tr><td><strong>core</strong><br><code>checkout-surge-core</code></td><td>The system under test: one multi-container Machine (Caddy, web, API, worker, Mock ERP, PostgreSQL, Redis, setup) with one volume for the databases (<a href="decisions/hosted_deployment.md#hd-04-the-core-is-one-fly-multi-container-machine">HD-04</a>). No public address.</td><td>The gate, after a visitor presses its start button</td></tr>
+        <tr><td><strong>runner</strong><br><code>checkout-surge-runner</code></td><td>The load generator (load-orchestrator and k6) on its own Machine, so it never shares CPU with the system under test (<a href="decisions/hosted_deployment.md#hd-01-flyio-with-the-load-generator-on-its-own-machine">HD-01</a>). No volume, no public address.</td><td>The core's API, for each run</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="fr" lang="fr">
+  <h2>3. Comment ce projet utilise Fly</h2>
+  <p>La démo tourne au plus quelques heures par mois : chaque Machine dort quand elle ne sert pas et se réveille à la demande. L'hébergement exécute les mêmes images de production que la topologie locale, plus la configuration Fly sous <code>infra/fly/</code> (<a href="runtime_topology.md#hosted-deployment-boundary">Runtime Topology</a>).</p>
+
+  <h3>Trois apps et un guard</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">App</th><th scope="col">Ce que c'est</th><th scope="col">Démarrée par</th></tr></thead>
+      <tbody>
+        <tr><td><strong>gate</strong> (portail)<br><code>checkout-surge-gate</code></td><td>La seule adresse publique. Un petit serveur web qui affiche ses propres pages, réveille le core sur le clic d'un visiteur, puis lui relaie le trafic (<a href="decisions/hosted_deployment.md#hd-02-the-gate-is-the-only-public-address-and-the-only-waker">HD-02</a>).</td><td>Fly Proxy, à l'arrivée d'une requête</td></tr>
+        <tr><td><strong>guard</strong> (gardien)<br>(dans l'app gate)</td><td>Une Machine planifiée, même image que la gate. Chaque heure, elle nettoie les restes et arrête ce qui reste éveillé trop longtemps, puis se termine. Elle borne le coût ; ce n'est pas une protection contre un attaquant.</td><td>Le planificateur de Fly, chaque heure</td></tr>
+        <tr><td><strong>core</strong> (cœur)<br><code>checkout-surge-core</code></td><td>Le système testé : une Machine multi-conteneurs (Caddy, web, API, worker, Mock ERP, PostgreSQL, Redis, setup) avec un volume pour les bases de données (<a href="decisions/hosted_deployment.md#hd-04-the-core-is-one-fly-multi-container-machine">HD-04</a>). Pas d'adresse publique.</td><td>La gate, quand un visiteur appuie sur son bouton de démarrage</td></tr>
+        <tr><td><strong>runner</strong> (générateur de charge)<br><code>checkout-surge-runner</code></td><td>Le générateur de charge (load-orchestrator et k6) sur sa propre Machine, pour ne jamais partager le processeur avec le système testé (<a href="decisions/hosted_deployment.md#hd-01-flyio-with-the-load-generator-on-its-own-machine">HD-01</a>). Ni volume, ni adresse publique.</td><td>L'API du core, pour chaque run</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<figure>
+  <div class="diagram">
+    <svg viewBox="0 0 560 580" role="img" aria-labelledby="topology-caption" xmlns="http://www.w3.org/2000/svg">
+      <title>Topology and request path / Topologie et chemin d'une requête</title>
+      <defs>
+        <marker id="head-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="head-flow" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+        <marker id="head-ctrl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path class="head-ctrl" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+      </defs>
+
+      <!-- Visitor -->
+      <rect class="box" x="20" y="14" width="260" height="46" rx="8"/>
+      <text class="label en" x="150" y="42" text-anchor="middle">Visitor's browser</text>
+      <text class="label fr" x="150" y="42" text-anchor="middle">Navigateur du visiteur</text>
+      <path class="flow" d="M120,60 V88" marker-end="url(#head-flow)"/>
+      <text class="flow-text" x="130" y="80">HTTPS · checkout-surge-gate.fly.dev</text>
+
+      <!-- Fly Proxy -->
+      <rect class="box" x="20" y="92" width="260" height="56" rx="8"/>
+      <text class="label" x="150" y="116" text-anchor="middle">Fly Proxy</text>
+      <text class="small en" x="150" y="136" text-anchor="middle">public IPs · TLS · autostart</text>
+      <text class="small fr" x="150" y="136" text-anchor="middle">IP publiques · TLS · autostart</text>
+      <path class="flow" d="M120,148 V200" marker-end="url(#head-flow)"/>
+
+      <!-- gate app -->
+      <rect class="group" x="10" y="176" width="290" height="104" rx="10"/>
+      <text class="group-label" x="20" y="192">GATE APP</text>
+      <rect class="box" x="20" y="204" width="160" height="64" rx="8"/>
+      <text class="label" x="100" y="230" text-anchor="middle">gate</text>
+      <text class="small en" x="100" y="252" text-anchor="middle">pages · wake · relay</text>
+      <text class="small fr" x="100" y="252" text-anchor="middle">pages · réveil · relais</text>
+      <rect class="box" x="190" y="204" width="100" height="64" rx="8"/>
+      <text class="label" x="240" y="230" text-anchor="middle">guard</text>
+      <text class="small en" x="240" y="252" text-anchor="middle">hourly</text>
+      <text class="small fr" x="240" y="252" text-anchor="middle">chaque heure</text>
+
+      <!-- gate to core over 6PN -->
+      <path class="flow" d="M120,268 V336" marker-end="url(#head-flow)"/>
+      <text class="flow-text en" x="130" y="302">6PN · relay once ready</text>
+      <text class="flow-text fr" x="130" y="302">6PN · relais une fois prêt</text>
+
+      <!-- core app -->
+      <rect class="group" x="10" y="316" width="290" height="140" rx="10"/>
+      <text class="group-label" x="20" y="332">CORE APP</text>
+      <rect class="box" x="20" y="340" width="270" height="66" rx="8"/>
+      <text class="label" x="155" y="362" text-anchor="middle">core</text>
+      <text class="small" x="155" y="381" text-anchor="middle">Caddy · web · API · worker</text>
+      <text class="small" x="155" y="398" text-anchor="middle">Mock ERP · PostgreSQL · Redis</text>
+      <path class="disk" d="M206,416 v24 a26,7 0 0 0 52,0 v-24"/>
+      <ellipse class="disk" cx="232" cy="416" rx="26" ry="7"/>
+      <text class="small" x="196" y="436" text-anchor="end">volume</text>
+
+      <!-- runner app -->
+      <rect class="group" x="10" y="488" width="290" height="80" rx="10"/>
+      <text class="group-label" x="20" y="504">RUNNER APP</text>
+      <rect class="box" x="20" y="512" width="270" height="46" rx="8"/>
+      <text class="label en" x="155" y="540" text-anchor="middle">runner · load orchestrator + k6</text>
+      <text class="label fr" x="155" y="540" text-anchor="middle">runner · orchestrateur + k6</text>
+      <path class="flow" d="M120,512 V410" marker-end="url(#head-flow)"/>
+      <text class="flow-text en" x="130" y="478">6PN · k6 burst, report</text>
+      <text class="flow-text fr" x="130" y="478">6PN · rafale k6, rapport</text>
+
+      <!-- Control plane -->
+      <rect class="box" x="330" y="92" width="210" height="56" rx="8"/>
+      <text class="label" x="435" y="116" text-anchor="middle">deploy.mjs</text>
+      <text class="small en" x="435" y="136" text-anchor="middle">workstation · GitHub Actions</text>
+      <text class="small fr" x="435" y="136" text-anchor="middle">poste de travail · GitHub Actions</text>
+      <rect class="box" x="360" y="230" width="180" height="64" rx="8"/>
+      <text class="label" x="450" y="256" text-anchor="middle">Machines API</text>
+      <text class="small" x="450" y="278" text-anchor="middle">api.machines.dev</text>
+      <path class="ctrl" d="M435,148 V226" marker-end="url(#head-ctrl)"/>
+      <text class="ctrl-text en" x="442" y="190">builds, updates</text>
+      <text class="ctrl-text fr" x="442" y="190">builds, mises à jour</text>
+      <path class="ctrl" d="M180,214 C240,160 320,180 372,228" marker-end="url(#head-ctrl)"/>
+      <text class="ctrl-text en" x="196" y="170">wake, recover</text>
+      <text class="ctrl-text fr" x="196" y="170">réveil, recréation</text>
+      <path class="ctrl" d="M290,248 H356" marker-end="url(#head-ctrl)"/>
+      <text class="ctrl-text en" x="304" y="242">clean</text>
+      <text class="ctrl-text fr" x="304" y="242">nettoie</text>
+      <path class="ctrl" d="M290,364 C360,364 450,344 450,298" marker-end="url(#head-ctrl)"/>
+      <text class="ctrl-text en" x="320" y="392">idle stop,</text>
+      <text class="ctrl-text en" x="320" y="406">runner start/stop</text>
+      <text class="ctrl-text fr" x="320" y="392">arrêt sur inactivité,</text>
+      <text class="ctrl-text fr" x="320" y="406">start/stop du runner</text>
+
+      <!-- Legend -->
+      <line class="flow" x1="330" y1="520" x2="370" y2="520"/>
+      <text class="small en" x="378" y="524">traffic</text>
+      <text class="small fr" x="378" y="524">trafic</text>
+      <line class="ctrl" x1="330" y1="546" x2="370" y2="546"/>
+      <text class="small en" x="378" y="550">Machine control calls</text>
+      <text class="small fr" x="378" y="550">appels de contrôle</text>
+    </svg>
+  </div>
+  <figcaption id="topology-caption">
+    <span class="en" lang="en">Topology and request path. A visitor reaches only the gate, through Fly Proxy. The gate relays to the core over the private network once the core is ready. The runner sends its load straight to the core over the private network. The gate, the guard, the core's API and the deploy script start, stop, update and recreate Machines through the Machines API.</span>
+    <span class="fr" lang="fr">Topologie et chemin d'une requête. Un visiteur n'atteint que la gate, via Fly Proxy. La gate relaie vers le core par le réseau privé une fois le core prêt. Le runner envoie sa charge directement au core par le réseau privé. La gate, le guard, l'API du core et le script de déploiement démarrent, arrêtent, mettent à jour et recréent les Machines par l'API Machines.</span>
+  </figcaption>
+</figure>
+
+<div class="en" lang="en">
+  <h3>The request path</h3>
+  <ol>
+    <li>The visitor opens the gate's <code>fly.dev</code> URL. Fly Proxy receives it on the gate app's public IPs, terminates TLS, and starts the gate Machine if it sleeps.</li>
+    <li>The gate checks the core's state through the Machines API and probes the core's Caddy. While the core is not ready, the gate answers every URL with its own page (start button, booting, updating, relocating, …) and status 503 (<a href="hosted_runtime.md#pages">pages</a>).</li>
+    <li>Once the core is ready, the gate relays every request (pages, API, live updates) to the core's Caddy at its 6PN address. The core has no public address of its own.</li>
+    <li>During a run, the runner sends the k6 burst straight to the core's API over 6PN; it never crosses the gate.</li>
+  </ol>
+
+  <h3>Sleeping and waking</h3>
+  <ul>
+    <li><strong>The gate</strong> uses Fly Proxy's autostart and autostop (its <code>services</code> in <a href="../infra/fly/gate/machine.json">infra/fly/gate/machine.json</a>): a visit wakes it, and it stops once traffic is gone. The first request to a sleeping gate waits a few seconds.</li>
+    <li><strong>The core</strong> never starts on its own. Its start page has a button that sends a POST; the gate then takes the core's lease, starts the core, releases the lease and redirects the visitor. Bots that only fetch pages cannot wake it (<a href="hosted_runtime.md#waking-the-core">waking the core</a>).</li>
+  </ul>
+
+  <h3>The idle stop</h3>
+  <p>The core's API stops its own Machine once there is no run in progress and no counted visitor activity for the idle period (<a href="decisions/hosted_deployment.md#hd-20-the-api-stops-its-own-idle-core">HD-20</a>). Every page shows a countdown with a "stay awake" button. Health checks, status polling and open live connections do not count. If the idle stop ever fails, the guard stops a core awake beyond its cap. The idle period is <code>coreIdleStopAfterMs</code> in <a href="../apps/api/src/services/core-idle-stop.ts">apps/api/src/services/core-idle-stop.ts</a>; the guard's thresholds are <code>defaultGuardThresholds</code> in <a href="../apps/gate/src/guard.ts">apps/gate/src/guard.ts</a>.</p>
+
+  <h3>The runner, once per run</h3>
+  <p>The runner stays stopped between runs (<a href="decisions/hosted_deployment.md#hd-07-the-api-starts-and-stops-the-runner-for-each-run">HD-07</a>). For each run, the API updates it with the run's size and the core's current 6PN address, starts it from a fresh boot, and waits until it is ready. When the run ends, the API asks the runner to exit, with a Fly stop only as a fallback. Before sending any traffic, the API checks that the runner runs the same commit as itself (<a href="decisions/hosted_deployment.md#hd-14-the-version-handshake-refuses-mismatched-runs">version handshake</a>).</p>
+
+  <h3>Recovery and relocation</h3>
+  <ul>
+    <li><strong>Core recovery</strong> (<a href="hosted_runtime.md#recovery">Hosted Runtime</a>). When a wake keeps failing for capacity or a dead host, when the core's host is not <code>ok</code>, when the core carries the recreation mark, or when no core exists, the gate creates a new empty volume and a new core Machine from the core config the last deploy left in the gate Machine. Placement tries the home region, then any region of <code>eu</code>. The new core installs fresh (migrations and seed on an empty database: run history and admin edits are lost). The old core is destroyed only once the new one is healthy. Visitors see the relocating page, or the fresh-install page for a requested recreation.</li>
+    <li><strong>Runner relocation</strong> (<a href="hosted_runtime.md#capacity-and-region">Hosted Runtime</a>). A refused start is retried in place, then the runner is recreated from the deployed runner config; a refused or reverted update recreates it at once. The new runner goes to the core's region first, then <code>eu</code>. At each run start, a runner in another region than the core is moved back (<a href="decisions/hosted_deployment.md#hd-36-the-runner-follows-the-cores-region-even-at-one-recreation-per-run">HD-36</a>).</li>
+  </ul>
+  <p>The home region is named in <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a> and <a href="../apps/gate/src/core-recovery.ts">apps/gate/src/core-recovery.ts</a>.</p>
+
+  <h3>Deploys</h3>
+  <p>One script, <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a>, deploys one commit to the three apps. It runs from the workstation (<code>node infra/fly/deploy.mjs all</code>) and from <a href="../.github/workflows/deploy.yml">GitHub Actions</a> on every push to <code>main</code> (<a href="decisions/hosted_deployment.md#hd-49-github-actions-deploys-every-push-to-main-with-the-workstations-script">HD-49</a>). The steps:</p>
+  <ol>
+    <li>Build each image on Fly's remote builder, label it with the commit, push it to the app's registry.</li>
+    <li>Wait for an awake core to go to sleep (a visitor's session is never cut, unless you pass <code>--force</code>), take the lease, and read the core again under it (<a href="decisions/hosted_deployment.md#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds">HD-45</a>).</li>
+    <li>Update the runner, then the core, with their full configs from <code>infra/fly/&lt;app&gt;/</code> and <code>skip_launch</code>. Because whole configs are sent, a change made by hand on Fly is reverted by the next deploy. Then update the gate and the guard.</li>
+    <li>Leave copies for recovery: the runner config inside the core's API container, the core config inside the gate Machine.</li>
+    <li>Compare the core's and the runner's versions, even after a failed step, and fail on a mismatch (<a href="decisions/hosted_deployment.md#hd-46-one-command-deploys-the-runner-and-the-core-together-and-a-version-mismatch-fails-the-deploy">HD-46</a>).</li>
+  </ol>
+  <ul>
+    <li><strong>Same commit again.</strong> A runner that already has the config to deploy is left untouched, even during a run. The rest still happens: a documentation-only push to <code>main</code> rebuilds and waits for the core to sleep, so batch such commits.</li>
+    <li><strong><code>--fresh-core</code> and the recreation mark.</strong> For a change the existing core data cannot use, deploy with <code>--fresh-core</code>: the core gets the <code>recreate=requested</code> metadata, and the next visitor wake recreates it fresh. Later deploys carry the mark over, so only a wake clears it (<a href="decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it">HD-48</a>). A deploy whose core update is refused by a full host sets the same mark by itself (<a href="decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation">HD-56</a>); the version check then counts the core at the version waiting in the gate.</li>
+    <li><strong>One at a time.</strong> CI never cancels a running deploy, and a workstation deploy must not overlap a CI one. A deploy killed while it holds a lease leaves that lease until it expires.</li>
+  </ul>
+  <p>Commands and failure messages: <a href="hosted_operations.md#deploying">Hosted Operations</a>.</p>
+
+  <h3>Secrets and tokens</h3>
+  <ul>
+    <li><strong>App secrets</strong> (passwords, session and cookie secrets, the control token shared by the core and the runner) live in each app's vault, and each core container lists only the ones it needs in <a href="../infra/fly/core/machine.json">infra/fly/core/machine.json</a>. The full table is in <a href="hosted_runtime.md#secrets-and-tokens">Hosted Runtime</a>.</li>
+    <li><strong>Machines API tokens inside Machines</strong> are app-scoped deploy tokens: the gate and the guard hold core and runner tokens; the core's API holds a runner token and a core token for its own idle stop. No personal or organization token ever goes into a Machine. Deploy access can read an app's secrets, so a compromised gate means control of the core and runner apps; the exposure is financial (<a href="decisions/hosted_deployment.md#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control">HD-26</a>).</li>
+    <li><strong>The CI token</strong> is one organization deploy token stored as the GitHub repository secret <code>FLY_API_TOKEN</code> (<a href="decisions/hosted_deployment.md#hd-50-the-ci-deploy-token-is-an-organization-deploy-token">HD-50</a>). It has an expiry and nothing warns before it: renew it ahead of time.</li>
+    <li><strong>Rotation</strong> follows one pattern: stage the new value with <code>flyctl secrets import --stage</code>, let each holder restart (Machines read secrets only at start), check it works, then revoke the old token. Never print a value. Step by step: <a href="hosted_operations.md#rotating-secrets-and-tokens">Hosted Operations</a>.</li>
+  </ul>
+</div>
+
+<div class="fr" lang="fr">
+  <h3>Le chemin d'une requête</h3>
+  <ol>
+    <li>Le visiteur ouvre l'URL <code>fly.dev</code> de la gate. Fly Proxy la reçoit sur les IP publiques de l'app gate, termine le TLS, et démarre la Machine gate si elle dort.</li>
+    <li>La gate lit l'état du core par l'API Machines et sonde le Caddy du core. Tant que le core n'est pas prêt, la gate répond à toute URL par sa propre page (bouton de démarrage, démarrage en cours, mise à jour, relocalisation, …) avec le statut 503 (<a href="hosted_runtime.md#pages">pages</a>).</li>
+    <li>Une fois le core prêt, la gate relaie chaque requête (pages, API, mises à jour en direct) vers le Caddy du core, à son adresse 6PN. Le core n'a pas d'adresse publique.</li>
+    <li>Pendant un run, le runner envoie la rafale k6 directement à l'API du core par le 6PN ; elle ne passe jamais par la gate.</li>
+  </ol>
+
+  <h3>Sommeil et réveil</h3>
+  <ul>
+    <li><strong>La gate</strong> utilise l'autostart et l'autostop de Fly Proxy (ses <code>services</code> dans <a href="../infra/fly/gate/machine.json">infra/fly/gate/machine.json</a>) : une visite la réveille, et elle s'arrête quand le trafic cesse. La première requête vers une gate endormie attend quelques secondes.</li>
+    <li><strong>Le core</strong> ne démarre jamais seul. Sa page de démarrage a un bouton qui envoie un POST ; la gate prend alors le verrou du core, le démarre, rend le verrou et redirige le visiteur. Les robots qui ne font que lire des pages ne peuvent pas le réveiller (<a href="hosted_runtime.md#waking-the-core">réveil du core</a>).</li>
+  </ul>
+
+  <h3>L'arrêt sur inactivité</h3>
+  <p>L'API du core arrête sa propre Machine quand il n'y a ni run en cours ni activité visiteur comptée pendant la durée d'inactivité (<a href="decisions/hosted_deployment.md#hd-20-the-api-stops-its-own-idle-core">HD-20</a>). Chaque page affiche un compte à rebours avec un bouton « rester éveillé ». Les sondes de santé, l'interrogation du statut et les connexions en direct ouvertes ne comptent pas. Si l'arrêt sur inactivité échoue, le guard arrête un core éveillé au-delà de son plafond. La durée d'inactivité est <code>coreIdleStopAfterMs</code> dans <a href="../apps/api/src/services/core-idle-stop.ts">apps/api/src/services/core-idle-stop.ts</a> ; les seuils du guard sont <code>defaultGuardThresholds</code> dans <a href="../apps/gate/src/guard.ts">apps/gate/src/guard.ts</a>.</p>
+
+  <h3>Le runner, une fois par run</h3>
+  <p>Le runner reste arrêté entre les runs (<a href="decisions/hosted_deployment.md#hd-07-the-api-starts-and-stops-the-runner-for-each-run">HD-07</a>). Pour chaque run, l'API le met à jour avec la taille du run et l'adresse 6PN actuelle du core, le démarre à neuf, et attend qu'il soit prêt. À la fin du run, l'API demande au runner de se terminer ; l'arrêt par Fly ne sert qu'en secours. Avant d'envoyer du trafic, l'API vérifie que le runner exécute le même commit qu'elle (<a href="decisions/hosted_deployment.md#hd-14-the-version-handshake-refuses-mismatched-runs">vérification de version</a>).</p>
+
+  <h3>Recréation et relocalisation</h3>
+  <ul>
+    <li><strong>Recréation du core</strong> (<a href="hosted_runtime.md#recovery">Hosted Runtime</a>). Quand un réveil échoue sans cesse faute de capacité ou d'hôte vivant, quand l'hôte du core n'est pas <code>ok</code>, quand le core porte la marque de recréation, ou quand aucun core n'existe, la gate crée un volume vide et une nouvelle Machine core à partir de la config du core que le dernier déploiement a laissée dans la Machine gate. Le placement essaie la région d'origine, puis n'importe quelle région de <code>eu</code>. Le nouveau core s'installe à neuf (migrations et seed sur une base vide : l'historique des runs et les réglages admin sont perdus). L'ancien core n'est détruit qu'une fois le nouveau en bonne santé. Les visiteurs voient la page de relocalisation, ou la page d'installation à neuf pour une recréation demandée.</li>
+    <li><strong>Relocalisation du runner</strong> (<a href="hosted_runtime.md#capacity-and-region">Hosted Runtime</a>). Un démarrage refusé est retenté sur place, puis le runner est recréé à partir de la config runner déployée ; une mise à jour refusée ou annulée le recrée aussitôt. Le nouveau runner va d'abord dans la région du core, puis dans <code>eu</code>. À chaque début de run, un runner hors de la région du core y est ramené (<a href="decisions/hosted_deployment.md#hd-36-the-runner-follows-the-cores-region-even-at-one-recreation-per-run">HD-36</a>).</li>
+  </ul>
+  <p>La région d'origine est nommée dans <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a> et <a href="../apps/gate/src/core-recovery.ts">apps/gate/src/core-recovery.ts</a>.</p>
+
+  <h3>Déploiements</h3>
+  <p>Un seul script, <a href="../infra/fly/deploy.mjs">infra/fly/deploy.mjs</a>, déploie un commit sur les trois apps. Il tourne depuis le poste de travail (<code>node infra/fly/deploy.mjs all</code>) et depuis <a href="../.github/workflows/deploy.yml">GitHub Actions</a> à chaque push sur <code>main</code> (<a href="decisions/hosted_deployment.md#hd-49-github-actions-deploys-every-push-to-main-with-the-workstations-script">HD-49</a>). Les étapes :</p>
+  <ol>
+    <li>Construire chaque image sur le builder distant de Fly, l'étiqueter avec le commit, la pousser dans le registre de l'app.</li>
+    <li>Attendre qu'un core éveillé s'endorme (la session d'un visiteur n'est jamais coupée, sauf avec <code>--force</code>), prendre le verrou, et relire le core sous ce verrou (<a href="decisions/hosted_deployment.md#hd-45-the-deploy-updates-a-sleeping-core-under-its-lease-read-again-after-the-builds">HD-45</a>).</li>
+    <li>Mettre à jour le runner, puis le core, avec leurs configs complètes tirées de <code>infra/fly/&lt;app&gt;/</code> et <code>skip_launch</code>. Comme la config entière est envoyée, une modification faite à la main sur Fly est annulée au déploiement suivant. Puis mettre à jour la gate et le guard.</li>
+    <li>Laisser des copies pour la recréation : la config du runner dans le conteneur API du core, la config du core dans la Machine gate.</li>
+    <li>Comparer les versions du core et du runner, même après une étape en échec, et échouer si elles diffèrent (<a href="decisions/hosted_deployment.md#hd-46-one-command-deploys-the-runner-and-the-core-together-and-a-version-mismatch-fails-the-deploy">HD-46</a>).</li>
+  </ol>
+  <ul>
+    <li><strong>Le même commit, à nouveau.</strong> Un runner qui a déjà la config à déployer n'est pas touché, même pendant un run. Le reste a bien lieu : un push sur <code>main</code> qui ne change que la documentation reconstruit et attend que le core dorme ; regroupez ces commits.</li>
+    <li><strong><code>--fresh-core</code> et la marque de recréation.</strong> Pour un changement que les données du core existant ne supportent pas, déployez avec <code>--fresh-core</code> : le core reçoit la métadonnée <code>recreate=requested</code>, et le prochain réveil par un visiteur le recrée à neuf. Les déploiements suivants conservent la marque : seul un réveil l'efface (<a href="decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it">HD-48</a>). Un déploiement dont la mise à jour du core est refusée par un hôte plein pose lui-même cette marque (<a href="decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation">HD-56</a>) ; la vérification de version compte alors le core à la version qui attend dans la gate.</li>
+    <li><strong>Un à la fois.</strong> La CI n'annule jamais un déploiement en cours, et un déploiement depuis le poste ne doit pas chevaucher celui de la CI. Un déploiement tué alors qu'il tient un verrou laisse ce verrou jusqu'à son expiration.</li>
+  </ul>
+  <p>Commandes et messages d'échec : <a href="hosted_operations.md#deploying">Hosted Operations</a>.</p>
+
+  <h3>Secrets et jetons</h3>
+  <ul>
+    <li><strong>Les secrets des apps</strong> (mots de passe, secrets de session et de cookie, jeton de contrôle partagé par le core et le runner) vivent dans le coffre de chaque app, et chaque conteneur du core ne liste que ceux dont il a besoin dans <a href="../infra/fly/core/machine.json">infra/fly/core/machine.json</a>. Le tableau complet est dans <a href="hosted_runtime.md#secrets-and-tokens">Hosted Runtime</a>.</li>
+    <li><strong>Les jetons de l'API Machines dans les Machines</strong> sont des jetons de déploiement limités à une app : la gate et le guard détiennent des jetons core et runner ; l'API du core détient un jeton runner et un jeton core pour son propre arrêt sur inactivité. Aucun jeton personnel ou d'organisation n'entre jamais dans une Machine. Un accès de déploiement peut lire les secrets d'une app : une gate compromise donne le contrôle des apps core et runner ; le risque est financier (<a href="decisions/hosted_deployment.md#hd-26-accepted-risk-deploy-tokens-give-a-compromised-component-wide-control">HD-26</a>).</li>
+    <li><strong>Le jeton de la CI</strong> est un jeton de déploiement d'organisation, stocké comme secret du dépôt GitHub <code>FLY_API_TOKEN</code> (<a href="decisions/hosted_deployment.md#hd-50-the-ci-deploy-token-is-an-organization-deploy-token">HD-50</a>). Il expire, et rien ne prévient avant : renouvelez-le à l'avance.</li>
+    <li><strong>La rotation</strong> suit toujours le même schéma : préparer la nouvelle valeur avec <code>flyctl secrets import --stage</code>, laisser chaque détenteur redémarrer (les Machines ne lisent les secrets qu'au démarrage), vérifier que tout fonctionne, puis révoquer l'ancien jeton. N'affichez jamais une valeur. Pas à pas : <a href="hosted_operations.md#rotating-secrets-and-tokens">Hosted Operations</a>.</li>
+  </ul>
+</div>
+</section>
+
+<!-- 4. Glossary -->
+<section id="glossary">
+<div class="en" lang="en"><h2>4. Glossary (EN / FR)</h2></div>
+<div class="fr" lang="fr"><h2>4. Glossaire (EN / FR)</h2></div>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">English</th>
+        <th scope="col" lang="fr">Français</th>
+        <th scope="col"><span class="en" lang="en">Meaning</span><span class="fr" lang="fr">Sens</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>organization</td><td lang="fr">organisation</td><td><span class="en" lang="en">Holds apps, billing, tokens and one private network.</span><span class="fr" lang="fr">Contient les apps, la facturation, les jetons et un réseau privé.</span></td></tr>
+      <tr><td>app</td><td lang="fr">app (application)</td><td><span class="en" lang="en">A named group of Machines with shared secrets, IPs and volumes.</span><span class="fr" lang="fr">Un groupe nommé de Machines avec secrets, IP et volumes partagés.</span></td></tr>
+      <tr><td>Machine</td><td lang="fr">Machine</td><td><span class="en" lang="en">A Firecracker microVM running a container image.</span><span class="fr" lang="fr">Une microVM Firecracker qui exécute une image de conteneur.</span></td></tr>
+      <tr><td>multi-container Machine</td><td lang="fr">Machine multi-conteneurs</td><td><span class="en" lang="en">One Machine running several containers, started in a declared order.</span><span class="fr" lang="fr">Une Machine qui fait tourner plusieurs conteneurs, démarrés dans un ordre déclaré.</span></td></tr>
+      <tr><td>region</td><td lang="fr">région</td><td><span class="en" lang="en">A datacenter location with a three-letter code; <code>eu</code> names a group of them.</span><span class="fr" lang="fr">Un centre de données identifié par trois lettres ; <code>eu</code> en désigne un groupe.</span></td></tr>
+      <tr><td>host (worker)</td><td lang="fr">hôte (serveur physique)</td><td><span class="en" lang="en">The physical server a Machine runs on.</span><span class="fr" lang="fr">Le serveur physique sur lequel tourne une Machine.</span></td></tr>
+      <tr><td>host status</td><td lang="fr">statut de l'hôte</td><td><span class="en" lang="en"><code>ok</code>, <code>unreachable</code> or <code>unknown</code>; anything but <code>ok</code> means partial data and no usable lease.</span><span class="fr" lang="fr"><code>ok</code>, <code>unreachable</code> ou <code>unknown</code> ; tout sauf <code>ok</code> signifie des données partielles et aucun verrou utilisable.</span></td></tr>
+      <tr><td>capacity</td><td lang="fr">capacité</td><td><span class="en" lang="en">Free CPU and memory on a host; a full host refuses a start or an update.</span><span class="fr" lang="fr">Processeur et mémoire libres sur un hôte ; un hôte plein refuse un démarrage ou une mise à jour.</span></td></tr>
+      <tr><td>image</td><td lang="fr">image</td><td><span class="en" lang="en">The packaged code a Machine runs.</span><span class="fr" lang="fr">Le code empaqueté qu'exécute une Machine.</span></td></tr>
+      <tr><td>registry</td><td lang="fr">registre</td><td><span class="en" lang="en">Fly's image store, <code>registry.fly.io</code>.</span><span class="fr" lang="fr">Le dépôt d'images de Fly, <code>registry.fly.io</code>.</span></td></tr>
+      <tr><td>volume</td><td lang="fr">volume</td><td><span class="en" lang="en">A disk on the Machine's own server; pins the Machine to that host.</span><span class="fr" lang="fr">Un disque sur le serveur même de la Machine ; il l'épingle à cet hôte.</span></td></tr>
+      <tr><td>snapshot</td><td lang="fr">instantané</td><td><span class="en" lang="en">A daily copy of a volume; unused by this project.</span><span class="fr" lang="fr">Une copie quotidienne d'un volume ; inutilisée par ce projet.</span></td></tr>
+      <tr><td>6PN (private network)</td><td lang="fr">6PN (réseau privé)</td><td><span class="en" lang="en">The organization's private IPv6 network between Machines.</span><span class="fr" lang="fr">Le réseau privé IPv6 de l'organisation entre les Machines.</span></td></tr>
+      <tr><td>Fly Proxy</td><td lang="fr">Fly Proxy</td><td><span class="en" lang="en">Fly's front door for public traffic; can autostart and autostop Machines.</span><span class="fr" lang="fr">La porte d'entrée de Fly pour le trafic public ; peut démarrer et arrêter les Machines.</span></td></tr>
+      <tr><td>public IP (shared IPv4, IPv6)</td><td lang="fr">IP publique (IPv4 partagée, IPv6)</td><td><span class="en" lang="en">Anycast addresses on which an app is reachable from the internet.</span><span class="fr" lang="fr">Adresses Anycast par lesquelles une app est joignable depuis Internet.</span></td></tr>
+      <tr><td>service</td><td lang="fr">service</td><td><span class="en" lang="en">The part of a Machine config that exposes a port through Fly Proxy.</span><span class="fr" lang="fr">La partie de la config d'une Machine qui expose un port via Fly Proxy.</span></td></tr>
+      <tr><td>autostart / autostop</td><td lang="fr">démarrage / arrêt automatique</td><td><span class="en" lang="en">Fly Proxy starting a Machine on a request and stopping it when traffic is gone.</span><span class="fr" lang="fr">Fly Proxy qui démarre une Machine à une requête et l'arrête quand le trafic cesse.</span></td></tr>
+      <tr><td>secret</td><td lang="fr">secret</td><td><span class="en" lang="en">An encrypted value injected as an environment variable at boot.</span><span class="fr" lang="fr">Une valeur chiffrée injectée comme variable d'environnement au démarrage.</span></td></tr>
+      <tr><td>staged secret</td><td lang="fr">secret préparé (« Staged »)</td><td><span class="en" lang="en">Stored without restarting Machines; here every secret shows Staged.</span><span class="fr" lang="fr">Enregistré sans redémarrer les Machines ; ici, chaque secret affiche Staged.</span></td></tr>
+      <tr><td>release</td><td lang="fr">release</td><td><span class="en" lang="en">A version made by <code>fly deploy</code>; this project never makes one.</span><span class="fr" lang="fr">Une version créée par <code>fly deploy</code> ; ce projet n'en crée jamais.</span></td></tr>
+      <tr><td>deploy token</td><td lang="fr">jeton de déploiement</td><td><span class="en" lang="en">A token scoped to one app.</span><span class="fr" lang="fr">Un jeton limité à une app.</span></td></tr>
+      <tr><td>organization token</td><td lang="fr">jeton d'organisation</td><td><span class="en" lang="en">A token covering every app of the organization; used only by CI here.</span><span class="fr" lang="fr">Un jeton couvrant toutes les apps de l'organisation ; ici, seule la CI l'utilise.</span></td></tr>
+      <tr><td>Machines API</td><td lang="fr">API Machines</td><td><span class="en" lang="en">Fly's REST API to create, update, start, stop and destroy Machines.</span><span class="fr" lang="fr">L'API REST de Fly pour créer, modifier, démarrer, arrêter et détruire les Machines.</span></td></tr>
+      <tr><td>config</td><td lang="fr">config</td><td><span class="en" lang="en">A Machine's full description: image, size (<code>guest</code>), env, files, services, metadata.</span><span class="fr" lang="fr">La description complète d'une Machine : image, taille (<code>guest</code>), environnement, fichiers, services, métadonnées.</span></td></tr>
+      <tr><td>metadata</td><td lang="fr">métadonnées</td><td><span class="en" lang="en">Key–value labels on a Machine, such as <code>role</code> and <code>recreate</code>.</span><span class="fr" lang="fr">Étiquettes clé–valeur sur une Machine, comme <code>role</code> et <code>recreate</code>.</span></td></tr>
+      <tr><td>skip_launch</td><td lang="fr">skip_launch</td><td><span class="en" lang="en">Create or update a Machine without starting it.</span><span class="fr" lang="fr">Créer ou modifier une Machine sans la démarrer.</span></td></tr>
+      <tr><td>lease</td><td lang="fr">verrou (lease)</td><td><span class="en" lang="en">A temporary lock on changing one Machine.</span><span class="fr" lang="fr">Un verrou temporaire sur la modification d'une Machine.</span></td></tr>
+      <tr><td>nonce</td><td lang="fr">nonce</td><td><span class="en" lang="en">The random value that proves you hold a lease.</span><span class="fr" lang="fr">La valeur aléatoire qui prouve qu'on détient un verrou.</span></td></tr>
+      <tr><td>TTL</td><td lang="fr">durée de vie (TTL)</td><td><span class="en" lang="en">How long a lease lasts before it expires on its own.</span><span class="fr" lang="fr">Combien de temps dure un verrou avant d'expirer seul.</span></td></tr>
+      <tr><td>scheduled Machine</td><td lang="fr">Machine planifiée</td><td><span class="en" lang="en">A Machine Fly starts at a rough interval (hourly, daily, …).</span><span class="fr" lang="fr">Une Machine que Fly démarre à intervalle approximatif (chaque heure, chaque jour, …).</span></td></tr>
+      <tr><td>Suspended (app)</td><td lang="fr">Suspended (app)</td><td><span class="en" lang="en">Dashboard label for an app whose Machines are all stopped.</span><span class="fr" lang="fr">Libellé du tableau de bord pour une app dont toutes les Machines sont arrêtées.</span></td></tr>
+      <tr><td>gate / guard / core / runner</td><td lang="fr">portail / gardien / cœur / générateur de charge</td><td><span class="en" lang="en">This project's public entry, hourly cleaner, system under test and load generator.</span><span class="fr" lang="fr">L'entrée publique, le nettoyeur horaire, le système testé et le générateur de charge du projet.</span></td></tr>
+      <tr><td>wake</td><td lang="fr">réveil</td><td><span class="en" lang="en">The gate starting the core after a visitor's click.</span><span class="fr" lang="fr">La gate qui démarre le core après le clic d'un visiteur.</span></td></tr>
+      <tr><td>idle stop</td><td lang="fr">arrêt sur inactivité</td><td><span class="en" lang="en">The core's API stopping its own Machine when nobody uses it.</span><span class="fr" lang="fr">L'API du core qui arrête sa propre Machine quand personne ne s'en sert.</span></td></tr>
+      <tr><td>recovery</td><td lang="fr">recréation (recovery)</td><td><span class="en" lang="en">The gate replacing the core with a fresh one on another host.</span><span class="fr" lang="fr">La gate qui remplace le core par un core neuf sur un autre hôte.</span></td></tr>
+      <tr><td>relocation</td><td lang="fr">relocalisation</td><td><span class="en" lang="en">Recreating the runner on a host with room.</span><span class="fr" lang="fr">Recréer le runner sur un hôte qui a de la place.</span></td></tr>
+      <tr><td>recreation mark</td><td lang="fr">marque de recréation</td><td><span class="en" lang="en"><code>recreate=requested</code> on the core: the next wake recreates it fresh.</span><span class="fr" lang="fr"><code>recreate=requested</code> sur le core : le prochain réveil le recrée à neuf.</span></td></tr>
+      <tr><td>version handshake</td><td lang="fr">vérification de version</td><td><span class="en" lang="en">The API refusing a run when the runner runs another commit.</span><span class="fr" lang="fr">L'API qui refuse un run quand le runner exécute un autre commit.</span></td></tr>
+    </tbody>
+  </table>
+</div>
+</section>
+
+<!-- 5. Official documentation -->
+<section id="official-docs">
+<div class="en" lang="en">
+  <h2>5. Read the official documentation</h2>
+  <p>Fly's documentation lives at <code>docs.fly.io</code>. These pages cover what this primer summarizes (checked in October 2026).</p>
+</div>
+<div class="fr" lang="fr">
+  <h2>5. Lire la documentation officielle</h2>
+  <p>La documentation de Fly se trouve sur <code>docs.fly.io</code>, en anglais. Ces pages couvrent ce que ce guide résume (vérifiées en octobre 2026).</p>
+</div>
+<ul>
+  <li><a href="https://docs.fly.io/reference/architecture">Architecture</a> — <span class="en" lang="en">hosts, Firecracker microVMs, Fly Proxy</span><span class="fr" lang="fr">hôtes, microVM Firecracker, Fly Proxy</span></li>
+  <li><a href="https://docs.fly.io/apps/overview">Fly Apps</a></li>
+  <li><a href="https://docs.fly.io/machines/overview">Machines</a> — <span class="en" lang="en">overview, placement can fail</span><span class="fr" lang="fr">vue d'ensemble, le placement peut échouer</span></li>
+  <li><a href="https://docs.fly.io/machines/machine-states">Machine states</a></li>
+  <li><a href="https://docs.fly.io/machines/api">Machines API</a> · <a href="https://docs.fly.io/machines/api/working-with-machines-api">Working with the Machines API</a> · <a href="https://docs.fly.io/machines/api/machines-resource">Machines resource</a> (<span class="en" lang="en">create, update, <code>skip_launch</code>, metadata, <code>schedule</code></span><span class="fr" lang="fr">création, mise à jour, <code>skip_launch</code>, métadonnées, <code>schedule</code></span>)</li>
+  <li><a href="https://docs.fly.io/machines/api/machines-resource#create-a-machine-lease">Machine leases (API)</a> · <a href="https://docs.fly.io/flyctl/machine-leases">fly machine leases</a></li>
+  <li><a href="https://docs.fly.io/machines/guides-examples/machine-placement">Machine placement</a> — <span class="en" lang="en">region groups and fallback lists</span><span class="fr" lang="fr">groupes de régions et listes de repli</span></li>
+  <li><a href="https://docs.fly.io/machines/guides-examples/multi-container-machines">Multi-container Machines</a></li>
+  <li><a href="https://docs.fly.io/blueprints/task-scheduling">Task scheduling</a> — <span class="en" lang="en">scheduled Machines</span><span class="fr" lang="fr">Machines planifiées</span></li>
+  <li><a href="https://docs.fly.io/volumes/overview">Volumes</a></li>
+  <li><a href="https://docs.fly.io/networking/private-networking">Private networking (6PN)</a></li>
+  <li><a href="https://docs.fly.io/networking/services">Public network services</a> — <span class="en" lang="en">public IPs</span><span class="fr" lang="fr">IP publiques</span> · <a href="https://docs.fly.io/reference/fly-proxy">Fly Proxy</a> · <a href="https://docs.fly.io/launch/autostop-autostart">Autostop / autostart</a></li>
+  <li><a href="https://docs.fly.io/apps/secrets">Secrets</a></li>
+  <li><a href="https://docs.fly.io/security/tokens">Access tokens</a></li>
+  <li><a href="https://docs.fly.io/reference/regions">Regions</a></li>
+  <li><a href="https://docs.fly.io/about/pricing">Pricing</a></li>
+  <li><a href="https://docs.fly.io/apps/app-availability">App availability</a> · <a href="https://docs.fly.io/apps/trouble-host-unavailable">Host unavailable</a></li>
+  <li><a href="https://community.fly.io/t/host-statuses-for-machines-and-volumes-added-to-the-api-and-flyctl/19548">Host statuses for Machines and volumes</a> — <span class="en" lang="en">Fly announcement on the community forum</span><span class="fr" lang="fr">annonce de Fly sur le forum</span></li>
+  <li><a href="https://status.flyio.net/">Fly.io status</a> — <span class="en" lang="en">incidents and capacity problems</span><span class="fr" lang="fr">incidents et problèmes de capacité</span></li>
+</ul>
+</section>
+
+</main>
+
+<footer>
+  <p class="en" lang="en">This primer explains; it does not decide. Behavior: <a href="hosted_runtime.md">Hosted Runtime</a>. Procedures: <a href="hosted_operations.md">Hosted Operations</a>. Reasons: <a href="decisions/hosted_deployment.md">decision log</a>.</p>
+  <p class="fr" lang="fr">Ce guide explique ; il ne décide rien. Comportement : <a href="hosted_runtime.md">Hosted Runtime</a>. Procédures : <a href="hosted_operations.md">Hosted Operations</a>. Raisons : <a href="decisions/hosted_deployment.md">journal des décisions</a>.</p>
+</footer>
+
+</div>
+<script>
+  (() => {
+    const titles = { en: "Fly.io Primer", fr: "Fly.io, l'essentiel" };
+    const root = document.documentElement;
+    const group = document.getElementById("lang-switch");
+    const buttons = group.querySelectorAll("button[data-lang]");
+
+    const apply = (lang) => {
+      root.setAttribute("data-lang", lang);
+      root.setAttribute("lang", lang);
+      document.title = titles[lang];
+      for (const button of buttons) {
+        button.setAttribute("aria-pressed", String(button.dataset.lang === lang));
+      }
+    };
+
+    apply(root.getAttribute("data-lang") === "fr" ? "fr" : "en");
+    group.hidden = false;
+    group.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-lang]");
+      if (!button) return;
+      apply(button.dataset.lang);
+      try {
+        window.localStorage.setItem("checkout-surge.fly-primer.lang", button.dataset.lang);
+      } catch {
+        // Storage unavailable: the choice lasts for this page view only.
+      }
+    });
+  })();
+</script>
+</body>
+</html>
