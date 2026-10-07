@@ -40,7 +40,7 @@ const states = {
     "relocating-load-generator",
     "warning",
     "relocating the load generator",
-    "Provider capacity issue, relocating the load generator, please wait.",
+    "The load generator is moving to another host (for example, when its host is full), so this start takes a little longer. Please wait.",
   ),
   active: state(
     "accepting-checkout-attempts",

@@ -19,6 +19,15 @@ export interface RunnerBoot extends RunnerPlacement {
 export type RunnerCondition = "alive" | "lost" | "unreachable";
 
 const defaultReadyTimeoutMs = 30_000;
+/**
+ * The whole boot (the runner start, retries and relocation included, then its readiness) ends
+ * within this. The start request waits for it behind two proxies, the web's fetch and the gate's
+ * relay, which both give up after undici's default 300 s without response headers. Past the
+ * deadline, the request can still take one Fly call in flight, the stop of a failed boot and the
+ * run's failure, so the deadline stays well below that: a relocation takes about 14 s and a
+ * readiness wait a few seconds, so it still leaves room for retries.
+ */
+const startDeadlineMs = 90_000;
 const readyPollIntervalMs = 250;
 
 export class RunnerBootError extends ApiHttpError {
@@ -139,9 +148,10 @@ export class RunnerOperations implements TrafficAbortGateway {
   private async boot(runId: string, hooks: RunnerStartHooks): Promise<RunnerBoot> {
     this.lastBootRunId = runId;
     let identity: RunnerIdentity | null = null;
+    const deadlineAt = this.now() + startDeadlineMs;
     try {
-      const placement = await this.options.host.start(runId, hooks);
-      identity = await this.waitForReadyIdentity();
+      const placement = await this.options.host.start(runId, hooks, deadlineAt);
+      identity = await this.waitForReadyIdentity(deadlineAt);
       if (!this.versionMatches(identity.version)) {
         throw new RunnerVersionMismatchError(this.options.apiVersion, identity.version);
       }
@@ -167,8 +177,11 @@ export class RunnerOperations implements TrafficAbortGateway {
     });
   }
 
-  private async waitForReadyIdentity(): Promise<RunnerIdentity> {
-    const deadline = this.now() + (this.options.readyTimeoutMs ?? defaultReadyTimeoutMs);
+  private async waitForReadyIdentity(deadlineAt: number): Promise<RunnerIdentity> {
+    const deadline = Math.min(
+      deadlineAt,
+      this.now() + (this.options.readyTimeoutMs ?? defaultReadyTimeoutMs),
+    );
     while (!(await this.options.control.isReady())) {
       if (this.now() >= deadline) throw new Error("The runner did not become ready in time.");
       await this.sleep(readyPollIntervalMs);

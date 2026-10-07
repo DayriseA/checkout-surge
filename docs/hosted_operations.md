@@ -46,7 +46,7 @@ A workstation deploy and a CI deploy must not overlap. Their leases make the sec
 
 ### When a deploy fails
 
-The script compares the core's and the runner's versions at the end, even after a failed step.
+The script compares the core's and the runner's versions at the end, even after a failed step. A core marked for recreation counts at the version of the core config in the gate, which the next wake recreates it at; the log then reads `The core is marked for recreation: …`.
 
 | Message | Meaning and action |
 | :-- | :-- |
@@ -177,7 +177,7 @@ It authenticates both directions between the core and the runner, so it changes 
 
 ## Resizing and Limits
 
-- **Core.** Change `guest` in `infra/fly/core/machine.json` and deploy. The deploy updates the sleeping core, and a later recovery places the new core on a host that fits that size. Do not resize with `flyctl machine update --vm-size`: the next deploy sends the file again and reverts it. The core is pinned to its volume's host, so a host that cannot fit the new size makes Fly refuse the update or the next start. A refused update fails the deploy (a partial deployment for `all`): revert the size and deploy again. A refused start makes the gate recover the core on another host, fresh and empty.
+- **Core.** Change `guest` in `infra/fly/core/machine.json` and deploy. The deploy updates the sleeping core, and a later recovery places the new core on a host that fits that size. Do not resize with `flyctl machine update --vm-size`: the next deploy sends the file again and reverts it. The core is pinned to its volume's host, so a host that cannot fit the new size makes Fly refuse the update or the next start. An update refused for capacity makes the deploy mark the core for recreation, and a refused start makes the gate recover it: either way the next wake recreates the core on another host, fresh and empty ([HD-56](decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation)).
 - **Runner.** Set `RUNNER_CPU_KIND`, `RUNNER_CPUS` and `RUNNER_MEMORY_MB` in the API container of `infra/fly/core/machine.json`, make `guest` in `infra/fly/runner/machine.json` match, and deploy `all`. The API applies the size before the next run; the runner has no volume, so its resize is safe.
 - **Run limits.** The `DEMO_MAX_*` deployment caps are API variables in the same container. The API refuses to start when the active public runtime policy exceeds one of them.
   - A fresh core (a recovery, or `--fresh-core`) seeds that policy from the `setup` container's `PUBLIC_CUSTOM_*` variables and from fixed seed values (`buildPublicRuntimePolicy` in `packages/db/src/scripts/seed.ts`). Lower the matching `PUBLIC_CUSTOM_*` variable in the `setup` container together with a cap, and never set a cap below a fixed seed value.

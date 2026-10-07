@@ -64,6 +64,8 @@ Every entry in ID order. New entries are added here too.
 | [HD-52](#hd-52-core-healthchecks-end-on-their-own-before-flys-check-timeout) | Core healthchecks end on their own, before Fly's check timeout | Platform and Topology |
 | [HD-53](#hd-53-the-public-constant-arrival-limit-stays-below-what-the-core-sustains-until-vu-allocation-is-capacity-aware) | The public constant-arrival limit stays below what the core sustains, until VU allocation is capacity-aware | Platform and Topology |
 | [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch) | The runner is sized so k6 never saturates its CPU during dispatch | Runner |
+| [HD-55](#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once) | A host that refuses the runner's new config relocates the runner at once | Runner |
+| [HD-56](#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation) | A core whose host refuses the deploy is marked for a fresh recreation | Deployment and Access |
 
 ## Platform and Topology
 
@@ -259,8 +261,8 @@ Every entry in ID order. New entries are added here too.
 - **Status:** accepted
 - **Date:** 2026-10-03
 - **Context:** A partial deployment, with the core and the runner on different commits, would produce evidence from mismatched code.
-- **Decision:** Before dispatch, the API compares its commit with the runner's (`COMMIT_SHA`, the same string as the image label). A mismatch refuses the run: it ends failed (`load_orchestrator_unavailable`) with zero counters, the start answers 503 `runner_version_mismatch`, and the UI says the demo is being updated. On Fly, `unknown` never matches; the local runner host accepts `unknown`, so Compose works without `COMMIT_SHA`.
-- **Consequences:** Refused attempts appear in run history as failed runs, because the run row exists before the runner may be asked its version (single-run admission comes first). No new failure reason was added.
+- **Decision:** Before dispatch, the API compares its commit with the runner's (`COMMIT_SHA`, the same string as the image label). A mismatch refuses the run: it ends failed (`load_generator_not_started`) with zero counters, the start answers 503 `runner_version_mismatch`, and the UI says the demo is being updated. On Fly, `unknown` never matches; the local runner host accepts `unknown`, so Compose works without `COMMIT_SHA`.
+- **Consequences:** Refused attempts appear in run history as failed runs, because the run row exists before the runner may be asked its version (single-run admission comes first). A mismatch shares the reason of a boot that failed before traffic, rather than a reason of its own.
 - **Code:** `RunnerOperations.bootForRun`, `acceptUnknownVersion` in `apps/api/src/index.ts`.
 
 ### HD-15 Accepted risk: startup replay skips the version handshake
@@ -362,6 +364,18 @@ Every entry in ID order. New entries are added here too.
   - Half the vCPUs: the cheapest, but CPU-bound during the dispatch.
   - Three quarters of them: still close to saturation while dispatching.
 - **Code:** `RUNNER_CPUS` and `RUNNER_MEMORY_MB` in `infra/fly/core/machine.json`, and the runner `guest` in `infra/fly/runner/machine.json`.
+
+### HD-55 A host that refuses the runner's new config relocates the runner at once
+
+- **Status:** accepted
+- **Date:** 2026-10-07
+- **Context:** Before a start, the API updates the stopped runner to the run's size and its own address, and a deploy updates it to the new version. A full host refuses such an update, either with a capacity error or by reverting it after accepting it, which failed visitors' runs and CI deploys.
+- **Decision:** A capacity or dead-host refusal of that update, in either form, recreates the runner at once on a host with room, through the same recreation as a refused start ([HD-17](#hd-17-runner-capacity-failures-retry-in-place-then-recreate)), without retrying in place. A revert is detected by reading the Machine back after the update, since the wait that follows it can fail or succeed. The deploy script does the same for the runner: a new runner from the new config, then the old one destroyed under its lease. A deploy leaves a runner that already has the config to deploy untouched. Other errors never recreate the runner.
+- **Consequences:** A momentary shortage costs a recreation instead of a few seconds of retries. The deploy script matches only observed capacity wordings, since it cannot use the shared classifier ([HD-16](#hd-16-fly-error-classification-is-best-effort)); another wording still fails the deploy. A runner recreated by a deploy may land outside the core's region until the next run start moves it ([HD-36](#hd-36-the-runner-follows-the-cores-region-even-at-one-recreation-per-run)). The core cannot be relocated this way, since its volume pins it to its host ([HD-56](#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation)).
+- **Rejected alternatives:**
+  - Retrying the update in place like a start: Fly already tried to reserve the resources on that host, and each reverted attempt can cost a full wait.
+  - Importing the shared classifier into the deploy script: the script runs in CI without installed dependencies.
+- **Code:** `FlyRunnerHost.applyRunSettings` in `apps/api/src/services/fly-runner-host.ts`, `classifyFlyMachine` in `packages/fly-machines/src/classifier.ts`, `deployRunner`, `updateInPlace` and `relocateRunner` in `infra/fly/deploy.mjs`.
 
 ## Core Idle Stop
 
@@ -670,6 +684,20 @@ Every entry in ID order. New entries are added here too.
 - **Consequences:** A core deployed with incompatible changes never starts on its old data, even when another deploy follows before any visitor. A mark set by mistake is removed by hand, through the Machines API metadata endpoint.
 - **Rejected alternatives:** Setting the mark in a separate step after the deploy: a wake in between would start the new code on incompatible data.
 - **Code:** `deployCore` in `infra/fly/deploy.mjs`.
+
+### HD-56 A core whose host refuses the deploy is marked for a fresh recreation
+
+- **Status:** accepted
+- **Date:** 2026-10-07
+- **Context:** The core's volume pins it to its host, so when that host is full, Fly refuses the deploy's core update, or reverts it. By then `all` has already updated the runner, so the refusal left a partial deployment that refused every run until the next deploy.
+- **Decision:** On such a refusal, the deploy leaves the core's config as it is, sets the recreation mark on the core under its lease ([HD-35](#hd-35-a-fresh-core-is-requested-by-a-mark-that-the-next-wake-acts-on)), and writes the new core config into the gate as usual. The next wake recreates the core elsewhere from that config, at the new version ([HD-34](#hd-34-core-recovery-recreates-a-fresh-core-and-retires-the-old-one-only-once-the-new-one-is-healthy)). The version check counts a marked core at the version of the config in the gate, since a marked core never starts again, so such a deploy succeeds.
+- **Consequences:** A full host costs the hosted run history and admin edits ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path)), and the first visitor afterwards waits for a fresh install. Any other failure of the core update after the runner update still leaves a partial deployment, reported by the version check and fixed by deploying again. Accepted risk: the update counts as reverted whenever the core's image references differ from the ones sent, so if Fly ever reported them in another form, every core deploy would mark the core for recreation and drop its run history. A demo without history is better than a failed deploy that leaves it unable to run, and the comparison is adapted if that ever happens.
+- **Rejected alternatives:**
+  - Failing the deploy: runs stay refused until someone deploys again, and a CI re-run meets the same full host.
+  - Failing the deploy on an image mismatch without a revert event: it leaves the demo unable to run, where a recreation only costs its history.
+  - Updating the core before the runner: the core needs the runner's deployed config, and a runner failure would then leave the partial deployment instead.
+  - Recreating the core during the deploy: the recovery, its health checks and the relocating page belong to the gate, and a deploy cannot check the new core's health.
+- **Code:** `deployCore`, `updateInPlace`, `markCoreForRecreation` and `nextCoreVersion` in `infra/fly/deploy.mjs`.
 
 ### HD-49 GitHub Actions deploys every push to `main` with the workstation's script
 

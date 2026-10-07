@@ -98,6 +98,36 @@ describe("error presentation", () => {
     });
   });
 
+  it("says plainly that the load generator did not start when a start fails before traffic", () => {
+    const read = { status: "unavailable", errorCode: "load_orchestrator_unavailable" } as const;
+    for (const surface of ["public-start", "admin-operation"] as const) {
+      expect(mapErrorPresentation(read, { surface, startRequestOutcome: true })).toMatchObject({
+        headline: "The load generator could not be started",
+        explanation: "No traffic was started. Try again shortly.",
+      });
+    }
+    expect(mapErrorPresentation(read, "admin-operation").headline).toBe(
+      "The latest information is temporarily unavailable",
+    );
+  });
+
+  it("explains a failed run that never sent traffic", () => {
+    const failed = (failedRunCategory: "not_started" | "provider_capacity") =>
+      mapErrorPresentation(
+        { status: "available", data: null },
+        {
+          surface: "watch-read",
+          failedRunCategory,
+        },
+      ).explanation;
+    expect(failed("not_started")).toBe(
+      "The load generator could not be started, so no traffic was sent.",
+    );
+    expect(failed("provider_capacity")).toBe(
+      "The hosting provider had no capacity for the load generator, so no traffic was sent.",
+    );
+  });
+
   it("distinguishes projection cleanup from malformed queue work", () => {
     const present = (conflictReason: string) =>
       mapErrorPresentation(

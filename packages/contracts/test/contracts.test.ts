@@ -740,6 +740,8 @@ describe("run lifecycle contracts", () => {
     expect(internalRunFailureReasonSchema.parse("auto_reset")).toBe("auto_reset");
     expect(toPublicRunFailureCategory("auto_reset")).toBe("automatic_reset");
     expect(toPublicRunFailureCategory("load_generator_lost")).toBe("traffic");
+    expect(toPublicRunFailureCategory("load_generator_not_started")).toBe("not_started");
+    expect(toPublicRunFailureCategory("runner_capacity_unavailable")).toBe("provider_capacity");
     expect(
       demoRunSnapshotSchema.parse({ ...baseRun, status: "starting", trafficStatus: "starting" })
         .autoResetAt,

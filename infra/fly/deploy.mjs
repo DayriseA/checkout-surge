@@ -6,7 +6,11 @@
 //
 // - The core is updated only while it sleeps, under its Machine lease: the script waits for an
 //   awake core to sleep, or stops it with --force. A held lease fails the script, to be re-run.
-// - The runner is updated only while stopped, under its Machine lease.
+//   A core whose host has no room for the new config is marked for recreation instead: the next
+//   wake recreates it fresh and empty, at the new version, through the recovery path.
+// - The runner is updated only while stopped, under its Machine lease, and left untouched when it
+//   already has the config to deploy. A runner whose host has no room for the new config is
+//   recreated on another host, then the old one destroyed.
 // - `all` deploys the runner, the core and the gate, the first two under the core lease, so a
 //   wake meanwhile shows the gate's updating page.
 // - A core deploy writes the runner's config into the core, which recreates the runner from it,
@@ -328,7 +332,31 @@ async function updateMachine(machinesApi, machineId, config, nonce) {
   await waitForStopped(machinesApi, machineId);
 }
 
-async function createMachine(machinesApi, role, config) {
+/**
+ * Whether `current` holds every value of `target`. Keys that Fly or the API add, such as the
+ * runner's `API_BASE_URL`, are ignored: a key removed from a config file comes with a new commit,
+ * so with a new image label and `COMMIT_SHA`.
+ */
+function includesConfig(current, target) {
+  if (target === null || typeof target !== "object") return current === target;
+  if (current === null || typeof current !== "object") return false;
+  if (Array.isArray(target) && current.length !== target.length) return false;
+  return Object.keys(target).every((key) => includesConfig(current[key], target[key]));
+}
+
+/**
+ * Fly's refusal to reserve a host's resources for a Machine. The script has no dependencies, so it
+ * matches only the observed phrases of the shared classifier (`packages/fly-machines`).
+ */
+function isCapacityRefusal(error) {
+  return (
+    error.status === 409 &&
+    /could not reserve resource|insufficient \w+ available/i.test(error.message)
+  );
+}
+
+/** `placement` may be a prioritized list of regions, such as `cdg,eu`, which Fly tries in order. */
+async function createMachine(machinesApi, role, config, placement = region) {
   const { volume } = targets[role];
   if (volume) {
     const created = await machinesApi("POST", "/volumes", {
@@ -342,13 +370,21 @@ async function createMachine(machinesApi, role, config) {
   let machine;
   try {
     machine = await sendConfig(() =>
-      machinesApi("POST", "/machines", { region, config, skip_launch: true }),
+      machinesApi("POST", "/machines", { region: placement, config, skip_launch: true }),
     );
   } catch (error) {
     if (volume) await machinesApi("DELETE", `/volumes/${config.mounts[0].volume}`);
     throw error;
   }
-  await waitForStopped(machinesApi, machine.id);
+  try {
+    await waitForStopped(machinesApi, machine.id);
+  } catch (error) {
+    // A replacement that failed must not leave two Machines of one role behind.
+    await machinesApi("DELETE", `/machines/${machine.id}?force=true`).catch((destroyError) => {
+      console.error(`Could not destroy Machine ${machine.id}: ${destroyError.message}`);
+    });
+    throw error;
+  }
 }
 
 async function deployRunner(imageRefs, version) {
@@ -360,12 +396,70 @@ async function deployRunner(imageRefs, version) {
   if (!existing) {
     await createMachine(machinesApi, "runner", config);
   } else {
-    await withLease(machinesApi, existing.id, runnerLeaseTtlSeconds, async (machine, nonce) => {
-      await requireStopped(machinesApi, machine, nonce);
-      await updateMachine(machinesApi, machine.id, config, nonce);
-    });
+    const unchanged = await withLease(
+      machinesApi,
+      existing.id,
+      runnerLeaseTtlSeconds,
+      async (machine, nonce) => {
+        // A deploy of the same commit leaves the runner untouched, even during a run.
+        if (includesConfig(machine.config, config)) return true;
+        await requireStopped(machinesApi, machine, nonce);
+        if (!(await updateInPlace(machinesApi, machine.id, config, nonce))) {
+          await relocateRunner(machinesApi, machine.id, config, nonce);
+        }
+        return false;
+      },
+    );
+    if (unchanged) {
+      console.log(`runner Machine already has the config of version ${version}; left untouched.`);
+      return;
+    }
   }
   console.log(`runner Machine is stopped and ready to start at version ${version}.`);
+}
+
+/**
+ * Every image of a config: each container's for a multi-container Machine (Fly also reports a
+ * top-level image for it), else the Machine's own.
+ */
+function configImages(config) {
+  return JSON.stringify(config.containers?.map((container) => container.image) ?? [config.image]);
+}
+
+/**
+ * Updates a stopped Machine in place. False when its host has no room for the new config: Fly
+ * refuses the update, or accepts it, then reverts it (observed on a full host).
+ */
+async function updateInPlace(machinesApi, machineId, config, nonce) {
+  const { role } = config.metadata;
+  try {
+    await updateMachine(machinesApi, machineId, config, nonce);
+  } catch (error) {
+    if (!isCapacityRefusal(error)) throw error;
+    console.log(`The ${role}'s host refused the update: ${error.message}`);
+    return false;
+  }
+  const current = await machinesApi("GET", `/machines/${machineId}`);
+  const [latest] = current.events ?? [];
+  if (latest?.type !== "revert" && configImages(current.config) === configImages(config)) {
+    return true;
+  }
+  console.log(
+    `The ${role}'s host reverted the update: images ${configImages(current.config)}, expected ${configImages(config)}.`,
+  );
+  return false;
+}
+
+/**
+ * Like the API's runner recreation (HD-17): a new runner from the new config, placed by Fly on a
+ * host with room in the home region or else elsewhere in Europe, then the old one destroyed under
+ * its lease. A failed create keeps the old runner.
+ */
+async function relocateRunner(machinesApi, oldMachineId, config, nonce) {
+  console.log(`Recreating the runner on another host (${region}, then eu).`);
+  await createMachine(machinesApi, "runner", config, `${region},eu`);
+  await machinesApi("DELETE", `/machines/${oldMachineId}?force=true`, undefined, nonce);
+  console.log(`Destroyed the old runner Machine ${oldMachineId}.`);
 }
 
 /** The runner's full config, as deployed, for the API to recreate the runner from. */
@@ -398,7 +492,10 @@ async function deployCore(imageRefs, version, beforeUpdate) {
         config.metadata.recreate = "requested";
       }
       config.mounts[0].volume = machine.config.mounts[0].volume;
-      await updateMachine(machinesApi, machine.id, config, nonce);
+      if (!(await updateInPlace(machinesApi, machine.id, config, nonce))) {
+        await markCoreForRecreation(machinesApi, machine.id, nonce);
+        config.metadata.recreate = "requested";
+      }
     }
     console.log(`core Machine is stopped and ready to start at version ${version}.`);
     if (config.metadata.recreate === "requested") {
@@ -413,6 +510,23 @@ async function deployCore(imageRefs, version, beforeUpdate) {
     await requireStopped(machinesApi, machine, nonce);
     await apply(machine, nonce);
   });
+}
+
+/**
+ * Sets the recreation mark (HD-35) on a core whose host has no room for the new config: its volume
+ * pins it there. The next wake recreates it elsewhere from the config this deploy writes into the
+ * gate, so at the new version, fresh and empty.
+ */
+async function markCoreForRecreation(machinesApi, machineId, nonce) {
+  await machinesApi(
+    "POST",
+    `/machines/${machineId}/metadata/recreate`,
+    { value: "requested" },
+    nonce,
+  );
+  console.log(
+    `Marked core Machine ${machineId} for recreation; it keeps its old config until then.`,
+  );
 }
 
 /** The gate config with `file` replacing any file at the same guest path. */
@@ -478,11 +592,29 @@ async function deployGuard(machinesApi, imageRefs, version) {
   console.log(`guard Machine ${machine.id} is scheduled ${config.schedule} at version ${version}.`);
 }
 
+/**
+ * The version the core runs at its next wake: a core marked for recreation never starts again, and
+ * the wake recreates it from the core config in the gate.
+ */
+async function nextCoreVersion(core) {
+  if (core.config.metadata?.recreate !== "requested") {
+    return apiContainer(core.config)?.env?.COMMIT_SHA;
+  }
+  const gate = await findMachine(createMachinesApi(targets.gate.app), "gate");
+  const file = gate?.config.files?.find((kept) => kept.guest_path === coreConfigGuestPath);
+  if (!file) return undefined;
+  const recoveryConfig = JSON.parse(Buffer.from(file.raw_value, "base64").toString("utf8"));
+  console.log(
+    "The core is marked for recreation: its version is the one the gate recreates it at.",
+  );
+  return apiContainer(recoveryConfig)?.env?.COMMIT_SHA;
+}
+
 /** Reports a partial deployment, which the version handshake makes refuse every run. */
 async function verifyVersions() {
   const core = await findMachine(createMachinesApi(targets.core.app), "core");
   const runner = await findMachine(createMachinesApi(targets.runner.app), "runner");
-  const coreVersion = core && apiContainer(core.config)?.env?.COMMIT_SHA;
+  const coreVersion = core && (await nextCoreVersion(core));
   const runnerVersion = runner?.config.env?.COMMIT_SHA;
   if (coreVersion && coreVersion === runnerVersion) {
     console.log(`The core and the runner both run version ${coreVersion}.`);

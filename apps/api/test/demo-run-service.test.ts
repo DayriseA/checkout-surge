@@ -65,6 +65,7 @@ import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-re
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
 import { RunHistoryService } from "../src/services/run-history-service.js";
+import { RunnerCapacityUnavailableError } from "../src/services/runner-host.js";
 import { RunnerVersionMismatchError } from "../src/services/runner-operations.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficStartRejectedError } from "../src/services/traffic-execution-gateway.js";
@@ -1722,7 +1723,10 @@ describe("demo-run lifecycle start gating", () => {
     expect(summaries[0]).toMatchObject({
       runId: "77777777-7777-4777-8777-777777777777",
       status: "failed",
-      failureReason: "load_orchestrator_unavailable",
+      failureReason:
+        evidence === "definitive_rejection"
+          ? "load_generator_not_started"
+          : "load_orchestrator_unavailable",
     });
     expect(summaries[0]?.transportAttemptCounts).toEqual({
       plannedRequests: 10_000,
@@ -1875,7 +1879,7 @@ describe("demo-run lifecycle start gating", () => {
     await service.failUndispatchedRun(started.runId);
 
     const [run] = await db.select().from(demoRuns);
-    expect(run).toMatchObject({ status: "failed", failureReason: "load_orchestrator_unavailable" });
+    expect(run).toMatchObject({ status: "failed", failureReason: "load_generator_not_started" });
     const [summary] = await db.select().from(demoRunSummaries);
     expect(summary?.transportAttemptCounts).toMatchObject({
       startedRequests: 0,
@@ -1904,12 +1908,34 @@ describe("demo-run lifecycle start gating", () => {
     const summaries = await requireConnection(connection).db.select().from(demoRunSummaries);
     expect(summaries[0]).toMatchObject({
       status: "failed",
-      failureReason: "load_orchestrator_unavailable",
+      failureReason: "load_generator_not_started",
     });
     expect(summaries[0]?.transportAttemptCounts).toMatchObject({
       startedRequests: 0,
       unstartedRequests: 10_000,
     });
+  });
+
+  it("records a provider capacity failure when no host can take the runner", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      runnerOperations: {
+        bootForRun: async () => {
+          throw new RunnerCapacityUnavailableError();
+        },
+        releaseAfterRun: vi.fn(),
+      },
+    });
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-start"),
+    ).rejects.toMatchObject({ statusCode: 503, code: "runner_capacity_unavailable" });
+
+    const [summary] = await requireConnection(connection).db.select().from(demoRunSummaries);
+    expect(summary).toMatchObject({
+      status: "failed",
+      failureReason: "runner_capacity_unavailable",
+    });
+    expect(summary?.transportAttemptCounts).toMatchObject({ startedRequests: 0 });
   });
 
   it("repairs stale Redis acceptance when an existing summary terminalizes a failed start", async () => {

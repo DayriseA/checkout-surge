@@ -75,6 +75,7 @@ import { FieldHint } from "../field-hint";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 import { RunEstimateNotice } from "../run-estimate-notice";
+import { RunnerRelocationNotice } from "../runner-relocation-notice";
 import { StatusPill } from "../status-pill";
 import { useRunEstimate } from "../use-run-estimate";
 import {
@@ -444,6 +445,7 @@ export function AdminCurrentRunPanel({
           <p className="m-0 mb-3 text-sm font-medium text-muted-strong" role="status">
             Traffic: {recovery.data.currentRun?.trafficStatus ?? "not active"}
           </p>
+          <RunnerRelocationNotice className="mb-3" recovery={recovery} />
           <dl className="m-0 grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
             <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
             <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
@@ -1205,7 +1207,8 @@ export function AdminPresetController({
         error={
           <>
             {startConfirmation ? <RunEstimateNotice state={estimate.state} mode="admin" /> : null}
-            {startError ? <AdminNoticeView notice={startError} /> : null}
+            {isPending ? <RunnerRelocationNotice recovery={recovery} /> : null}
+            {startError ? <AdminNoticeView notice={startError} startRequestOutcome /> : null}
           </>
         }
         onCancel={() => {

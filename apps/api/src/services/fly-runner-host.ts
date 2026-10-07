@@ -39,8 +39,8 @@ type FlyRunnerMachines = Pick<
 >;
 
 // The TTL covers measured operations (3 to 8 s) with a wide margin, so the lease is never renewed.
-// It does not cover the worst-case sum of per-call timeouts in start (about 380 s). The only other
-// lease party is the deploy script.
+// It covers a start, which its deadline bounds (RunnerOperations), plus one call in flight past
+// it. The only other lease party is the deploy script.
 const leaseTtlSeconds = 300;
 const busyRetryWindowMs = 30_000;
 const busyRetryIntervalMs = 1_000;
@@ -59,6 +59,13 @@ const relocatingFailures = new Set<FlyFailureClass>(["provider_capacity", "host_
  * (HD-36, docs/decisions/hosted_deployment.md).
  */
 const fallbackRegion = "eu";
+
+/** One start: its deadline, and whether it has met a capacity shortage so far. */
+interface StartAttempt {
+  /** Milliseconds since the epoch. */
+  deadlineAt: number;
+  capacityShortage: boolean;
+}
 
 /**
  * The runner as one Fly Machine with no volume, stopped between runs. Each operation holds the
@@ -88,10 +95,16 @@ export class FlyRunnerHost implements RunnerHost {
 
   /**
    * Starts the runner where it is, retrying with back-off. When the provider still has no
-   * capacity, or the host is unreachable, the runner is recreated elsewhere. A runner outside the
-   * core's region, because the core was relocated, is recreated to follow it.
+   * capacity, or the host is unreachable, the runner is recreated elsewhere; a host that refuses
+   * the run's settings recreates it at once. A runner outside the core's region, because the core
+   * was relocated, is recreated to follow it.
+   *
+   * Past `deadlineAt`, no further step begins and Fly waits end: the start fails, as a capacity
+   * failure when it met a shortage. A recreated runner that did not start is destroyed; a runner
+   * started in place is stopped by the caller's cleanup of a failed boot.
    */
-  start(runId: string, hooks: RunnerStartHooks): Promise<RunnerPlacement> {
+  start(runId: string, hooks: RunnerStartHooks, deadlineAt: number): Promise<RunnerPlacement> {
+    const attempt: StartAttempt = { deadlineAt, capacityShortage: false };
     return this.withLease("runner start", async (machine, nonce) => {
       // Without a lease, the host is not ok: the runner is recreated at once.
       if (nonce) {
@@ -101,14 +114,16 @@ export class FlyRunnerHost implements RunnerHost {
           const identity = await this.options.control.readIdentity().catch(() => null);
           await this.stopMachine(machine, nonce, { runId, bootId: identity?.bootId ?? null }, true);
         }
-        if (machine.region === this.options.coreRegion) {
-          const failure = await this.startInPlace(machine, nonce);
-          if (failure === null) return { machineId: machine.id, region: machine.region };
-          if (!relocatingFailures.has(classifyFlyError(failure))) throw failure;
+        if (
+          machine.region === this.options.coreRegion &&
+          (await this.startInPlace(machine, nonce, attempt)) === "started"
+        ) {
+          return { machineId: machine.id, region: machine.region };
         }
       }
+      this.requireTimeLeft(attempt);
       await hooks.onRelocating();
-      return this.replace(machine, nonce);
+      return this.replace(machine, nonce, attempt);
     });
   }
 
@@ -142,7 +157,10 @@ export class FlyRunnerHost implements RunnerHost {
           message: "The load generator is running; recreate it between runs.",
         });
       }
-      const placement = await this.replace(machine, nonce);
+      const placement = await this.replace(machine, nonce, {
+        deadlineAt: Number.POSITIVE_INFINITY,
+        capacityShortage: false,
+      });
       if (placement.machineId) {
         await this.options.machines.stopMachine(placement.machineId);
         await this.requireState(placement.machineId, "stopped");
@@ -152,46 +170,106 @@ export class FlyRunnerHost implements RunnerHost {
   }
 
   /**
-   * Brings the stopped Machine up in place. Returns the last start failure once the retries are spent, or
-   * null when it started.
+   * Brings the stopped Machine up in place. Returns "relocate" when its host refuses the run's
+   * settings, or still has no capacity or is unreachable once the retries are spent; throws any
+   * other failure.
    */
-  private async startInPlace(machine: FlyMachine, nonce: string): Promise<unknown | null> {
-    if (!this.hasRunSettings(machine.config)) {
-      const updated = await this.options.machines.updateMachine(
-        machine.id,
-        this.withRunSettings(machine.config),
-        nonce,
-      );
-      await this.requireState(machine.id, "stopped", updated.instance_id);
+  private async startInPlace(
+    machine: FlyMachine,
+    nonce: string,
+    attempt: StartAttempt,
+  ): Promise<"started" | "relocate"> {
+    this.requireTimeLeft(attempt);
+    if (
+      !this.hasRunSettings(machine.config) &&
+      !(await this.applyRunSettings(machine, nonce, attempt))
+    ) {
+      return "relocate";
     }
-    for (let attempt = 0; ; attempt += 1) {
+    this.requireTimeLeft(attempt);
+    for (let tries = 0; ; tries += 1) {
       try {
         await this.options.machines.startMachine(machine.id, nonce);
         break;
       } catch (error) {
         const failure = classifyFlyError(error);
         this.options.logger.warn(
-          { err: error, failure, attempt: attempt + 1 },
+          { err: error, failure, attempt: tries + 1 },
           "The runner Machine did not start.",
         );
-        const delayMs = startRetryDelaysMs[attempt];
+        if (failure === "provider_capacity") attempt.capacityShortage = true;
+        const delayMs = startRetryDelaysMs[tries];
         if (!retriedStartFailures.has(failure)) throw error;
-        if (delayMs === undefined) return error;
+        if (delayMs === undefined) {
+          if (relocatingFailures.has(failure)) return "relocate";
+          throw error;
+        }
+        this.requireTimeLeft(attempt, delayMs);
         await this.sleep(delayMs);
       }
     }
     // Accepted risk HD-19 (docs/decisions/hosted_deployment.md)
     // (a failed wait fails the run before any traffic; the next start heals the runner).
-    await this.requireState(machine.id, "started");
-    return null;
+    await this.requireState(machine.id, "started", attempt);
+    return "started";
+  }
+
+  /**
+   * Updates the stopped Machine to the run's size and API address. Returns false when its host
+   * refuses them for capacity or is dead, either at once or by reverting the update; the runner is
+   * then recreated without retrying in place. Throws any other failure.
+   */
+  private async applyRunSettings(
+    machine: FlyMachine,
+    nonce: string,
+    attempt: StartAttempt,
+  ): Promise<boolean> {
+    let updated: FlyMachine;
+    try {
+      updated = await this.options.machines.updateMachine(
+        machine.id,
+        this.withRunSettings(machine.config),
+        nonce,
+      );
+    } catch (error) {
+      const failure = classifyFlyError(error);
+      if (!relocatingFailures.has(failure)) throw error;
+      if (failure === "provider_capacity") attempt.capacityShortage = true;
+      this.options.logger.warn({ err: error }, "The runner's host refused the run's settings.");
+      return false;
+    }
+    try {
+      await this.requireState(machine.id, "stopped", attempt, updated.instance_id);
+    } catch (error) {
+      const failure = classifyFlyMachine(await this.options.machines.getMachine(machine.id));
+      if (failure === null || !relocatingFailures.has(failure)) throw error;
+      if (failure === "provider_capacity") attempt.capacityShortage = true;
+      this.options.logger.warn(
+        { err: error, failure },
+        "The runner's host reverted the run's settings.",
+      );
+      return false;
+    }
+    // The wait can also succeed on the reverted Machine, so the settings are read back.
+    if (this.hasRunSettings((await this.options.machines.getMachine(machine.id)).config)) {
+      return true;
+    }
+    attempt.capacityShortage = true;
+    this.options.logger.warn("The runner's host reverted the run's settings.");
+    return false;
   }
 
   /**
    * Creates a fresh runner from the deployed config, in the core's region or else in Europe,
    * waits for it to start, then retires the old one. The old one stays when no new one starts.
    */
-  private async replace(old: FlyMachine, nonce: string | undefined): Promise<RunnerPlacement> {
+  private async replace(
+    old: FlyMachine,
+    nonce: string | undefined,
+    attempt: StartAttempt,
+  ): Promise<RunnerPlacement> {
     const config = this.withRunSettings(await this.options.readDeployedConfig());
+    this.requireTimeLeft(attempt);
     let created: FlyMachine;
     try {
       created = await this.options.machines.createMachine(
@@ -206,7 +284,7 @@ export class FlyRunnerHost implements RunnerHost {
       throw error;
     }
     try {
-      await this.requireState(created.id, "started");
+      await this.requireState(created.id, "started", attempt);
     } catch (error) {
       await this.options.machines.destroyMachine(created.id).catch((destroyError: unknown) => {
         this.options.logger.error(
@@ -264,6 +342,20 @@ export class FlyRunnerHost implements RunnerHost {
     this.options.logger.warn({ ...target, outcome }, "Stopping the runner Machine through Fly.");
     await this.options.machines.stopMachine(machine.id, nonce);
     await this.requireState(machine.id, "stopped");
+  }
+
+  /**
+   * Fails the start when its deadline has passed, or would pass within `neededMs`: as a capacity
+   * failure when it met a shortage, otherwise as a start that ran out of time.
+   */
+  private requireTimeLeft(attempt: StartAttempt, neededMs = 0): void {
+    if (this.now() + neededMs < attempt.deadlineAt) return;
+    this.options.logger.warn(
+      { capacityShortage: attempt.capacityShortage },
+      "The runner start ran out of time.",
+    );
+    if (attempt.capacityShortage) throw new RunnerCapacityUnavailableError();
+    throw new Error("The runner did not start before its deadline.");
   }
 
   private async requestShutdown(target: {
@@ -358,17 +450,27 @@ export class FlyRunnerHost implements RunnerHost {
     return runner;
   }
 
+  /** Waits for `state`, at most until the start's deadline when one is given. */
   private async requireState(
     machineId: string,
     state: "started" | "stopped",
+    attempt?: StartAttempt,
     instanceId?: string,
   ): Promise<void> {
+    const timeoutSeconds = attempt
+      ? Math.max(
+          1,
+          Math.min(machineWaitSeconds, Math.ceil((attempt.deadlineAt - this.now()) / 1000)),
+        )
+      : machineWaitSeconds;
     const reached = await this.options.machines.waitForState(machineId, state, {
-      timeoutSeconds: machineWaitSeconds,
+      timeoutSeconds,
       ...(instanceId ? { instanceId } : {}),
     });
     if (!reached) {
-      throw new Error(`The runner Machine did not reach ${state} within ${machineWaitSeconds}s.`);
+      // A wait cut by the deadline fails as the start's deadline does.
+      if (attempt) this.requireTimeLeft(attempt);
+      throw new Error(`The runner Machine did not reach ${state} within ${timeoutSeconds}s.`);
     }
   }
 

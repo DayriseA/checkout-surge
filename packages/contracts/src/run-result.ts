@@ -19,6 +19,8 @@ export const internalRunFailureReasonValues = [
   "traffic_failed",
   "inventory_initialization_failed",
   "load_orchestrator_unavailable",
+  "load_generator_not_started",
+  "runner_capacity_unavailable",
   "load_generator_lost",
   ...destructiveResetReasonValues,
 ] as const;
@@ -27,6 +29,8 @@ export type InternalRunFailureReason = z.infer<typeof internalRunFailureReasonSc
 
 export const publicRunFailureCategoryValues = [
   "traffic",
+  "not_started",
+  "provider_capacity",
   "inventory",
   "operator",
   "automatic_reset",
@@ -45,6 +49,10 @@ export function toPublicRunFailureCategory(
     case "load_orchestrator_unavailable":
     case "load_generator_lost":
       return "traffic";
+    case "load_generator_not_started":
+      return "not_started";
+    case "runner_capacity_unavailable":
+      return "provider_capacity";
     case "inventory_initialization_failed":
       return "inventory";
     case "auto_reset":

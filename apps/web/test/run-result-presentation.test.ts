@@ -129,6 +129,16 @@ describe("run result presentation", () => {
       }),
       sentence: "The run failed due to a traffic failure.",
     },
+    {
+      name: "provider capacity failure",
+      evidence: withEvidence({
+        runStatus: "failed",
+        failureCategory: "provider_capacity",
+        durable: { reservedUnits: 0 },
+      }),
+      sentence:
+        "The run failed because the hosting provider had no capacity for the load generator; no traffic was sent.",
+    },
   ] as const)("states $name", ({ evidence, sentence }) => {
     expect(runConclusionSentence(deriveRunResult(evidence))).toBe(sentence);
   });

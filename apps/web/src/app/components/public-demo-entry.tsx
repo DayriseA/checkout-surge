@@ -56,11 +56,15 @@ import { ErrorNotice } from "./error-notice";
 import { FieldHint } from "./field-hint";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { RunEstimateNotice } from "./run-estimate-notice";
+import { RunnerRelocationNotice } from "./runner-relocation-notice";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
 import { useRunEstimate } from "./use-run-estimate";
 
 const recoveryPollIntervalMs = 15_000;
+// While the visitor's own start is pending, so a runner relocation shows during the wait. It stays
+// within the per-visitor budget of dashboard recovery reads.
+const startingRecoveryPollIntervalMs = 6_000;
 const readinessPollIntervalMs = 60_000;
 const boardClassName = "min-w-0 rounded-2xl border border-border bg-surface";
 const recommendedPresetSlug = "preview-1k";
@@ -193,11 +197,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     };
   }, []);
 
+  const startPending = startingSlug !== null;
   useEffect(() => {
     if (recovery.status !== "available") return;
-    const interval = setInterval(() => void refresh(), recoveryPollIntervalMs);
+    const interval = setInterval(
+      () => void refresh(),
+      startPending ? startingRecoveryPollIntervalMs : recoveryPollIntervalMs,
+    );
     return () => clearInterval(interval);
-  }, [recovery.status, refresh]);
+  }, [recovery.status, refresh, startPending]);
 
   useEffect(() => {
     const interval = setInterval(() => void refreshReadiness(), readinessPollIntervalMs);
@@ -1307,8 +1315,9 @@ function StartGate({
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
   const runPresentation = deriveRunPresentationState(recovery);
   const relocatingRunner = runPresentation.state === "relocating-load-generator";
+  // The visitor's own pending start is not "another run in progress".
   const activeRunPresentation =
-    runInProgress && !relocatingRunner
+    runInProgress && !relocatingRunner && !isStarting
       ? mapErrorPresentation(
           {
             status: "unavailable",
@@ -1352,14 +1361,7 @@ function StartGate({
           <StatusPill status={{ label: readyLabel, tone: "idle" }} />
         )}
       </div>
-      {relocatingRunner ? (
-        <p
-          className="m-0 rounded-lg border border-warning-line bg-warning-soft p-3 text-sm text-warning"
-          role="status"
-        >
-          {runPresentation.description}
-        </p>
-      ) : null}
+      <RunnerRelocationNotice recovery={recovery} />
       {activeRunPresentation ? (
         <ErrorNotice
           className="w-full"

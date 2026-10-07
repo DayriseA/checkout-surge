@@ -39,14 +39,17 @@ export function classifyFlyError(error: unknown): FlyFailureClass {
 }
 
 /**
- * Classifies the state Fly reports for a Machine: a dead host, or a non-zero exit that nobody
- * requested. Null when neither applies.
+ * Classifies the state Fly reports for a Machine: a dead host, an update its host reverted, or a
+ * non-zero exit that nobody requested. Null when none applies.
  */
 export function classifyFlyMachine(
   machine: Pick<FlyMachine, "host_status" | "events">,
 ): FlyFailureClass | null {
   if (machine.host_status === "unreachable") return "host_unreachable";
   const [latest] = machine.events ?? [];
+  // Fly can accept an update, then revert it when the host cannot reserve its resources (observed
+  // on a full host).
+  if (latest?.type === "revert") return "provider_capacity";
   const exit = latest?.type === "exit" ? latest.request?.exit_event : undefined;
   if (exit?.exit_code && !exit.requested_stop) return "own_error";
   return null;

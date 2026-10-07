@@ -538,6 +538,33 @@ describe("admin feature controllers", () => {
     expect(screen.getByRole("button", { name: "Retry recovery" })).toBeTruthy();
   });
 
+  it("says plainly when the starting run's load generator is moving to another host", () => {
+    const { trafficStartedAt: _notStarted, ...run } = runFixture() ?? {};
+    const projection = recoveryFixture({
+      ...run,
+      status: "starting",
+      trafficStatus: "starting",
+      runnerRelocating: true,
+    } as DashboardProjection["currentRun"]);
+    render(
+      <AdminCurrentRunPanel
+        freshness={{ state: "live", observedAt: projection.recoveredAt, final: false }}
+        hasSyncIssue={false}
+        isPending={false}
+        isRefreshDisabled={false}
+        isRetryScheduled={false}
+        onRefresh={async () => undefined}
+        recovery={available(projection)}
+        retriesExhausted={false}
+        retryAttempt={0}
+        retryDelayMs={null}
+        syncIssue={null}
+      />,
+    );
+
+    expect(screen.getByText(/moving to another host/)).toBeTruthy();
+  });
+
   it("derives stale admin state after the shared freshness threshold", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-20T00:00:10.000Z"));

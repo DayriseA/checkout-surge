@@ -62,6 +62,7 @@ import type {
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
+import { RunnerCapacityUnavailableError } from "./runner-host.js";
 import type { RunnerBoot, RunnerOperations } from "./runner-operations.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import { syntheticFailedTrafficSummary } from "./traffic-delivery-plan.js";
@@ -215,7 +216,9 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         // The runner failed before any start was dispatched: no traffic can have started.
         await this.failRun(
           accepted.run.runId,
-          "load_orchestrator_unavailable",
+          error instanceof RunnerCapacityUnavailableError
+            ? "runner_capacity_unavailable"
+            : "load_generator_not_started",
           correlationId,
           "no_traffic_started",
         );
@@ -239,11 +242,12 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         if (
           !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
         ) {
+          const rejected = error instanceof TrafficStartRejectedError;
           await this.failRun(
             accepted.run.runId,
-            "load_orchestrator_unavailable",
+            rejected ? "load_generator_not_started" : "load_orchestrator_unavailable",
             correlationId,
-            error instanceof TrafficStartRejectedError ? "no_traffic_started" : "unavailable",
+            rejected ? "no_traffic_started" : "unavailable",
           );
         }
         throw error;
@@ -299,7 +303,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   async failUndispatchedRun(runId: string): Promise<void> {
     await this.failRun(
       runId,
-      "load_orchestrator_unavailable",
+      "load_generator_not_started",
       `traffic-reconcile-${runId}`,
       "no_traffic_started",
     );

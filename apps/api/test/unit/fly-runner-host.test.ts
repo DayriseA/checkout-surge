@@ -1,4 +1,8 @@
-import { type FlyMachine, FlyMachinesApiError } from "@checkout-surge/fly-machines";
+import {
+  type FlyMachine,
+  type FlyMachineConfig,
+  FlyMachinesApiError,
+} from "@checkout-surge/fly-machines";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import { FlyRunnerHost } from "../../src/services/fly-runner-host.js";
@@ -8,6 +12,7 @@ const runId = "55555555-5555-4555-8555-555555555555";
 const bootId = "11111111-1111-4111-8111-111111111111";
 const apiBaseUrl = "http://[fdaa::2]:4000";
 const size = { cpuKind: "performance", cpus: 4, memoryMb: 8192 };
+const noDeadline = Number.POSITIVE_INFINITY;
 const noCapacity = () =>
   new FlyMachinesApiError(
     "POST",
@@ -63,6 +68,8 @@ function setup(
 ) {
   let clock = 0;
   const sleeps: number[] = [];
+  // Fly keeps an update unless a test makes it revert.
+  let updated: FlyMachine | undefined;
   const machines = {
     listMachines: vi.fn(async () => [
       runnerMachine({
@@ -71,10 +78,15 @@ function setup(
       }),
       options.machine ?? runnerMachine(),
     ]),
-    getMachine: vi.fn(async () => options.machineUnderLease ?? options.machine ?? runnerMachine()),
+    getMachine: vi.fn(
+      async () => updated ?? options.machineUnderLease ?? options.machine ?? runnerMachine(),
+    ),
     acquireLease: vi.fn(async () => "nonce-1"),
     releaseLease: vi.fn(async () => undefined),
-    updateMachine: vi.fn(async () => runnerMachine({ instance_id: "v2" })),
+    updateMachine: vi.fn(async (_id: string, config: FlyMachineConfig) => {
+      updated = runnerMachine({ instance_id: "v2", config });
+      return updated;
+    }),
     createMachine: vi.fn(async () => runnerMachine({ id: "runner-2", region: "ams" })),
     destroyMachine: vi.fn(async () => undefined),
     startMachine: vi.fn(async () => undefined),
@@ -107,14 +119,19 @@ function setup(
     },
   });
   const hooks = { onRelocating: vi.fn(async () => undefined) };
-  return { host, machines, control, hooks, sleeps };
+  const advanceClock = (ms: number) => {
+    clock += ms;
+  };
+  return { host, machines, control, hooks, sleeps, advanceClock };
 }
 
 describe("FlyRunnerHost start", () => {
   it("starts the stopped runner under its lease when its config already fits the run", async () => {
     const { host, machines } = setup();
 
-    await expect(host.start(runId, { onRelocating: async () => undefined })).resolves.toEqual({
+    await expect(
+      host.start(runId, { onRelocating: async () => undefined }, noDeadline),
+    ).resolves.toEqual({
       machineId: "runner-1",
       region: "cdg",
     });
@@ -134,7 +151,7 @@ describe("FlyRunnerHost start", () => {
     machine.config.env = { PORT: "4200", API_BASE_URL: "http://old-core:4000" };
     const { host, machines } = setup({ machine });
 
-    await host.start(runId, { onRelocating: async () => undefined });
+    await host.start(runId, { onRelocating: async () => undefined }, noDeadline);
 
     expect(machines.updateMachine).toHaveBeenCalledWith(
       "runner-1",
@@ -161,7 +178,7 @@ describe("FlyRunnerHost start", () => {
     deployed.config.env = { PORT: "4200", COMMIT_SHA: "new" };
     const { host, machines } = setup({ machineUnderLease: deployed });
 
-    await host.start(runId, { onRelocating: async () => undefined });
+    await host.start(runId, { onRelocating: async () => undefined }, noDeadline);
 
     expect(machines.getMachine).toHaveBeenCalledWith("runner-1");
     expect(machines.acquireLease.mock.invocationCallOrder[0]).toBeLessThan(
@@ -183,7 +200,7 @@ describe("FlyRunnerHost start", () => {
       shutdownOutcomes: ["ignored_boot_mismatch"],
     });
 
-    await host.start(runId, { onRelocating: async () => undefined });
+    await host.start(runId, { onRelocating: async () => undefined }, noDeadline);
 
     expect(control.shutdown).toHaveBeenCalledWith({ runId, bootId });
     expect(machines.stopMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
@@ -196,9 +213,9 @@ describe("FlyRunnerHost start", () => {
     const { host, machines } = setup();
     machines.startMachine.mockRejectedValueOnce(new Error("insufficient resources"));
 
-    await expect(host.start(runId, { onRelocating: async () => undefined })).rejects.toThrow(
-      "insufficient resources",
-    );
+    await expect(
+      host.start(runId, { onRelocating: async () => undefined }, noDeadline),
+    ).rejects.toThrow("insufficient resources");
     expect(machines.releaseLease).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 });
@@ -210,7 +227,7 @@ describe("FlyRunnerHost capacity recovery", () => {
       new FlyMachinesApiError("POST", "/machines/runner-1/start", 503, "unavailable"),
     );
 
-    await expect(host.start(runId, hooks)).resolves.toEqual({
+    await expect(host.start(runId, hooks, noDeadline)).resolves.toEqual({
       machineId: "runner-1",
       region: "cdg",
     });
@@ -225,7 +242,7 @@ describe("FlyRunnerHost capacity recovery", () => {
     const { host, machines, hooks, sleeps } = setup();
     machines.startMachine.mockRejectedValue(noCapacity());
 
-    await expect(host.start(runId, hooks)).resolves.toEqual({
+    await expect(host.start(runId, hooks, noDeadline)).resolves.toEqual({
       machineId: "runner-2",
       region: "ams",
     });
@@ -240,6 +257,96 @@ describe("FlyRunnerHost capacity recovery", () => {
     expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 
+  describe("when the runner's host refuses the run's settings", () => {
+    // The deployed runner config has no API address, so a start updates it first.
+    const deployedRunner = (overrides: Partial<FlyMachine> = {}) =>
+      runnerMachine({
+        config: { ...runnerMachine().config, env: { PORT: "4200" } },
+        ...overrides,
+      });
+
+    it("recreates the runner at once when the update is refused for capacity", async () => {
+      const { host, machines, hooks } = setup({ machine: deployedRunner() });
+      machines.updateMachine.mockRejectedValueOnce(
+        new FlyMachinesApiError(
+          "POST",
+          "/machines/runner-1",
+          409,
+          '{"error":"aborted: could not reserve resource for machine: insufficient CPUs available to fulfill request on the current host"}',
+        ),
+      );
+
+      await expect(host.start(runId, hooks, noDeadline)).resolves.toEqual({
+        machineId: "runner-2",
+        region: "ams",
+      });
+
+      expect(machines.startMachine).not.toHaveBeenCalled();
+      expect(hooks.onRelocating).toHaveBeenCalledOnce();
+      expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
+      expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+      expect(machines.createMachine.mock.invocationCallOrder[0]).toBeLessThan(
+        machines.destroyMachine.mock.invocationCallOrder[0] ?? 0,
+      );
+    });
+
+    it("recreates the runner when its host accepts the update, then reverts it", async () => {
+      const { host, machines, hooks } = setup({ machine: deployedRunner() });
+      machines.getMachine.mockResolvedValueOnce(deployedRunner()).mockResolvedValueOnce(
+        deployedRunner({
+          events: [
+            { type: "revert", status: "stopped" },
+            { type: "update", status: "replacing" },
+          ],
+        }),
+      );
+      machines.waitForState.mockResolvedValueOnce(false);
+
+      await expect(host.start(runId, hooks, noDeadline)).resolves.toMatchObject({
+        machineId: "runner-2",
+      });
+
+      expect(machines.waitForState).toHaveBeenNthCalledWith(1, "runner-1", "stopped", {
+        timeoutSeconds: 60,
+        instanceId: "v2",
+      });
+      expect(machines.startMachine).not.toHaveBeenCalled();
+      expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
+      expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+    });
+
+    it("recreates the runner when the wait succeeds but the update did not stick", async () => {
+      const { host, machines, hooks } = setup({ machine: deployedRunner() });
+      machines.getMachine
+        .mockResolvedValueOnce(deployedRunner())
+        .mockResolvedValueOnce(deployedRunner());
+
+      await expect(host.start(runId, hooks, noDeadline)).resolves.toMatchObject({
+        machineId: "runner-2",
+      });
+
+      expect(machines.updateMachine).toHaveBeenCalledOnce();
+      expect(machines.startMachine).not.toHaveBeenCalled();
+      expect(hooks.onRelocating).toHaveBeenCalledOnce();
+      expect(machines.createMachine).toHaveBeenCalledWith(recreatedConfig, "cdg,eu");
+      expect(machines.destroyMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
+    });
+
+    it("never recreates the runner when the update fails transiently", async () => {
+      const { host, machines, hooks } = setup({ machine: deployedRunner() });
+      machines.updateMachine.mockRejectedValueOnce(
+        new FlyMachinesApiError("POST", "/machines/runner-1", 503, "unavailable"),
+      );
+
+      await expect(host.start(runId, hooks, noDeadline)).rejects.toMatchObject({ status: 503 });
+
+      expect(machines.startMachine).not.toHaveBeenCalled();
+      expect(hooks.onRelocating).not.toHaveBeenCalled();
+      expect(machines.createMachine).not.toHaveBeenCalled();
+      expect(machines.destroyMachine).not.toHaveBeenCalled();
+    });
+  });
+
   it("recreates the runner at once from the deployed config, without a lease, when its host is not ok", async () => {
     const { host, machines, hooks } = setup({
       // A partial config, as Fly reports a Machine on a host that is not ok.
@@ -252,7 +359,9 @@ describe("FlyRunnerHost capacity recovery", () => {
       new FlyMachinesApiError("DELETE", "/machines/runner-1?force=true", 404, "not found"),
     );
 
-    await expect(host.start(runId, hooks)).resolves.toMatchObject({ machineId: "runner-2" });
+    await expect(host.start(runId, hooks, noDeadline)).resolves.toMatchObject({
+      machineId: "runner-2",
+    });
 
     expect(machines.acquireLease).not.toHaveBeenCalled();
     expect(machines.startMachine).not.toHaveBeenCalled();
@@ -263,7 +372,9 @@ describe("FlyRunnerHost capacity recovery", () => {
   it("recreates a runner left outside the core's region, so it follows a relocated core", async () => {
     const { host, machines, hooks } = setup({ machine: runnerMachine({ region: "ams" }) });
 
-    await expect(host.start(runId, hooks)).resolves.toMatchObject({ machineId: "runner-2" });
+    await expect(host.start(runId, hooks, noDeadline)).resolves.toMatchObject({
+      machineId: "runner-2",
+    });
 
     expect(machines.startMachine).not.toHaveBeenCalled();
     expect(hooks.onRelocating).toHaveBeenCalledOnce();
@@ -276,7 +387,7 @@ describe("FlyRunnerHost capacity recovery", () => {
       machine: runnerMachine({ state: "started", region: "ams" }),
     });
 
-    await host.start(runId, hooks);
+    await host.start(runId, hooks, noDeadline);
 
     expect(control.shutdown).toHaveBeenCalledWith({ runId, bootId });
     expect(machines.waitForState).toHaveBeenCalledWith("runner-1", "stopped", {
@@ -294,7 +405,7 @@ describe("FlyRunnerHost capacity recovery", () => {
       new FlyMachinesApiError("POST", "/machines/runner-1/start", 409, '{"error":"lease held"}'),
     );
 
-    await expect(host.start(runId, hooks)).rejects.toMatchObject({ status: 409 });
+    await expect(host.start(runId, hooks, noDeadline)).rejects.toMatchObject({ status: 409 });
 
     expect(machines.startMachine).toHaveBeenCalledOnce();
     expect(machines.createMachine).not.toHaveBeenCalled();
@@ -312,7 +423,9 @@ describe("FlyRunnerHost capacity recovery", () => {
       ),
     );
 
-    await expect(host.start(runId, hooks)).rejects.toBeInstanceOf(RunnerCapacityUnavailableError);
+    await expect(host.start(runId, hooks, noDeadline)).rejects.toBeInstanceOf(
+      RunnerCapacityUnavailableError,
+    );
 
     expect(machines.destroyMachine).not.toHaveBeenCalled();
   });
@@ -322,9 +435,88 @@ describe("FlyRunnerHost capacity recovery", () => {
     machines.startMachine.mockRejectedValue(noCapacity());
     machines.waitForState.mockResolvedValueOnce(false);
 
-    await expect(host.start(runId, hooks)).rejects.toThrow("did not reach started");
+    await expect(host.start(runId, hooks, noDeadline)).rejects.toThrow("did not reach started");
 
     expect(machines.destroyMachine).toHaveBeenCalledExactlyOnceWith("runner-2");
+  });
+});
+
+describe("FlyRunnerHost start deadline", () => {
+  it("fails as a capacity failure when the deadline falls while retrying a full host", async () => {
+    const { host, machines, hooks, sleeps } = setup();
+    machines.startMachine.mockRejectedValue(noCapacity());
+
+    await expect(host.start(runId, hooks, 2_000)).rejects.toBeInstanceOf(
+      RunnerCapacityUnavailableError,
+    );
+
+    // The second back-off would end past the deadline, so no third attempt and no recreation.
+    expect(machines.startMachine).toHaveBeenCalledTimes(2);
+    expect(sleeps).toEqual([1_000]);
+    expect(hooks.onRelocating).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+    expect(machines.releaseLease).toHaveBeenCalledWith("runner-1", "nonce-1");
+  });
+
+  it("ends a recreation's wait at the deadline, destroys the new runner and keeps the old one", async () => {
+    const { host, machines, hooks } = setup({ machine: runnerMachine({ region: "ams" }) });
+    machines.waitForState.mockResolvedValueOnce(false);
+
+    await expect(host.start(runId, hooks, 20_000)).rejects.toThrow("did not reach started");
+
+    expect(machines.waitForState).toHaveBeenCalledWith("runner-2", "started", {
+      timeoutSeconds: 20,
+    });
+    expect(machines.destroyMachine).toHaveBeenCalledExactlyOnceWith("runner-2");
+  });
+
+  it("fails as a capacity failure when the deadline cuts a relocation after a full host", async () => {
+    const { host, machines, hooks, advanceClock } = setup({
+      machine: runnerMachine({
+        config: { ...runnerMachine().config, env: { PORT: "4200" } },
+      }),
+    });
+    machines.updateMachine.mockRejectedValueOnce(noCapacity());
+    machines.waitForState.mockImplementationOnce(async () => {
+      advanceClock(20_000);
+      return false;
+    });
+
+    await expect(host.start(runId, hooks, 20_000)).rejects.toBeInstanceOf(
+      RunnerCapacityUnavailableError,
+    );
+
+    expect(machines.createMachine).toHaveBeenCalledOnce();
+    expect(machines.destroyMachine).toHaveBeenCalledExactlyOnceWith("runner-2");
+  });
+
+  it("does not start in place once the update has used up the deadline", async () => {
+    const { host, machines, hooks, advanceClock } = setup({
+      machine: runnerMachine({
+        config: { ...runnerMachine().config, env: { PORT: "4200" } },
+      }),
+    });
+    // The update sticks, but its wait for `stopped` ends at the deadline.
+    machines.waitForState.mockImplementationOnce(async () => {
+      advanceClock(20_000);
+      return true;
+    });
+
+    await expect(host.start(runId, hooks, 20_000)).rejects.toThrow("before its deadline");
+
+    expect(machines.updateMachine).toHaveBeenCalledOnce();
+    expect(machines.startMachine).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+  });
+
+  it("starts nothing once the deadline has passed", async () => {
+    const { host, machines, hooks } = setup({ machine: runnerMachine({ region: "ams" }) });
+
+    await expect(host.start(runId, hooks, 0)).rejects.toThrow("before its deadline");
+
+    expect(hooks.onRelocating).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+    expect(machines.startMachine).not.toHaveBeenCalled();
   });
 });
 

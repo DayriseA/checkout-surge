@@ -13,13 +13,18 @@ function setup(
     runnerVersion?: string;
     acceptUnknownVersion?: boolean;
     readyAfterChecks?: number;
+    /** How long the runner start takes on the test clock. */
+    startTakesMs?: number;
     host?: Partial<RunnerHost>;
   } = {},
 ) {
   let clock = 0;
   let readinessChecks = 0;
   const host = {
-    start: vi.fn(async () => ({ machineId: "runner-1", region: "cdg" })),
+    start: vi.fn(async () => {
+      clock += options.startTakesMs ?? 0;
+      return { machineId: "runner-1", region: "cdg" };
+    }),
     stop: vi.fn(async () => undefined),
     isStopped: vi.fn(async () => false),
     isLost: vi.fn(async () => false),
@@ -61,7 +66,7 @@ describe("RunnerOperations boot", () => {
       region: "cdg",
       bootId,
     });
-    expect(host.start).toHaveBeenCalledWith(runId, hooks);
+    expect(host.start).toHaveBeenCalledWith(runId, hooks, 90_000);
     expect(control.isReady).toHaveBeenCalledTimes(4);
     expect(host.stop).not.toHaveBeenCalled();
   });
@@ -97,6 +102,20 @@ describe("RunnerOperations boot", () => {
       statusCode: 503,
       code: "load_orchestrator_unavailable",
     });
+    expect(host.stop).toHaveBeenCalledWith({ runId, bootId: null });
+  });
+
+  it("ends the readiness wait at the boot's deadline", async () => {
+    const { operations, host, control } = setup({
+      startTakesMs: 85_000,
+      readyAfterChecks: Number.POSITIVE_INFINITY,
+    });
+
+    await expect(operations.bootForRun(runId, hooks)).rejects.toMatchObject({
+      code: "load_orchestrator_unavailable",
+    });
+    // Polled every 250 ms for the 5 s left, not for the full readiness timeout.
+    expect(control.isReady).toHaveBeenCalledTimes(21);
     expect(host.stop).toHaveBeenCalledWith({ runId, bootId: null });
   });
 

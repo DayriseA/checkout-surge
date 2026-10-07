@@ -46,7 +46,8 @@ describe("run presentation state", () => {
       ),
     ).toMatchObject({
       state: "relocating-load-generator",
-      description: "Provider capacity issue, relocating the load generator, please wait.",
+      description:
+        "The load generator is moving to another host (for example, when its host is full), so this start takes a little longer. Please wait.",
     });
   });
 

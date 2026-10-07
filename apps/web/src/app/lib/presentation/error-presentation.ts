@@ -52,7 +52,7 @@ export interface ErrorPresentationContext {
   surface: ErrorPresentationContextName;
   /** Set only by a server-authorized protected surface that may disclose diagnostics. */
   protected?: boolean;
-  /** Set only when presenting the outcome of a submitted public start request. */
+  /** Set only when presenting the outcome of a submitted start request, public or admin. */
   startRequestOutcome?: true;
   cause?:
     | "active_run_exists"
@@ -114,6 +114,7 @@ const publicStartActionCodes = new Set<ErrorPayloadCode>([
   "invalid_run_configuration",
   "runner_version_mismatch",
   "runner_capacity_unavailable",
+  "load_orchestrator_unavailable",
 ]);
 
 // When returned from the start path, these mean the BFF never saw a valid API verdict,
@@ -250,20 +251,31 @@ function publicStartUncertainPresentation(): Omit<ErrorPresentation, "technicalD
 function failedRunPresentation(
   category: NonNullable<ErrorPresentationContext["failedRunCategory"]>,
 ): ErrorPresentation {
-  const explanation =
-    category === "inventory"
-      ? "The scenario could not prepare its inventory."
-      : category === "traffic"
-        ? "The scenario could not complete its traffic window."
-        : category === "automatic_reset"
-          ? "The scenario was cancelled by an automatic reset."
-          : "The scenario was stopped by an operator.";
   return {
     headline: "This run did not finish",
-    explanation,
+    explanation: failedRunExplanation(category),
     action: { kind: "none", label: "" },
     tone: "danger",
   };
+}
+
+function failedRunExplanation(
+  category: NonNullable<ErrorPresentationContext["failedRunCategory"]>,
+): string {
+  switch (category) {
+    case "inventory":
+      return "The scenario could not prepare its inventory.";
+    case "traffic":
+      return "The scenario could not complete its traffic window.";
+    case "not_started":
+      return "The load generator could not be started, so no traffic was sent.";
+    case "provider_capacity":
+      return "The hosting provider had no capacity for the load generator, so no traffic was sent.";
+    case "automatic_reset":
+      return "The scenario was cancelled by an automatic reset.";
+    case "operator":
+      return "The scenario was stopped by an operator.";
+  }
 }
 
 function codePresentation(
@@ -310,9 +322,21 @@ function codePresentation(
         action: { kind: "contact-operator", label: "Review deployment" },
         tone: "danger",
       };
+    case "load_orchestrator_unavailable":
+      // On a start, the API answers it only before any traffic was dispatched.
+      if (context.startRequestOutcome === true) {
+        return {
+          headline: "The load generator could not be started",
+          explanation: "No traffic was started. Try again shortly.",
+          action: { kind: "check", label: "Check again" },
+          tone: "warning",
+        };
+      }
+      return context.surface === "public-start"
+        ? publicBackendRetryPresentation(retryAfterMs)
+        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
     case "dashboard_recovery_unavailable":
     case "queue_status_unavailable":
-    case "load_orchestrator_unavailable":
       return context.surface === "public-start"
         ? publicBackendRetryPresentation(retryAfterMs)
         : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);

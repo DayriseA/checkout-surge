@@ -178,9 +178,14 @@ function pendingOrdersSentence(result: RunResult): string {
 }
 
 function failedSentence(result: RunResult): string {
-  const category = result.failureCategory
-    ? ` due to a ${result.failureCategory} failure`
-    : "; the failure category is unavailable";
+  const category =
+    result.failureCategory === "not_started"
+      ? " because the load generator could not be started; no traffic was sent"
+      : result.failureCategory === "provider_capacity"
+        ? " because the hosting provider had no capacity for the load generator; no traffic was sent"
+        : result.failureCategory
+          ? ` due to a ${result.failureCategory} failure`
+          : "; the failure category is unavailable";
   return `The run failed${category}${result.failedOrders ? ` with ${formatNarrativeCount(result.failedOrders)} failed orders` : ""}.`;
 }
 

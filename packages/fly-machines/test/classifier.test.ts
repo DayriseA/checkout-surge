@@ -82,6 +82,18 @@ describe("classifyFlyMachine", () => {
     expect(classifyFlyMachine({ host_status: "unreachable", events: [] })).toBe("host_unreachable");
   });
 
+  it("classifies an update its host reverted as provider capacity", () => {
+    expect(
+      classifyFlyMachine({
+        host_status: "ok",
+        events: [
+          { type: "revert", status: "stopped" },
+          { type: "update", status: "replacing" },
+        ],
+      }),
+    ).toBe("provider_capacity");
+  });
+
   it("classifies a non-zero exit after start as our own error", () => {
     expect(
       classifyFlyMachine({

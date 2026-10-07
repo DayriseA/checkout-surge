@@ -179,6 +179,17 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
           "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
         action: "Start a new run to try again.",
       };
+    case "not_started":
+      return {
+        explanation: "The load generator could not be started, so no traffic was sent.",
+        action: "Start a new run to try again.",
+      };
+    case "provider_capacity":
+      return {
+        explanation:
+          "The hosting provider had no capacity for the load generator, so no traffic was sent.",
+        action: "Try again later.",
+      };
     case "inventory":
       return {
         explanation: "Final inventory evidence could not verify the run's stock outcome.",

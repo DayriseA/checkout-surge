@@ -33,8 +33,11 @@ export class RunnerCapacityUnavailableError extends ApiHttpError {
  * Machine started and stopped for every run, or a local runner that is always on.
  */
 export interface RunnerHost {
-  /** Brings up a freshly booted runner for `runId`, and returns where it runs. */
-  start(runId: string, hooks: RunnerStartHooks): Promise<RunnerPlacement>;
+  /**
+   * Brings up a freshly booted runner for `runId`, and returns where it runs. Fails once
+   * `deadlineAt` (milliseconds since the epoch) has passed.
+   */
+  start(runId: string, hooks: RunnerStartHooks, deadlineAt: number): Promise<RunnerPlacement>;
   /** Stops the runner of a finished run. A runner already serving another boot is left alone. */
   stop(target: RunnerStopTarget): Promise<void>;
   /** True only when the runner is known to be stopped, so it cannot emit traffic. */
