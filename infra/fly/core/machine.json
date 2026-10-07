@@ -101,6 +101,9 @@
       "name": "setup",
       "image": "setup",
       "env": {
+        "PUBLIC_RUN_BUDGET_WINDOW_SECONDS": "86400",
+        "PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS": "15",
+        "PUBLIC_RUN_BUDGET_GLOBAL_MAX_STARTS": "30",
         "PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS": "10000",
         "PUBLIC_CUSTOM_MAX_BUYERS": "10000",
         "PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND": "500",

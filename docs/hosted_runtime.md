@@ -51,6 +51,7 @@ Every deploy sends the Machine configs under `infra/fly/` in full, so a change m
 | Core Machine size | `guest` in `infra/fly/core/machine.json` |
 | Runner Machine size | API variables `RUNNER_CPU_KIND`, `RUNNER_CPUS` and `RUNNER_MEMORY_MB` (API container in `infra/fly/core/machine.json`, defaults in `apps/api/src/runtime/config.ts`). The API applies them before each runner start; `guest` in `infra/fly/runner/machine.json` is the size a deploy sends. |
 | Run limits | `DEMO_MAX_*` deployment caps, in the same API container (defaults in the [configuration reference](local_development.md#configuration-reference)). The public runtime policy is edited from the admin console and cannot exceed them. |
+| Public limits and run budget | `PUBLIC_CUSTOM_*` and `PUBLIC_RUN_BUDGET_*` in the `setup` container of `infra/fly/core/machine.json`. The seed writes them into the public runtime policy only on a fresh core (a recovery or `--fresh-core`); admin console edits apply to the running core, and the next recovery replaces them with the file's values. |
 | Gate and guard | `infra/fly/gate/machine.json`, `infra/fly/gate/guard-machine.json`; the guard's thresholds are `defaultGuardThresholds` in `apps/gate/src/guard.ts` |
 | Hosted-only switches | `CORE_IDLE_STOP_ENABLED` and `RUNNER_FLY_APP` in the core's API container, `RUNNER_LIFECYCLE_ENABLED` in the runner |
 

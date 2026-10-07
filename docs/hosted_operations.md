@@ -22,6 +22,7 @@ Procedures for operating the hosted demo on Fly.io. How the hosted runtime behav
 - **Token.** It authenticates with the repository secret `FLY_API_TOKEN` ([CI token](#ci-token)).
 - **Pinned tools.** Its actions are pinned by commit SHA and its flyctl version is pinned. Raise the flyctl version on purpose, after a workstation deploy with that version.
 - **No `--force`.** When a visitor has the core awake, the deploy waits for the core to sleep. The wait is bounded by the idle stop or, failing that, by the guard's awake cap. A waiting deploy consumes runner minutes, which matters on a private repository.
+- **Every push deploys.** The workflow has no path filter, so a documentation-only push to `main` also rebuilds and waits for the core to sleep. Batch such commits.
 - **One at a time.** A running deploy is never cancelled, and a newer push replaces a deploy still waiting to start. The deploy left waiting is usually the newest push, but GitHub does not guarantee the order: if the hosted version lags `main`, re-run the latest run or push again.
 - **Do not cancel a running deploy by hand.** A deploy killed while it holds a Machine lease leaves the lease until it expires ([freeing a lease](#freeing-a-lease)).
 - **A failed deploy** fails the workflow run, and GitHub notifies the person who pushed. Read the run's log and the [failure messages](#when-a-deploy-fails), then use GitHub's "Re-run" only on the latest run of `main`: re-running an older run deploys that older commit, which stays live until the next push to `main`.
@@ -120,6 +121,9 @@ The deploy workflow authenticates with one organization deploy token, stored as 
 
 Machines read their app's secrets when they start, so a staged secret takes effect at each holder's next start, and nothing is redeployed.
 
+- **Checking a change.** `flyctl secrets list -a <app>` shows every secret as `Staged`, always: deploys go through the Machines API, never through a Fly release. Compare the `DIGEST` column before and after instead. Never run `flyctl secrets deploy`.
+- **Revocation completes a rotation.** A deploy token can read its app's secrets, so an old core-app or runner-app token can read the newly staged values until it is revoked.
+
 ### Machines API tokens
 
 | Secret | Holder app (Machines) | Token for app | Current token name |
@@ -163,6 +167,10 @@ It authenticates both directions between the core and the runner, so it changes 
 ### Other core secrets
 
 - **Admin passphrase, admin session secret, visitor cookie secret, Redis password with `REDIS_URL`.** Stage them on the core while it sleeps; they take effect at its next start. A new session or cookie secret invalidates existing admin sessions and visitor cookies.
+- **Values.**
+  - The admin passphrase is chosen by the owner, who needs it to sign in: read it into a shell variable with `read -rs` from a password manager. Avoid quotes, `#` and line breaks, which the import parses.
+  - Generate the other values with `openssl rand -hex`, so they are URL-safe. The session secret and the cookie secret must differ, and the cookie secret takes at least 16 bytes; placeholder values are refused. A refused value keeps the web container unhealthy, and the gate shows the booting page until the guard stops the core.
+  - PostgreSQL and Redis listen on `127.0.0.1` only, so the URLs use that host: `DATABASE_URL` as `postgresql://postgres:<password>@127.0.0.1:5432/checkout_surge`, `REDIS_URL` as `redis://:<password>@127.0.0.1:6379`, each with the password staged beside it.
 - **PostgreSQL password with `DATABASE_URL`.** PostgreSQL applies its password only when it initializes an empty data directory. Stage both while the core sleeps, then [set the recreation mark](#recreation-mark): the next wake installs a fresh core with the new password, and hosted run history and admin edits are lost.
 
 ---
@@ -174,6 +182,7 @@ It authenticates both directions between the core and the runner, so it changes 
 - **Run limits.** The `DEMO_MAX_*` deployment caps are API variables in the same container. The API refuses to start when the active public runtime policy exceeds one of them.
   - A fresh core (a recovery, or `--fresh-core`) seeds that policy from the `setup` container's `PUBLIC_CUSTOM_*` variables and from fixed seed values (`buildPublicRuntimePolicy` in `packages/db/src/scripts/seed.ts`). Lower the matching `PUBLIC_CUSTOM_*` variable in the `setup` container together with a cap, and never set a cap below a fixed seed value.
   - On the running core, the seed keeps the existing policy: lower it in the admin console before deploying lower caps.
+- **Public run budget.** The `PUBLIC_RUN_BUDGET_*` variables of the `setup` container bound how many public runs start per window, globally and per visitor cookie; admin runs are not counted. A client that drops its cookie counts as a new visitor, so the global value is the one that bounds cost. Like the `PUBLIC_CUSTOM_*` limits, they are seeded only on a fresh core. An admin console edit lasts until the next recovery, so change the file for a lasting value.
 
 ---
 
