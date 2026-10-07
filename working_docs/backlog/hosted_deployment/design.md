@@ -99,6 +99,12 @@ Visitor ── portfolio link ──▶ https://<gate-app>.fly.dev   (only publi
   - **Public limits.** All `PUBLIC_CUSTOM_*` are explicit in the `setup` container env, so a fresh core seeds them. The public constant-arrival rate is 500 per second, and the others keep their seed defaults.
   - **Why 500 per second.** The public form sends no VU setting, so k6 pre-allocates as many VUs as the rate. At 1,000 per second, the start transient then drops about 1 % of a run's iterations. The hardware itself sustains about 3,200 per second over reused connections.
   - **Seed constraint.** The caps stay at or above the seed's fixed values (600 s occupancy, the 5,000-buyer / 80 s public defaults), since the API refuses to start on a policy above its caps.
+- **Capacity-aware admission (task 15, owner decisions 2026-10-08).**
+  - **Capacity per deployment.** Each deployment has a measured capacity for each connection mode: reused connections (constant arrival) and a new connection per buyer (buyer spike), plus a latency budget. They are API env values, next to the caps and the estimator constants. The local default comes from a measurement on a cloud VM, and a committed script lets anyone re-measure.
+  - **Criterion.** A run succeeds when it drops no iteration. Latency is explained to visitors, not used to admit or refuse.
+  - **Classes.** A constant-arrival run is expected to complete up to 80 % of the capacity, at the limit up to 100 %, and expected to fail above it unless its backlog fits the VUs. A buyer spike is judged by the time to serve its buyers against its safety cutoff. Stock enters only if measurements show an effect.
+  - **Behavior.** Public custom runs are accepted only when expected to complete. Admin runs get a warning and a confirmation, never a refusal.
+  - **VUs.** Without explicit VUs, the API resolves them at admission as the rate times the latency budget, all pre-allocated, within the VU cap, and writes them into the run.
 
 ### 1.3 Hosted-only behavior and the local topology
 

@@ -7,7 +7,7 @@ Work breakdown for the hosted deployment on Fly.io.
 
 ## Rules
 
-- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel.
+- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel. Task 15 was split into 15a–15c when it started.
 - **Notes stay in the task.** Findings, measurements and annotations go into the task's own "Working notes" section, never into another task or into `design.md`.
 - **Decisions stay in the design.** When a task changes or refines a decision, update `design.md` in the same change.
 - **Open points are not decided.** They are settled with the owner when the task starts.
@@ -34,7 +34,9 @@ Work breakdown for the hosted deployment on Fly.io.
 | 13c | [Go-live](13c_go_live.md) | 13a, 13b, plus the external prerequisite | done |
 | 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | todo |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
-| 15 | [Capacity-aware run admission](15_capacity_aware_run_admission.md) | 13c | todo |
+| 15a | [Capacity measurement](15a_capacity_measurement.md) | 13c | todo |
+| 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a | todo |
+| 15c | [Public limits and visitor explanations](15c_public_limits_and_explanations.md) | 15b, deployed | todo |
 | 16 | [Gate pages and messages](16_gate_pages_and_messages.md) | 17 | todo |
 | 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
 
