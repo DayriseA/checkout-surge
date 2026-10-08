@@ -13,6 +13,7 @@ import {
   type RunErpOutcomeSummary,
   type RunRuntimeProgress,
   runSignalBucketCount,
+  type TrafficDeliveryStatus,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-surge/contracts/testing";
@@ -153,8 +154,9 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: "Preview 1k",
       operatorMode: "public",
-      status: "completed",
+      status: "failed",
       trafficStatus: "succeeded",
+      failureReason: "traffic_delivery_major_shortfall",
       saleOfferId,
       configSnapshot: configSnapshot(),
       startedAt: terminalStartedAt,
@@ -193,7 +195,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
         droppedIterations: 0,
         completedIterations: 750,
         requestArrivalSummary: emptyRequestArrivalSummary,
-        trafficDeliveryStatus: "complete",
+        trafficDeliveryStatus: "failed",
         notes: [],
       },
       httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
@@ -208,7 +210,7 @@ describe("PostgresDashboardRecoveryContextReader integration", () => {
     await db.insert(demoRunSummaries).values({
       runId,
       presetName: "Preview 1k",
-      status: "completed",
+      status: "failed",
       replayPossible: false,
       startedAt: terminalStartedAt,
       endedAt: now,
@@ -671,6 +673,7 @@ describe("DashboardProjectionService", () => {
     };
     const harness = serviceHarness({ currentRun: runSnapshot(), saleOfferId }, undefined, {
       transportAttemptCounts: counts,
+      trafficDeliveryStatus: "failed",
     });
 
     const recovery = await harness.service.build({ correlationId: "corr-draining" });
@@ -938,7 +941,7 @@ function serviceHarness(
     lagError?: Error;
     transportAttemptCounts?: TransportAttemptCounts | null;
     transportAttemptCountsError?: Error;
-    trafficDeliveryStatus?: "complete" | "warning";
+    trafficDeliveryStatus?: TrafficDeliveryStatus;
     runtimeProgressError?: Error;
     now?: () => Date;
   } = {},

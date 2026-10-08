@@ -470,7 +470,7 @@ describe("run history", () => {
     expect(markup).toContain("orders:process");
     expect(markup).toContain("Physical queue");
     expect(markup).toContain("orders-process");
-    expect(markup).toContain("Traffic delivery: All planned attempts dispatched");
+    expect(markup).toContain("Traffic delivery: All planned attempts completed");
     expect(markup).toContain("Lifecycle and reference");
     expect(markup).toContain("Run ended");
     expect(markup).toContain('id="report-advanced-scenario"');
@@ -596,7 +596,7 @@ describe("run history", () => {
     const summaryRows = container.querySelector("[data-delivery-summary]");
 
     expect([...(summaryRows?.children ?? [])].map((row) => row.textContent)).toEqual([
-      "100%Delivery coverageof dispatched attempts",
+      "100%Reply coverageof dispatched attempts",
       "≤ 5msObserved reservation p95bounded p95 estimate",
       "42 msCheckout response p95 (client-observed)",
       "n/aReservation-to-confirmation p95",
@@ -611,7 +611,7 @@ describe("run history", () => {
         (row) => row.textContent,
       ),
     ).toEqual([
-      "100%Delivery coverageof dispatched attempts",
+      "100%Reply coverageof dispatched attempts",
       "n/aObserved reservation p95bounded p95 estimate",
       "n/aCheckout response p95 (client-observed)",
       "n/aReservation-to-confirmation p95",

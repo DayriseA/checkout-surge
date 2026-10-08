@@ -13,21 +13,23 @@ export const warningShortfallRatio = 0.01;
 export const failureShortfallRatio = 0.05;
 
 /**
- * Delivery quality describes whether planned attempts started, not whether
- * started attempts received responses. A run whose attempts all started but
- * some were interrupted has complete attempt delivery.
+ * Delivery quality describes whether every planned attempt was started and completed. The
+ * shortfall is planned minus completed attempts, that is unstarted plus interrupted ones: an
+ * attempt the server did not answer before the generator stopped counts like one never started.
+ * A transport failure still completes its attempt; transport loss is graded separately.
  */
 export function classifyTrafficDelivery(
-  summary: Pick<TransportAttemptCounts, "plannedRequests" | "unstartedRequests">,
+  summary: Pick<TransportAttemptCounts, "plannedRequests" | "completedRequests">,
 ): TrafficDeliverySummary["trafficDeliveryStatus"] | null {
-  if (summary.unstartedRequests === null) return "failed";
+  if (summary.completedRequests === null) return "failed";
   if (summary.plannedRequests <= 0) return null;
 
-  const unstartedRatio = summary.unstartedRequests / summary.plannedRequests;
+  const shortfallRatio =
+    (summary.plannedRequests - summary.completedRequests) / summary.plannedRequests;
 
-  if (unstartedRatio === 0) return "complete";
-  if (unstartedRatio <= warningShortfallRatio) return "warning";
-  if (unstartedRatio <= failureShortfallRatio) return "degraded";
+  if (shortfallRatio === 0) return "complete";
+  if (shortfallRatio <= warningShortfallRatio) return "warning";
+  if (shortfallRatio <= failureShortfallRatio) return "degraded";
   return "failed";
 }
 

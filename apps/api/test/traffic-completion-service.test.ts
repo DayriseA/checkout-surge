@@ -24,6 +24,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import { PostgresStartingDemoRunReconciliationStore } from "../src/services/demo-run-startup-reconciliation-service.js";
+import { RunHistoryService } from "../src/services/run-history-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "../src/services/traffic-completion-enrichment-service.js";
 import { TrafficCompletionService } from "../src/services/traffic-completion-service.js";
@@ -308,27 +309,11 @@ describe("TrafficCompletionService", () => {
         return typeof value === "function" ? value.bind(target) : value;
       },
     }) as typeof redisClient;
-    const finalizationService = new DemoRunFinalizationService({
-      runnerOperations: { releaseAfterRun: () => undefined },
-      queueLimits: { synchronize: async () => {} },
-      db: activeConnection.db,
-      redis: redisClient,
-      logger: createSilentLogger("api"),
-      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(activeConnection.db, {
-        synchronize: async () => {},
-      }),
-      terminalInventoryRead: {
-        read: ({ saleOfferId: currentSaleOfferId, observedAt }) =>
-          getInventoryStatus(redisClient, currentSaleOfferId, observedAt),
-      },
-      terminalInventoryReadTimeoutMs: 2_000,
-      now: () => new Date("2026-07-19T00:00:11.000Z"),
-    });
     const completionService = new TrafficCompletionService({
       db: activeConnection.db,
       redis: redisClient,
       completionEnrichmentService: createEnrichmentService(activeConnection, captureRedis),
-      finalizationService,
+      finalizationService: createFinalizationService(activeConnection, redisClient),
       logger: createSilentLogger("api"),
       now: () => new Date("2026-07-19T00:00:11.000Z"),
     });
@@ -356,12 +341,43 @@ describe("TrafficCompletionService", () => {
     expect(summary?.terminalInventorySnapshot).toMatchObject({ saleOfferId, source: "redis" });
     expect(captureReadCount).toBe(1);
   });
+
+  it("fails a run whose server left requests unanswered and reports it from history", async () => {
+    const activeConnection = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const completionService = createCompletionService(
+      activeConnection,
+      redisClient,
+      createFinalizationService(activeConnection, redisClient),
+    );
+    const report = completionReport();
+
+    await expect(
+      completionService.recordTrafficCompletion({
+        ...report,
+        transportAttemptCounts: {
+          plannedRequests: 10,
+          startedRequests: 10,
+          completedRequests: 9,
+          interruptedRequests: 1,
+          unstartedRequests: 0,
+        },
+        httpSummary: { ...report.httpSummary, soldOutResponses: 9 },
+        trafficDeliverySummary: { ...report.trafficDeliverySummary, completedIterations: 9 },
+      }),
+    ).resolves.toMatchObject({ status: "failed", failureCategory: "traffic" });
+
+    const detail = await new RunHistoryService({ db: activeConnection.db }).detail(runId);
+    expect(detail?.summary.trafficDeliverySummary.trafficDeliveryStatus).toBe("failed");
+    expect(detail?.result.outcome).toBe("failed");
+    expect(detail?.failureDiagnostic).toEqual({ cause: "interrupted_requests" });
+  });
 });
 
 function createCompletionService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
-  finalizationService: { finalizeRun(runId: string, correlationId?: string): Promise<null> } = {
+  finalizationService: Pick<DemoRunFinalizationService, "finalizeRun"> = {
     finalizeRun: async () => null,
   },
 ): TrafficCompletionService {
@@ -371,6 +387,28 @@ function createCompletionService(
     completionEnrichmentService: createEnrichmentService(connection, redis),
     finalizationService,
     logger: createSilentLogger("api"),
+    now: () => new Date("2026-07-19T00:00:11.000Z"),
+  });
+}
+
+function createFinalizationService(
+  connection: ReturnType<typeof createDatabaseConnection>,
+  redis: ReturnType<typeof createRedisClient>,
+): DemoRunFinalizationService {
+  return new DemoRunFinalizationService({
+    runnerOperations: { releaseAfterRun: () => undefined },
+    queueLimits: { synchronize: async () => {} },
+    db: connection.db,
+    redis,
+    logger: createSilentLogger("api"),
+    terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+      synchronize: async () => {},
+    }),
+    terminalInventoryRead: {
+      read: ({ saleOfferId: currentSaleOfferId, observedAt }) =>
+        getInventoryStatus(redis, currentSaleOfferId, observedAt),
+    },
+    terminalInventoryReadTimeoutMs: 2_000,
     now: () => new Date("2026-07-19T00:00:11.000Z"),
   });
 }

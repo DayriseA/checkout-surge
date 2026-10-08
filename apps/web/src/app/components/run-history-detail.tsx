@@ -472,7 +472,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
   ];
   const deliveryFigures: Array<[string, string, string | undefined]> = [
     [
-      "Delivery coverage",
+      "Reply coverage",
       transportObservation.coveragePercent === null
         ? "n/a"
         : `${transportObservation.coveragePercent}%`,

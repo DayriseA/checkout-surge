@@ -6,21 +6,40 @@ import {
   parsePersistedTrafficDeliverySummary,
 } from "../../src/services/traffic-delivery-classifier.js";
 
+function plannedHundred(unstartedRequests: number, interruptedRequests: number) {
+  const startedRequests = 100 - unstartedRequests;
+  return {
+    plannedRequests: 100,
+    startedRequests,
+    completedRequests: startedRequests - interruptedRequests,
+    interruptedRequests,
+    unstartedRequests,
+  };
+}
+
 describe("traffic delivery classifier", () => {
   it.each([
-    { unstartedRequests: 0, expected: "complete" },
-    { unstartedRequests: 1, expected: "warning" },
-    { unstartedRequests: 5, expected: "degraded" },
-    { unstartedRequests: 6, expected: "failed" },
-  ] as const)("classifies 100 planned with $unstartedRequests unstarted as $expected", ({
+    { unstartedRequests: 0, interruptedRequests: 0, expected: "complete" },
+    { unstartedRequests: 1, interruptedRequests: 0, expected: "warning" },
+    { unstartedRequests: 0, interruptedRequests: 1, expected: "warning" },
+    { unstartedRequests: 5, interruptedRequests: 0, expected: "degraded" },
+    { unstartedRequests: 0, interruptedRequests: 5, expected: "degraded" },
+    { unstartedRequests: 1, interruptedRequests: 1, expected: "degraded" },
+    { unstartedRequests: 6, interruptedRequests: 0, expected: "failed" },
+    { unstartedRequests: 0, interruptedRequests: 6, expected: "failed" },
+    { unstartedRequests: 3, interruptedRequests: 3, expected: "failed" },
+  ] as const)("classifies 100 planned with $unstartedRequests unstarted and $interruptedRequests interrupted as $expected", ({
     unstartedRequests,
+    interruptedRequests,
     expected,
   }) => {
-    expect(classifyTrafficDelivery({ plannedRequests: 100, unstartedRequests })).toBe(expected);
+    expect(classifyTrafficDelivery(plannedHundred(unstartedRequests, interruptedRequests))).toBe(
+      expected,
+    );
   });
 
   it("guards zero plans instead of treating zero delivery as complete", () => {
-    expect(classifyTrafficDelivery({ plannedRequests: 0, unstartedRequests: 0 })).toBeNull();
+    expect(classifyTrafficDelivery({ plannedRequests: 0, completedRequests: 0 })).toBeNull();
   });
 
   it("classifies the current incoming completion evidence at the API boundary", () => {

@@ -113,6 +113,7 @@ export class RunHistoryService implements RunHistoryController {
           source.summaryRow.loadRunDiagnosticsSummary,
           `run summary ${source.summaryRow.id}`,
         ),
+        summary.transportAttemptCounts,
       ),
       summary,
       run,
@@ -148,6 +149,7 @@ export class RunHistoryService implements RunHistoryController {
           ? internalRunFailureReasonSchema.parse(source.runRow.failureReason)
           : null,
         diagnostics,
+        summary.transportAttemptCounts,
       ),
       summary,
       run: toDemoRunSnapshot(source.runRow),

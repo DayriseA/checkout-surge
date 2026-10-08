@@ -1,3 +1,4 @@
+import type { RunFailureDiagnostic } from "@checkout-surge/contracts";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import {
@@ -19,7 +20,8 @@ export function RunFailureExplanation({
   const http = evidence.httpSummary;
   const business = evidence.businessOutcomeSummary;
   const connectionP95 = evidence.httpTimingBreakdownSummary.connecting?.p95Ms;
-  const known = diagnostic.cause === "virtual_user_limit";
+  const copy = causeCopy(diagnostic);
+  const unanswered = diagnostic.cause === "interrupted_requests";
   const countsUnknown = hasUnknownTrafficCounts(counts);
   const settled =
     business.acceptedReservations > 0 &&
@@ -30,31 +32,30 @@ export function RunFailureExplanation({
     business.processingOrders === 0 &&
     business.pendingPersistenceCount === 0 &&
     business.retryingOrders === 0;
-  const shortfall =
-    counts.unstartedRequests !== null && counts.plannedRequests > 0
-      ? new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
-          (counts.unstartedRequests / counts.plannedRequests) * 100,
-        )
-      : null;
+  const missingRequests =
+    counts.completedRequests === null ? 0 : counts.plannedRequests - counts.completedRequests;
   return (
     <section className="mt-3 text-sm leading-6 text-muted-strong" aria-label="Failure explanation">
-      <h2 className="type-title m-0 text-xl leading-tight text-ink">
-        {known ? "Virtual user limit reached" : "Traffic failed — exact cause not identified"}
-      </h2>
+      <h2 className="type-title m-0 text-xl leading-tight text-ink">{copy.heading}</h2>
       {countsUnknown ? <p className="m-0 mt-2">{trafficEvidenceUnavailableText}</p> : null}
-      <p className="m-0 mt-2">
-        {known
-          ? `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent virtual users and could not maintain the requested traffic rate.`
-          : "The recorded evidence does not identify a specific cause for this traffic failure."}
-      </p>
-      {counts.unstartedRequests !== null && counts.unstartedRequests > 0 ? (
+      <p className="m-0 mt-2">{copy.summary}</p>
+      {missingRequests > 0 ? (
         <div className="my-3 border-l-2 border-danger pl-3">
-          <p className="m-0 font-semibold text-ink">
-            {formatCount(counts.unstartedRequests)} planned requests were never sent.
-          </p>
+          {counts.unstartedRequests !== null && counts.unstartedRequests > 0 ? (
+            <p className="m-0 font-semibold text-ink">
+              {formatCount(counts.unstartedRequests)} planned requests were never sent.
+            </p>
+          ) : null}
+          {unanswered ? (
+            <p className="m-0 font-semibold text-ink">
+              {formatCount(counts.interruptedRequests)} launched requests were still waiting for an
+              answer when the load generator stopped.
+            </p>
+          ) : null}
           <p className="m-0">
-            {formatCount(counts.startedRequests)} of {formatCount(counts.plannedRequests)} requests
-            launched{shortfall ? ` (${shortfall}% shortfall)` : ""}.
+            {formatCount(counts.completedRequests)} of {formatCount(counts.plannedRequests)}{" "}
+            requests completed ({formatShortfallPercent(missingRequests, counts.plannedRequests)}%
+            shortfall).
           </p>
         </div>
       ) : null}
@@ -68,7 +69,7 @@ export function RunFailureExplanation({
           {formatCount(http.transportFailures)} attempts ended in transport failure.
         </p>
       ) : null}
-      {counts.interruptedRequests !== null && counts.interruptedRequests > 0 ? (
+      {!unanswered && counts.interruptedRequests !== null && counts.interruptedRequests > 0 ? (
         <p className="m-0 mt-2">
           {formatCount(counts.interruptedRequests)} launched requests did not complete.
         </p>
@@ -95,18 +96,10 @@ export function RunFailureExplanation({
         </p>
       ) : null}
       <h3 className="m-0 mt-4 text-sm font-bold text-ink">What to check next</h3>
-      <p className="m-0 mt-1">
-        {known
-          ? "For the same traffic target, investigate slow responses and review virtual-user capacity. A lower request rate would test a less demanding scenario."
-          : "Review the recorded traffic measurements and generator diagnostics before retrying. The report does not establish which setting or component caused the failure."}
-      </p>
+      <p className="m-0 mt-1">{copy.next}</p>
       <details className="mt-3 border-t border-border pt-2">
         <summary className="disclosure font-semibold text-ink">Why this diagnosis?</summary>
-        <p className="m-0 mt-2">
-          {known
-            ? "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays."
-            : "No recognized generator diagnostic explains this failure. Missing or truncated diagnostics cannot establish that no problem occurred."}
-        </p>
+        <p className="m-0 mt-2">{copy.why}</p>
         <dl className="my-2 grid grid-cols-2 gap-2">
           <dt>HTTP response latency, p95</dt>
           <dd className="m-0 text-right">
@@ -156,4 +149,43 @@ export function RunFailureExplanation({
       </details>
     </section>
   );
+}
+
+function formatShortfallPercent(missingRequests: number, plannedRequests: number): string {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
+    (missingRequests / plannedRequests) * 100,
+  );
+}
+
+function causeCopy(diagnostic: RunFailureDiagnostic): {
+  heading: string;
+  summary: string;
+  next: string;
+  why: string;
+} {
+  switch (diagnostic.cause) {
+    case "virtual_user_limit":
+      return {
+        heading: "Virtual user limit reached",
+        summary: `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent virtual users and could not maintain the requested traffic rate.`,
+        next: "For the same traffic target, investigate slow responses and review virtual-user capacity. A lower request rate would test a less demanding scenario.",
+        why: "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays.",
+      };
+    case "interrupted_requests":
+      return {
+        heading: "Server did not answer in time",
+        summary:
+          "The server did not answer enough requests before the load generator stopped. The server may still have processed these requests; their answers came too late for the load generator.",
+        next: "For the same traffic target, investigate slow responses on the server. Fewer buyers or a lower request rate would test a less demanding scenario.",
+        why: "The generator recorded these requests as launched but never answered when it stopped, and they alone are enough to fail the run. This identifies why the run fell short, but does not establish the exact source of response delays.",
+      };
+    case "unidentified":
+      return {
+        heading: "Traffic failed — exact cause not identified",
+        summary:
+          "The recorded evidence does not identify a specific cause for this traffic failure.",
+        next: "Review the recorded traffic measurements and generator diagnostics before retrying. The report does not establish which setting or component caused the failure.",
+        why: "No recognized generator diagnostic explains this failure. Missing or truncated diagnostics cannot establish that no problem occurred.",
+      };
+  }
 }

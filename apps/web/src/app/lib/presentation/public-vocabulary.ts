@@ -102,7 +102,7 @@ export function trafficExecutionStatusLabel(status: TrafficExecutionStatus): str
 export function trafficDeliveryStatusLabel(status: TrafficDeliveryStatus): string {
   switch (status) {
     case "complete":
-      return "All planned attempts dispatched";
+      return "All planned attempts completed";
     case "warning":
     case "degraded":
       return "Partial delivery";

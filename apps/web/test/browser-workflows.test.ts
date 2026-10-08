@@ -2564,7 +2564,7 @@ describe("watch composition", () => {
 
     // Availability confirms the link, and the visitor's own exact-run evidence qualifies it.
     expect(document.querySelector(`a[href="/run-history/${sharedRunId}"]`)).toBeTruthy();
-    expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
+    expectVisible(container, "Partial delivery: not all planned checkout attempts completed.");
     expect(screen.getAllByText("Final result")).toHaveLength(1);
   });
 

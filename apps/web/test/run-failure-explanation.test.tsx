@@ -60,6 +60,60 @@ describe("failure explanation", () => {
     expect(screen.getByText(warning)).toBeTruthy();
     expect(screen.getByText("< 1 ms")).toBeTruthy();
   });
+  it("explains requests the server left unanswered with a shortfall that counts them", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "interrupted_requests" };
+    input.transportAttemptCounts = {
+      plannedRequests: 10000,
+      startedRequests: 9998,
+      completedRequests: 7767,
+      interruptedRequests: 2231,
+      unstartedRequests: 2,
+    };
+    input.httpSummary.soldOutResponses = 6267;
+    input.businessOutcomeSummary.soldOutRejections = 6267;
+    render(<RunFailureExplanation evidence={input} />);
+    expect(screen.getByRole("heading", { name: "Server did not answer in time" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        /The server may still have processed these requests; their answers came too late for the load generator\./,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("2 planned requests were never sent.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "2,231 launched requests were still waiting for an answer when the load generator stopped.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/7,767 of 10,000 requests completed \(22.33% shortfall\)/),
+    ).toBeTruthy();
+    expect(screen.queryByText("2,231 launched requests did not complete.")).toBeNull();
+  });
+  it("counts interrupted requests in the shortfall of an unidentified failure", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "unidentified" };
+    input.transportAttemptCounts = {
+      plannedRequests: 100,
+      startedRequests: 97,
+      completedRequests: 93,
+      interruptedRequests: 4,
+      unstartedRequests: 3,
+    };
+    input.httpSummary = { ...input.httpSummary, acceptedResponses: 50, soldOutResponses: 43 };
+    input.businessOutcomeSummary = {
+      ...input.businessOutcomeSummary,
+      acceptedReservations: 50,
+      reservedUnits: 50,
+      soldOutRejections: 43,
+      confirmedOrders: 50,
+      notificationsRecorded: 50,
+    };
+    render(<RunFailureExplanation evidence={input} />);
+    expect(screen.getByText("3 planned requests were never sent.")).toBeTruthy();
+    expect(screen.getByText(/93 of 100 requests completed \(7% shortfall\)/)).toBeTruthy();
+    expect(screen.getByText("4 launched requests did not complete.")).toBeTruthy();
+  });
   it("preserves transport losses and unsettled business outcomes without guessing a cause", () => {
     const input = evidence();
     input.failureDiagnostic = { cause: "unidentified" };

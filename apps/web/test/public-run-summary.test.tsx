@@ -143,7 +143,7 @@ describe("public run summary", () => {
 
     expect(degraded.caveats).toEqual([
       {
-        message: "Partial delivery: not all planned checkout attempts were delivered.",
+        message: "Partial delivery: not all planned checkout attempts completed.",
         tone: "warning",
       },
     ]);
@@ -554,7 +554,7 @@ describe("public run conclusion", () => {
     const { container } = renderConclusion(cleanEvidence, overrides);
     expectVisible(container, "Completed");
     expectVisible(container, "All 250 available units were reserved without overselling.");
-    expectVisible(container, "Partial delivery: not all planned checkout attempts were delivered.");
+    expectVisible(container, "Partial delivery: not all planned checkout attempts completed.");
     expectVisible(
       container,
       "Reply observation incomplete: outcomes and latency cover 17 of 20 attempts.",

@@ -1899,11 +1899,6 @@ async function setAcceptedDeliveryEvidence(
   const plannedRequests = plan.plannedEmittedAttempts;
   const startedRequests = input.startedRequests ?? plannedRequests;
   const unstartedRequests = plannedRequests - startedRequests;
-  const trafficDeliveryStatus = classifyTrafficDelivery({
-    plannedRequests,
-    unstartedRequests,
-  });
-  if (!trafficDeliveryStatus) throw new Error("Test fixture requires a positive request plan.");
   const report = trafficCompletionReportSchema.parse({
     ...trafficCompletionReportFixture("complete", configSnapshot),
     transportAttemptCounts: {
@@ -1926,6 +1921,8 @@ async function setAcceptedDeliveryEvidence(
       completedIterations: input.completedIterations ?? startedRequests,
     },
   });
+  const trafficDeliveryStatus = classifyTrafficDelivery(report.transportAttemptCounts);
+  if (!trafficDeliveryStatus) throw new Error("Test fixture requires a positive request plan.");
   expect(
     findTrafficCompletionBindingMismatch(
       {

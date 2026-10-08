@@ -195,7 +195,7 @@ function deliveryCaveats(status: TrafficDeliveryStatus | null): PublicRunCaveat[
           tone: "danger" as const,
         }
       : {
-          message: "Partial delivery: not all planned checkout attempts were delivered.",
+          message: "Partial delivery: not all planned checkout attempts completed.",
           tone: "warning" as const,
         },
   ];

@@ -67,6 +67,7 @@ Every entry in ID order. New entries are added here too.
 | [HD-55](#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once) | A host that refuses the runner's new config relocates the runner at once | Runner |
 | [HD-56](#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation) | A core whose host refuses the deploy is marked for a fresh recreation | Deployment and Access |
 | [HD-57](#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow) | Cost alerts run in an external Grafana Cloud, not in a scheduled GitHub workflow | Deployment and Access |
+| [HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones) | Interrupted requests count in the delivery shortfall, like unstarted ones | Runner |
 
 ## Platform and Topology
 
@@ -377,6 +378,19 @@ Every entry in ID order. New entries are added here too.
   - Retrying the update in place like a start: Fly already tried to reserve the resources on that host, and each reverted attempt can cost a full wait.
   - Importing the shared classifier into the deploy script: the script runs in CI without installed dependencies.
 - **Code:** `FlyRunnerHost.applyRunSettings` in `apps/api/src/services/fly-runner-host.ts`, `classifyFlyMachine` in `packages/fly-machines/src/classifier.ts`, `deployRunner`, `updateInPlace` and `relocateRunner` in `infra/fly/deploy.mjs`.
+
+### HD-58 Interrupted requests count in the delivery shortfall, like unstarted ones
+
+- **Status:** accepted
+- **Date:** 2026-10-08
+- **Context:** The delivery status counted only the requests k6 never started. Runs whose server left over a fifth of their requests unanswered, until k6's graceful stop cut them, were reported as complete and successful.
+- **Decision:** Delivery is `complete` only when every planned request is started and completed. The shortfall is planned minus completed requests, that is unstarted plus interrupted ones, on the existing warning, degraded and failed tiers. Only a shortfall above the failure tier fails the run; `warning` and `degraded` still finalize as completed. A status-0 attempt counts as completed and is graded as transport loss, against started requests. A failed run whose interrupted requests alone exceed the failure tier is explained as a server that did not answer before the generator stopped; a recorded virtual-user limit still comes first.
+- **Consequences:** A slow server fails a run as a delivery shortfall, even when k6 started every request. Readers re-derive the status, so stored runs whose status changes become unreadable: the change is incompatible, handled with a fresh core and a local data reset instead of a migration ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path), [HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)). The stored evidence does not tell request timeouts from connection errors, so a run failed by transport loss keeps an unidentified cause.
+- **Rejected alternatives:**
+  - Grading interrupted requests on their own, against started requests, like transport loss: a run could leave up to the failure tier of its requests unstarted and nearly as many unanswered, and still succeed.
+  - Leaving interrupted requests to the reply-coverage caveat: visitors saw a complete, successful run.
+  - Translating stored runs to the new status: the data is disposable, and a tolerant reader would accept a contradictory stored status.
+- **Code:** `classifyTrafficDelivery` in `apps/api/src/services/traffic-delivery-classifier.ts`, `deriveRunFailureDiagnostic` in `apps/api/src/services/run-failure-diagnostic.ts`.
 
 ## Core Idle Stop
 

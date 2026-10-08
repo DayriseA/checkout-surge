@@ -59,7 +59,7 @@ The script compares the core's and the runner's versions at the end, even after 
 
 ### Incompatible changes
 
-A change that the existing core data cannot use, such as a rewritten database baseline, needs a fresh, empty core ([HD-48](decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)):
+A change that the existing core data cannot use, such as a rewritten database baseline or a new rule for a status that readers re-derive from stored runs, needs a fresh, empty core ([HD-48](decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)):
 
 1. Before merging, deploy the commit from the workstation with `node infra/fly/deploy.mjs all --fresh-core`. The core is marked `recreate=requested`, and the next visitor wake recreates it through the recovery path.
 2. Merge into `main`. The CI deploy carries the mark over when no wake happened meanwhile, or finds a core that is already fresh.
