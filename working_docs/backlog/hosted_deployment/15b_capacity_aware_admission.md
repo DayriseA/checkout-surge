@@ -66,6 +66,21 @@ A run is admitted only when it is expected to complete, or, for the owner, after
 - **Buyer spike:** VUs equal the buyers, bounded by the buyer caps only, not the VU caps (HD-51).
 - **Values:** C, C' and the latency budget come from 15a's working notes.
 
+## Inputs from Task 15a
+
+Details, fit errors, alternatives and caveats: [15a's working notes](15a_capacity_measurement.md#proposed-values-for-15b-2026-10-08). A measured run counted as complete when every planned request started and completed with zero failed responses (transport failures plus unexpected responses).
+
+| Value | Fly | Local (4 vCPU VM) |
+|---|--:|--:|
+| C, constant arrival, all sold out | 3,500/s | 3,000/s |
+| C', buyer spike, all sold out | 2,600/s | 1,150/s |
+| Accepted throughput, constant arrival / buyer spike | 240 / 240/s | 195 / 155/s |
+| k, cost of an accepted order in sold-out answers (constant arrival) | 7 | 15 |
+| Latency budget | 3 s | 3 s, provisional |
+
+- **Stock enters the model.** With A = min(stock, planned requests): a constant-arrival run fits when rate + (k − 1) × A / duration ≤ C, and A ≤ accepted throughput × (duration + 30 s graceful stop). A buyer spike's time to serve is A / accepted throughput + (buyers − A) / C', compared with the cutoff and with k6's 60 s request timeout.
+- **Watch:** at low stock, buyer spikes on Fly ran up to 37 % slower than predicted (26 % at stock 1,000; 55 % by k6's bound). The budget was measured with stock 1; with stock 1,000 the mean iteration time on Fly rose to 3.6 to 4.7 s. The local budget and the local k are not confirmed by a run.
+
 ## Working Notes
 
 _None yet._

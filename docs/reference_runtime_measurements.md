@@ -4,7 +4,7 @@
 These measurements used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS).
 This document records the measurements taken from Checkout-Surge's reference runtime — generator-side network/resource limits and the adaptive-ERP acceptance observations — and the configuration decisions those measurements justify. It is a record of one environment, not guidance.
 
-For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](decisions/scope_and_caveats.md#connection-establishment-ceiling).
+For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](decisions/scope_and_caveats.md#connection-establishment-ceiling). Measuring a host's request capacity per connection mode follows the [capacity measurement procedure](capacity_measurement.md); its results are under [Capacity per connection mode](#capacity-per-connection-mode).
 
 Every figure below is indicative for this environment only. Prefer changes that are neutral-to-positive on any host, and record the deployed host's effective characteristics with each run instead of assuming they match these values.
 
@@ -124,9 +124,9 @@ These observations come from the hosted deployment on Fly.io, not from the local
 
 - Every run `completed` with delivery `complete`: every planned request started and completed, with zero transport failures and zero unexpected responses.
 - Every accepted order was confirmed and notified. `idempotency-check-200` answered its 200 replays without a second effect.
-- In the occupancy column, "conservative" is the estimate admission uses, and "shown" is the explanatory estimate the visitor sees.
+- In the occupancy column, "conservative" is the estimate admission uses. The figure in parentheses is the explanatory estimate, which the estimate endpoint also returns but no page displays.
 
-| Preset | Dispatch | Request p95 | Order queue peak; drain | Occupancy: actual vs conservative (shown) estimate | Core VM peak / mean |
+| Preset | Dispatch | Request p95 | Order queue peak; drain | Occupancy: actual vs conservative (explanatory) estimate | Core VM peak / mean |
 | --- | ---: | ---: | --- | --- | --- |
 | `preview-1k` | 0.20 s | 3.23 s | 487; 27.3 s | 34.6 s vs 71.3 s (30.0 s) | 76 / 24 % |
 | `surge-5k` | 0.61 s | 5.34 s | 495; 28.5 s | 34.9 s vs 121.3 s (80.0 s) | 84 / 26 % |
@@ -143,7 +143,7 @@ These observations come from the hosted deployment on Fly.io, not from the local
 **`surge-10k` across runs.**
 
 - The request p95 ranged from 7.5 to 13.9 s over about twenty runs, across several sessions and Machine sizes. Almost all of it is server time (`waiting`), and `connecting` stays under about 1 s.
-- About 1,000 requests are answered per second. Each buyer opens a new connection, whereas constant arrival reuses its connections (below); the two modes were observed to differ, without isolating the cause.
+- About 1,000 requests are answered per second. That rate reflects mostly the preset's 500 accepted orders, each written to PostgreSQL before the API answers, rather than the new connection each buyer opens: with stock 1, the same 10,000-buyer spike is answered at about 2,600 per second ([capacity per connection mode](#capacity-per-connection-mode)).
 - The transport and business behavior match the local reference: every request completed, with zero transport failures, and every accepted order was confirmed. The local reference records no latency figures to compare the p95 with.
 - **Generator size.** Dispatching the 10,000 buyers took:
   - 1.25 to 1.82 s on a 4 vCPU runner, where k6 saturates its CPU while it initializes and sends;
@@ -158,7 +158,7 @@ These observations come from the hosted deployment on Fly.io, not from the local
 
 **Constant arrival.**
 
-- **Throughput with reused connections.** With constant arrival, whose VUs reuse their connections, the same core answered about 3,200 requests per second.
+- **Throughput with reused connections.** With constant arrival, whose VUs reuse their connections, the same core answered about 3,200 requests per second. These runs had a stock of 500, so about 2 % of their requests were accepted orders; with stock 1, the core sustains about 3,500 per second ([capacity per connection mode](#capacity-per-connection-mode)).
   - With 5,000 pre-allocated VUs (maximum 10,000), 10 s runs were complete at 1,000, 1,500 and 2,000 per second, with a p95 of 3.8, 5.2 and 8.3 s.
   - With 10,000 pre-allocated and maximum VUs, 10 s runs were complete at 2,750 and 3,125 per second (twice), with a p95 of 11.8 to 12.8 s and 10,000 open connections.
   - At 3,500 per second, all 10,000 VUs were busy and the run dropped about 8 % of its iterations, reported as a virtual-user limit.
@@ -171,6 +171,31 @@ These observations come from the hosted deployment on Fly.io, not from the local
 - **Runner start.** A run started about 3.5 to 4 s later than with an always-on runner, and about 8 s later on the first run after a deploy.
 - **Runner loss.** 3.4 s from a SIGKILL of the runner to the terminal `load_generator_lost` run.
 - **Core recovery.** 37 s from the start button to the demo, with a fresh core installed on a new volume.
+
+## Capacity per connection mode
+
+Measured on 2026-10-08 with the [capacity measurement procedure](capacity_measurement.md), with the same application version on both deployments. Every run used the fastest Mock ERP (0 ms latency, 1,000 TPS, concurrency 10) and no start delay. Constant-arrival runs lasted 10 s with 10,000 explicit VUs unless stated; buyer spikes had a 60 s cutoff. Each figure comes from one to three runs.
+
+- **Hosted:** the Fly.io core (performance-6x, 12 GB) and runner (performance-8x, 16 GB) described [above](#hosted-flyio-observations).
+- **Local:** two cloud VMs with 4 vCPU (Intel Xeon at 2.3 and 2.8 GHz) and 16 GB each, running the whole Compose stack, k6 included (Docker 29.8, Compose 5.6, Node 22). One measured constant arrival, the other buyer spikes.
+- **Criterion:** a run is complete when every planned request started and completed, none unstarted or interrupted, and none failed (no transport failure or unexpected response; k6 counts a request with no reply as completed). The delivery status alone is not enough: all-accepted runs at 1,000 per second read `complete` while k6's graceful stop had interrupted 2,200 to 2,700 of their 10,000 requests.
+- **Mechanism:** an accepted order is written to PostgreSQL before the API answers: a Redis reservation, a transaction on the API's PostgreSQL pool of 10 connections, then a queue publish. A sold-out answer stays in Redis. Accepted orders are therefore answered at the pool's pace, an order of magnitude below sold-out answers, and the stock a run sells lowers its capacity.
+
+| | Hosted (Fly.io) | Local (4 vCPU VM) |
+| :-- | :-- | :-- |
+| Constant arrival, all sold out (C<sub>s</sub>) | 3,500/s, complete twice; 3,750 left 1,536 requests unstarted | about 3,000/s: complete at 2,000, and at 3,500 once; 3,000 and the 3,500 repeat left 2 and 17 of 30,000 to 35,000 unstarted, 3,750 left 713 |
+| Accepted orders answered per second | about 240 in both modes (236 to 258) | about 195 in constant arrival, 150 to 165 in buyer spikes |
+| Constant arrival, all accepted | complete at 750/s only because k6's 30 s graceful stop absorbed the backlog (p95 19 to 21 s); 1,000/s left 2,720 interrupted | the same at 500/s; 1,000/s left 2,231 interrupted |
+| Buyer spike, all sold out (C′<sub>s</sub>) | about 2,600 buyers/s (2,590 to 2,670 for 5,000 and 10,000 buyers) | 1,150 to 1,470/s for 10,000 buyers, 860/s for 5,000 (k6's upper bound) |
+| Buyer spike, all accepted (C′<sub>a</sub>) | 240 to 260/s | 150 to 155/s; the 10,000-buyer run was lossy: it took about 62 s, and 631 requests hit k6's 60 s request timeout |
+| Stock 1,000, constant arrival | complete at 2,625/s, not at 3,125/s (138 unstarted) | not complete at 3,500 or 3,750/s; lower rates not run |
+| Stock 1,000, 10,000-buyer spike | answered in 9.6 s (about 1,040/s) | 12.2 to 16.4 s (610 to 820/s) |
+| Latency budget that held | about 3 s: mean iteration 1.3 s at 3,500/s; 10,000 VUs (2.9 s) held twice, 7,000 (2 s) left 1,207 unstarted | mean iteration 0.9 to 1.1 s at 3,500/s; 10,000 VUs (2.9 s) held once; no lower budget confirmed |
+| Bottleneck | sold out: the single API process (1.7 to 1.9 cores at peak, VM about 50 %); accepted: the PostgreSQL pool (PostgreSQL 2.6 to 3.0 cores, VM 86 to 92 %) | sold out: the 4 vCPU shared with k6 (k6 alone up to 3.9 cores); accepted: the PostgreSQL pool (PostgreSQL about 1.9 cores); buyer spike: the load generator (k6 about 3.9 cores, the API about 1.2) |
+
+- **Stock in a buyer spike.** The times add up: accepted orders at their rate, plus sold-out answers at C′<sub>s</sub>. For 10,000 buyers and stock 5,000, that predicts about 22 s against 21.3 s measured on Fly, and 35 to 37 s against 29 to 33 s locally. With stock 1,000, the hosted spike took 9.6 s against 7.4 to 7.6 s predicted.
+- **Stock in constant arrival.** On Fly, an accepted order cost the API about as much as 7 sold-out answers, not the 15 the two rates suggest: accepted orders wait on the pool while the API keeps answering sold-out requests. With stock 1,000, that predicts about 2,900 per second, between the measured 2,625 and 3,125, and with stock 500 about 3,200, as measured earlier (above). Locally, the saturated stock-1,000 runs answered 2,240 to 2,380 per second, against 3,600 to 4,700 when sold out.
+- **Latency with stock.** With stock 1,000 on Fly, the mean iteration time was 3.6 to 4.7 s at 1,625 to 2,625 per second, against 1.3 s when sold out at 3,125 to 3,500 per second; almost all of it was spent outside the reservation service, which averaged 125 to 180 ms. The latency budgets above were measured with stock 1.
 
 ## Tuning deliberately not configured
 
