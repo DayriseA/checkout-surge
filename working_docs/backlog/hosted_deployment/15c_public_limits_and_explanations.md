@@ -35,3 +35,18 @@ Visitors can use what the hardware sustains, with capacity values confirmed by m
 ## Working Notes
 
 _None yet._
+
+### Fly confirmation (2026-10-08, 21:10 Paris, run by the owner with Codex, version `d5198be8`)
+
+- ERP 100 ms / 50 TPS / 0 % / concurrency 5, constant arrival 10 s, VUs = rate × 3 s.
+- A run counts as complete when sent = planned, with no interrupted, unstarted, dropped or failed request.
+- The core was recreated on the first wake (as `8e7366c7754918`), then stopped on its own.
+
+| Run | Stock | VUs | Complete | Counts (planned/started/completed/interrupted/unstarted/failed) | Mean / p95 (s) | Generator CPU mean/peak % |
+|---|--:|--:|---|---|---|---|
+| 2,500/s ×2 | 1 | 7,500 | yes, yes | 25,000/25,000/25,000/0/0/0 | 1.02 / 7.40; 0.28 / 1.76 | 41/89, 42/90 |
+| 2,200/s ×2 | 1,000 | 6,600 | yes, yes | 22,000/22,000/22,000/0/0/0 | 3.05 / 11.78; 3.28 / 12.98 | 25/90 |
+| 10,000 buyers ×2 | 1,000 | 10,000 | yes, yes | 10,000/10,000/10,000/0/0/0 | 6.89 / 10.24; 6.88 / 9.75 | 28/89, 29/91 |
+
+- The Fly values hold at the targets: 2,500/s sold out is 71 % of C_s, and 2,200/s with stock 1,000 is the model's 80 % point.
+- **Watch:** with stock 1,000 the mean iteration time (3.05 to 3.28 s) slightly exceeds the 3 s VU budget. The runs completed, with little VU margin.
