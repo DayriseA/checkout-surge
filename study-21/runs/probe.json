@@ -1,0 +1,30 @@
+[
+  {
+    "label": "probe-ca-2500-soldout-r1",
+    "mode": "constant-arrival-rate",
+    "ratePerSecond": 2500,
+    "durationSeconds": 10,
+    "preAllocatedVus": 10000,
+    "maxVus": 10000,
+    "startDelaySeconds": 0,
+    "startingStock": 1,
+    "erpLatencyMs": 0,
+    "erpMaxTps": 1000,
+    "erpErrorRate": 0,
+    "orderProcessConcurrency": 5
+  },
+  {
+    "label": "probe-ca-2500-soldout-r2",
+    "mode": "constant-arrival-rate",
+    "ratePerSecond": 2500,
+    "durationSeconds": 10,
+    "preAllocatedVus": 10000,
+    "maxVus": 10000,
+    "startDelaySeconds": 0,
+    "startingStock": 1,
+    "erpLatencyMs": 0,
+    "erpMaxTps": 1000,
+    "erpErrorRate": 0,
+    "orderProcessConcurrency": 5
+  }
+]

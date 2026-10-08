@@ -1,0 +1,1430 @@
+[
+ {
+  "label": "surge-5k-erp-r1",
+  "mode": "demo",
+  "runId": "b2686cf3-ddf5-4467-827f-4b2e5c9a434e",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 6.4623087693,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 4.54070911,
+    "p95": 6.462303728,
+    "max": 7.919117114
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 5.094277347999999,
+    "p95": 7.709949903,
+    "max": 7.919117114
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 4.461964527,
+    "p95": 6.393745920000001,
+    "max": 6.5112068579999995
+   }
+  },
+  "allAnsweredS": 11.524118423461914,
+  "soldOutS": 1.3169865608215332,
+  "allConfirmedS": 32.090986490249634,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    83.478,
+    90.91
+   ],
+   "postgres": [
+    77.444,
+    92.6
+   ],
+   "redis": [
+    20.176000000000002,
+    22.26
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-noerp-r1",
+  "mode": "demo",
+  "runId": "fe7a25d2-ee99-440e-bb60-b76b66f36ee1",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 6.047118208100001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 3.449408842,
+    "p95": 6.046996088,
+    "max": 7.145409711999999
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 4.037617748,
+    "p95": 6.879188077,
+    "max": 7.145409711999999
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 3.4286009089999996,
+    "p95": 6.001069683,
+    "max": 6.384257372
+   }
+  },
+  "allAnsweredS": 11.244194269180298,
+  "soldOutS": 1.3353571891784668,
+  "allConfirmedS": 23.05235719680786,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    80.845,
+    92.27
+   ],
+   "postgres": [
+    97.54,
+    113.51
+   ],
+   "redis": [
+    19.218333333333334,
+    25.92
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-erp-r1",
+  "mode": "demo",
+  "runId": "2a9b853e-3231-420a-814b-a51de9f76616",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 7.21718840085,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 5.863919685,
+    "p95": 7.2171870259999995,
+    "max": 7.444711624
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 3.719089411,
+    "p95": 5.994108586,
+    "max": 6.263153641
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 6.039740802,
+    "p95": 7.2552252479999995,
+    "max": 7.444711624
+   }
+  },
+  "allAnsweredS": 9.14827275276184,
+  "soldOutS": 0.3400847911834717,
+  "allConfirmedS": 109.05508470535278,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    80.508,
+    105.84
+   ],
+   "postgres": [
+    69.842,
+    86.13
+   ],
+   "redis": [
+    18.59,
+    29.31
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-noerp-r1",
+  "mode": "demo",
+  "runId": "2ec95df0-f509-4f83-8af4-68b7c34690a9",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 11.892448209150002,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 7.439921418,
+    "p95": 11.892428212,
+    "max": 12.076734214
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 4.60417737,
+    "p95": 6.988281806,
+    "max": 7.320828029
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 8.129406649,
+    "p95": 11.929421884,
+    "max": 12.076734214
+   }
+  },
+  "allAnsweredS": 14.30942964553833,
+  "soldOutS": 1.3029475212097168,
+  "allConfirmedS": 22.011947631835938,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    77.16,
+    93.38
+   ],
+   "postgres": [
+    90.13285714285715,
+    108.67
+   ],
+   "redis": [
+    20.07857142857143,
+    24.68
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-erp-r1",
+  "mode": "demo",
+  "runId": "d8b6e9a0-4a31-425f-b29b-cc887cc1e16c",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 9.69511646955,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 2.664607899,
+    "p95": 9.695042163,
+    "max": 10.359435214
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 6.186545064,
+    "p95": 10.220403582000001,
+    "max": 10.359435214
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 2.2201803890000003,
+    "p95": 3.2953017300000003,
+    "max": 3.334231071
+   }
+  },
+  "allAnsweredS": 13.054340839385986,
+  "soldOutS": 3.5040488243103027,
+  "allConfirmedS": 60.243048906326294,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    78.645,
+    86.36
+   ],
+   "postgres": [
+    106.82,
+    116.81
+   ],
+   "redis": [
+    20.148333333333333,
+    27.6
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-noerp-r1",
+  "mode": "demo",
+  "runId": "85cc9762-b92d-48fb-bb26-5e299c756e88",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 7.4538535154000005,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 0.48105255199999997,
+    "p95": 7.453849289,
+    "max": 7.973971663
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 5.249093148,
+    "p95": 7.769945267,
+    "max": 7.973971663
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.205461814,
+    "p95": 0.7431330380000001,
+    "max": 0.854091763
+   }
+  },
+  "allAnsweredS": 11.002245426177979,
+  "soldOutS": 3.2627294063568115,
+  "allConfirmedS": 36.74372935295105,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    70.84333333333333,
+    89.12
+   ],
+   "postgres": [
+    109.87,
+    130.56
+   ],
+   "redis": [
+    20.145,
+    25.04
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-erp-r2",
+  "mode": "demo",
+  "runId": "fb18d3f0-c710-4ab4-8633-2aba5756dc5c",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 4.808840106500001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 1.809139938,
+    "p95": 4.808630035,
+    "max": 6.267794544
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 4.808630035,
+    "p95": 6.138922038,
+    "max": 6.267794544
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 1.794353154,
+    "p95": 2.856857883,
+    "max": 3.470842939
+   }
+  },
+  "allAnsweredS": 6.70232367515564,
+  "soldOutS": 0.7899947166442871,
+  "allConfirmedS": 32.21599459648132,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    99.49,
+    129.55
+   ],
+   "postgres": [
+    80.70333333333333,
+    126.11
+   ],
+   "redis": [
+    22.03,
+    27.92
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-noerp-r2",
+  "mode": "demo",
+  "runId": "e6e197a0-7153-466f-afaa-91103958d943",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 6.04093750465,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 5.016516469,
+    "p95": 6.040934364,
+    "max": 6.540127266000001
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 3.923333725,
+    "p95": 6.2496403019999995,
+    "max": 6.540127266000001
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 5.252701756,
+    "p95": 6.03328519,
+    "max": 6.311380953
+   }
+  },
+  "allAnsweredS": 8.871131896972656,
+  "soldOutS": 0.7595117092132568,
+  "allConfirmedS": 19.840511798858643,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    82.22749999999999,
+    102.32
+   ],
+   "postgres": [
+    98.0825,
+    114.18
+   ],
+   "redis": [
+    22.215,
+    28.77
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-erp-r2",
+  "mode": "demo",
+  "runId": "f602ad87-69db-4901-a1dc-e52d0c72d147",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 6.68355821875,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.443961873,
+    "p95": 6.683473529,
+    "max": 6.962460545
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 3.7179689,
+    "p95": 5.928674654,
+    "max": 6.088982562
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 1.799120488,
+    "p95": 6.715572387,
+    "max": 6.962460545
+   }
+  },
+  "allAnsweredS": 7.5949225425720215,
+  "soldOutS": 0.4917464256286621,
+  "allConfirmedS": 109.53974652290344,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    90.195,
+    102.06
+   ],
+   "postgres": [
+    75.9875,
+    85.1
+   ],
+   "redis": [
+    18.9125,
+    28.44
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-noerp-r2",
+  "mode": "demo",
+  "runId": "fa255900-7ad9-4387-8986-707308b1f018",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 7.44560377255,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 4.183062713,
+    "p95": 7.445589665000001,
+    "max": 7.608286791
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 4.946426276,
+    "p95": 7.09169639,
+    "max": 7.290654327
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 3.962929242,
+    "p95": 7.471589501,
+    "max": 7.608286791
+   }
+  },
+  "allAnsweredS": 9.455721378326416,
+  "soldOutS": 0.3295583724975586,
+  "allConfirmedS": 19.39455819129944,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    81.624,
+    88.81
+   ],
+   "postgres": [
+    87.858,
+    114.4
+   ],
+   "redis": [
+    19.902,
+    28.09
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-erp-r2",
+  "mode": "demo",
+  "runId": "9ca8552d-f74f-458d-9ecd-c147021b2860",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 6.320440441800001,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 0.775031839,
+    "p95": 6.320387829,
+    "max": 7.000764341
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 3.8404559089999997,
+    "p95": 6.874896644000001,
+    "max": 7.000764341
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.469718706,
+    "p95": 0.9664439640000001,
+    "max": 1.019605365
+   }
+  },
+  "allAnsweredS": 10.034062385559082,
+  "soldOutS": 3.400360345840454,
+  "allConfirmedS": 57.645360469818115,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    80.412,
+    95.51
+   ],
+   "postgres": [
+    98.432,
+    104.1
+   ],
+   "redis": [
+    19.692,
+    23.75
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-noerp-r2",
+  "mode": "demo",
+  "runId": "1eb5fe59-d2d3-4e6e-88b7-03fb10d0d3f3",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 7.251563870299998,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 0.808655189,
+    "p95": 7.251248426,
+    "max": 8.01005343
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 4.49848422,
+    "p95": 7.864812755,
+    "max": 8.01005343
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.6947372789999999,
+    "p95": 0.961190785,
+    "max": 1.040155109
+   }
+  },
+  "allAnsweredS": 11.083326578140259,
+  "soldOutS": 3.151376485824585,
+  "allConfirmedS": 34.09437656402588,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    73.964,
+    84.57
+   ],
+   "postgres": [
+    106.424,
+    112.84
+   ],
+   "redis": [
+    19.342,
+    26.9
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-erp-r1",
+  "mode": "baseline",
+  "runId": "5e1cde75-b34e-46e9-9693-ce887b703864",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 15.00085984625001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.1394769379999996,
+    "p95": 14.998272992,
+    "max": 28.411847121999998
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 14.998272992,
+    "p95": 26.872098718,
+    "max": 28.411847121999998
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 2.105415837,
+    "p95": 3.570872888,
+    "max": 3.685424166
+   }
+  },
+  "allAnsweredS": 28.413511276245117,
+  "soldOutS": 0.8138113021850586,
+  "allConfirmedS": 28.346811294555664,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    26.286428571428573,
+    113.36
+   ],
+   "postgres": [
+    16.635714285714286,
+    50.33
+   ],
+   "redis": [
+    1.8064285714285715,
+    5.81
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-noerp-r1",
+  "mode": "baseline",
+  "runId": "f274a34b-c98e-4641-9846-71183159cb40",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 5.219353341650001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 3.448532132,
+    "p95": 5.219326291000001,
+    "max": 5.432869867
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 2.6293578699999998,
+    "p95": 3.650963987,
+    "max": 3.723662735
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 3.5818343770000003,
+    "p95": 5.239014083,
+    "max": 5.432869867
+   }
+  },
+  "allAnsweredS": 6.5397608280181885,
+  "soldOutS": 0.5573267936706543,
+  "allConfirmedS": 3.7913267612457275,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    90.52666666666667,
+    117.78
+   ],
+   "postgres": [
+    56.87,
+    77.39
+   ],
+   "redis": [
+    2.5166666666666666,
+    5.18
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-erp-r1",
+  "mode": "baseline",
+  "runId": "1ce433d3-36b9-4d60-a06f-96ff3d0ebb12",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": false,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 279,
+  "soldOut": 4500,
+  "failed": 221,
+  "recordP95": 53.42450925470004,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 1.9662066580000002,
+    "p95": 53.414022808,
+    "max": 59.677272701
+   },
+   "accepted": {
+    "n": 279,
+    "p50": 30.256730831000002,
+    "p95": 56.78782565,
+    "max": 59.505961928
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 1.9228670939999999,
+    "p95": 3.12629518,
+    "max": 3.3305356489999998
+   },
+   "failed": {
+    "n": 221,
+    "p50": 59.600961352999995,
+    "p95": 59.64708728,
+    "max": 59.677272701
+   }
+  },
+  "allAnsweredS": 59.73400855064392,
+  "soldOutS": 0.2802765369415283,
+  "allConfirmedS": 106.27027654647827,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    19.235172413793105,
+    91.16
+   ],
+   "postgres": [
+    12.903103448275862,
+    54.8
+   ],
+   "redis": [
+    1.7717241379310344,
+    5.48
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-noerp-r1",
+  "mode": "baseline",
+  "runId": "d9bd7a81-5fbc-41b5-819b-ea8e57a3cb25",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 4.095608392150001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.256349803,
+    "p95": 4.095436959,
+    "max": 4.926517863
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 3.932003909,
+    "p95": 4.807547359,
+    "max": 4.926517863
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 2.182412672,
+    "p95": 3.483906423,
+    "max": 4.279992658
+   }
+  },
+  "allAnsweredS": 5.488286018371582,
+  "soldOutS": 1.015099048614502,
+  "allConfirmedS": 5.475099086761475,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    60.66,
+    89.36
+   ],
+   "postgres": [
+    53.446666666666665,
+    76.61
+   ],
+   "redis": [
+    1.0733333333333333,
+    1.27
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-erp-r1",
+  "mode": "baseline",
+  "runId": "aa661c35-467b-407f-9e11-814882ce4bf3",
+  "status": "failed",
+  "deliveryStatus": "failed",
+  "failureReason": "traffic_delivery_major_shortfall",
+  "complete": false,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 2751,
+   "interruptedRequests": 249,
+   "unstartedRequests": 0
+  },
+  "accepted": 751,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 30.7126123425,
+  "latency": {
+   "all": {
+    "n": 2751,
+    "p50": 0.002991019,
+    "p95": 30.733404851,
+    "max": 37.449062665
+   },
+   "accepted": {
+    "n": 751,
+    "p50": 18.914092608,
+    "p95": 35.623796350999996,
+    "max": 37.449062665
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.001968427,
+    "p95": 0.030493571,
+    "max": 0.086130229
+   }
+  },
+  "allAnsweredS": 39.62559247016907,
+  "soldOutS": 3.0061323642730713,
+  "allConfirmedS": 52.859132528305054,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    24.56736842105263,
+    70.76
+   ],
+   "postgres": [
+    21.911578947368422,
+    72.71
+   ],
+   "redis": [
+    1.831578947368421,
+    4.83
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-noerp-r1",
+  "mode": "baseline",
+  "runId": "48692809-bcfe-42ef-9e7f-629f47845495",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 2.8981836737499997,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 0.493836765,
+    "p95": 2.898175836,
+    "max": 3.807730066
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 2.260879734,
+    "p95": 3.19642713,
+    "max": 3.807730066
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.0035183080000000004,
+    "p95": 1.6471758,
+    "max": 2.1753414699999998
+   }
+  },
+  "allAnsweredS": 9.705816984176636,
+  "soldOutS": 4.245835781097412,
+  "allConfirmedS": 5.332835912704468,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    67.03,
+    85.6
+   ],
+   "postgres": [
+    72.0125,
+    120.58
+   ],
+   "redis": [
+    2.2575,
+    5.54
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-erp-r2",
+  "mode": "baseline",
+  "runId": "4f3a6262-d3b0-4272-ac3d-5360c8a7561b",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 14.818275762900008,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.112635805,
+    "p95": 14.815702381,
+    "max": 28.017994115
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 14.815702381,
+    "p95": 26.710067005,
+    "max": 28.017994115
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 2.010067463,
+    "p95": 2.828187193,
+    "max": 2.997780507
+   }
+  },
+  "allAnsweredS": 28.5995934009552,
+  "soldOutS": 0.8563745021820068,
+  "allConfirmedS": 28.59637451171875,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    24.86,
+    107.72
+   ],
+   "postgres": [
+    23.890714285714285,
+    99.92
+   ],
+   "redis": [
+    1.79,
+    4.51
+   ]
+  }
+ },
+ {
+  "label": "surge-5k-noerp-r2",
+  "mode": "baseline",
+  "runId": "6b5f64a3-0e9e-4b45-a359-94d0b7555344",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 4.764345483900001,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.760092207,
+    "p95": 4.764322102,
+    "max": 4.959879197
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 1.950147871,
+    "p95": 2.882925052,
+    "max": 3.165649932
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 2.90921427,
+    "p95": 4.771172498,
+    "max": 4.959879197
+   }
+  },
+  "allAnsweredS": 5.887157440185547,
+  "soldOutS": 0.29049253463745117,
+  "allConfirmedS": 3.28949236869812,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    81.77333333333334,
+    114.54
+   ],
+   "postgres": [
+    61.333333333333336,
+    81.67
+   ],
+   "redis": [
+    1.5333333333333332,
+    2.01
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-erp-r2",
+  "mode": "baseline",
+  "runId": "5e011657-85ff-42a9-bb8b-43b36ef03d1f",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": false,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 280,
+  "soldOut": 4500,
+  "failed": 220,
+  "recordP95": 53.270201507200035,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.028292977,
+    "p95": 53.259599834,
+    "max": 59.958472078
+   },
+   "accepted": {
+    "n": 280,
+    "p50": 29.899882806,
+    "p95": 56.614790175,
+    "max": 59.559910476
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 1.9180151060000001,
+    "p95": 3.383664085,
+    "max": 3.7192675640000004
+   },
+   "failed": {
+    "n": 220,
+    "p50": 59.776231237,
+    "p95": 59.81905845,
+    "max": 59.958472078
+   }
+  },
+  "allAnsweredS": 60.026928186416626,
+  "soldOutS": 0.37331414222717285,
+  "allConfirmedS": 106.2623143196106,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    20.40103448275862,
+    99.16
+   ],
+   "postgres": [
+    13.879999999999999,
+    66.66
+   ],
+   "redis": [
+    1.73,
+    4.78
+   ]
+  }
+ },
+ {
+  "label": "slow-erp-5k-noerp-r2",
+  "mode": "baseline",
+  "runId": "b6c1ae8c-3e04-4944-8c8a-179ca19fa6ff",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 5000,
+   "startedRequests": 5000,
+   "completedRequests": 5000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 500,
+  "soldOut": 4500,
+  "failed": 0,
+  "recordP95": 4.33863017935,
+  "latency": {
+   "all": {
+    "n": 5000,
+    "p50": 2.7925625789999997,
+    "p95": 4.338599657,
+    "max": 4.526221478
+   },
+   "accepted": {
+    "n": 500,
+    "p50": 2.564795181,
+    "p95": 3.413585125,
+    "max": 3.618663674
+   },
+   "sold_out": {
+    "n": 4500,
+    "p50": 2.8613100030000003,
+    "p95": 4.347928011,
+    "max": 4.526221478
+   }
+  },
+  "allAnsweredS": 6.675255537033081,
+  "soldOutS": 1.0661306381225586,
+  "allConfirmedS": 3.6201305389404297,
+  "ordersPersisted": 500,
+  "ordersConfirmed": 500,
+  "cpuDuringTraffic": {
+   "api": [
+    83.46000000000001,
+    120.29
+   ],
+   "postgres": [
+    49.0975,
+    62.85
+   ],
+   "redis": [
+    2.0425,
+    4.3
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-erp-r2",
+  "mode": "baseline",
+  "runId": "392d266a-b993-4f6f-9110-5dfca939bfcc",
+  "status": "failed",
+  "deliveryStatus": "failed",
+  "failureReason": "traffic_delivery_major_shortfall",
+  "complete": false,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 2749,
+   "interruptedRequests": 251,
+   "unstartedRequests": 0
+  },
+  "accepted": 749,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 30.717559585599997,
+  "latency": {
+   "all": {
+    "n": 2749,
+    "p50": 0.00244346,
+    "p95": 30.733947263999998,
+    "max": 37.497173049
+   },
+   "accepted": {
+    "n": 749,
+    "p50": 19.053994488,
+    "p95": 35.675485041,
+    "max": 37.497173049
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.0019265859999999999,
+    "p95": 0.014007929,
+    "max": 0.090119747
+   }
+  },
+  "allAnsweredS": 39.55864095687866,
+  "soldOutS": 2.895220994949341,
+  "allConfirmedS": 52.88822102546692,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    28.1115,
+    77.3
+   ],
+   "postgres": [
+    23.386,
+    76.58
+   ],
+   "redis": [
+    1.9395,
+    5.73
+   ]
+  }
+ },
+ {
+  "label": "ca-300x10-noerp-r2",
+  "mode": "baseline",
+  "runId": "0bd30807-5997-4a76-b41a-409d3fa4d479",
+  "status": "completed",
+  "deliveryStatus": "complete",
+  "failureReason": null,
+  "complete": true,
+  "requests": {
+   "plannedRequests": 3000,
+   "startedRequests": 3000,
+   "completedRequests": 3000,
+   "interruptedRequests": 0,
+   "unstartedRequests": 0
+  },
+  "accepted": 1000,
+  "soldOut": 2000,
+  "failed": 0,
+  "recordP95": 2.016871173249999,
+  "latency": {
+   "all": {
+    "n": 3000,
+    "p50": 0.614298326,
+    "p95": 2.0167021259999998,
+    "max": 2.289151604
+   },
+   "accepted": {
+    "n": 1000,
+    "p50": 1.5015513699999998,
+    "p95": 2.177910432,
+    "max": 2.289151604
+   },
+   "sold_out": {
+    "n": 2000,
+    "p50": 0.003440235,
+    "p95": 1.8327428700000001,
+    "max": 2.103821521
+   }
+  },
+  "allAnsweredS": 9.712028503417969,
+  "soldOutS": 4.976033449172974,
+  "allConfirmedS": 5.1780335903167725,
+  "ordersPersisted": 1000,
+  "ordersConfirmed": 1000,
+  "cpuDuringTraffic": {
+   "api": [
+    72.25999999999999,
+    111.3
+   ],
+   "postgres": [
+    57.818,
+    95.79
+   ],
+   "redis": [
+    1.8659999999999999,
+    4.38
+   ]
+  }
+ }
+]
