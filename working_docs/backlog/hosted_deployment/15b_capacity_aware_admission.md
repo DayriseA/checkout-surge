@@ -50,7 +50,7 @@ A run is admitted only when it is expected to complete, or, for the owner, after
 
 ## Open Points
 
-- The messages: implement the model first, then stop at a checkpoint with the proposed wording for the public preview, the public refusal and the admin warning, before writing them into the UI.
+- None. The messages were settled at the checkpoint (2026-10-08): the public preview shows nothing for a run expected to complete, and the owner approved the public refusal and the admin warnings, including the agent's five follow-up choices.
 
 ## Inputs from Preparation (2026-10-08)
 
