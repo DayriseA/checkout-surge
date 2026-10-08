@@ -46,7 +46,7 @@ export function buildSeedPresets(): SeedPreset[] {
       isSystem: true,
       display: {
         name: "Preview 1k",
-        description: "1,000 buyers rush 500 units. Standard ERP.",
+        description: "A waiting room releases 1,000 buyers at once for 500 units. Standard ERP.",
         sortOrder: 10,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },
@@ -66,7 +66,7 @@ export function buildSeedPresets(): SeedPreset[] {
       display: {
         name: "Surge 5k",
         description:
-          "5,000 buyers rush 500 units. Same stock and ERP as Preview 1k: only the crowd grows.",
+          "5,000 buyers released at once for 500 units. Same stock and ERP as Preview 1k: only the batch grows.",
         sortOrder: 20,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },
@@ -86,7 +86,7 @@ export function buildSeedPresets(): SeedPreset[] {
       display: {
         name: "Surge 10k",
         description:
-          "10,000 buyers rush 500 units. Same stock and ERP: the ERP does the same work whatever the crowd size.",
+          "10,000 buyers released at once for 500 units. Same stock and ERP: the ERP does the same work whatever the batch size. Expect answers to take several seconds: the batch is large, and each unit sold is first written to the database.",
         sortOrder: 30,
         outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
       },
@@ -106,7 +106,7 @@ export function buildSeedPresets(): SeedPreset[] {
       display: {
         name: "Slow ERP",
         description:
-          "5,000 buyers rush 500 units while the ERP accepts only 5 orders per second. Orders queue up and drain at its pace.",
+          "5,000 buyers released at once for 500 units while the ERP accepts only 5 orders per second. Orders queue up and drain at its pace.",
         sortOrder: 32,
         outcomeFocus: ["downstream_capacity", "queue_pressure", "sold_out"],
       },
@@ -126,7 +126,7 @@ export function buildSeedPresets(): SeedPreset[] {
       display: {
         name: "Laggy ERP",
         description:
-          "5,000 buyers rush 500 units while each ERP call takes one second. Bounded workers cap the calls in flight.",
+          "5,000 buyers released at once for 500 units while each ERP call takes one second. Bounded workers cap the calls in flight.",
         sortOrder: 34,
         outcomeFocus: ["downstream_latency", "queue_pressure", "sold_out"],
       },

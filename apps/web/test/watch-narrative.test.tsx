@@ -127,7 +127,7 @@ describe("watch narrative", () => {
   it("renders starting with an identity line and truthful unavailable readings", () => {
     const output = markup(available(projection(run("starting"))));
 
-    expect(output).toContain("Preparing the flash sale");
+    expect(output).toContain("Preparing the run");
     expect(output).not.toContain("Try another scenario");
     expect(output).toContain("Preview 1k · 1,000 buyers · 250 units");
     expect(output).toContain('aria-label="Run phase"');
@@ -162,7 +162,7 @@ describe("watch narrative", () => {
     const output = markup(available(projection(run("active"))));
 
     expect(output).toContain("The surge is under way");
-    expect(output).toContain("Checkout attempts are being accepted.");
+    expect(output).toContain("Buyers are arriving.");
     const identity = output.indexOf('aria-label="Run phase"');
     const verdict = output.indexOf("The surge is under way");
     const counts = output.indexOf("Units left");

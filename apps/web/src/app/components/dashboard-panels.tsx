@@ -651,7 +651,14 @@ export function RunErpOutcomesPanel({
           />
           <dl className={factGridClassName}>
             <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
-            <Fact label="Failures" value={formatNumber(erp.recentFailureCount)} />
+            <Fact
+              label="Failures"
+              value={
+                erp.recentFailureCount > 0 && data?.businessOutcome?.failedOrders === 0
+                  ? `${formatNumber(erp.recentFailureCount)} (retried; no order failed)`
+                  : formatNumber(erp.recentFailureCount)
+              }
+            />
             <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
             <Fact
               label="Latest attempt"

@@ -98,7 +98,7 @@ Hold expiry does not change retry semantics while the idempotency record remains
 
 ## Stale Holds and Operator Visibility
 
-Reservation holds use the API's configured hold window. The default is 15 minutes.
+A reservation hold is the record of reserved stock, not a step before payment: a real purchase journey would hold the unit temporarily while the buyer pays, and this demo has no payment step. Its deadline comes from the API's configured hold window (15 minutes by default) and only affects display.
 
 Expired reservation holds are tracked in Redis via `reservation-expirations`, but the local demo intentionally retains them instead of releasing or reconciling them automatically. Active release/reconciliation belongs with payment or reconciliation work outside the current Node.js demo track.
 

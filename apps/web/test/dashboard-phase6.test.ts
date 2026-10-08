@@ -450,6 +450,22 @@ describe("projection dashboard", () => {
 
     // A generic poll clock must not sit among the leading public facts.
     expect(runMarkup).not.toContain("Last updated");
+    expect(runMarkup).not.toContain("retried; no order failed");
+  });
+
+  it("marks ERP failures as retried when no order failed", () => {
+    const projection = projectionFixture();
+    if (!projection.businessOutcome) throw new Error("Expected a business outcome.");
+    projection.businessOutcome.failedOrders = 0;
+    const markup = renderToStaticMarkup(
+      createElement(RunErpOutcomesPanel, {
+        recovery: available(projection),
+        presentation: deriveRunErpOutcomeState(projection.erp),
+        freshness: liveFreshness,
+      }),
+    );
+
+    expect(markup).toContain("2 (retried; no order failed)");
   });
 
   it("keeps the live queue facts and renders no verdict, failed total, or status pill", () => {
@@ -745,7 +761,7 @@ const activePresentation: PresentationState = {
   state: "accepting-checkout-attempts",
   tone: "progress",
   label: "accepting checkout attempts",
-  description: "Checkout attempts are being accepted.",
+  description: "Buyers are arriving.",
 };
 
 const liveFreshness: Freshness = {

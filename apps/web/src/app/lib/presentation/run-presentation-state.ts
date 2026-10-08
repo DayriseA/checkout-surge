@@ -46,7 +46,7 @@ const states = {
     "accepting-checkout-attempts",
     "progress",
     "accepting checkout attempts",
-    "Checkout attempts are being accepted.",
+    "Buyers are arriving.",
   ),
   draining: state(
     "processing-accepted-reservations",

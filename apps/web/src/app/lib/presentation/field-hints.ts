@@ -1,8 +1,8 @@
 export const fieldHints = {
   trafficPattern:
-    "How buyers arrive. Everyone at once: a fixed crowd checks out at the same instant, like a flash sale opening. Steady stream: new buyers keep arriving at a constant rate for a set time.",
+    "How buyers arrive. Everyone at once: a waiting room releases a batch of buyers together. Steady stream: the waiting room lets new buyers through at a constant rate for a set time.",
   buyerCount:
-    "How many simulated shoppers try to buy at the same moment. Each one tries to reserve one unit. When there are more buyers than stock, the extra ones are turned away as sold out.",
+    "How many simulated buyers the waiting room releases together. Each one tries to reserve one unit. When there are more buyers than stock, the extra ones are turned away as sold out.",
   duplicateBuyerAttempt:
     "Simulates an impatient shopper who clicks Buy twice. Both clicks carry the same request key, so the API recognizes the repeat and returns the same reservation instead of taking a second unit.",
   arrivalRate:

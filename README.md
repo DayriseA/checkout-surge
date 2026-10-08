@@ -1,12 +1,19 @@
 # Checkout-Surge
 
-Checkout-Surge is a realistic limited-inventory checkout simulation for surge traffic. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
+Checkout-Surge is a limited-inventory checkout simulation of the purchase system behind a virtual waiting room: its surge traffic is what the waiting room lets through. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can absorb request bursts without overselling or overwhelming a slow downstream business system. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
 
-The Node.js system and its containerized reference runtime are implemented and locally demoable. The implemented path includes the inventory hot path, durable asynchronous handoffs and recovery scanners, run-scoped worker admission and downstream-protection policy, API-owned conservative duration admission with automatic run reset, realtime dashboard recovery with bounded public reads, durable k6 execution and completion delivery, simulated notifications, API-owned run finalization, immutable public aggregate and protected admin aggregate Run History reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the Compose runtime. This local status is not evidence of hosted or production readiness, a reproducible hosted benchmark, horizontal scaling, or operational hardening. Hosted deployment work and the optional Go comparison track remain future work.
+The Node.js system runs locally on its containerized reference runtime and as a hosted demo on Fly.io ([hosted runtime](docs/hosted_runtime.md)). The implemented path includes the inventory hot path, durable asynchronous handoffs and recovery scanners, run-scoped worker admission and downstream-protection policy, API-owned conservative duration admission with automatic run reset, realtime dashboard recovery with bounded public reads, durable k6 execution and completion delivery, simulated notifications, API-owned run finalization, immutable public aggregate and protected admin aggregate Run History reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the Compose runtime. Neither is evidence of production readiness, a reproducible benchmark, horizontal scaling, or operational hardening. The optional Go comparison track remains future work.
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The local runtime and verification paths are designed to make inventory consistency, API responsiveness, downstream pressure, and delayed processing observable; benchmark claims require separate reproducible evidence from the environment in which they are measured.
 
 The supported local topology is single-instance: one API process is also the sole maintenance authority, one Next.js process serves the web application, one load-orchestrator process owns one journal, and one worker runtime owns background processing. These remain separate containers. The single Caddy dashboard proxy/edge is only the ingress and routing boundary; it is not another web application process or application authority. Horizontally scaled application services are outside the accepted product and verification contract.
+
+## Behind a Waiting Room
+
+- **The framing.** A popular sale puts a virtual waiting room in front of checkout. Checkout-Surge models the purchase system behind it: a run's traffic is what the waiting room lets through in an interval. A buyer spike is a batch released at once; constant arrival is the waiting room's steady outflow. That is why the system is calibrated and refuses runs it cannot absorb.
+- **What it demonstrates.** The in-memory stock decision in Redis, which answers buyers turned away without touching the database; idempotency; asynchronous processing that protects a slow downstream system with a queue, a rate limit and a circuit breaker; and no overselling.
+- **The simplification.** A secured reservation creates its order at once; there is no payment step between them. The API records both durably in PostgreSQL before answering a buyer who secures a unit, so successful buyers wait longer for their answer than turned-away buyers.
+- **What production should add.** A waiting room, temporary holds with expiry and payment, several API instances, and bot protection.
 
 ---
 
@@ -16,8 +23,8 @@ During a simulated limited-inventory surge:
 
 1. A public or admin preset creates an isolated demonstration run with a generated sale offer and frozen configuration snapshot.
 2. k6 generates direct API traffic from synthetic buyers using the run ID and generated sale offer ID.
-3. Redis atomically reserves inventory for that run-scoped limited-stock offer.
-4. The API returns a reservation response and pushes order processing to BullMQ; a worker-owned dispatch scanner repairs a committed order whose immediate enqueue was lost.
+3. Redis atomically reserves inventory for that run-scoped limited-stock offer. A sold-out attempt is answered from Redis alone.
+4. For a secured reservation, the API writes the reservation and its order in one PostgreSQL transaction, publishes the order-processing job to BullMQ, then returns the reservation response; a worker-owned dispatch scanner repairs a committed order whose immediate enqueue was lost.
 5. The worker runtime confirms orders against the mock ERP / downstream business system. The API configures the order-process queue's native BullMQ rate limit and global concurrency from the accepted run snapshot's declared ERP capacity, so dispatch is paced at that declared capacity rather than by a learned rate. The worker adds durable per-scope capacity cooldowns, a separate availability circuit with sparse probes, in-flight ceilings, and bounded latency-derived request deadlines. Every actual ERP call gets its own durable identity, and the mock ERP owns a PostgreSQL-backed terminal confirmation ledger with a status lookup, so an uncertain result is resolved by lookup or idempotent replay across worker retries and restarts. Worker records alone do not prove exactly-once external effects: a real connector would need the same durable idempotency or an authoritative lookup on the downstream side.
 6. A simulated notification record is written after successful confirmation.
 7. The live spectator view shows request rate, queue depth, inventory drain, completion outcomes, and consistency lag in real time.
@@ -30,18 +37,17 @@ Load Orchestrator (k6 wrapper)
       v
 API Gateway (Fastify)  <---- Web Dashboard (Next.js)
       |
-      |--> Redis (atomic reservation for generated run offer)
-      |         |
-      |         `--> BullMQ Queue
-      |                   |
-      |                   v
-      |             Background Worker
-      |                   |
-      |                   v
-      |             Mock ERP / Downstream Service
+      |--> Redis (atomic reservation for generated run offer; sold-out answered here)
       |
-      v
-PostgreSQL (durable business records)
+      |--> PostgreSQL (secured reservation and its order, one transaction)
+      |
+      `--> BullMQ Queue (order job, after the transaction)
+                |
+                v
+          Background Worker --> PostgreSQL (order outcomes)
+                |
+                v
+          Mock ERP / Downstream Service
 ```
 
 For the deeper design rationale and failure modes, see [docs/architecture.md](docs/architecture.md).

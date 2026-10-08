@@ -6,7 +6,7 @@ This document is designed to serve as the project's "Internal RFC" or "Design Do
 
 ## Project Goal:
 
-To demonstrate expertise in building resilient, high-performance distributed systems capable of handling extreme limited-inventory checkout spikes while gracefully managing slow, legacy downstream dependencies (ERPs).
+To demonstrate expertise in building resilient, high-performance distributed systems capable of handling the extreme limited-inventory checkout spikes that a virtual waiting room lets through, while gracefully managing slow, legacy downstream dependencies (ERPs).
 
 ---
 
@@ -34,15 +34,15 @@ The project is a realistic systems simulation: external actors such as buyers, t
 
 ### A. Inventory Management (The Redis "Hot Path")
 
-- **Problem:** Traditional Database ACID transactions are too slow for 10k+ requests per second.
-- **Solution:** Use Redis for **Atomic Inventory Reservation**. Before any database record is touched, the system uses Redis `DECR` (or a Lua script) to check and reserve stock for the active sale offer.
+- **Problem:** Deciding stock in a database transaction would make every buyer, turned-away buyers included, wait on the database during a 10k+ surge.
+- **Solution:** Use Redis for **Atomic Inventory Reservation**. Before any database record is touched, the system uses a Redis Lua script to check and reserve stock for the active sale offer. Buyers turned away are answered from Redis alone; for a buyer who secures a unit, the reservation and order are then written to PostgreSQL in one transaction before the answer.
 - **Benefit:** Prevents overselling atomically. 
 
 ### B. Asynchronous Order Processing (The Buffer)
 
 - **Problem:** The downstream business system cannot handle the spike; hitting it directly would crash it.
 - **Solution:** Once Redis secures stock for the active sale offer, the system enqueues order-processing work into a **Redis-backed Queue (BullMQ)**.
-- **API Experience:** The caller receives a "Reservation Secured" response immediately. The final "Order Confirmed" outcome is emitted once the background worker successfully talks to the ERP.
+- **API Experience:** The caller receives a "Reservation Secured" response once its reservation and order are durably recorded, without waiting for the ERP. There is no payment step between them, unlike a real purchase journey. The final "Order Confirmed" outcome is emitted once the background worker successfully talks to the ERP.
 
 ### C. The Mock ERP & Backpressure
 
@@ -80,9 +80,9 @@ The project is a realistic systems simulation: external actors such as buyers, t
 
 To prove your expertise, your dashboard must visualize these four "Gold Signals":
 
-1.  **Request Surge:** The 10k scarcity-driven purchase attempts hitting the API in < 1 second.
+1.  **Request Surge:** The 10k scarcity-driven purchase attempts a waiting room releases at once, hitting the API in about a second.
 2.  **Queue Depth:** The "Pressure Cooker" effect—thousands of jobs waiting in Redis while the ERP processes them slowly.
-3.  **Inventory Drain:** The millisecond-accurate countdown of stock as Redis processes the burst.
+3.  **Inventory Drain:** The countdown of stock as Redis processes the burst.
 4.  **Consistency Lag:** The time difference between the initial buy request and the final ERP confirmation.
 
 ---
@@ -99,7 +99,7 @@ To ensure the system survives the "Hammer," the following OS-level optimizations
 
 ## 6. Project Roadmap
 
-Items 1 to 8 are delivered; items 9 and 10 remain future work. The durable roadmap shape is:
+Items 1 to 9 are delivered; item 10 remains future work. The durable roadmap shape is:
 
 ### Primary Track (Node.js / Fastify)
 
@@ -111,7 +111,7 @@ Items 1 to 8 are delivered; items 9 and 10 remain future work. The durable roadm
 6.  **Dashboard and load orchestration:** Add API-owned SSE/recovery, public/admin dashboard surfaces, durable presets, k6 traffic execution, metric streaming, and immutable run-history summaries.
 7.  **Access protection and runtime topology:** Protect public/admin controls, containerize the reference local runtime, run k6 inside the load-orchestrator image, and validate dashboard-triggered load runs through the Caddy single-origin proxy.
 8.  **Run lifecycle finalization:** Treat k6 traffic completion separately from business completion, keep API-owned runs in `starting -> active -> draining -> completed | failed`, and finalize summaries only after run-scoped business work settles.
-9.  **Hosted deployment readiness:** Define hosted packaging, reverse-proxy/connection handling, operational validation, and infrastructure tuning once the local reference runtime is stable.
+9.  **Hosted deployment:** Deploy the demo on Fly.io with hosted packaging, reverse-proxy/connection handling, operational validation, and infrastructure tuning.
 
 ### Optional Follow-Up Track (Go port - Side-by-Side Benchmark)
 

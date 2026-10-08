@@ -24,7 +24,7 @@ export const publicVocabulary = {
   httpFailurePopulation: "load-generator attempts; connection failures may have no response",
   startingStock: "starting stock",
   pendingReservations: "reservations awaiting durable storage",
-  expiredReservations: "holds past deadline, still reserved",
+  expiredReservations: "reservations past their deadline, still reserved",
   consistencyLag: "reservation-to-confirmation time",
   notifications: "simulated emails recorded",
   durableCheckoutRecords: "Durable checkout records",

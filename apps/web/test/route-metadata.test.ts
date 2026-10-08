@@ -34,7 +34,7 @@ describe("route metadata", () => {
       "/admin": adminMetadata.title,
       "not-found": notFoundMetadata.title,
     }).toEqual({
-      "/": { absolute: "Checkout-Surge · Flash-sale checkout demo" },
+      "/": { absolute: "Checkout-Surge: the system behind the waiting room of a flash sale" },
       "/demo": "Demo",
       "/watch": "Live watch",
       "/run-history": "Run history",

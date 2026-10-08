@@ -171,7 +171,7 @@ Notes:
 Primary responsibilities:
 
 - represent a successful atomic stock-hold decision,
-- define the hold window before downstream confirmation finishes,
+- record the hold deadline (`expiresAt`), which only affects display: a secured reservation creates its order at once, with no payment step between them, where a real journey would hold the unit temporarily before payment,
 - connect the fast Redis decision to the slower durable order workflow.
 
 Recommended fields:

@@ -64,8 +64,8 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
             {scenarioRecap(publicDetail.data)}
           </p>
           <p className="m-0 mt-1 max-w-[66ch] text-sm leading-6 text-muted">
-            This is a simulation of buyers competing for limited stock and orders reaching a
-            simulated order-processing system.
+            This is a simulation of the purchase system behind a waiting room: the buyers it lets
+            through compete for limited stock, and orders reach a simulated order-processing system.
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <p className="m-0 text-sm text-muted">

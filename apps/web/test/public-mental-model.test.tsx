@@ -39,28 +39,28 @@ describe("public visitor mental model", () => {
     expect(controlsIndex).toBeGreaterThan(-1);
     expect(controlsIndex).toBeLessThan(capsuleIndex);
     expect(markup).toContain(
-      "Choose a simulation, start it, and watch a simulated flash sale unfold.",
+      "Choose a simulation, start it, and watch the system handle a release of buyers.",
     );
     const safetyStory = markup.slice(capsuleIndex);
     expect(safetyStory).not.toContain('hidden=""');
-    expect(safetyStory).toContain("Simulated buyers compete for limited stock");
+    expect(safetyStory).toContain("compete for limited stock");
+    expect(safetyStory).toContain("buyers turned away are answered from");
     expect(safetyStory).toContain(
-      "Redis atomically reserves units immediately without overselling",
+      "every order is confirmed and none failed, and oversold units remain zero",
     );
-    expect(safetyStory).toContain("every unique reservation reaches a confirmed or failed outcome");
     expect(safetyStory).toContain("not universal production evidence");
-    expect(safetyStory).toContain('href="/#failure-story"');
+    expect(safetyStory).toContain('href="/#waiting-room"');
     expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
   });
 
   it("introduces the project and leads visitors to the demo", async () => {
     const markup = renderToStaticMarkup(await OverviewPage());
-    const heroMarkup = markup.slice(0, markup.indexOf('id="failure-story"'));
+    const heroMarkup = markup.slice(0, markup.indexOf('id="waiting-room"'));
 
     expect(heroMarkup).toContain("<h1");
     expect(heroMarkup).toContain("Checkout-Surge");
     expect(heroMarkup).toContain('href="/demo"');
-    expect(heroMarkup).toContain('href="#failure-story"');
+    expect(heroMarkup).toContain('href="#waiting-room"');
     expect(markup.match(/href="\/demo"/g)).toHaveLength(2);
   });
 
@@ -82,12 +82,12 @@ describe("public visitor mental model", () => {
       "projection",
       "recovery",
       "drain",
-      "reservation-hold",
+      "pending-reservation",
       "reservation-vs-confirmation",
     ];
 
     expect(markup).not.toContain('hidden=""');
-    expect(markup).toContain('id="failure-story"');
+    expect(markup).toContain('id="waiting-room"');
     expect(markup).toContain('id="redis-fast-path"');
     expect(markup).toContain('id="queue-protection"');
     expect(markup).toContain('id="real-and-simulated"');

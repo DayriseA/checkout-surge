@@ -6,13 +6,13 @@ This document defines the core constraints, reference scenarios, and architectur
 
 The system must continuously support the following limited-inventory checkout surge scenario:
 
-- **The Surge**: 10,000+ synthetic buyers attempt to buy a limited-stock offer in one unpaced k6 burst. The executor dispatches as fast as its host allows; this is not a one-second elapsed-time guarantee.
+- **The Surge**: 10,000+ synthetic buyers, the batch a virtual waiting room releases at once, attempt to buy a limited-stock offer in one unpaced k6 burst. The executor dispatches as fast as its host allows; this is not a one-second elapsed-time guarantee.
 - **The Fast Path**: The declared target is p95 around ms level from immediately before the Node.js API calls the Redis stock-reservation gateway until its decision is received. Persistence and BullMQ publication occur afterward within the wider response path and are measured separately. Every result must identify its environment; this target is not an environment-independent guarantee.
 - **The Buffer**: Successful reservations enqueue order-processing work onto a Redis-backed queue (BullMQ).
 - **The Bottleneck**: Background workers pull from the queue and hit a Mock ERP. The ERP can intentionally be configured to be slow (e.g., 1500ms latency) and unstable (e.g., max TPS limits).
 - **The Observation**: A real-time SSE dashboard, backed by API recovery reads and internal Redis Pub/Sub dashboard events, surfaces request surge, queue depth, inventory drain, and system lag.
 
-The public `surge-10k` target is the product/demo goal, not just an upper configuration value. The underlying scenario is a scarcity-driven checkout surge rather than a requirement that the offer be a short promotional flash sale. Local laptop, Dev Container, and Codespaces runs may expose host-resource limits before a hosted benchmark environment is introduced, but code and design choices should first optimize the single-node hot path rather than lowering the public target.
+The public `surge-10k` target is the product/demo goal, not just an upper configuration value. The underlying scenario is the purchase system behind a virtual waiting room facing a scarcity-driven checkout surge, rather than a requirement that the offer be a short promotional flash sale. Local laptop, Dev Container, and Codespaces runs may expose host-resource limits, and the hosted demo on Fly.io is not a benchmark environment, but code and design choices should first optimize the single-node hot path rather than lowering the public target.
 
 ## 2. Delivery Constraints
 

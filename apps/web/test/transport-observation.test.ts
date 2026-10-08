@@ -126,7 +126,7 @@ describe("transport observation section", () => {
     expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("≤ 100ms");
     expect(markup).toContain("bounded p95 estimate");
-    expect(markup).toContain("not hosted benchmark evidence");
+    expect(markup).toContain("not a benchmark");
   });
 
   it("discloses coverage, cause, and survivorship bias when replies went unrecorded", () => {

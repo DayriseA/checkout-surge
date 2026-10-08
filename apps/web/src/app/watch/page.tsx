@@ -50,8 +50,8 @@ export default async function WatchPage({
           Live watch
         </h1>
         <p className="m-0 text-sm leading-5 text-muted max-[900px]:mt-1">
-          Follow the flash sale from live activity to the final result; technical details are
-          available below.
+          Follow the run from live activity to the final result; technical details are available
+          below.
         </p>
       </header>
       <OperatorDashboard

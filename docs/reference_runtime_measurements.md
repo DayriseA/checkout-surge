@@ -1,7 +1,7 @@
 # Reference Runtime Measurements
 
 
-These measurements used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS).
+The local sections up to and including the adaptive ERP acceptance observations used the pre-2026-09-23 preset configurations (surge stocks 250 / 750 / 1,000 and ERP 200–250 TPS). The [hosted Fly.io observations](#hosted-flyio-observations) used the presets of their date, and [capacity per connection mode](#capacity-per-connection-mode) states its own configurations.
 This document records the measurements taken from Checkout-Surge's reference runtime — generator-side network/resource limits and the adaptive-ERP acceptance observations — and the configuration decisions those measurements justify. It is a record of one environment, not guidance.
 
 For the reusable, host-neutral version of this material — which limits matter, why, and how to verify them on any host — see [High-Load Tuning Notes](k6_high_load_tuning.md). Server-side connection capacity is owned by [Scope and Caveats](decisions/scope_and_caveats.md#connection-establishment-ceiling). Measuring a host's request capacity per connection mode follows the [capacity measurement procedure](capacity_measurement.md); its results are under [Capacity per connection mode](#capacity-per-connection-mode).

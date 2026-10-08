@@ -641,8 +641,9 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           </p>
         ) : null}
         <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
-          Local run note: the load generator, API, database, order-processing service, and simulated
-          ERP share one host. This is not hosted benchmark evidence.
+          Environment note: run locally, the load generator, API, database, order-processing
+          service, and simulated ERP share one host; on the hosted demo, the load generator runs on
+          its own machine. These figures record one run in one environment, not a benchmark.
         </p>
         {run.runnerRegion ? (
           <p className="m-0 mt-3 text-xs text-muted" data-runner-region="">

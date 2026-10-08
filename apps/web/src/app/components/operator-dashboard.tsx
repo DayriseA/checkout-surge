@@ -549,7 +549,7 @@ function runPhaseTitle(
     case "draining":
       return "Confirming remaining orders";
     case "starting":
-      return "Preparing the flash sale";
+      return "Preparing the run";
   }
 }
 
@@ -907,8 +907,7 @@ function IdleNarrative() {
       <p className="m-0 text-xs font-medium text-muted">Ready when you are</p>
       <h2 className="type-title m-0 mt-0.5 text-2xl leading-tight text-ink">Choose a simulation</h2>
       <p className="m-0 mt-3 max-w-[66ch] leading-6 text-muted">
-        Choose a flash-sale scenario, then return here to follow it from setup through the final
-        result.
+        Choose a scenario, then return here to follow it from setup through the final result.
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <Link className={actionClassName} href="/demo">

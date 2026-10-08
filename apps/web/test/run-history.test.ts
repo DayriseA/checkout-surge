@@ -768,7 +768,7 @@ describe("run history", () => {
     expect(markup).toContain("<h1");
     expect(markup).toContain("Preview 1k</h1>");
     expect(markup).toContain("Everyone at once · 1,000 buyers · 250 starting units");
-    expect(markup).toContain("This is a simulation of buyers competing for limited stock");
+    expect(markup).toContain("This is a simulation of the purchase system behind a waiting room");
     expect(markup).not.toContain("Saved run report for a checkout simulation.");
     expect(markup).toContain("All 250 available units were reserved without overselling.");
     expect(markup).toContain("Completed");
