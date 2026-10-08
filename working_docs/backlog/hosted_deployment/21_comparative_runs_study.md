@@ -1,6 +1,6 @@
 # 21 — Comparative Runs Study
 
-**Design:** none · **Depends on:** 15c
+**Design:** none · **Depends on:** 15d
 
 ## Goal
 
