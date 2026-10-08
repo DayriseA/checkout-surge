@@ -69,15 +69,15 @@ The gate (`apps/gate`) is a Fastify server and the only public entry point ([HD-
 
 ### Pages
 
-While the core is not ready, the gate answers every method and URL with its own HTML page, status 503 and `Cache-Control: no-store` ([HD-30](decisions/hosted_deployment.md#hd-30-gate-pages-answer-any-request-with-html-503)). No page starts the core.
+While the core is not ready, the gate answers every method and URL with its own HTML page, status 503 and `Cache-Control: no-store` ([HD-30](decisions/hosted_deployment.md#hd-30-gate-pages-answer-any-request-with-html-503)). No page starts the core. The pages are self-contained, since a sleeping core cannot serve assets: they carry a copy of the demo's light theme colors and use its fallback system font stack, with no font file, external asset or script.
 
 | Page | When |
 | :-- | :-- |
 | Stopped (start button) | The core is `stopped` or `stopping`, its host is not `ok`, or no core is listed (the button then creates one) |
-| Booting (reloads itself) | The core is `starting`, or `started` while Caddy's `/health` does not answer |
-| Updating (retry button) | The core is `created` or `replacing` (a deploy is writing its config), or a wake found its lease held |
-| Relocating (reloads itself) | A recovery runs in the gate after a capacity or dead-host failure, or because no core is listed |
-| Fresh install (reloads itself) | A recovery runs because the core carries the `recreate=requested` mark |
+| Booting (reloads itself) | The core is `starting`, or `started` while Caddy's `/health` does not answer; also after a start that timed out on a core already `starting` or `started` |
+| Updating (retry button) | The core is `created` or `replacing` (a deploy is writing its config), or a wake found its lease held; the page speaks of maintenance, since a held lease does not prove a deploy |
+| Relocating (reloads itself) | A recovery runs in the gate after a capacity or dead-host failure, because no core is listed, or because the deploy marked the core for capacity (`recreate_reason=capacity`) |
+| Fresh install (reloads itself) | A recovery runs because the core carries the `recreate=requested` mark without that reason (`--fresh-core`, or set by hand) |
 | No capacity (retry button, link to the Fly.io status page) | The last recovery was refused for provider capacity; held until the next wake |
 | Setup failure | The core is `started` and its `setup` container exited non-zero since the latest start |
 | Unavailable (try again) | Any other state, a Machines API failure, a failed start, or a recovery without the deployed core config |
@@ -88,6 +88,7 @@ An open demo tab on a stopped core gets the gate page as the answer to its polli
 
 - The start button posts to `/__gate/start?return=<path>`, the only path the gate owns. The return path must be a same-site path; anything else returns to `/`. Visitors pressing together share one start. There is no wake quota.
 - Under the core Machine's lease, the gate reads the core again, waits for a core still `stopping`, starts it (retrying capacity, dead-host and transient errors with back-off), releases the lease, then redirects to the return path. A held lease shows the updating page ([HD-29](decisions/hosted_deployment.md#hd-29-the-gates-lease-covers-only-the-start-command)).
+- A start that times out is never sent again, since it may have taken effect and a second one would be refused. The gate reads the core again: `starting` or `started` redirects as a start does; any other state, or a failed read, shows the unavailable page.
 - A start that keeps failing for capacity or a dead host, a core on a host that is not `ok`, a core marked `recreate=requested`, or no core at all starts the [core recovery](#recovery) instead.
 
 ### Visitor address
@@ -141,9 +142,9 @@ The gate owns core recovery, because nobody is around to repair the core by hand
 2. The new core installs fresh: migrations and seed on an empty database. Hosted run history and admin edits are lost.
 3. Once the new core is healthy (its setup succeeded and its readiness probe answers), the old Machine is destroyed and its volume deletion is started; on a host that is down, Fly keeps that deletion pending until the host returns. If the new core does not become healthy, it is removed and the old one is kept.
 
-The gate holds the old core's lease for the whole recovery, except on a host that is not `ok`, where Fly grants no usable lease. Visitors see the relocating page, or the fresh-install page when the recovery was requested on purpose.
+The gate holds the old core's lease for the whole recovery, except on a host that is not `ok`, where Fly grants no usable lease. Visitors see the relocating page, or the fresh-install page when an operator requested the recovery.
 
-**Requested recovery.** Setting `recreate=requested` in the core Machine's metadata makes the next visitor wake recreate the core instead of starting it ([HD-35](decisions/hosted_deployment.md#hd-35-a-fresh-core-is-requested-by-a-mark-that-the-next-wake-acts-on)). The deploy script sets this mark with `--fresh-core` and carries an existing mark over, so only a wake clears it ([HD-48](decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)).
+**Requested recovery.** Setting `recreate=requested` in the core Machine's metadata makes the next visitor wake recreate the core instead of starting it ([HD-35](decisions/hosted_deployment.md#hd-35-a-fresh-core-is-requested-by-a-mark-that-the-next-wake-acts-on)). The deploy script sets this mark with `--fresh-core` and carries an existing mark over, so only a wake clears it ([HD-48](decisions/hosted_deployment.md#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)). When the deploy sets the mark because the core's host refused or reverted its update, it first sets `recreate_reason=capacity`, which it carries over with the mark and the new core does not inherit; the gate then shows the relocating page rather than the fresh-install page ([HD-56](decisions/hosted_deployment.md#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation)).
 
 ### Authoritative core and leases
 

@@ -186,12 +186,12 @@ export class CoreRecovery {
   }
 }
 
-/** The deployed config on the new volume, without a recreation request. */
+/** The deployed config on the new volume, without a recreation request or its reason. */
 function freshConfig(
   config: FlyMachineConfig,
   mount: FlyMachineMount,
   volumeId: string,
 ): FlyMachineConfig {
-  const { recreate: _request, ...metadata } = config.metadata ?? {};
+  const { recreate: _request, recreate_reason: _reason, ...metadata } = config.metadata ?? {};
   return { ...config, metadata, mounts: [{ ...mount, volume: volumeId }] };
 }

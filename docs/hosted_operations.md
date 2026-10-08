@@ -68,7 +68,7 @@ If an incompatible change reached `main` without the mark, stop the core if it i
 
 ### Recreation mark
 
-The mark lives in the core Machine's metadata. Change it while no deploy runs, since a deploy carries over the mark it finds. These commands send the operator's flyctl token in a header read from standard input, so the token never appears on a command line.
+The mark lives in the core Machine's metadata. Change it while no deploy runs, since a deploy carries over the mark it finds. When a full host refuses or reverts the deploy's core update, the script also sets `recreate_reason=capacity`, so visitors see the relocating page rather than the fresh-install page; a mark set by hand or with `--fresh-core` has no reason. The gate reads the reason only with the mark, and the next deploy drops a reason left without one. These commands send the operator's flyctl token in a header read from standard input, so the token never appears on a command line.
 
 - **Set it,** for a fresh core at the next wake:
 
@@ -85,7 +85,7 @@ The mark lives in the core Machine's metadata. Change it while no deploy runs, s
     -X DELETE https://api.machines.dev/v1/apps/checkout-surge-core/machines/<core id>/metadata/recreate
   ```
 
-- **Check it:** `flyctl machine status <core id> -a checkout-surge-core -d` shows `"recreate": "requested"` under `metadata` while the mark is set.
+- **Check it:** `flyctl machine status <core id> -a checkout-surge-core -d` shows `"recreate": "requested"` under `metadata` while the mark is set, with `"recreate_reason": "capacity"` when the deploy set it for a full host.
 
 ---
 

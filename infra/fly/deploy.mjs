@@ -486,15 +486,15 @@ async function deployCore(imageRefs, version, beforeUpdate) {
     if (!machine) {
       await createMachine(machinesApi, "core", config);
     } else {
-      // A requested fresh core stays requested until a wake acts on it: the core must never
-      // start on data its new version cannot use.
-      if (freshCore || machine.config.metadata?.recreate === "requested") {
-        config.metadata.recreate = "requested";
-      }
+      // A requested fresh core stays requested until a wake acts on it, with the reason it was
+      // marked for: the core must never start on data its new version cannot use.
+      const { recreate, recreate_reason: reason } = machine.config.metadata ?? {};
+      if (freshCore || recreate === "requested") config.metadata.recreate = "requested";
+      if (recreate === "requested" && reason) config.metadata.recreate_reason = reason;
       config.mounts[0].volume = machine.config.mounts[0].volume;
       if (!(await updateInPlace(machinesApi, machine.id, config, nonce))) {
         await markCoreForRecreation(machinesApi, machine.id, nonce);
-        config.metadata.recreate = "requested";
+        Object.assign(config.metadata, capacityRecreationMark);
       }
     }
     console.log(`core Machine is stopped and ready to start at version ${version}.`);
@@ -512,18 +512,19 @@ async function deployCore(imageRefs, version, beforeUpdate) {
   });
 }
 
+// The reason makes the gate show its relocating page rather than the fresh-install page an
+// operator's mark gets. It is set first, so the mark never stands without it.
+const capacityRecreationMark = { recreate_reason: "capacity", recreate: "requested" };
+
 /**
  * Sets the recreation mark (HD-35) on a core whose host has no room for the new config: its volume
  * pins it there. The next wake recreates it elsewhere from the config this deploy writes into the
  * gate, so at the new version, fresh and empty.
  */
 async function markCoreForRecreation(machinesApi, machineId, nonce) {
-  await machinesApi(
-    "POST",
-    `/machines/${machineId}/metadata/recreate`,
-    { value: "requested" },
-    nonce,
-  );
+  for (const [key, value] of Object.entries(capacityRecreationMark)) {
+    await machinesApi("POST", `/machines/${machineId}/metadata/${key}`, { value }, nonce);
+  }
   console.log(
     `Marked core Machine ${machineId} for recreation; it keeps its old config until then.`,
   );

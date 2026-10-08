@@ -12,6 +12,10 @@ const noCapacity = () =>
     '{"error":"insufficient memory available to fulfill request"}',
   );
 
+/** What the Machines API client's own request timeout aborts a call with. */
+const startTimeout = () =>
+  new DOMException("The operation was aborted due to timeout", "TimeoutError");
+
 const deployedConfig = {
   guest: { cpu_kind: "performance", cpus: 4, memory_mb: 8192 },
   metadata: { role: "core" },
@@ -124,6 +128,40 @@ describe("CoreWake", () => {
     expect(onStarted).not.toHaveBeenCalled();
     expect(machines.releaseLease).toHaveBeenCalledOnce();
   });
+
+  it("shows the starting page when a start that timed out took effect, without starting again", async () => {
+    const { wake, machines, onStarted } = setup();
+    machines.startMachine.mockRejectedValueOnce(startTimeout());
+    machines.getMachine
+      .mockResolvedValueOnce(coreMachine())
+      .mockResolvedValueOnce(coreMachine({ state: "starting" }));
+
+    await expect(wake.wake()).resolves.toBe("starting");
+
+    expect(machines.startMachine).toHaveBeenCalledOnce();
+    expect(onStarted).toHaveBeenCalledOnce();
+    expect(machines.releaseLease).toHaveBeenCalledWith("core-1", "nonce-1");
+  });
+
+  it("reports a start that timed out as unavailable when the core did not start or cannot be read", async () => {
+    const rereads = [
+      async () => coreMachine({ state: "stopped" }),
+      async (): Promise<FlyMachine> => {
+        throw new Error("Machines API down");
+      },
+    ];
+    for (const reread of rereads) {
+      const { wake, machines, onStarted } = setup();
+      machines.startMachine.mockRejectedValueOnce(startTimeout());
+      machines.getMachine.mockResolvedValueOnce(coreMachine()).mockImplementationOnce(reread);
+
+      await expect(wake.wake()).resolves.toBe("unavailable");
+
+      expect(machines.startMachine).toHaveBeenCalledOnce();
+      expect(onStarted).not.toHaveBeenCalled();
+      expect(machines.releaseLease).toHaveBeenCalledOnce();
+    }
+  });
 });
 
 describe("CoreWake recovery", () => {
@@ -175,6 +213,22 @@ describe("CoreWake recovery", () => {
     expect(wake.recoveryState()).toBe("refreshing");
     await expect(wake.wake()).resolves.toBe("relocating");
     expect(recovery.recreate).toHaveBeenCalledOnce();
+  });
+
+  it("shows the relocating page when the deploy marked the core because its host had no room", async () => {
+    const machine = coreMachine({
+      config: {
+        ...coreMachine().config,
+        metadata: { role: "core", recreate: "requested", recreate_reason: "capacity" },
+      },
+    });
+    const { wake, machines, recovery } = setup({ listed: machine });
+
+    await expect(wake.wake()).resolves.toBe("relocating");
+
+    expect(machines.startMachine).not.toHaveBeenCalled();
+    expect(recovery.recreate).toHaveBeenCalledWith(machine, deployedConfig, "nonce-1");
+    expect(wake.recoveryState()).toBe("relocating");
   });
 
   it("recreates a core whose host is down at once, without taking its lease", async () => {

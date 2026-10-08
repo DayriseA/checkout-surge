@@ -81,9 +81,17 @@ export function hostDown(machine: FlyMachine): boolean {
 }
 
 /**
- * Whether an operator asked for a fresh core (`recreate=requested` in the core Machine's metadata):
- * the next wake then recreates the core instead of starting it.
+ * Whether the core is marked for recreation (`recreate=requested` in the core Machine's metadata),
+ * by an operator or by a deploy: the next wake then recreates the core instead of starting it.
  */
 export function recreationRequested(machine: FlyMachine): boolean {
   return machine.config.metadata?.recreate === "requested";
+}
+
+/**
+ * Whether the deploy marked the core because its host refused or reverted the update
+ * (`recreate_reason=capacity`, set with the mark), rather than an operator asking for a fresh core.
+ */
+export function recreationForCapacity(machine: FlyMachine): boolean {
+  return machine.config.metadata?.recreate_reason === "capacity";
 }

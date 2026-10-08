@@ -14,11 +14,14 @@ const oldCore = coreMachine({
     mounts: [{ volume: "vol_old", path: "/persistent", name: "core_data", size_gb: 3 }],
   },
 });
-/** The config the deploy script wrote into the gate, not the old Machine's. */
+/**
+ * The config the deploy script wrote into the gate, not the old Machine's, with the mark and its
+ * reason of a core whose host refused the update.
+ */
 const deployed = {
   guest,
   image: "core:new",
-  metadata: { role: "core" },
+  metadata: { role: "core", recreate: "requested", recreate_reason: "capacity" },
   mounts: [{ volume: "vol_deployed", path: "/persistent", name: "core_data", size_gb: 3 }],
 };
 const startedAt = 1_000_000;

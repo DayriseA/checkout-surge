@@ -62,9 +62,36 @@ describe("gate server", () => {
 
     expect(response.statusCode).toBe(503);
     expect(response.headers["content-type"]).toContain("text/html");
+    expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body).toContain("The demo is asleep");
     expect(response.body).toContain('action="/__gate/start?return=%2Fdemo%2Fwatch%3Frun%3D1"');
+    expect(response.body).not.toContain('http-equiv="refresh"');
     expect(wake.wake).not.toHaveBeenCalled();
+  });
+
+  it("reloads the starting page every 3 seconds until the core is ready", async () => {
+    const { gate } = await setup({ state: "booting" });
+
+    const response = await gate.inject({ method: "GET", url: "/demo" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toContain("Starting the demo");
+    expect(response.body).toContain('<meta http-equiv="refresh" content="3">');
+    expect(response.body).not.toContain("<form");
+  });
+
+  it("offers neither a reload nor a start when the core's setup failed", async () => {
+    const { gate } = await setup({ state: "setup_failed" });
+
+    const response = await gate.inject({ method: "GET", url: "/demo" });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toContain("The demo could not start");
+    expect(response.body).not.toContain('http-equiv="refresh"');
+    expect(response.body).not.toContain("<form");
+    expect(response.body).not.toContain('class="button"');
   });
 
   it("starts the core from the button, then returns to the visitor's page", async () => {
@@ -121,22 +148,28 @@ describe("gate server", () => {
     const full = await noCapacity.gate.inject({ method: "GET", url: "/demo" });
 
     expect(moving.statusCode).toBe(503);
-    expect(moving.body).toContain("Relocating the demo");
+    expect(moving.headers["cache-control"]).toBe("no-store");
+    expect(moving.body).toContain("Moving the demo to new servers");
+    expect(moving.body).toContain('<meta http-equiv="refresh" content="5">');
     expect(relocating.status.current).not.toHaveBeenCalled();
     expect(fresh.statusCode).toBe(503);
     expect(fresh.body).toContain("Installing a fresh demo");
-    expect(fresh.body).not.toContain("capacity");
+    expect(fresh.body).toContain('<meta http-equiv="refresh" content="5">');
+    expect(fresh.body).not.toContain("hosting provider");
     expect(full.body).toContain('href="https://status.flyio.net/"');
     expect(full.body).toContain('action="/__gate/start?return=%2Fdemo"');
+    expect(full.body).not.toContain('http-equiv="refresh"');
   });
 
-  it("shows the update page when a deploy holds the core", async () => {
+  it("shows the maintenance page when a deploy holds the core", async () => {
     const { gate } = await setup({ state: "stopped" }, "updating");
 
     const response = await gate.inject({ method: "POST", url: "/__gate/start?return=%2F" });
 
     expect(response.statusCode).toBe(503);
-    expect(response.body).toContain("Update in progress");
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.body).toContain("Maintenance in progress");
+    expect(response.body).toContain('action="/__gate/start?return=%2F"');
   });
 
   it("relays to the ready core with the visitor's Fly address as the only forwarded source", async () => {

@@ -11,6 +11,7 @@ import {
   coreMachineState,
   findCoreMachine,
   hostDown,
+  recreationForCapacity,
   recreationRequested,
 } from "./core-machine.js";
 import type { CoreRecovery } from "./core-recovery.js";
@@ -34,7 +35,8 @@ export type RecoveryPage = "relocating" | "refreshing" | "no_capacity";
 
 // Covers the worst case of the wake's own calls under the lease, at the client's timeouts: the
 // read (30 s), the wait for a stopping core (40 s), three starts (90 s) and the back-off (4 s),
-// about 164 s. The lease is released right after, or extended for a recovery.
+// about 164 s. The lease is released right after, or extended for a recovery. The read after a
+// start that timed out may outlast it: nothing is sent to the core after that read.
 const leaseTtlSeconds = 180;
 const stoppingWaitSeconds = 30;
 // Three start attempts in place, with back-off between them, before the core is recreated.
@@ -118,7 +120,7 @@ export class CoreWake {
     try {
       // Read again under the lease: the core may have changed since the listing.
       const current = await machines.getMachine(machine.id);
-      // An operator's request for a fresh core, or a host that went down, skips the start.
+      // A recreation mark, or a host that went down, skips the start.
       if (!recreationRequested(current) && !hostDown(current)) {
         if (current.state === "started" || current.state === "starting") return "starting";
         if (current.state === "stopping") {
@@ -133,11 +135,13 @@ export class CoreWake {
         }
         if (!recreatingFailures.has(classifyFlyError(failure))) throw failure;
       }
-      const outcome = await this.recover(
-        current,
-        nonce,
-        recreationRequested(current) ? "refreshing" : "relocating",
-      );
+      // Only a fresh core an operator asked for drops the provider wording: a mark the deploy set
+      // because the core's host had no room is a capacity issue, like a failed start.
+      const page =
+        recreationRequested(current) && !recreationForCapacity(current)
+          ? "refreshing"
+          : "relocating";
+      const outcome = await this.recover(current, nonce, page);
       recovering = outcome === "relocating";
       return outcome;
     } finally {
@@ -161,11 +165,32 @@ export class CoreWake {
           { err: error, failure, attempt: attempt + 1 },
           "The core Machine did not start.",
         );
+        // A start that timed out may still have taken effect, and a second one would be refused
+        // while the Machine is active: the Machine is read again instead of started again.
+        if (isTimeout(error) && (await this.startedDespiteTimeout(machineId))) return null;
         const delayMs = startRetryDelaysMs[attempt];
         if (!retriedStartFailures.has(failure)) throw error;
         if (delayMs === undefined) return error;
         await this.sleep(delayMs);
       }
+    }
+  }
+
+  /** Whether the core is starting or started after a start that timed out; false when unread. */
+  private async startedDespiteTimeout(machineId: string): Promise<boolean> {
+    try {
+      const { state } = await this.options.machines.getMachine(machineId);
+      this.options.logger.info(
+        { machineId, state },
+        "Read the core Machine after its start timed out.",
+      );
+      return state === "starting" || state === "started";
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error },
+        "Could not read the core Machine after its start timed out.",
+      );
+      return false;
     }
   }
 
@@ -217,4 +242,9 @@ export class CoreWake {
   private sleep(ms: number): Promise<void> {
     return this.options.sleep?.(ms) ?? new Promise((resolve) => setTimeout(resolve, ms));
   }
+}
+
+/** The Machines API client's own request timeout, which aborts the call with this error. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "TimeoutError";
 }
