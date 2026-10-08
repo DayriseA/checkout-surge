@@ -25,6 +25,7 @@ The gate's own pages and the messages about starting and failing runs match the 
 - **Admin read failures.** The admin shows the generic "The latest information is temporarily unavailable" for read failures other than a start (`retryPresentation` in `apps/web/src/app/lib/presentation/error-presentation.ts`), whatever the cause.
 - **Core recreated for capacity.** A capacity-triggered core recreation (a deploy refused by a full host marks the core) shows the fresh-install page, the requested-recovery page, rather than the relocating page.
 - **Old failed runs.** Runs that failed before task 17 with `load_orchestrator_unavailable` before traffic keep the old traffic-failure wording.
+- **Request timeouts read "unidentified".** A run failed by transport loss keeps an unidentified failure explanation, even when its requests timed out after k6's 60 s request timeout (measured: 631 of 10,000 buyers, every reservation confirmed server-side). The stored evidence has a single count of status-0 attempts and cannot tell a timeout from a connection error. Recognizing timeouts needs a separate counter on the runner, so the API and the runner must be updated together (HD-14) (owner decision, 2026-10-08).
 - **No unit harness for a pending start.** The public page has none, so the visitor's own pending start (the hidden "already in progress" notice, the relocation message) has no component test.
 
 ## Out of Scope
