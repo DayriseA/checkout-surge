@@ -38,6 +38,7 @@ import { createTerminalInventoryReadOperation } from "./runtime/terminal-invento
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
+import { BaselineBuyService } from "./services/baseline-buy-service.js";
 import {
   type CoreIdleShutdown,
   CoreIdleStop,
@@ -535,7 +536,15 @@ export async function startApiServer(): Promise<void> {
       inventoryStatusService,
       orderStatusService,
       queueStatusService,
-      reserveOrderService,
+      // Throwaway study flag (backlog 21): API_BUY_PATH_MODE=baseline swaps the buy path.
+      reserveOrderService:
+        process.env.API_BUY_PATH_MODE === "baseline"
+          ? (new BaselineBuyService(
+              connection.sql,
+              process.env.MOCK_ERP_BASE_URL ?? "http://mock-erp:4100",
+              config.reservationHoldMinutes,
+            ) as unknown as ReserveOrderService)
+          : reserveOrderService,
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,

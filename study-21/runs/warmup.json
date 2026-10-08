@@ -1,0 +1,14 @@
+[
+  {
+    "label": "warmup",
+    "mode": "buyer-spike",
+    "buyerCount": 1000,
+    "maxDurationSeconds": 30,
+    "startDelaySeconds": 0,
+    "startingStock": 100,
+    "erpLatencyMs": 0,
+    "erpMaxTps": 1000,
+    "erpErrorRate": 0,
+    "orderProcessConcurrency": 5
+  }
+]

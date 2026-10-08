@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createWriteStream } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -591,6 +592,11 @@ async function consumeK6Stdout(input: {
   }
 }
 
+// Throwaway study tap (backlog 21): keeps every request-duration point for offline percentiles.
+const k6PointsTap = process.env.K6_POINTS_FILE
+  ? createWriteStream(process.env.K6_POINTS_FILE, { flags: "a" })
+  : null;
+
 async function consumeK6Line(
   line: string,
   input: {
@@ -599,6 +605,9 @@ async function consumeK6Line(
     batcher: MetricBatcher;
   },
 ): Promise<void> {
+  if (k6PointsTap && line.includes('"study_checkout_duration"') && line.includes('"Point"')) {
+    k6PointsTap.write(`${line}\n`);
+  }
   const point = parseK6JsonLine(line);
   if (!point) return;
   input.accumulator.observe(point);

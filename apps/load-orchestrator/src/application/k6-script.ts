@@ -52,7 +52,7 @@ export function generateK6Script(input: TrafficExecutionStartRequest) {
     contents: `import http from "k6/http";
 import { check } from "k6";
 import exec from "k6/execution";
-import { Counter } from "k6/metrics";
+import { Counter, Trend } from "k6/metrics";
 
 const config = ${JSON.stringify(scriptConfig)};
 const expectedCheckoutStatuses = http.expectedStatuses(202, 409);
@@ -62,6 +62,8 @@ const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const transportFailures = new Counter("checkout_transport_failures");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
+// Throwaway study metric (backlog 21): request duration tagged with its outcome.
+const studyDuration = new Trend("study_checkout_duration", true);
 // k6 built-ins, declared again only to initialize them; k6 returns the existing metric.
 const httpRequests = new Counter("http_reqs");
 const completedIterations = new Counter("iterations");
@@ -151,6 +153,11 @@ export default function () {
   } else {
     unexpectedResponses.add(1);
   }
+
+  studyDuration.add(response.timings.duration, {
+    outcome:
+      response.status === 0 ? "failed" : isAccepted ? "accepted" : isSoldOut ? "sold_out" : "unexpected",
+  });
 
   // Transport failures still fail this k6-facing check because no expected
   // checkout response was received.
