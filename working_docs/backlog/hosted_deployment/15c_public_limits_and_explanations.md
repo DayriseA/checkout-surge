@@ -59,3 +59,11 @@ _None yet._
 - **Local defaults** (Compose, both `.env.example`, `localDeploymentCapacity`, the configuration reference): k 21, budget 4 s. With stock 1,000 for 10 s, 400/s is the last rate expected to complete; 401 and 500/s are at the limit. Local public limits unchanged.
 - **Live policy row:** not edited. A fresh core seeds the new limits; the running core needs the admin console edit (documented in `docs/hosted_operations.md`, Resizing and Limits).
 - **Decision log:** HD-59 and HD-60 consequences corrected in place (the budget now covers runs with stock; the local values are confirmed). No new entry.
+
+### Closure (2026-10-08)
+
+- The owner raised the live policy from the admin console after the deploy at `080c79f5`: 2,500 requests per second and 25,000 total requests.
+- **Checked through the gate's public estimate:**
+  - 2,500/s for 10 s, stock 1: admitted, `expected_to_complete` (load 2,500 of 3,500).
+  - The same with stock 1,000: `at_the_limit` (load 3,100). The fit suggests 2,200/s or 500 units.
+- Done.
