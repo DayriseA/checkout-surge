@@ -7,7 +7,7 @@ Work breakdown for the hosted deployment on Fly.io.
 
 ## Rules
 
-- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel. Task 15 was split into 15a–15d.
+- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel. Task 15 was split into 15a–15d. Task 16 was split into 16a–16b; its runner counters became task 22.
 - **Notes stay in the task.** Findings, measurements and annotations go into the task's own "Working notes" section, never into another task or into `design.md`.
 - **Decisions stay in the design.** When a task changes or refines a decision, update `design.md` in the same change.
 - **Open points are not decided.** They are settled with the owner when the task starts.
@@ -38,12 +38,14 @@ Work breakdown for the hosted deployment on Fly.io.
 | 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a, 18 | done |
 | 15c | [Public limits](15c_public_limits_and_explanations.md) | 15b, deployed | done |
 | 15d | [Narrative and visitor explanations](15d_narrative_and_explanations.md) | 15b; figures from 15c | done |
-| 16 | [Gate pages and messages](16_gate_pages_and_messages.md) | 17 | todo |
+| 16a | [Gate pages](16a_gate_pages.md) | 17 | todo |
+| 16b | [Demo messages](16b_demo_messages.md) | 17 | todo |
 | 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
 | 18 | [Interrupted requests in the run outcome](18_interrupted_requests_in_run_outcome.md) | none | done |
 | 19 | [Runner start while the previous runner stops](19_runner_start_while_stopping.md) | 17 | done |
 | 20 | [Core incidents under saturation](20_core_incidents_under_saturation.md) | 15c | todo |
-| 21 | [Comparative runs study](21_comparative_runs_study.md) | 15d | todo |
+| 21 | [Comparative runs study](21_comparative_runs_study.md) | 15d | in progress |
+| 22 | [Runner counters](22_runner_counters.md) | none | todo |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 
