@@ -10,6 +10,8 @@ export type FlyFailureClass =
   | "host_unreachable"
   | "transient"
   | "conflict"
+  /** A start refused because the Machine's previous boot has not finished stopping. */
+  | "still_active"
   | "unclassified_provider_error"
   | "own_error";
 
@@ -34,6 +36,10 @@ export function classifyFlyError(error: unknown): FlyFailureClass {
   if (error.status === 408 || body.hostStatus === "unreachable") return "host_unreachable";
   if (error.status === 429 || error.status >= 500) return "transient";
   if (error.status === 409) return "conflict";
+  // Observed on a start sent shortly after the Machine exited.
+  if (error.status === 412 && body.message.toLowerCase().includes("machine still active")) {
+    return "still_active";
+  }
   if (error.status >= 400 && error.status < 500) return "own_error";
   return "unclassified_provider_error";
 }

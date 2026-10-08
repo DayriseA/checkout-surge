@@ -64,6 +64,11 @@ describe("classifyFlyError", () => {
       "conflict",
     ],
     ["409 version conflict", apiError(409, { error: "machine version mismatch" }), "conflict"],
+    [
+      "start: 412 machine still active",
+      apiError(412, { error: "failed_precondition: machine still active, refusing to start" }),
+      "still_active",
+    ],
     ["other 4xx (400)", apiError(400, { error: "invalid config" }), "own_error"],
     ["other 4xx (404)", apiError(404, { error: "machine not found" }), "own_error"],
     ["other 4xx (422 without a capacity status)", apiError(422, { error: "bad" }), "own_error"],

@@ -53,6 +53,8 @@ const retriedStartFailures = new Set<FlyFailureClass>([
   "host_unreachable",
   "transient",
 ]);
+// The pause before another start while Fly says the previous boot is still active.
+const stillActiveRetryMs = 1_000;
 const relocatingFailures = new Set<FlyFailureClass>(["provider_capacity", "host_unreachable"]);
 /**
  * Where a recreated runner may go after the core's own region
@@ -108,7 +110,11 @@ export class FlyRunnerHost implements RunnerHost {
     return this.withLease("runner start", async (machine, nonce) => {
       // Without a lease, the host is not ok: the runner is recreated at once.
       if (nonce) {
-        if (machine.state !== "stopped") {
+        if (machine.state === "stopping") {
+          // Already on its way down, like the previous run's runner exiting after its shutdown:
+          // waiting is enough, as the gate does for the core.
+          await this.requireState(machine.id, "stopped", attempt);
+        } else if (machine.state !== "stopped") {
           // No other run is in flight, so a running runner is stale: it never serves this run,
           // even when it is about to be replaced.
           const identity = await this.options.control.readIdentity().catch(() => null);
@@ -187,7 +193,8 @@ export class FlyRunnerHost implements RunnerHost {
       return "relocate";
     }
     this.requireTimeLeft(attempt);
-    for (let tries = 0; ; tries += 1) {
+    let tries = 0;
+    for (;;) {
       try {
         await this.options.machines.startMachine(machine.id, nonce);
         break;
@@ -197,6 +204,16 @@ export class FlyRunnerHost implements RunnerHost {
           { err: error, failure, attempt: tries + 1 },
           "The runner Machine did not start.",
         );
+        if (failure === "still_active") {
+          // Fly refuses a start until the previous boot has finished stopping, even when it
+          // already reports the Machine `stopped` (seen on a run started right after another
+          // one), for a time it does not document. Waiting for `stopped` returns at once, so
+          // the start is sent again every second until the deadline, without using up the
+          // attempts kept for capacity and transient failures.
+          this.requireTimeLeft(attempt, stillActiveRetryMs);
+          await this.sleep(stillActiveRetryMs);
+          continue;
+        }
         if (failure === "provider_capacity") attempt.capacityShortage = true;
         const delayMs = startRetryDelaysMs[tries];
         if (!retriedStartFailures.has(failure)) throw error;
@@ -206,6 +223,7 @@ export class FlyRunnerHost implements RunnerHost {
         }
         this.requireTimeLeft(attempt, delayMs);
         await this.sleep(delayMs);
+        tries += 1;
       }
     }
     // Accepted risk HD-19 (docs/decisions/hosted_deployment.md)

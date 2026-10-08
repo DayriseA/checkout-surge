@@ -20,6 +20,14 @@ const noCapacity = () =>
     409,
     '{"error":"insufficient CPUs available"}',
   );
+// Fly's answer to a start sent while the previous run's runner is still stopping.
+const stillActive = () =>
+  new FlyMachinesApiError(
+    "POST",
+    "/machines/runner-1/start",
+    412,
+    '{"error":"failed_precondition: machine still active, refusing to start"}',
+  );
 
 // The config the deploy script last sent; a recreated runner is built from it, with the run's
 // size and API address.
@@ -207,6 +215,57 @@ describe("FlyRunnerHost start", () => {
     expect(machines.stopMachine.mock.invocationCallOrder[0]).toBeLessThan(
       machines.startMachine.mock.invocationCallOrder[0] ?? 0,
     );
+  });
+
+  it("starts again a second later when the previous run's runner is still active", async () => {
+    const { host, machines, hooks, sleeps } = setup();
+    machines.startMachine.mockRejectedValueOnce(stillActive());
+
+    await expect(host.start(runId, hooks, 90_000)).resolves.toEqual({
+      machineId: "runner-1",
+      region: "cdg",
+    });
+
+    expect(sleeps).toEqual([1_000]);
+    expect(machines.acquireLease).toHaveBeenCalledOnce();
+    expect(machines.startMachine).toHaveBeenNthCalledWith(2, "runner-1", "nonce-1");
+    expect(hooks.onRelocating).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+  });
+
+  it("keeps starting a runner still active beyond the three attempts kept for other failures", async () => {
+    const { host, machines, hooks, sleeps } = setup();
+    for (let refusal = 0; refusal < 4; refusal += 1) {
+      machines.startMachine.mockRejectedValueOnce(stillActive());
+    }
+
+    await expect(host.start(runId, hooks, 90_000)).resolves.toEqual({
+      machineId: "runner-1",
+      region: "cdg",
+    });
+
+    expect(machines.startMachine).toHaveBeenCalledTimes(5);
+    expect(sleeps).toEqual([1_000, 1_000, 1_000, 1_000]);
+    expect(hooks.onRelocating).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+  });
+
+  it("waits for a runner found stopping instead of stopping it again", async () => {
+    const { host, machines, control } = setup({ machine: runnerMachine({ state: "stopping" }) });
+
+    await expect(
+      host.start(runId, { onRelocating: async () => undefined }, 20_000),
+    ).resolves.toEqual({ machineId: "runner-1", region: "cdg" });
+
+    expect(control.shutdown).not.toHaveBeenCalled();
+    expect(machines.stopMachine).not.toHaveBeenCalled();
+    expect(machines.waitForState).toHaveBeenNthCalledWith(1, "runner-1", "stopped", {
+      timeoutSeconds: 20,
+    });
+    expect(machines.waitForState.mock.invocationCallOrder[0]).toBeLessThan(
+      machines.startMachine.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(machines.startMachine).toHaveBeenCalledWith("runner-1", "nonce-1");
   });
 
   it("releases the lease when the start fails", async () => {
@@ -506,6 +565,19 @@ describe("FlyRunnerHost start deadline", () => {
 
     expect(machines.updateMachine).toHaveBeenCalledOnce();
     expect(machines.startMachine).not.toHaveBeenCalled();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+  });
+
+  it("fails as a start that ran out of time when the runner stays active until the deadline", async () => {
+    const { host, machines, hooks, sleeps } = setup();
+    machines.startMachine.mockRejectedValue(stillActive());
+
+    await expect(host.start(runId, hooks, 3_500)).rejects.toThrow("before its deadline");
+
+    // Starts at 0, 1, 2 and 3 s; one more second would end past the deadline.
+    expect(machines.startMachine).toHaveBeenCalledTimes(4);
+    expect(sleeps).toEqual([1_000, 1_000, 1_000]);
+    expect(hooks.onRelocating).not.toHaveBeenCalled();
     expect(machines.createMachine).not.toHaveBeenCalled();
   });
 
