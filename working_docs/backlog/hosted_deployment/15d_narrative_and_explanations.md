@@ -51,3 +51,64 @@ The demo tells an accurate story: it models the purchase system behind a waiting
 ## Working Notes
 
 _None yet._
+
+### Audit (2026-10-08, read-only)
+
+The buy path is described in `docs/architecture.md` "The Buy Path" (lines 72–83).
+
+**apps/web, most misleading first:**
+
+- `page.tsx:173-176` implies buyers never wait on PostgreSQL. Winners do: their order is written before the 202.
+- `page.tsx:362-398`, the architecture diagram, has no API→PostgreSQL or API→queue arrow on the winner path.
+- `demo/page.tsx:31-36` omits the durable write before the answer; "reaches a confirmed or failed outcome, no orders fail" reads as self-contradictory.
+- `run-history-detail.tsx:644-645` and `transport-observation.tsx:295-296` show "Local run note: … share one host" unconditionally, which is false on Fly, where k6 runs on its own Machine.
+- `page.tsx:172` and glossary `:511` say "immediately". The decision is fast; the answer is not (Fly surge-10k p95 7.5–13.9 s).
+- `page.tsx:53-54, 98, 160-165` (hero, "The flash-sale failure story") present the run as the whole sale, with no waiting room.
+- `page.tsx:220-243` ("What is real and what is simulated") never says what is not modelled.
+- `page.tsx:314-320` ("Results are environment-dependent") explains neither capacity nor what makes a run fail.
+- Glossary `:503-506` and `public-vocabulary.ts:27`: "Reservation hold" collides with the real journey's temporary hold before payment.
+- `field-hints.ts:3, 5` use crowd framing; `watch/page.tsx:53`, `operator-dashboard.tsx:552, 910` and `run-history/[runId]/page.tsx:67-68` say "flash sale" (minor).
+
+**Presets (`packages/db/src/seed-presets.ts:49, 69, 89, 109, 129`):** "N buyers rush 500 units" is crowd framing, and the 10k preset carries no latency note.
+
+**README:**
+
+- Line 20 inverts the order and misses the PostgreSQL transaction.
+- Line 5 is stale: it says hosted deployment is future work.
+- Line 3 needs the framing.
+
+**docs/:**
+
+- `architecture.md:15` omits the PostgreSQL write.
+- `architecture.md:5` presents the surge as the sale.
+- `architecture.md:100` needs a "bounded by one API process and the pool" caveat.
+- `architecture.md:89` has a stale page name.
+- `redis_inventory_hot_path.md:101` and `core_business_entities.md:174`: "hold window" reads as a hold step.
+- `cross_service_conventions.md:29-34` forbids treating reservation and order as synonyms. Phrase the simplification as "a secured reservation creates its order at once; there is no payment step between them".
+- `reference_runtime_measurements.md:3`: the top note seems to cover the October figures too.
+
+**working_docs (the owner's own):**
+
+- `project_description.md:37-38, 45, 83, 85, 102, 114`: losers-only claims, "immediately", "< 1 second", "millisecond-accurate", a stale roadmap.
+- `delivery_constraints.md:9, 15`: crowd framing and stale hosted-benchmark wording.
+
+**Where to write:**
+
+- `page.tsx`:
+  - a new opening section, "Behind a waiting room", replacing the failure story;
+  - "What a production system would add" after "What is real and what is simulated";
+  - the Redis paragraph and the diagram rewritten;
+  - the capacity and failure explanations in its Limits section.
+- Small edits elsewhere: `demo/page.tsx`, hints, presets, the local-run notes, README step 4 and line 5, `architecture.md:5,15`.
+- One short README section after the intro.
+
+**Accurate, worth keeping:**
+
+- `capacity-presentation.ts:17-18` and `run-failure-explanation.tsx:207`;
+- `field-hints.ts:17, 21`;
+- `page.tsx:201-215`, "How a run finishes", "What success means", "Admission and reset";
+- `architecture.md:72-83, 153`;
+- `reference_runtime_measurements.md` "Mechanism";
+- `redis_inventory_hot_path.md:33`, reusable for the production section;
+- `scope_and_caveats.md`;
+- `delivery_constraints.md:10, 22`.
