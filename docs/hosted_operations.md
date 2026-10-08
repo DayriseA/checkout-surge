@@ -257,6 +257,10 @@ What can go wrong:
 - **Run limits.** The `DEMO_MAX_*` deployment caps are API variables in the same container. The API refuses to start when the active public runtime policy exceeds one of them.
   - A fresh core (a recovery, or `--fresh-core`) seeds that policy from the `setup` container's `PUBLIC_CUSTOM_*` variables and from fixed seed values (`buildPublicRuntimePolicy` in `packages/db/src/scripts/seed.ts`). Lower the matching `PUBLIC_CUSTOM_*` variable in the `setup` container together with a cap, and never set a cap below a fixed seed value.
   - On the running core, the seed keeps the existing policy: lower it in the admin console before deploying lower caps.
+  - **Raising a public limit on the running core.** A new `PUBLIC_CUSTOM_*` value reaches only a fresh core, so after the deploy, edit the live policy to match:
+    - **Admin console:** on [`/admin`](#admin-access), open **Public runtime policy**, change the fields under **Public custom limits** (for example **Max requests/sec** and **Max total requests**), click **Save public policy**, then confirm the change summary.
+    - **API:** from the API container, with the control token ([straight to the API](#admin-access)), `GET http://127.0.0.1:4000/admin/demo/runtime-policy`, take its `policy`, remove `deploymentHardCaps`, change the limits under `publicCustomLimits`, and send it back as `PUT` with the body `{ "policy": ... }` and a JSON content type. The whole policy is replaced, so start from the current one.
+    - Either way, the API refuses a limit above its deployment cap and answers with the new policy otherwise.
 - **Public run budget.** The `PUBLIC_RUN_BUDGET_*` variables of the `setup` container bound how many public runs start per window, globally and per visitor cookie; admin runs are not counted. A client that drops its cookie counts as a new visitor, so the global value is the one that bounds cost. Like the `PUBLIC_CUSTOM_*` limits, they are seeded only on a fresh core. An admin console edit lasts until the next recovery, so change the file for a lasting value.
 
 ---

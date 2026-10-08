@@ -200,7 +200,7 @@ Every entry in ID order. New entries are added here too.
   - The runner needs no deployment setting, and the API and the runner derive the same plan from the stored snapshot ([HD-14](#hd-14-the-version-handshake-refuses-mismatched-runs)).
   - The public rate limit no longer compensates for the VU allocation; capacity-aware admission bounds visitor runs instead ([HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused)).
   - Runs pre-allocate more VUs than before, so the load generator holds more memory and may open one connection per VU.
-  - The budget was measured with sold-out runs. Accepted orders lengthen requests, so near capacity a run with stock can still run short of VUs.
+  - Accepted orders lengthen requests, so the budget is set above the mean iteration time of runs with stock, not of sold-out runs. A run selling more than the stock it was confirmed with can still run short of VUs.
 - **Rejected alternatives:**
   - Resolving VUs in the runner: it would need the deployment's budget, and its plan could drift from the API's.
   - Applying the public VU limits to resolved VUs: they would cap a visitor's rate indirectly, below what the core sustains.
@@ -219,7 +219,7 @@ Every entry in ID order. New entries are added here too.
   - Public custom runs are admitted only when expected to complete: the preview shows the refusal and the API enforces it. Admin runs at the limit or expected to fail get a warning before confirmation. Public presets are fixed, so a test keeps them expected to complete on every deployment's committed values instead of a runtime check.
 - **Consequences:**
   - Some visitor runs that would complete are refused.
-  - The model rests on few runs. Hosted buyer spikes at low stock ran up to about a third slower than predicted, more than the completion margin covers, and the local accepted-order cost and latency budget are not confirmed by a run.
+  - The model rests on few runs. Hosted buyer spikes at low stock ran up to about a third slower than predicted, more than the completion margin covers.
   - A deployment that does not measure its capacity keeps the local defaults.
 - **Rejected alternatives:**
   - Ignoring stock: a hosted run with stock failed below the sold-out capacity.

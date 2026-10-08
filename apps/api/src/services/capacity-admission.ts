@@ -43,10 +43,10 @@ export type DeploymentCapacity = z.infer<typeof deploymentCapacitySchema>;
 export const localDeploymentCapacity: DeploymentCapacity = {
   constantArrivalSoldOutPerSecond: 3_000,
   constantArrivalAcceptedPerSecond: 195,
-  constantArrivalAcceptedOrderCost: 15,
+  constantArrivalAcceptedOrderCost: 21,
   buyerSpikeSoldOutPerSecond: 1_150,
   buyerSpikeAcceptedPerSecond: 155,
-  vuLatencyBudgetSeconds: 3,
+  vuLatencyBudgetSeconds: 4,
 };
 
 /** Up to this share of the capacity, a run is expected to complete; up to all of it, at the limit. */

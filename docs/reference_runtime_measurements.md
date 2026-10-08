@@ -188,7 +188,7 @@ Measured on 2026-10-08 with the [capacity measurement procedure](capacity_measur
 | Constant arrival, all accepted | complete at 750/s only because k6's 30 s graceful stop absorbed the backlog (p95 19 to 21 s); 1,000/s left 2,720 interrupted | the same at 500/s; 1,000/s left 2,231 interrupted |
 | Buyer spike, all sold out (C′<sub>s</sub>) | about 2,600 buyers/s (2,590 to 2,670 for 5,000 and 10,000 buyers) | 1,150 to 1,470/s for 10,000 buyers, 860/s for 5,000 (k6's upper bound) |
 | Buyer spike, all accepted (C′<sub>a</sub>) | 240 to 260/s | 150 to 155/s; the 10,000-buyer run was lossy: it took about 62 s, and 631 requests hit k6's 60 s request timeout |
-| Stock 1,000, constant arrival | complete at 2,625/s, not at 3,125/s (138 unstarted) | not complete at 3,500 or 3,750/s; lower rates not run |
+| Stock 1,000, constant arrival | complete at 2,625/s, not at 3,125/s (138 unstarted) | not complete at 3,500 or 3,750/s; lower rates [below](#confirmation-at-the-public-limits) |
 | Stock 1,000, 10,000-buyer spike | answered in 9.6 s (about 1,040/s) | 12.2 to 16.4 s (610 to 820/s) |
 | Latency budget that held | about 3 s: mean iteration 1.3 s at 3,500/s; 10,000 VUs (2.9 s) held twice, 7,000 (2 s) left 1,207 unstarted | mean iteration 0.9 to 1.1 s at 3,500/s; 10,000 VUs (2.9 s) held once; no lower budget confirmed |
 | Bottleneck | sold out: the single API process (1.7 to 1.9 cores at peak, VM about 50 %); accepted: the PostgreSQL pool (PostgreSQL 2.6 to 3.0 cores, VM 86 to 92 %) | sold out: the 4 vCPU shared with k6 (k6 alone up to 3.9 cores); accepted: the PostgreSQL pool (PostgreSQL about 1.9 cores); buyer spike: the load generator (k6 about 3.9 cores, the API about 1.2) |
@@ -196,6 +196,13 @@ Measured on 2026-10-08 with the [capacity measurement procedure](capacity_measur
 - **Stock in a buyer spike.** The times add up: accepted orders at their rate, plus sold-out answers at C′<sub>s</sub>. For 10,000 buyers and stock 5,000, that predicts about 22 s against 21.3 s measured on Fly, and 35 to 37 s against 29 to 33 s locally. With stock 1,000, the hosted spike took 9.6 s against 7.4 to 7.6 s predicted.
 - **Stock in constant arrival.** On Fly, an accepted order cost the API about as much as 7 sold-out answers, not the 15 the two rates suggest: accepted orders wait on the pool while the API keeps answering sold-out requests. With stock 1,000, that predicts about 2,900 per second, between the measured 2,625 and 3,125, and with stock 500 about 3,200, as measured earlier (above). Locally, the saturated stock-1,000 runs answered 2,240 to 2,380 per second, against 3,600 to 4,700 when sold out.
 - **Latency with stock.** With stock 1,000 on Fly, the mean iteration time was 3.6 to 4.7 s at 1,625 to 2,625 per second, against 1.3 s when sold out at 3,125 to 3,500 per second; almost all of it was spent outside the reservation service, which averaged 125 to 180 ms. The latency budgets above were measured with stock 1.
+
+### Confirmation at the public limits
+
+Run on 2026-10-08, after the values above were set, to check the public limits with stock. A run counts as complete under the same criterion.
+
+- **Hosted:** with the Mock ERP at 100 ms, 50 TPS and concurrency 5, and VUs = rate × 3 s, 2,500/s with stock 1 and 2,200/s with stock 1,000 for 10 s were complete twice each, and so was the 10,000-buyer spike with stock 1,000. With stock 1,000, the mean iteration time was 3.05 to 3.28 s, above the 3 s budget, so the hosted budget became 4 s.
+- **Local (two 4 vCPU cloud VMs):** with stock 1,000 for 10 s, 400/s was complete on every run, 500/s on one run of two, and 600/s on none, even with 10,000 VUs. These runs are server-bound: the API, PostgreSQL, the worker and k6 share the 4 vCPU. The first run after a stack start was slower (cold start). The 10,000-buyer spike with stock 1,000 was complete four times. The local accepted-order cost was set so that 400/s is the last rate expected to complete with stock 1,000, and the local budget to 4 s like the hosted one.
 
 ## Tuning deliberately not configured
 

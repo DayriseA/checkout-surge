@@ -99,13 +99,13 @@ describe("capacity-aware admission model", () => {
       constantArrivalAcceptedOrderCost: 7,
       buyerSpikeSoldOutPerSecond: 2_600,
       buyerSpikeAcceptedPerSecond: 240,
-      vuLatencyBudgetSeconds: 3,
+      vuLatencyBudgetSeconds: 4,
     });
     // The Compose defaults are the API's own defaults.
     expect(local).toEqual(loadApiConfig(baseEnv).deploymentCapacity);
     expect(local).toMatchObject({
       constantArrivalSoldOutPerSecond: 3_000,
-      constantArrivalAcceptedOrderCost: 15,
+      constantArrivalAcceptedOrderCost: 21,
     });
   });
 
@@ -121,9 +121,9 @@ describe("capacity-aware admission model", () => {
   });
 
   it.each([
-    // Fly: each accepted order costs 6 more sold-out answers, spread over 10 s.
+    // Fly: each accepted order costs 6 more sold-out answers, spread over 10 s; locally, 20.
     ["fly", fly, 2_200],
-    ["local", local, 1_000],
+    ["local", local, 400],
   ])("charges the stock the run can sell to the API (%s)", (_, capacity, largestCompletingRate) => {
     const verdictAt = (rate: number) => assess(constantArrival(rate, 10, 1_000), capacity).verdict;
     expect(verdictAt(largestCompletingRate)).toBe("expected_to_complete");

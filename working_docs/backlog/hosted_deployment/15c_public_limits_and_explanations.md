@@ -51,3 +51,11 @@ _None yet._
 - The Fly values hold at the targets: 2,500/s sold out is 71 % of C_s, and 2,200/s with stock 1,000 is the model's 80 % point.
 - **Watch:** with stock 1,000 the mean iteration time (3.05 to 3.28 s) slightly exceeds the 3 s VU budget. The runs completed, with little VU margin.
 - **Owner decision (2026-10-08):** raise Fly's `CAPACITY_VU_LATENCY_BUDGET_SECONDS` to 4 s for VU margin with stock. That gives 8,800 VUs at 2,200/s, about 2.5 GB of k6 memory on the 16 GB runner, and the 10,000 cap at 2,500/s.
+
+### Values and limits applied
+
+- **Fly API env:** `CAPACITY_VU_LATENCY_BUDGET_SECONDS` 4; the other `CAPACITY_*` unchanged. 2,200/s with stock 1,000 now gets 8,800 VUs, and 2,500/s the 10,000 cap.
+- **Fly `setup` env:** `PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND` 2,500, `PUBLIC_CUSTOM_MAX_TOTAL_REQUESTS` 25,000. The effective policy built from the seed passes the API's cap check (caps 10,000/s and 100,000 requests; occupancy 600 s and the 5,000-buyer / 80 s defaults within their caps).
+- **Local defaults** (Compose, both `.env.example`, `localDeploymentCapacity`, the configuration reference): k 21, budget 4 s. With stock 1,000 for 10 s, 400/s is the last rate expected to complete; 401 and 500/s are at the limit. Local public limits unchanged.
+- **Live policy row:** not edited. A fresh core seeds the new limits; the running core needs the admin console edit (documented in `docs/hosted_operations.md`, Resizing and Limits).
+- **Decision log:** HD-59 and HD-60 consequences corrected in place (the budget now covers runs with stock; the local values are confirmed). No new entry.

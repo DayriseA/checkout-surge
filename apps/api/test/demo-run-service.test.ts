@@ -472,7 +472,7 @@ describe("demo-run lifecycle start gating", () => {
       publicRunBudgetStore: { reserve, release: vi.fn() },
       trafficExecutionGateway: { start: trafficStart },
     });
-    // Locally, 1,000 accepted orders add 14 × 1,000 / 9 s to the rate: 844/s is the last that fits.
+    // Locally, 1,000 accepted orders add 20 × 1,000 / 10 s to the rate: 400/s is the last that fits.
     const request = (ratePerSecond: number) => ({
       presetSlug: "public-custom",
       operatorMode: "public" as const,
@@ -481,7 +481,7 @@ describe("demo-run lifecycle start gating", () => {
         trafficConfig: {
           mode: "constant-arrival-rate" as const,
           ratePerSecond,
-          durationSeconds: 9,
+          durationSeconds: 10,
           startDelaySeconds: 0,
           quantityPerAttempt: 1,
         },
@@ -489,11 +489,11 @@ describe("demo-run lifecycle start gating", () => {
       },
     });
 
-    expect((await service.previewRun(request(845))).capacity).toMatchObject({
+    expect((await service.previewRun(request(401))).capacity).toMatchObject({
       verdict: "at_the_limit",
-      fit: { ratePerSecond: 844 },
+      fit: { ratePerSecond: 400 },
     });
-    await expect(service.startRun(request(845), "over-capacity")).rejects.toMatchObject({
+    await expect(service.startRun(request(401), "over-capacity")).rejects.toMatchObject({
       code: "estimated_capacity_rejected",
       details: { mode: "constant-arrival-rate", verdict: "at_the_limit" },
     });
@@ -501,9 +501,9 @@ describe("demo-run lifecycle start gating", () => {
     expect(reserve).not.toHaveBeenCalled();
     expect(trafficStart).not.toHaveBeenCalled();
 
-    // 844/s × the 3 s budget asks 2,532 VUs, above the public VU limit of 1,000.
-    const accepted = await service.startRun(request(844), "within-capacity");
-    const resolvedVus = { preAllocatedVus: 2_532, maxVus: 2_532 };
+    // 400/s × the 4 s budget asks 1,600 VUs, above the public VU limit of 1,000.
+    const accepted = await service.startRun(request(400), "within-capacity");
+    const resolvedVus = { preAllocatedVus: 1_600, maxVus: 1_600 };
     expect(accepted.run.configSnapshot.trafficConfig).toMatchObject({ k6Vus: resolvedVus });
     const [persisted] = await db.select().from(demoRuns);
     expect(persisted?.configSnapshot.trafficConfig).toMatchObject({ k6Vus: resolvedVus });
@@ -516,8 +516,8 @@ describe("demo-run lifecycle start gating", () => {
     const service = createStartService(requireConnection(connection), requireRedis(redis));
     const trafficConfig = {
       mode: "constant-arrival-rate" as const,
-      ratePerSecond: 845,
-      durationSeconds: 9,
+      ratePerSecond: 401,
+      durationSeconds: 10,
       startDelaySeconds: 0,
       quantityPerAttempt: 1,
     };
@@ -547,7 +547,7 @@ describe("demo-run lifecycle start gating", () => {
     const accepted = await service.startRun(adminRequest, "admin-at-limit");
     expect(accepted.run.status).toBe("active");
     expect(accepted.run.configSnapshot.trafficConfig).toMatchObject({
-      k6Vus: { preAllocatedVus: 2_535, maxVus: 2_535 },
+      k6Vus: { preAllocatedVus: 1_604, maxVus: 1_604 },
     });
   });
 
@@ -658,10 +658,10 @@ describe("demo-run lifecycle start gating", () => {
       decision: "admitted",
       conservativeDurationSeconds: 75 + 888 / 9.5,
     });
-    // The incident sets no VUs, so admission writes the automatic ones: 25/s × the 3 s budget.
+    // The incident sets no VUs, so admission writes the automatic ones: 25/s × the 4 s budget.
     expect((await service.startRun(request, "incident")).run.configSnapshot).toEqual({
       ...incident,
-      trafficConfig: { ...incident.trafficConfig, k6Vus: { preAllocatedVus: 75, maxVus: 75 } },
+      trafficConfig: { ...incident.trafficConfig, k6Vus: { preAllocatedVus: 100, maxVus: 100 } },
     });
   });
 
