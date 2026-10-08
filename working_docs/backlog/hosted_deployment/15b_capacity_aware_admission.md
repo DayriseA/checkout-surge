@@ -12,17 +12,20 @@ A run is admitted only when it is expected to complete, or, for the owner, after
   - When `k6Vus` is absent, the API resolves VUs at admission as the rate times the deployment's latency budget. All of them are pre-allocated, within the deployment's VU cap.
   - The API writes them into the run, so the runner needs no deployment setting. The API and the runner must still derive the same plan (HD-14).
   - Check the effect on local runs: memory and open connections.
-  - Rewrite the field hints that say the public VU limits cap derived values (`apps/web/src/app/lib/presentation/field-hints.ts`); the code caps only explicit VUs.
-- **Feasibility model** (owner decisions, 2026-10-08).
-  - **Constant arrival:**
-    - expected to complete up to 80 % of the capacity C;
-    - at the limit between 80 % and 100 %;
-    - expected to fail above C, unless the run is short enough for its backlog to fit within the VUs.
-  - **Buyer spike:** the time to serve, buyers divided by C', is compared with the safety cutoff.
-  - **Stock** enters only if 15a shows an effect.
-  - **Success** means every planned request is started and answered: none dropped, unstarted or interrupted (owner decision, 2026-10-08, after cloud VM A). Latency is not a criterion.
+  - Resolved VUs are bounded by the deployment's VU cap only. The public VU limits keep applying to explicit VUs alone, as the code already does (owner decision). Rewrite the field hints that say otherwise (`apps/web/src/app/lib/presentation/field-hints.ts`).
+  - The 3 s budget was measured with stock 1; with stock 1,000 the mean iteration time on Fly was 3.6 to 4.7 s. 15c checks it on Fly at the raised public limits and adjusts the env value if needed.
+- **Feasibility model** (owner decisions, 2026-10-08; values in "Inputs from Task 15a"). A = min(stock ÷ quantity per attempt, planned requests) is the number of orders a run can accept.
+  - **Constant arrival** (rate R, duration T):
+    - the load is R + (k − 1) × A ÷ min(T, 10 s), with k fitted per deployment (Fly 7, local 15, provisional). The orders' cost is spread over at most 10 s, the measured run length, because accepted orders arrive first;
+    - expected to complete up to 80 % of C_s, at the limit between 80 % and 100 %, expected to fail above C_s, with no backlog exception (owner decision);
+    - the run is also expected to fail when A > C_a × (T + 30 s): k6's graceful stop interrupts orders the database pool has not answered by then.
+  - **Buyer spike** (N buyers):
+    - the time to serve is A ÷ C′_a + (N − A) ÷ C′_s;
+    - it is compared with min(cutoff, 60 s): k6's request timeout fails any request unanswered after 60 s. Expected to complete up to 80 %, at the limit up to 100 %, expected to fail above;
+    - k6's 30 s graceful stop after the cutoff is left as a reserve, because the model was up to 37 % optimistic on Fly (owner decision).
+  - **Success** means every planned request is started and completed with zero failed responses: none dropped, unstarted, interrupted, failed or unexpected (owner decisions, 2026-10-08, after cloud VM A and the 15a review). Latency is not a criterion.
   - **ERP settings** do not hold VUs (13a).
-- **Capacity per deployment** (owner decision, 2026-10-08). C, C' and the latency budget are API env values, next to the caps and the estimator constants:
+- **Capacity per deployment** (owner decision, 2026-10-08). C_s, C_a, k, C′_s, C′_a and the latency budget are API env values, next to the caps and the estimator constants:
   - Fly: `infra/fly/core/machine.json`;
   - local: `docker-compose.yml`, `.env.example` and the table in `docs/local_development.md`, defaulting to the cloud VM's measurement.
 - **Behavior.**
@@ -47,9 +50,7 @@ A run is admitted only when it is expected to complete, or, for the owner, after
 
 ## Open Points
 
-- How the public VU limits apply to VUs resolved by the API.
-- The exact backlog condition for a constant-arrival run above C.
-- The messages (checkpoint).
+- The messages: implement the model first, then stop at a checkpoint with the proposed wording for the public preview, the public refusal and the admin warning, before writing them into the UI.
 
 ## Inputs from Preparation (2026-10-08)
 
