@@ -1,12 +1,13 @@
 import {
   buyOutcomeHeaderName,
   deriveLoadExecutionPlan,
+  k6GracefulStopSeconds,
   loadRunIdHeaderName,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
 import { correlationIdHeaderName } from "@checkout-surge/logger";
 
-export const k6ScenarioGracefulStop = "30s";
+export const k6ScenarioGracefulStop = `${k6GracefulStopSeconds}s`;
 
 export function generateK6Script(input: TrafficExecutionStartRequest) {
   const traffic = input.configSnapshot.trafficConfig;

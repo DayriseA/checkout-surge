@@ -1,4 +1,8 @@
-import type { RunFailureDiagnostic } from "@checkout-surge/contracts";
+import {
+  k6GracefulStopSeconds,
+  type RunFailureDiagnostic,
+  type TransportAttemptCounts,
+} from "@checkout-surge/contracts";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import {
@@ -20,8 +24,8 @@ export function RunFailureExplanation({
   const http = evidence.httpSummary;
   const business = evidence.businessOutcomeSummary;
   const connectionP95 = evidence.httpTimingBreakdownSummary.connecting?.p95Ms;
-  const copy = causeCopy(diagnostic);
-  const unanswered = diagnostic.cause === "interrupted_requests";
+  const copy = causeCopy(diagnostic, counts);
+  const lateAnswersCause = diagnostic.cause === "interrupted_requests";
   const countsUnknown = hasUnknownTrafficCounts(counts);
   const settled =
     business.acceptedReservations > 0 &&
@@ -34,6 +38,10 @@ export function RunFailureExplanation({
     business.retryingOrders === 0;
   const missingRequests =
     counts.completedRequests === null ? 0 : counts.plannedRequests - counts.completedRequests;
+  // Server-side proof that late answers were handled: every sent request became a reservation,
+  // and every reservation was confirmed and notified.
+  const serverHandledLateAnswers =
+    hasLateAnswers(counts) && settled && business.acceptedReservations === counts.startedRequests;
   return (
     <section className="mt-3 text-sm leading-6 text-muted-strong" aria-label="Failure explanation">
       <h2 className="type-title m-0 text-xl leading-tight text-ink">{copy.heading}</h2>
@@ -46,18 +54,30 @@ export function RunFailureExplanation({
               {formatCount(counts.unstartedRequests)} planned requests were never sent.
             </p>
           ) : null}
-          {unanswered ? (
-            <p className="m-0 font-semibold text-ink">
-              {formatCount(counts.interruptedRequests)} launched requests were still waiting for an
-              answer when the load generator stopped.
+          {lateAnswersCause ? (
+            <p className="m-0">
+              {formatCount(counts.interruptedRequests)} of {formatCount(counts.startedRequests)}{" "}
+              answers arrived too late (
+              {formatShortfallPercent(counts.interruptedRequests ?? 0, counts.startedRequests ?? 0)}
+              %).
             </p>
-          ) : null}
-          <p className="m-0">
-            {formatCount(counts.completedRequests)} of {formatCount(counts.plannedRequests)}{" "}
-            requests completed ({formatShortfallPercent(missingRequests, counts.plannedRequests)}%
-            shortfall).
-          </p>
+          ) : (
+            <p className="m-0">
+              {formatCount(counts.completedRequests)} of {formatCount(counts.plannedRequests)}{" "}
+              requests completed ({formatShortfallPercent(missingRequests, counts.plannedRequests)}%
+              shortfall).
+            </p>
+          )}
         </div>
+      ) : null}
+      {lateAnswersCause ? (
+        <p className="m-0 mt-2">
+          {serverHandledLateAnswers
+            ? `The server still handled those requests: all ${formatCount(business.acceptedReservations)} orders were reserved, confirmed and notified. Only their answers came too late to be recorded. `
+            : null}
+          These buyers waited at least {k6GracefulStopSeconds} seconds without an answer, so the run
+          counts as failed.
+        </p>
       ) : null}
       {http.unexpectedResponses !== null && http.unexpectedResponses > 0 ? (
         <p className="m-0 mt-2">
@@ -69,14 +89,15 @@ export function RunFailureExplanation({
           {formatCount(http.transportFailures)} attempts ended in transport failure.
         </p>
       ) : null}
-      {!unanswered && counts.interruptedRequests !== null && counts.interruptedRequests > 0 ? (
+      {!lateAnswersCause && hasLateAnswers(counts) ? (
         <p className="m-0 mt-2">
-          {formatCount(counts.interruptedRequests)} launched requests did not complete.
+          {formatCount(counts.interruptedRequests)} answers arrived too late to be recorded.
         </p>
       ) : null}
       {settled ? (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3 font-semibold text-ink">
-          All {formatCount(business.confirmedOrders)} accepted orders were confirmed and notified.
+          All {formatCount(business.confirmedOrders)} accepted orders were confirmed and notified
+          {serverHandledLateAnswers ? ", including those whose answer arrived too late" : null}.
         </p>
       ) : (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3">
@@ -131,15 +152,7 @@ export function RunFailureExplanation({
       <details className="mt-2 border-t border-border pt-2">
         <summary className="disclosure font-semibold text-ink">Measurement coverage</summary>
         <p className="m-0 mt-2">
-          {countsUnknown ? (
-            trafficEvidenceUnavailableText
-          ) : (
-            <>
-              {formatCount(counts.unstartedRequests)} planned requests were never sent;{" "}
-              {formatCount(counts.interruptedRequests)} launched requests did not complete. Outcomes
-              and latency cover only recorded responses.
-            </>
-          )}
+          {countsUnknown ? trafficEvidenceUnavailableText : measurementCoverageText(counts)}
         </p>
         {http.transportFailures !== null && http.transportFailures > 0 ? (
           <p className="m-0 mt-1">
@@ -151,13 +164,29 @@ export function RunFailureExplanation({
   );
 }
 
+function hasLateAnswers(counts: TransportAttemptCounts): boolean {
+  return counts.interruptedRequests !== null && counts.interruptedRequests > 0;
+}
+
+function measurementCoverageText(counts: TransportAttemptCounts): string {
+  const coverage = hasLateAnswers(counts)
+    ? `${formatCount(counts.interruptedRequests)} answers arrived too late to be recorded; outcomes and latency cover only the recorded answers.`
+    : "Outcomes and latency cover only the recorded answers.";
+  return counts.unstartedRequests !== null && counts.unstartedRequests > 0
+    ? `${formatCount(counts.unstartedRequests)} planned requests were never sent. ${coverage}`
+    : coverage;
+}
+
 function formatShortfallPercent(missingRequests: number, plannedRequests: number): string {
   return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
     (missingRequests / plannedRequests) * 100,
   );
 }
 
-function causeCopy(diagnostic: RunFailureDiagnostic): {
+function causeCopy(
+  diagnostic: RunFailureDiagnostic,
+  counts: TransportAttemptCounts,
+): {
   heading: string;
   summary: string;
   next: string;
@@ -173,11 +202,10 @@ function causeCopy(diagnostic: RunFailureDiagnostic): {
       };
     case "interrupted_requests":
       return {
-        heading: "Server did not answer in time",
-        summary:
-          "The server did not answer enough requests before the load generator stopped. The server may still have processed these requests; their answers came too late for the load generator.",
-        next: "For the same traffic target, investigate slow responses on the server. Fewer buyers or a lower request rate would test a less demanding scenario.",
-        why: "The generator recorded these requests as launched but never answered when it stopped, and they alone are enough to fail the run. This identifies why the run fell short, but does not establish the exact source of response delays.",
+        heading: "Answers arrived too late",
+        summary: `The server needed more time than the load generator waits: ${formatCount(counts.interruptedRequests)} buyers were still waiting for their answer when the generator stopped listening, ${k6GracefulStopSeconds} seconds after its sending window closed.`,
+        next: "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
+        why: "The load generator sent these requests but stopped listening before their answers arrived. The late answers alone are enough to fail the run, so they explain this failure. The report shows when answers arrived, not where the server spent its time.",
       };
     case "unidentified":
       return {

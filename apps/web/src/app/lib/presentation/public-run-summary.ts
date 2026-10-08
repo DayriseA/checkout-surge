@@ -179,7 +179,7 @@ function transportCaveats(observation: TransportObservation | null): PublicRunCa
   return [
     {
       message: observation.hasUndispatchedAttempts
-        ? `${formatCount(observation.counts.unstartedRequests)} planned requests were never sent. ${observation.hasUnrecordedReplies ? `${formatCount(observation.counts.interruptedRequests)} launched requests did not complete; ${formatCount(observation.transportFailures)} attempts ended in transport failure.` : "All sent requests completed."} Outcomes and latency cover recorded responses only.`
+        ? `${formatCount(observation.counts.unstartedRequests)} planned requests were never sent. ${observation.hasUnrecordedReplies ? `${formatCount(observation.counts.interruptedRequests)} answers arrived too late to be recorded; ${formatCount(observation.transportFailures)} attempts ended in transport failure.` : "All sent requests completed."} Outcomes and latency cover recorded responses only.`
         : `Reply observation incomplete: outcomes and latency cover ${formatCount(observation.repliesRecorded) ?? "unavailable"} of ${formatCount(observation.counts.plannedRequests) ?? "unavailable"} attempts.`,
       tone: "warning",
     },

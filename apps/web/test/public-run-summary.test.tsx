@@ -111,6 +111,22 @@ describe("public run summary", () => {
       "100 planned requests were never sent. All sent requests completed.",
     );
     expect(summary.caveats[0]?.message).not.toContain("Reply observation incomplete");
+    const lateAnswers = deriveTransportObservation(
+      {
+        plannedRequests: 1100,
+        startedRequests: 1090,
+        completedRequests: 1085,
+        unstartedRequests: 10,
+        interruptedRequests: 5,
+      },
+      0,
+    );
+    expect(
+      derivePublicRunSummary(summaryInput({ transportObservation: lateAnswers })).caveats[0]
+        ?.message,
+    ).toContain(
+      "10 planned requests were never sent. 5 answers arrived too late to be recorded; 0 attempts ended in transport failure.",
+    );
   });
   it("keeps a clean sellout free of alarms and exposes known counts", () => {
     const summary = derivePublicRunSummary(summaryInput({ trafficDeliveryStatus: "complete" }));

@@ -90,6 +90,9 @@ export type ConstantArrivalTrafficConfig = z.infer<typeof constantArrivalTraffic
 
 export const maximumAutomaticallyDerivedVUs = 10_000;
 
+/** How long k6 still waits for answers after the traffic ends before it interrupts the requests. */
+export const k6GracefulStopSeconds = 30;
+
 export interface ResolvedConstantArrivalVus {
   preAllocatedVus: number;
   maxVus: number;

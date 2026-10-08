@@ -149,7 +149,7 @@ Every entry in ID order. New entries are added here too.
   - Keep one API process for this release.
   - Size the core Machine for the other containers' headroom during a burst, not for throughput.
   - Keep the deployment caps (`DEMO_MAX_*`) above what the core sustains, so an operator can push admin runs past it. The buyer cap is the exception: a buyer spike runs one k6 VU per buyer, so `DEMO_MAX_BUYERS` keeps it within the runner's memory.
-- **Consequences:** The core costs more per awake hour than the smallest size that runs the demo, for headroom rather than speed. Single-process optimizations of the API were not explored. An admin run above the core's throughput degrades or fails its delivery, reported as a virtual-user limit, without harming the infrastructure.
+- **Consequences:** The core costs more per awake hour than the smallest size that runs the demo, for headroom rather than speed. Single-process optimizations of the API were not explored. An admin run above the core's throughput degrades or fails its delivery once its backlog outlasts k6's graceful stop, reported as a virtual-user limit or as answers that arrived too late, without harming the infrastructure.
 - **Rejected alternatives:**
   - Several API processes (a cluster or replicas) in this release: they break the single owner of run starts, resets and runner operations ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)).
   - A larger core as the throughput lever: it gave the API more CPU, but no established gain in latency or throughput.
@@ -384,12 +384,13 @@ Every entry in ID order. New entries are added here too.
 - **Status:** accepted
 - **Date:** 2026-10-08
 - **Context:** The delivery status counted only the requests k6 never started. Runs whose server left over a fifth of their requests unanswered, until k6's graceful stop cut them, were reported as complete and successful.
-- **Decision:** Delivery is `complete` only when every planned request is started and completed. The shortfall is planned minus completed requests, that is unstarted plus interrupted ones, on the existing warning, degraded and failed tiers. Only a shortfall above the failure tier fails the run; `warning` and `degraded` still finalize as completed. A status-0 attempt counts as completed and is graded as transport loss, against started requests. A failed run whose interrupted requests alone exceed the failure tier is explained as a server that did not answer before the generator stopped; a recorded virtual-user limit still comes first.
+- **Decision:** Delivery is `complete` only when every planned request is started and completed. The shortfall is planned minus completed requests, that is unstarted plus interrupted ones, on the existing warning, degraded and failed tiers. Only a shortfall above the failure tier fails the run; `warning` and `degraded` still finalize as completed. A status-0 attempt counts as completed and is graded as transport loss, against started requests. A failed run is explained by the cause whose own requests exceed the failure tier: a recorded virtual-user limit only when unstarted requests alone exceed it, otherwise answers that arrived too late when interrupted requests alone exceed it and the generator exited normally.
 - **Consequences:** A slow server fails a run as a delivery shortfall, even when k6 started every request. Readers re-derive the status, so stored runs whose status changes become unreadable: the change is incompatible, handled with a fresh core and a local data reset instead of a migration ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path), [HD-48](#hd-48-a-requested-fresh-core-stays-requested-until-a-wake-acts-on-it)). The stored evidence does not tell request timeouts from connection errors, so a run failed by transport loss keeps an unidentified cause.
 - **Rejected alternatives:**
   - Grading interrupted requests on their own, against started requests, like transport loss: a run could leave up to the failure tier of its requests unstarted and nearly as many unanswered, and still succeed.
   - Leaving interrupted requests to the reply-coverage caveat: visitors saw a complete, successful run.
   - Translating stored runs to the new status: the data is disposable, and a tolerant reader would accept a contradictory stored status.
+  - A recorded virtual-user limit explaining the failure first: one k6 warning for a few unsent requests named it as the cause of a run that failed on late answers.
 - **Code:** `classifyTrafficDelivery` in `apps/api/src/services/traffic-delivery-classifier.ts`, `deriveRunFailureDiagnostic` in `apps/api/src/services/run-failure-diagnostic.ts`.
 
 ## Core Idle Stop

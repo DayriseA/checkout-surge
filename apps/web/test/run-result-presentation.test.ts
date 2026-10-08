@@ -255,7 +255,7 @@ describe("run result presentation", () => {
       "accepted partial",
       withEvidence({ generator: partialGenerator() }),
       "accepted_responses_vs_unique_reservations",
-      null,
+      "The load generator did not record an answer for every planned request, so its count cannot match the server&#x27;s.",
     ],
     [
       "sold out expected",

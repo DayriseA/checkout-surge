@@ -52,7 +52,12 @@ describe("failure explanation", () => {
     expect(screen.getByRole("heading", { name: "Virtual user limit reached" })).toBeTruthy();
     expect(screen.getByText("2,557 planned requests were never sent.")).toBeTruthy();
     expect(screen.getByText(/8.52% shortfall/)).toBeTruthy();
-    expect(screen.getByText(/All 1,500 accepted orders/)).toBeTruthy();
+    expect(screen.getByText("All 1,500 accepted orders were confirmed and notified.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "2,557 planned requests were never sent. Outcomes and latency cover only the recorded answers.",
+      ),
+    ).toBeTruthy();
     const details = screen.getByText("Why this diagnosis?").closest("details");
     expect(details?.open).toBe(false);
     fireEvent.click(screen.getByText("Why this diagnosis?"));
@@ -60,7 +65,56 @@ describe("failure explanation", () => {
     expect(screen.getByText(warning)).toBeTruthy();
     expect(screen.getByText("< 1 ms")).toBeTruthy();
   });
-  it("explains requests the server left unanswered with a shortfall that counts them", () => {
+  it("explains late answers the server still handled as orders", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "interrupted_requests" };
+    input.transportAttemptCounts = {
+      plannedRequests: 10000,
+      startedRequests: 10000,
+      completedRequests: 6590,
+      interruptedRequests: 3410,
+      unstartedRequests: 0,
+    };
+    input.httpSummary = { ...input.httpSummary, acceptedResponses: 6590, soldOutResponses: 0 };
+    input.businessOutcomeSummary = {
+      ...input.businessOutcomeSummary,
+      acceptedReservations: 10000,
+      reservedUnits: 10000,
+      soldOutRejections: 0,
+      confirmedOrders: 10000,
+      notificationsRecorded: 10000,
+    };
+    render(<RunFailureExplanation evidence={input} />);
+    expect(screen.getByRole("heading", { name: "Answers arrived too late" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The server needed more time than the load generator waits: 3,410 buyers were still waiting for their answer when the generator stopped listening, 30 seconds after its sending window closed.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("3,410 of 10,000 answers arrived too late (34.1%).")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The server still handled those requests: all 10,000 orders were reserved, confirmed and notified. Only their answers came too late to be recorded. These buyers waited at least 30 seconds without an answer, so the run counts as failed.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "All 10,000 accepted orders were confirmed and notified, including those whose answer arrived too late.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "3,410 answers arrived too late to be recorded; outcomes and latency cover only the recorded answers.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/never sent|requests completed|launched requests/)).toBeNull();
+  });
+  it("does not claim the server handled late answers its own counts do not cover", () => {
     const input = evidence();
     input.failureDiagnostic = { cause: "interrupted_requests" };
     input.transportAttemptCounts = {
@@ -71,24 +125,22 @@ describe("failure explanation", () => {
       unstartedRequests: 2,
     };
     input.httpSummary.soldOutResponses = 6267;
-    input.businessOutcomeSummary.soldOutRejections = 6267;
+    input.businessOutcomeSummary.soldOutRejections = 8498;
     render(<RunFailureExplanation evidence={input} />);
-    expect(screen.getByRole("heading", { name: "Server did not answer in time" })).toBeTruthy();
-    expect(
-      screen.getByText(
-        /The server may still have processed these requests; their answers came too late for the load generator\./,
-      ),
-    ).toBeTruthy();
     expect(screen.getByText("2 planned requests were never sent.")).toBeTruthy();
+    expect(screen.getByText("2,231 of 9,998 answers arrived too late (22.31%).")).toBeTruthy();
     expect(
       screen.getByText(
-        "2,231 launched requests were still waiting for an answer when the load generator stopped.",
+        "These buyers waited at least 30 seconds without an answer, so the run counts as failed.",
       ),
     ).toBeTruthy();
+    expect(screen.queryByText(/The server still handled those requests/)).toBeNull();
+    expect(screen.getByText("All 1,500 accepted orders were confirmed and notified.")).toBeTruthy();
     expect(
-      screen.getByText(/7,767 of 10,000 requests completed \(22.33% shortfall\)/),
+      screen.getByText(
+        "2 planned requests were never sent. 2,231 answers arrived too late to be recorded; outcomes and latency cover only the recorded answers.",
+      ),
     ).toBeTruthy();
-    expect(screen.queryByText("2,231 launched requests did not complete.")).toBeNull();
   });
   it("counts interrupted requests in the shortfall of an unidentified failure", () => {
     const input = evidence();
@@ -112,7 +164,7 @@ describe("failure explanation", () => {
     render(<RunFailureExplanation evidence={input} />);
     expect(screen.getByText("3 planned requests were never sent.")).toBeTruthy();
     expect(screen.getByText(/93 of 100 requests completed \(7% shortfall\)/)).toBeTruthy();
-    expect(screen.getByText("4 launched requests did not complete.")).toBeTruthy();
+    expect(screen.getByText("4 answers arrived too late to be recorded.")).toBeTruthy();
   });
   it("preserves transport losses and unsettled business outcomes without guessing a cause", () => {
     const input = evidence();
@@ -130,7 +182,7 @@ describe("failure explanation", () => {
     expect(screen.queryByText(/All sent requests completed/)).toBeNull();
     expect(screen.getByText("3 attempts ended in transport failure.")).toBeTruthy();
     expect(screen.getByText("Unexpected responses recorded: 1.")).toBeTruthy();
-    expect(screen.getByText("2 launched requests did not complete.")).toBeTruthy();
+    expect(screen.getByText("2 answers arrived too late to be recorded.")).toBeTruthy();
     expect(screen.queryByText("Recorded k6 output")).toBeNull();
   });
 });

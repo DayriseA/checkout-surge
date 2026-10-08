@@ -75,7 +75,7 @@ Each line of the results file is one run, copied from its admin run detail:
 | --- | --- |
 | `host` | CPU count, CPU model and memory of the machine the script runs on |
 | `config`, `conservativeEstimateSeconds` | The accepted configuration and its admission estimate |
-| `status`, `deliveryStatus`, `failureReason`, `failureDiagnostic` | Outcome, delivery classification and failure reason (`virtual_user_limit` when k6 ran out of VUs) |
+| `status`, `deliveryStatus`, `failureReason`, `failureDiagnostic` | Outcome, delivery classification and failure reason (`virtual_user_limit` when k6 ran out of VUs and left too many requests unsent, `interrupted_requests` when too many answers arrived after k6 stopped listening) |
 | `times` | Run start, traffic start and end, finalization, overall duration |
 | `requests`, `droppedIterations`, `completedIterations` | Planned, started, completed, interrupted and unstarted requests; k6 iterations |
 | `responses` | Accepted and sold-out answers, transport failures, unexpected responses, request-duration p95 |

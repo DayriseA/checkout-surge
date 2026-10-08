@@ -730,7 +730,7 @@ describe("run history", () => {
     const markup = renderToStaticMarkup(createElement(PublicRunHistoryDetail, { detail }));
 
     expect(markup).toMatch(
-      /role="status"[^>]*>Evidence incomplete: planned checkout attempts and checkout responses completed by the load generator require reconciliation\./,
+      /role="status"[^>]*>Evidence incomplete: accepted responses observed by the load generator and unique reservations secured require reconciliation\. The load generator did not record an answer for every planned request/,
     );
     expect(markup).toContain("Only attempts that reached a response are included");
   });

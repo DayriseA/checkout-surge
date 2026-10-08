@@ -58,6 +58,9 @@ function publicReconciliationReason(item: Reconciliation): string | null {
       ) {
         return "The durable reservation count is not available for comparison.";
       }
+      if (item.classification === "evidence_incomplete" && item.incompleteReason === "partial") {
+        return "The load generator did not record an answer for every planned request, so its count cannot match the server's.";
+      }
       return null;
     case "sold_out_decisions_vs_responses":
       if (item.classification === "expected_population_difference") {
@@ -340,6 +343,11 @@ function classificationExplanation(classification: Reconciliation["classificatio
   }
 }
 
+// Population labels are written as headings; lowercase a capitalized word, not an acronym, mid-sentence.
+function inSentence(label: string): string {
+  return /^[A-Z][a-z]/.test(label) ? label.charAt(0).toLowerCase() + label.slice(1) : label;
+}
+
 function ReconciliationStatus({ result }: { result: RunResult }) {
   if (
     result.maximumClassification !== "evidence_incomplete" &&
@@ -356,7 +364,7 @@ function ReconciliationStatus({ result }: { result: RunResult }) {
     matchingReconciliations[0];
   const reason = reconciliation ? publicReconciliationReason(reconciliation) : null;
   const explanation = reconciliation
-    ? `${publicPopulationLabel(reconciliation, "left")} and ${publicPopulationLabel(reconciliation, "right")} require reconciliation.${reason ? ` ${reason}` : ""}`
+    ? `${inSentence(publicPopulationLabel(reconciliation, "left"))} and ${inSentence(publicPopulationLabel(reconciliation, "right"))} require reconciliation.${reason ? ` ${reason}` : ""}`
     : "Some final evidence was unavailable.";
   const incomplete = result.maximumClassification === "evidence_incomplete";
 
