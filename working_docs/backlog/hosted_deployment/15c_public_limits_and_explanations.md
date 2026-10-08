@@ -50,3 +50,4 @@ _None yet._
 
 - The Fly values hold at the targets: 2,500/s sold out is 71 % of C_s, and 2,200/s with stock 1,000 is the model's 80 % point.
 - **Watch:** with stock 1,000 the mean iteration time (3.05 to 3.28 s) slightly exceeds the 3 s VU budget. The runs completed, with little VU margin.
+- **Owner decision (2026-10-08):** raise Fly's `CAPACITY_VU_LATENCY_BUDGET_SECONDS` to 4 s for VU margin with stock. That gives 8,800 VUs at 2,200/s, about 2.5 GB of k6 memory on the 16 GB runner, and the 10,000 cap at 2,500/s.
