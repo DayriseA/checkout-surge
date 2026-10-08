@@ -66,3 +66,13 @@ A run started right after another one never fails because the runner Machine is 
   1. Start a run within about 1 s of the previous run's terminal state.
   2. Expect one or more "The runner Machine did not start." warnings with `failure: "still_active"`, then a normal start. Record how many 1 s retries it took.
   3. Confirm that the 412 wording still contains "machine still active", that the 1 s retries draw no 429, and that no "Stopping the runner Machine through Fly." warning appears.
+
+### Live verification (2026-10-08)
+
+- Fly at `e0895f10`, fresh core `8d14e1bed94708`. Two back-to-back pairs through the measurement script (constant arrival 50/s for 5 s, stock 1, 100 VUs, fastest ERP): all four runs completed, delivery `complete`, 250/250 completed.
+- **No refusal happened, so the retry was not exercised.** The script's 5 s detail poll put each second start 3 to 4.5 s after the runner's exit (exit 02:53:30.35, start 02:53:34.72; exit 02:55:09.97, start 02:55:13.18). The API logged no warning at all: no `still_active`, no 429, no "Stopping the runner Machine through Fly.". The 15a refusal followed a 10,000-VU run, whose runner exit may take longer than these small runs'.
+- Second session: the planned retest (a 50/s run started within 0.5 s of a 10,000-VU run's terminal state) was not run, for the same refused start (see task 18's notes). The retry is still unexercised on Fly.
+
+**Third session (2026-10-08, 10:20 UTC, run by the owner with Codex).** A small run started 2.8 s after the heavy run's finalization; the runner Machine started 3 s after the previous runner exited. No 412, no "The runner Machine did not start." warning, no 429, no stop warning. The race was not reproduced in three tries.
+
+**Closure (owner decision, 2026-10-08):** done. The live retry path stays unobserved; 13d reads the logs for `still_active` warnings.

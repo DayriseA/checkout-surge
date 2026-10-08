@@ -78,3 +78,21 @@ A run whose requests were interrupted is never reported as complete, to the owne
 - **Tests.** New unidentified case (100 planned, 97 started, 93 completed → 7 %); the interrupted case now has coherent sold-out counts and checks the never-sent line and the new sentence.
 - **HD-58.** Renamed "Interrupted requests count in the delivery shortfall, like unstarted ones"; the Decision separates delivery `complete` from run success; the evidence is no longer called hosted. "answered" became "completed" in `core_business_entities.md` and the classifier comment.
 - **Checks.** Biome clean, `pnpm type-check` passes, web 754 and api 330 unit tests pass. Docker unavailable; the API suite already passed in the cloud verification and this pass changes no API behavior.
+
+### Live verification (2026-10-08)
+
+- Fly at `e0895f10`, fresh core `8d14e1bed94708` (recreated by the wake, history empty, policy as seeded).
+- Public `preview-1k` (`28607ae5-8c5c-47b2-916e-60c3050e7d79`): completed, delivery `complete`, 1,000/1,000 completed, 0 interrupted, 0 unstarted, 0 failed. The public report shows "All planned attempts completed" and "Reply coverage" (its caption still reads "of dispatched attempts").
+- **The failure run was not reproduced.** Admin run `1a6601db-5998-495b-b56d-0da1146ffd02` (constant arrival 1,000/s for 10 s, stock 10,000, 10,000 VUs, fastest ERP), kept in history: completed, delivery `complete`, 10,000/10,000 completed, 0 interrupted, 0 unstarted, 0 failed, p95 25.3 s, no diagnostic, finalized 2 min 16 s after its start. The fresh core answered about 273 accepted orders per second (10,000 in 36.7 s, first attempt to k6 end), against 236 to 244/s in 15a, so every order was answered within k6's 30 s graceful stop. The interrupted path stays verified by the API tests only.
+- Second session (owner-approved, core woken by the owner at about 03:26 UTC): the kept run `1a6601db-…` was torn down (`deleted`, 30 s; public detail now 404). The heavy failure run (constant arrival 10,000/s for 1 s, stock 10,000, 10,000 VUs, kept in history) was not run: the agent's permission system refused the detached start of the series in the API container. The interrupted-requests failure is still unverified on Fly.
+
+**Third session (2026-10-08, 10:20 UTC, run by the owner with Codex after the permission system refused the agent's in-container commands).**
+
+- Run `6d4c026d-cc13-4364-87de-23c268ded43a`: constant arrival 10,000/s for 1 s, stock 10,000, 10,000 VUs, kept in history.
+  - Status and delivery `failed`, reason `traffic_delivery_major_shortfall`.
+  - 10,000 planned and started, 6,590 completed, 3,410 interrupted (34.1 %), 0 unstarted, 0 failed.
+  - All 10,000 orders reserved, confirmed and notified.
+- **The diagnostic read `virtual_user_limit`,** not `interrupted_requests`: k6 logged one "Insufficient VUs" warning for 2 dropped iterations, and the VU check comes first. The "Server did not answer in time" block never showed.
+- **Owner review of the page (2026-10-08).** The report is confusing and erodes trust. It says the generator hit its VU limit, that 3,410 requests "did not complete", and that all 10,000 accepted orders were confirmed. A visitor reads that as fake numbers.
+  - The page never says that the server handled those requests and that only their answers arrived after the generator stopped listening.
+  - Second pass approved: the diagnosis takes the dominant cause, and new texts replace the explanation.
