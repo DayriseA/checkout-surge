@@ -34,6 +34,7 @@ export const errorPayloadCodes = [
   "invalid_run_configuration",
   "invalid_runtime_policy",
   "estimated_duration_rejected",
+  "estimated_capacity_rejected",
   "run_cleanup_conflict",
   "load_orchestrator_unavailable",
   "load_orchestrator_abort_unconfirmed",

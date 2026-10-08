@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { largestAllowedErpLatencyMs } from "./erp.js";
 import { inventoryConfigSchema, trafficConfigSchema } from "./load.js";
-import { nonnegativeNumberSchema, percentageSchema, positiveIntegerSchema } from "./primitives.js";
+import {
+  nonnegativeIntegerSchema,
+  nonnegativeNumberSchema,
+  percentageSchema,
+  positiveIntegerSchema,
+} from "./primitives.js";
 
 /**
  * Initial estimated demo-occupancy ceiling. Inclusive, in seconds,
@@ -172,7 +177,83 @@ export const estimatorResultSchema = z
   });
 export type EstimatorResult = z.infer<typeof estimatorResultSchema>;
 
-export const estimatePreviewSchema = z.object({ result: estimatorResultSchema }).strict();
+/**
+ * Whether a run is expected to complete on the deployment's measured capacity: every planned
+ * request started and answered, none failed.
+ */
+export const capacityVerdictValues = [
+  "expected_to_complete",
+  "at_the_limit",
+  "expected_to_fail",
+] as const;
+export const capacityVerdictSchema = z.enum(capacityVerdictValues);
+export type CapacityVerdict = z.infer<typeof capacityVerdictSchema>;
+
+/**
+ * For one setting, the others unchanged, the value with which the run is expected to complete:
+ * the largest rate, buyer count or stock, the smallest safety cutoff. `null` when no value of
+ * that setting alone is enough. Present only when the run is not expected to complete.
+ */
+const constantArrivalCapacityFitSchema = z
+  .object({
+    ratePerSecond: positiveIntegerSchema.nullable(),
+    startingStock: nonnegativeIntegerSchema.nullable(),
+  })
+  .strict();
+const buyerSpikeCapacityFitSchema = z
+  .object({
+    buyerCount: positiveIntegerSchema.nullable(),
+    startingStock: nonnegativeIntegerSchema.nullable(),
+    maxDurationSeconds: positiveIntegerSchema.nullable(),
+  })
+  .strict();
+
+export const capacityAssessmentSchema = z.discriminatedUnion("mode", [
+  z
+    .object({
+      mode: z.literal("constant-arrival-rate"),
+      verdict: capacityVerdictSchema,
+      // The assessed settings, so that a message about the run needs nothing else.
+      ratePerSecond: positiveIntegerSchema,
+      durationSeconds: positiveIntegerSchema,
+      startingStock: nonnegativeIntegerSchema,
+      /** Orders the run can accept: the stock in units of one attempt, at most the planned requests. */
+      acceptedOrders: nonnegativeIntegerSchema,
+      /** Answers per second the API needs: the rate, plus the accepted orders' extra cost. */
+      loadPerSecond: nonnegativeNumberSchema,
+      capacityPerSecond: nonnegativeNumberSchema,
+      /** Most accepted orders the database pool answers before the load generator stops waiting. */
+      poolOrderLimit: nonnegativeNumberSchema,
+      fit: constantArrivalCapacityFitSchema.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      mode: z.literal("buyer-spike"),
+      verdict: capacityVerdictSchema,
+      buyerCount: positiveIntegerSchema,
+      startingStock: nonnegativeIntegerSchema,
+      acceptedOrders: nonnegativeIntegerSchema,
+      timeToServeSeconds: nonnegativeNumberSchema,
+      /** The safety cutoff, at most the load generator's request timeout. */
+      windowSeconds: positiveIntegerSchema,
+      fit: buyerSpikeCapacityFitSchema.optional(),
+    })
+    .strict(),
+]);
+export type CapacityAssessment = z.infer<typeof capacityAssessmentSchema>;
+
+export const estimatePreviewSchema = z
+  .object({
+    result: estimatorResultSchema,
+    capacity: capacityAssessmentSchema,
+    /**
+     * The VUs a constant-arrival run at this rate gets when it sets none (`null` for a buyer
+     * spike), so that explicit VUs below them can be flagged before the start.
+     */
+    automaticVus: positiveIntegerSchema.nullable(),
+  })
+  .strict();
 
 /** Start rejection details, consumed by the dashboard before any run exists. */
 export const estimateAdmissionRejectionDetailsSchema = z.discriminatedUnion("reason", [

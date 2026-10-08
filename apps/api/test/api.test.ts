@@ -21,6 +21,7 @@ import {
   type BusinessOutcomeSummary,
   buyOutcomeHeaderName,
   buyResponseSchema,
+  capacityAssessmentSchema,
   controlServiceTokenHeaderName,
   type DashboardProjection,
   type DemoRunSnapshot,
@@ -123,6 +124,11 @@ import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
 import { type BuildApiServerOptions, buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
+import {
+  assessCapacity,
+  localDeploymentCapacity,
+  requireCapacityAdmission,
+} from "../src/services/capacity-admission.js";
 import { disabledCoreIdleShutdown } from "../src/services/core-idle-stop.js";
 import type { DashboardRecoveryAdmissionController } from "../src/services/dashboard-recovery-admission.js";
 import {
@@ -602,6 +608,12 @@ function demoRunLifecycleControllerFixture(): DemoRunLifecycleController {
         demoRunSnapshotFixture().configSnapshot,
         publicRuntimePolicyFixture(),
       ),
+      capacity: assessCapacity(
+        demoRunSnapshotFixture().configSnapshot,
+        localDeploymentCapacity,
+        () => true,
+      ),
+      automaticVus: null,
     }),
     startRun: async (_request, correlationId) => ({
       run: demoRunSnapshotFixture(),
@@ -1877,7 +1889,15 @@ describe("API gateway routes", () => {
       ...publicRuntimePolicyFixture(),
       estimatedDemoOccupancyCeilingSeconds: 1,
     });
-    const previewRun = vi.fn(async () => ({ result }));
+    const previewRun = vi.fn(async () => ({
+      result,
+      capacity: assessCapacity(
+        acceptedRunConfigSnapshotFixture(),
+        localDeploymentCapacity,
+        () => true,
+      ),
+      automaticVus: null,
+    }));
     const server = await trackedServer({
       persistence: new AcceptingPersistence(),
       demoRunLifecycleService: {
@@ -1913,6 +1933,50 @@ describe("API gateway routes", () => {
     expect(estimateAdmissionRejectionDetailsSchema.parse(start.json().details)).toMatchObject({
       reason: "over_ceiling",
       effectiveCeilingSeconds: 1,
+    });
+  });
+
+  it("refuses a run not expected to complete with its capacity assessment as 400", async () => {
+    const assessment = assessCapacity(
+      {
+        ...acceptedRunConfigSnapshotFixture(),
+        trafficConfig: {
+          mode: "constant-arrival-rate",
+          ratePerSecond: 2_500,
+          durationSeconds: 10,
+          startDelaySeconds: 0,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: { startingStock: 0 },
+      },
+      localDeploymentCapacity,
+      () => true,
+    );
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      demoRunLifecycleService: {
+        ...demoRunLifecycleControllerFixture(),
+        startRun: async () => {
+          requireCapacityAdmission(assessment);
+          throw new Error("Expected rejection");
+        },
+      },
+    });
+    const start = await server.inject({
+      method: "POST",
+      url: startDemoRunPath,
+      headers: {
+        [controlServiceTokenHeaderName]: "test-control-token",
+        [demoRunOperatorModeHeaderName]: "public",
+        [publicVisitorIdHeaderName]: "signed-visitor-1",
+      },
+      payload: { presetSlug: "public-custom" },
+    });
+    expect(start.statusCode).toBe(400);
+    expect(start.json().code).toBe("estimated_capacity_rejected");
+    expect(capacityAssessmentSchema.parse(start.json().details)).toMatchObject({
+      verdict: "at_the_limit",
+      fit: { ratePerSecond: 2_400, startingStock: null },
     });
   });
 

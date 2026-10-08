@@ -379,6 +379,16 @@ describe("API runtime configuration", () => {
     ).toThrow(new RegExp(name));
   });
 
+  it.each([
+    [{ CAPACITY_VU_LATENCY_BUDGET_SECONDS: "0" }, /CAPACITY_VU_LATENCY_BUDGET_SECONDS/],
+    [{ CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_ORDER_COST: "0.5" }, /constantArrivalAcceptedOrderCost/],
+    [{ CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND: "2000" }, /must not exceed sold-out answers/],
+  ])("rejects an unusable deployment capacity (%o)", (override, message) => {
+    expect(() =>
+      loadApiConfig({ ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token", ...override }),
+    ).toThrow(message);
+  });
+
   it("rejects a readiness deadline outside the Compose healthcheck budget", () => {
     expect(() =>
       loadApiConfig({

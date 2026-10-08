@@ -2510,7 +2510,7 @@ describe("public runtime policy contract", () => {
     expect(publicRuntimePolicyPersistedSchema.safeParse(mutable).success).toBe(false);
   });
 
-  it("validates automatic default VUs against deployment caps only for effective policy", () => {
+  it("leaves absent default VUs to admission, which resolves them within the deployment caps", () => {
     const effective = semanticRuntimePolicy();
     effective.publicCustomDefaults.trafficConfig = {
       mode: "constant-arrival-rate",
@@ -2521,30 +2521,9 @@ describe("public runtime policy contract", () => {
     };
     effective.deploymentHardCaps.maxPreAllocatedVus = 10;
     effective.deploymentHardCaps.maxVus = 10;
-    const { deploymentHardCaps: _deploymentHardCaps, ...mutable } = effective;
 
-    expect(collectPublicRuntimePolicyMutableViolations(mutable)).toEqual([]);
-    expect(publicRuntimePolicyPersistedSchema.safeParse(mutable).success).toBe(true);
-    expect(collectPublicRuntimePolicyViolations(effective)).toEqual([
-      {
-        code: "public_custom_default_deployment_max_vus_exceeded",
-        message: "Public custom defaults must fit within the active public runtime policy.",
-        details: { value: 12, cap: 10 },
-        path: ["publicCustomDefaults", "trafficConfig", "k6Vus", "maxVus"],
-      },
-    ]);
-
-    const parsed = publicRuntimePolicySchema.safeParse(effective);
-    expect(parsed.success).toBe(false);
-    if (!parsed.success) {
-      expect(parsed.error.issues[0]).toMatchObject({
-        path: ["publicCustomDefaults", "trafficConfig", "k6Vus", "maxVus"],
-        params: {
-          violationCode: "public_custom_default_deployment_max_vus_exceeded",
-          details: { value: 12, cap: 10 },
-        },
-      });
-    }
+    expect(collectPublicRuntimePolicyViolations(effective)).toEqual([]);
+    expect(publicRuntimePolicySchema.safeParse(effective).success).toBe(true);
   });
 
   it("resolves automatic constant-arrival VUs with one capped neutral rule", () => {
@@ -2573,44 +2552,38 @@ describe("public runtime policy contract", () => {
     ).toEqual({ preAllocatedVus: 12_000, maxVus: 15_000 });
   });
 
-  it.each([
-    {
-      ratePerSecond: 51,
-      maxPreAllocatedVus: 50,
-      maxVus: 200,
-      expectedCode: "deployment_preallocated_vus_exceeded",
-      expectedDetails: { value: 51, cap: 50 },
-    },
-    {
-      ratePerSecond: 26,
-      maxPreAllocatedVus: 50,
-      maxVus: 50,
-      expectedCode: "deployment_max_vus_exceeded",
-      expectedDetails: { value: 52, cap: 50 },
-    },
-  ])("applies the $expectedCode deployment cap to automatically derived VUs", (fixture) => {
+  it("applies the deployment VU caps to explicit VUs only", () => {
     const policy = semanticRuntimePolicy();
-    policy.deploymentHardCaps.maxPreAllocatedVus = fixture.maxPreAllocatedVus;
-    policy.deploymentHardCaps.maxVus = fixture.maxVus;
-    const snapshot: AcceptedRunConfigSnapshot = {
-      ...acceptedRunSnapshot(),
-      trafficConfig: {
-        mode: "constant-arrival-rate",
-        ratePerSecond: fixture.ratePerSecond,
-        startDelaySeconds: 0,
-        durationSeconds: 1,
-        quantityPerAttempt: 1,
-      },
-    };
+    policy.deploymentHardCaps.maxPreAllocatedVus = 50;
+    policy.deploymentHardCaps.maxVus = 50;
+    const violations = (k6Vus?: { preAllocatedVus: number; maxVus: number }) =>
+      collectAcceptedRunConfigSnapshotViolations(
+        {
+          ...acceptedRunSnapshot(),
+          trafficConfig: {
+            mode: "constant-arrival-rate",
+            ratePerSecond: 100,
+            startDelaySeconds: 0,
+            durationSeconds: 1,
+            quantityPerAttempt: 1,
+            ...(k6Vus ? { k6Vus } : {}),
+          },
+        },
+        policy,
+        { operatorMode: "admin", enforcePublicCustomLimits: false },
+      );
 
     expect(collectPublicRuntimePolicyViolations(policy)).toEqual([]);
-    expect(
-      collectAcceptedRunConfigSnapshotViolations(snapshot, policy, {
-        operatorMode: "admin",
-        enforcePublicCustomLimits: false,
+    expect(violations()).toEqual([]);
+    expect(violations({ preAllocatedVus: 51, maxVus: 52 })).toEqual([
+      expect.objectContaining({
+        code: "deployment_preallocated_vus_exceeded",
+        details: { value: 51, cap: 50 },
       }),
-    ).toEqual([
-      expect.objectContaining({ code: fixture.expectedCode, details: fixture.expectedDetails }),
+      expect.objectContaining({
+        code: "deployment_max_vus_exceeded",
+        details: { value: 52, cap: 50 },
+      }),
     ]);
   });
 

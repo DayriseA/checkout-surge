@@ -84,4 +84,43 @@ Details, fit errors, alternatives and caveats: [15a's working notes](15a_capacit
 
 ## Working Notes
 
-_None yet._
+### Implementation up to the message checkpoint (2026-10-08)
+
+- **Model:** `apps/api/src/services/capacity-admission.ts`, beside the duration estimator: `assessCapacity` (pure), `requireCapacityAdmission`, `withResolvedConstantArrivalVus`, the strict `deploymentCapacitySchema` (k ≥ 1; accepted rates at most the sold-out ones, which keeps every setting monotonic for the "largest fit" search) and `localDeploymentCapacity` (code defaults). Reuses `k6GracefulStopSeconds`; k6's 60 s request timeout, the 80 % share and the 10 s window are local constants.
+- **Wire shape:** `capacityAssessmentSchema` in `packages/contracts/src/estimate.ts`. The preview returns `{ result, capacity }`; a refused public custom start answers 400 `estimated_capacity_rejected` with the assessment as details. Constant arrival: `verdict`, `acceptedOrders`, `loadPerSecond`, `capacityPerSecond`, `poolOrderLimit`; buyer spike: `verdict`, `acceptedOrders`, `timeToServeSeconds`, `windowSeconds` (= min(cutoff, 60)). When not expected to complete, `fit` gives, one setting at a time, the largest rate / buyer count / stock and the smallest cutoff expected to complete (`null`: no value of that setting alone fits).
+- **Buyer spike with duplicate clicks:** A ≤ the unique buyers (duplicates share an idempotency key), and the sold-out term counts every planned request (2N − A). Equal to the settled formula without duplicates.
+- **Env:** `CAPACITY_CONSTANT_ARRIVAL_SOLD_OUT_PER_SECOND`, `CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_PER_SECOND`, `CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_ORDER_COST`, `CAPACITY_BUYER_SPIKE_SOLD_OUT_PER_SECOND`, `CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND`, `CAPACITY_VU_LATENCY_BUDGET_SECONDS`: Fly values in `infra/fly/core/machine.json`, local values in `docker-compose.yml`, both `.env.example`, the `docs/local_development.md` table, and as code defaults.
+- **Admission order:** credential → caps and public limits on the requested configuration → VU resolution → run conflict → estimator → capacity (public custom only) → public run budget. Preview: same resolution, returns both.
+- **Resolved vs explicit VUs:** told apart by order, not by a stored mark. Validation runs on the configuration the caller sent; VUs are resolved after it, within the deployment VU caps, and stored as explicit `k6Vus`. Nothing validates a stored snapshot again (checked: only `resolveValidatedConfig` and the web admin draft check call the validator, both before resolution). The deployment VU caps now apply to explicit VUs only (absent VUs are capped by construction); the contracts and policy-service tests that pinned the old cap check on derived VUs were rewritten. `resolveConstantArrivalVus` keeps the rate / 2 × rate derivation for stored runs without VUs and for configurations not yet admitted (only their planned request count is read).
+- **HD-14:** the runner receives the stored snapshot, so `deriveLoadExecutionPlan` reads the same explicit VUs on both sides and the completion binding's deep-equal holds; the runner needs no setting.
+- **Public presets:** `buildSeedPresets` moved from `packages/db/src/scripts/seed.ts` to `packages/db/src/seed-presets.ts` and is exported from `@checkout-surge/db`; `apps/api/test/unit/capacity-admission.test.ts` reads both deployments' values from `machine.json` and `docker-compose.yml` and pins every public preset as expected to complete (largest share: local `surge-10k`, 11.5 s of 48 s).
+- **Local runs, estimated (not measured):** at the local public limit of 1,000/s, 3,000 VUs pre-allocated instead of 1,000 (max 2,000): about 0.7 GB of k6 memory instead of 0.2 to 0.45 GB at about 225 kB per VU. From about 3,334/s, admin runs hit `DEMO_MAX_VUS` (10,000): about 2.3 GB, 3.7 GB peak on cloud A. Each VU that runs an iteration keeps its own keep-alive connection, so up to one API connection per VU: 3,000 at the public limit, 10,000 at the cap, well within `nofile` (1,048,576), the 8,192 listen backlog and the generator's 55,296 ports. The local budget itself is still provisional (15a).
+- **Decision log:** HD-59 (default VUs resolved at admission; supersedes HD-53, whose premise was the old allocation; the public rate value stays until 15c measures) and HD-60 (public custom runs admitted only when expected to complete, admin warned).
+- **Checks:** Biome, `pnpm type-check`, unit tests of contracts, db, api and web pass. API service tests that need PostgreSQL/Redis (`demo-run-service.test.ts`, `public-runtime-policy-service.test.ts`) were written but not run: Docker was down. The route-level tests in `api.test.ts` that need no database pass. `load-orchestrator` unit tests fail on this Windows workstation with `EPERM: fsync`, untouched by this task.
+- **UI:** placeholders only (`capacityRefusalCopy`, `capacityWarningCopy` in `estimate-presentation.ts`); the refusal blocks the public custom start, the admin warning shows in "Start this run?" without blocking. Field hints rewritten (`maxVus`, `publicDefaults`, `maxPreAllocatedVus`, `maxPublicVus`).
+
+### Messages wired (2026-10-08, after the owner approved the checkpoint)
+
+- The owner's wording is in `apps/web/src/app/lib/presentation/capacity-presentation.ts`. The preview still shows nothing for a run expected to complete. The public refusal shows from the preview and from the API's `estimated_capacity_rejected`. The admin warning shows in "Start this run?". The HD-25 allowlist is unchanged.
+- The assessment now echoes the assessed settings (rate, duration and stock for constant arrival; buyers and stock for a buyer spike), so a message needs nothing but the assessment. `k6RequestTimeoutSeconds` moved to contracts, beside `k6GracefulStopSeconds`.
+- **Rules:** stock counts as an issue only when less stock, still at least 1 unit, would fit (`fit.startingStock` > 0). Otherwise the stock mention and "or the stock" are dropped. `null` clauses are dropped, and nouns and "fit/fits" agree with 1. A buyer spike says "too close to" at the limit and "more than" past its window.
+- **Additions not in the approved wording:**
+  - The buyer-spike refusal opens with the same "too heavy" headline.
+  - The admin "Expected to complete" clause also lists the stock when it fits.
+  - Admin buyer spikes bound by their cutoff get "Near…: about {time} to answer, {pct} % of the {cutoff}-second safety cutoff" (at the limit) or "Beyond…: …, more than the {cutoff}-second safety cutoff. Expect a failed delivery: answers arriving too late, or requests never sent before the cutoff." (expected to fail).
+- **Checks:** Biome, `pnpm type-check`, unit tests of contracts, db, api and web, and the database-free route tests in `api.test.ts` pass. The database-backed API tests are still not run.
+
+### Fix pass after review, cloud verification and arbitration (2026-10-08)
+
+- **Cloud boundary failure (4 vCPU VM, local values):**
+  - 1,000/s for 10 s with stock 1,000 sits exactly at the 80 % line, so it is classed expected to complete. It failed, with 2,770 requests unstarted and a p95 of 13.9 s.
+  - A run at 92 % failed too.
+  - k6 used 813 MB RSS at 3,000 VUs, against the 0.7 GB estimated above.
+  - Owner decision: 15c confirms the values on Fly and on a cloud VM before raising the limits, and adjusts the env values, the VU budget included. The values are unchanged here.
+- **Cutoff suggestion:** `assessCapacity` takes an `admitsCutoff` predicate. The service checks the smallest completing cutoff against the duration estimate and the run limits; if they refuse it, the suggestion is `null`. Reviewer case (local, 10,000 buyers, stock 970, cutoff 1 s, ERP 100 ms / 5 TPS / 5 %, concurrency 5): the estimate is 591 s at 1 s and 608 s at 18 s, so the result is buyers 124 and cutoff `null`.
+- **Admin VUs:**
+  - The run editor leaves both VU fields empty by default, which means automatic allocation. Filling one requires the other. Previews show "automatic".
+  - The preview now returns `automaticVus`. "Start this run?" warns when the explicit pre-allocated VUs are below it.
+  - The seeded `admin-smoke-constant` and `admin-failure-path` explicit VUs (10/50, 10/60) dated from the initial seed with no recorded reason, and would have triggered the warning (10 against 60 and 45). They are now automatic. Existing rows keep their values until a fresh core or reset, because those presets are not overwritten on reseed.
+- **Public wording:** owner rewrites applied: "requests per second" for constant arrival, the "too close to the demo server's limit" opening and the "{pct}% of what the server can sustain" clause at the limit, and the server sentence in buyer-spike refusals. The presentation tests now use only fixtures the model can produce.
+- `demo-run-service.test.ts`: the duplicate-preview test compares only `result` and checks the capacity time separately. A new test covers the reviewer's case.

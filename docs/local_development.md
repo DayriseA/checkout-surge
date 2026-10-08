@@ -492,6 +492,12 @@ Most infrastructure URLs have local defaults, but every run/control service chan
 | `ESTIMATOR_SETTLEMENT_OVERHEAD_SECONDS` | `15` | Estimator delay between the last notification and run finalization (positive number); same calibration origin |
 | `ESTIMATOR_TRANSIENT_ERROR_DEMAND_MARGIN` | `1.25` | Estimator margin multiplying the `1/(1-p)` retry demand (number at least 1); same calibration origin |
 | `ESTIMATOR_EXCESS_ATTEMPT_PAUSE_SECONDS` | `1` | Estimator pause per excess attempt, anchored to the mock ERP `Retry-After: 1` (positive number) |
+| `CAPACITY_CONSTANT_ARRIVAL_SOLD_OUT_PER_SECOND` | `3000` | Sold-out answers per second over reused connections (C<sub>s</sub>), for capacity-aware admission. The `CAPACITY_*` defaults were measured on a 4 vCPU / 16 GB cloud VM running the whole stack; re-measure per deployment with the [capacity measurement procedure](capacity_measurement.md) |
+| `CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_PER_SECOND` | `195` | Accepted orders the API's database pool answers per second in constant arrival (C<sub>a</sub>) |
+| `CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_ORDER_COST` | `15` | What an accepted order costs the API, in sold-out answers, in constant arrival (k, at least 1); provisional locally, not fitted |
+| `CAPACITY_BUYER_SPIKE_SOLD_OUT_PER_SECOND` | `1150` | Sold-out buyers answered per second, one new connection each (C′<sub>s</sub>) |
+| `CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND` | `155` | Accepted buyers answered per second (C′<sub>a</sub>); at most the sold-out value, like C<sub>a</sub> |
+| `CAPACITY_VU_LATENCY_BUDGET_SECONDS` | `3` | A constant-arrival run without explicit VUs pre-allocates rate × this budget, all of them, within `DEMO_MAX_PRE_ALLOCATED_VUS` and `DEMO_MAX_VUS`; provisional locally |
 | `DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS` | `5` | API polling interval while waiting for demo run finalization |
 | `PUBLIC_RUN_BUDGET_WINDOW_SECONDS` | `300` | `runtime-setup` first-seed public run-budget window |
 | `PUBLIC_RUN_BUDGET_PER_VISITOR_MAX_STARTS` | `2` | `runtime-setup` first-seed public run-budget per-visitor cap |

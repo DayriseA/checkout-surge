@@ -38,8 +38,8 @@ describe("admin drafts", () => {
     expect(draftFromConfigSnapshot(presetFixture("buyer-spike"))).toMatchObject({
       ratePerSecond: "20",
       durationSeconds: "30",
-      preAllocatedVus: "20",
-      maxVus: "40",
+      preAllocatedVus: "",
+      maxVus: "",
     });
     expect(draftFromConfigSnapshot(presetFixture("constant-arrival-rate"))).toMatchObject({
       buyerCount: "5000",
@@ -101,6 +101,18 @@ describe("admin drafts", () => {
     expect(buildEffectiveRunConfig(draft, preset, policy).fieldErrors.buyerCount?.code).toBe(
       "above_max",
     );
+  });
+
+  it("leaves VUs to automatic allocation when both are empty, and requires the pair otherwise", () => {
+    const preset = presetFixture("constant-arrival-rate");
+    const draft = { ...draftFromPreset(preset), preAllocatedVus: "", maxVus: "" };
+    const automatic = buildEffectiveRunConfig(draft, preset).values?.trafficConfig;
+    expect(automatic?.mode).toBe("constant-arrival-rate");
+    expect(automatic).not.toHaveProperty("k6Vus");
+
+    const half = buildEffectiveRunConfig({ ...draft, preAllocatedVus: "30" }, preset);
+    expect(half.values).toBeUndefined();
+    expect(half.fieldErrors.maxVus?.code).toBe("required");
   });
 
   it("reports both controls in VU relationship failures", () => {
@@ -195,6 +207,7 @@ describe("admin drafts", () => {
     {
       mutate: (draft: ReturnType<typeof draftFromRuntimePolicy>) => {
         draft.mode = "constant-arrival-rate";
+        draft.preAllocatedVus = "10";
         draft.maxVus = "51";
         draft.maxPublicVus = "50";
       },

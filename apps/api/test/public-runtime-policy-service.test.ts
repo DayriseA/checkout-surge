@@ -127,7 +127,7 @@ describe("public runtime policy service", () => {
     expect(row?.policy.publicCustomLimits.maxTotalRequests).toBe(10_000);
   });
 
-  it("rejects an automatic default whose derived max VUs exceed deployment caps", async () => {
+  it("accepts an automatic default whose VUs are resolved within the deployment caps at admission", async () => {
     const activeConnection = requireConnection(connection);
     const service = createService(activeConnection, {
       ...deploymentHardCapsFixture,
@@ -145,18 +145,9 @@ describe("public runtime policy service", () => {
       quantityPerAttempt: 1,
     };
 
-    await expect(
-      service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-default-vus-reject"),
-    ).rejects.toMatchObject({
-      code: "invalid_runtime_policy",
-      details: {
-        value: 12,
-        cap: 10,
-        violationCode: "public_custom_default_deployment_max_vus_exceeded",
-      },
-    });
+    await service.updateAdminPublicRuntimePolicy({ policy }, "corr-policy-default-vus");
     const [row] = await activeConnection.db.select().from(publicRuntimePolicies);
-    expect(row?.policy.publicCustomDefaults.trafficConfig.mode).toBe("buyer-spike");
+    expect(row?.policy.publicCustomDefaults.trafficConfig.mode).toBe("constant-arrival-rate");
   });
 
   it("validates the active policy against current deployment caps before startup", async () => {

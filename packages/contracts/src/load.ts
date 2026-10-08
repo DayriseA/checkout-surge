@@ -93,6 +93,9 @@ export const maximumAutomaticallyDerivedVUs = 10_000;
 /** How long k6 still waits for answers after the traffic ends before it interrupts the requests. */
 export const k6GracefulStopSeconds = 30;
 
+/** k6's default request timeout (the script sets none): a request unanswered this long fails. */
+export const k6RequestTimeoutSeconds = 60;
+
 export interface ResolvedConstantArrivalVus {
   preAllocatedVus: number;
   maxVus: number;
@@ -127,6 +130,11 @@ export function deriveLoadExecutionPlan(traffic: TrafficConfig): LoadExecutionPl
   };
 }
 
+/**
+ * The API writes explicit VUs into every constant-arrival run it accepts, so the runner needs no
+ * deployment setting. The derivation below is how runs accepted before that were executed; it
+ * still applies to stored runs without VUs and to configurations not yet admitted.
+ */
 export function resolveConstantArrivalVus(
   trafficConfig: Pick<ConstantArrivalTrafficConfig, "ratePerSecond" | "k6Vus">,
 ): ResolvedConstantArrivalVus {

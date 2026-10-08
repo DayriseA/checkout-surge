@@ -68,6 +68,8 @@ Every entry in ID order. New entries are added here too.
 | [HD-56](#hd-56-a-core-whose-host-refuses-the-deploy-is-marked-for-a-fresh-recreation) | A core whose host refuses the deploy is marked for a fresh recreation | Deployment and Access |
 | [HD-57](#hd-57-cost-alerts-run-in-an-external-grafana-cloud-not-in-a-scheduled-github-workflow) | Cost alerts run in an external Grafana Cloud, not in a scheduled GitHub workflow | Deployment and Access |
 | [HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones) | Interrupted requests count in the delivery shortfall, like unstarted ones | Runner |
+| [HD-59](#hd-59-the-api-resolves-a-constant-arrival-runs-default-vus-at-admission-all-pre-allocated) | The API resolves a constant-arrival run's default VUs at admission, all pre-allocated | Platform and Topology |
+| [HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused) | Public custom runs are admitted only when expected to complete; admin runs are warned, never refused | Platform and Topology |
 
 ## Platform and Topology
 
@@ -176,7 +178,7 @@ Every entry in ID order. New entries are added here too.
 
 ### HD-53 The public constant-arrival limit stays below what the core sustains, until VU allocation is capacity-aware
 
-- **Status:** accepted
+- **Status:** superseded by [HD-59](#hd-59-the-api-resolves-a-constant-arrival-runs-default-vus-at-admission-all-pre-allocated)
 - **Date:** 2026-10-06
 - **Context:** A visitor's custom run must complete, but the public form sends no VU setting, so k6 pre-allocates VUs in proportion to the rate, and the latency jump at the start of a run exhausts them well below what the core sustains. At twice the public limit, about 1 % of a run's iterations were dropped.
 - **Decision:** The public constant-arrival rate limit (`PUBLIC_CUSTOM_MAX_REQUESTS_PER_SECOND`) is set where every measured run with the default VU allocation was complete. The public VU limits keep their defaults: they bind only callers who set VUs explicitly.
@@ -185,6 +187,47 @@ Every entry in ID order. New entries are added here too.
   - The previous, higher public rate with the default allocation: a run dropped iterations, so its delivery verdict was not clean.
   - Raising only the public VU limits: the form does not use them.
 - **Code:** `PUBLIC_CUSTOM_*` in the `setup` container env of `infra/fly/core/machine.json`; `resolveConstantArrivalVus` in `packages/contracts/src/load.ts`.
+
+### HD-59 The API resolves a constant-arrival run's default VUs at admission, all pre-allocated
+
+- **Status:** accepted
+- **Date:** 2026-10-08
+- **Context:** Without explicit VUs, k6 pre-allocated as many VUs as the rate, and the latency jump at the start of a run exhausted them well below what the core sustains, so the public rate limit was held down to compensate ([HD-53](#hd-53-the-public-constant-arrival-limit-stays-below-what-the-core-sustains-until-vu-allocation-is-capacity-aware)).
+- **Decision:**
+  - A constant-arrival run without explicit VUs gets the rate times the deployment's latency budget, all pre-allocated, within the deployment's VU caps. The API resolves them at admission and stores them in the run's snapshot as explicit VUs.
+  - The resolution follows validation, so the public VU limits bind only VUs the caller set. The stored snapshot does not record which VUs were resolved.
+- **Consequences:**
+  - The runner needs no deployment setting, and the API and the runner derive the same plan from the stored snapshot ([HD-14](#hd-14-the-version-handshake-refuses-mismatched-runs)).
+  - The public rate limit no longer compensates for the VU allocation; capacity-aware admission bounds visitor runs instead ([HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused)).
+  - Runs pre-allocate more VUs than before, so the load generator holds more memory and may open one connection per VU.
+  - The budget was measured with sold-out runs. Accepted orders lengthen requests, so near capacity a run with stock can still run short of VUs.
+- **Rejected alternatives:**
+  - Resolving VUs in the runner: it would need the deployment's budget, and its plan could drift from the API's.
+  - Applying the public VU limits to resolved VUs: they would cap a visitor's rate indirectly, below what the core sustains.
+  - Marking resolved VUs in the snapshot: nothing validates a stored snapshot again, so nothing would read the mark.
+- **Code:** `withResolvedConstantArrivalVus` in `apps/api/src/services/capacity-admission.ts`; `resolveConstantArrivalVus` in `packages/contracts/src/load.ts` keeps the derivation of stored runs without VUs.
+
+### HD-60 Public custom runs are admitted only when expected to complete; admin runs are warned, never refused
+
+- **Status:** accepted
+- **Date:** 2026-10-08
+- **Context:** The single API process and its database pool bound what a run can get answered ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput)). A run past them fails its delivery ([HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones)), and an accepted order costs the API far more than a sold-out answer, so the stock a run can sell lowers what it can reach.
+- **Decision:**
+  - Each deployment declares its measured capacity per connection mode in the API environment. A model classifies a run as expected to complete, at the limit, or expected to fail.
+  - A constant-arrival run is judged by the answers per second it asks of the API, accepted orders weighted by a fitted cost and spread over at most the measured run length, and by whether the database pool answers its orders before k6's graceful stop. A buyer spike is judged by its time to serve against the smaller of its cutoff and k6's request timeout; the graceful stop after the cutoff stays a reserve.
+  - Completion means every planned request started and answered without failure. Latency is not a criterion, and a backlog that k6's graceful stop might absorb earns no exception.
+  - Public custom runs are admitted only when expected to complete: the preview shows the refusal and the API enforces it. Admin runs at the limit or expected to fail get a warning before confirmation. Public presets are fixed, so a test keeps them expected to complete on every deployment's committed values instead of a runtime check.
+- **Consequences:**
+  - Some visitor runs that would complete are refused.
+  - The model rests on few runs. Hosted buyer spikes at low stock ran up to about a third slower than predicted, more than the completion margin covers, and the local accepted-order cost and latency budget are not confirmed by a run.
+  - A deployment that does not measure its capacity keeps the local defaults.
+- **Rejected alternatives:**
+  - Ignoring stock: a hosted run with stock failed below the sold-out capacity.
+  - Accepted orders bound by the pool alone, in parallel with sold-out answers: optimistic in both modes.
+  - The unfitted cost of an accepted order on the hosted core: it would refuse visitor runs that complete.
+  - Counting k6's graceful stop as capacity for a backlog: completion would rest on the generator waiting, not on the server keeping up.
+  - Refusing admin runs: the operator must be able to push past capacity ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput)).
+- **Code:** `assessCapacity` and `requireCapacityAdmission` in `apps/api/src/services/capacity-admission.ts`; `CAPACITY_*` in the API env of `infra/fly/core/machine.json` and `docker-compose.yml`.
 
 ## Runner
 

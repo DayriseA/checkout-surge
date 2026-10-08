@@ -74,7 +74,7 @@ import { ErrorNotice } from "../error-notice";
 import { FieldHint } from "../field-hint";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
-import { RunEstimateNotice } from "../run-estimate-notice";
+import { RunCapacityWarning, RunEstimateNotice } from "../run-estimate-notice";
 import { RunnerRelocationNotice } from "../runner-relocation-notice";
 import { StatusPill } from "../status-pill";
 import { useRunEstimate } from "../use-run-estimate";
@@ -1207,6 +1207,12 @@ export function AdminPresetController({
         error={
           <>
             {startConfirmation ? <RunEstimateNotice state={estimate.state} mode="admin" /> : null}
+            {startConfirmation ? (
+              <RunCapacityWarning
+                state={estimate.state}
+                trafficConfig={startConfirmation.config.trafficConfig}
+              />
+            ) : null}
             {isPending ? <RunnerRelocationNotice recovery={recovery} /> : null}
             {startError ? <AdminNoticeView notice={startError} startRequestOutcome /> : null}
           </>
@@ -1495,8 +1501,8 @@ function publicTrafficPolicyFields(traffic: AcceptedRunConfigSnapshot["trafficCo
     maxDurationSeconds: buyer?.maxDurationSeconds ?? "—",
     durationSeconds: arrival?.durationSeconds ?? "—",
     quantityPerAttempt: traffic.quantityPerAttempt,
-    "k6Vus.preAllocatedVus": arrival?.k6Vus?.preAllocatedVus ?? "—",
-    "k6Vus.maxVus": arrival?.k6Vus?.maxVus ?? "—",
+    "k6Vus.preAllocatedVus": arrival ? (arrival.k6Vus?.preAllocatedVus ?? "automatic") : "—",
+    "k6Vus.maxVus": arrival ? (arrival.k6Vus?.maxVus ?? "automatic") : "—",
   };
 }
 

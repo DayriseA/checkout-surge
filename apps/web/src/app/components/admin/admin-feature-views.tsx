@@ -787,8 +787,11 @@ export function EffectiveRunPreview({
               <>
                 <FieldRow label="Requests per second" value={traffic.ratePerSecond} />
                 <FieldRow label="Duration seconds" value={traffic.durationSeconds} />
-                <FieldRow label="Preallocated VUs" value={traffic.k6Vus?.preAllocatedVus ?? "—"} />
-                <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "—"} />
+                <FieldRow
+                  label="Preallocated VUs"
+                  value={traffic.k6Vus?.preAllocatedVus ?? "automatic"}
+                />
+                <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "automatic"} />
               </>
             )}
             <FieldRow label="Start delay seconds" value={traffic.startDelaySeconds} />

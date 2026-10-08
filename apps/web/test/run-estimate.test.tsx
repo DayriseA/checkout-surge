@@ -34,7 +34,12 @@ import {
   demoRunStartProxyPath,
 } from "../src/app/lib/control-paths";
 import { estimateRejectionCopy } from "../src/app/lib/presentation/estimate-presentation";
-import { estimateFixture, estimateRejectionFixture } from "./estimate-fixtures";
+import {
+  capacityFixture,
+  estimateFixture,
+  estimateRejectionFixture,
+  previewFixture,
+} from "./estimate-fixtures";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }) }));
 afterEach(() => {
@@ -71,8 +76,8 @@ it("debounces rapid edits, aborts superseded requests and ignores out-of-order r
   const fetchMock = vi
     .fn()
     .mockReturnValueOnce(old.promise)
-    .mockResolvedValueOnce(json({ result: estimateFixture("over_ceiling") }))
-    .mockResolvedValueOnce(json({ result: estimateFixture() }));
+    .mockResolvedValueOnce(json(previewFixture("over_ceiling")))
+    .mockResolvedValueOnce(json(previewFixture()));
   vi.stubGlobal("fetch", fetchMock);
   const request = (count: number): StartDemoRunRequest => ({
     presetSlug: "custom",
@@ -102,7 +107,7 @@ it("debounces rapid edits, aborts superseded requests and ignores out-of-order r
   rerender({ count: 3, enabled: true });
   expect(result.current.state.status).toBe("pending");
   await debounce();
-  await act(async () => old.resolve(json({ result: estimateFixture("unestimable") })));
+  await act(async () => old.resolve(json(previewFixture("unestimable"))));
   expect(result.current.state.status).toBe("allowed");
   expect(result.current.blocksStart).toBe(false);
   rerender({ count: 10, enabled: false });
@@ -111,6 +116,21 @@ it("debounces rapid edits, aborts superseded requests and ignores out-of-order r
   expect(fetchMock).toHaveBeenCalledTimes(3);
   expect((fetchMock.mock.calls[2]?.[1].signal as AbortSignal).aborted).toBe(true);
   unmount();
+});
+
+it.each([
+  ["public", "capacity_rejected", true],
+  ["admin", "allowed", false],
+] as const)("in %s mode, a run at the capacity limit is %s", async (mode, status, blocksStart) => {
+  vi.useFakeTimers();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => json(previewFixture("allowed", "at_the_limit"))),
+  );
+  const { result } = renderHook(() => useRunEstimate({ presetSlug: "custom" }, mode, true));
+  await debounce();
+  expect(result.current.state.status).toBe(status);
+  expect(result.current.blocksStart).toBe(blocksStart);
 });
 
 it("keeps public outage and policy guidance private", () => {
@@ -135,7 +155,7 @@ it("keeps public outage and policy guidance private", () => {
 
 it("uses the API decision despite display rounding and stays silent when allowed", () => {
   const { rerender } = render(
-    <RunEstimateNotice state={{ status: "allowed", result: estimateFixture() }} mode="public" />,
+    <RunEstimateNotice state={{ status: "allowed", ...previewFixture() }} mode="public" />,
   );
   expect(screen.queryByRole("status")).toBeNull();
   rerender(
@@ -185,7 +205,7 @@ describe.each(["public", "admin"] as const)("%s admission surface", (mode) => {
     vi.useFakeTimers();
     const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
       String(input) === previewPath
-        ? json({ result: estimateFixture() })
+        ? json(previewFixture())
         : json(
             {
               code: "estimated_duration_rejected",
@@ -262,7 +282,7 @@ describe("admin admission surface", () => {
     "unestimable",
   ] as const)("blocks pending and %s previews with actionable copy", async (kind) => {
     vi.useFakeTimers();
-    const fetchMock = vi.fn(async () => json({ result: estimateFixture(kind) }));
+    const fetchMock = vi.fn(async () => json(previewFixture(kind)));
     vi.stubGlobal("fetch", fetchMock);
     mountAdmin();
     expect(adminStartButton().disabled).toBe(true);
@@ -274,6 +294,30 @@ describe("admin admission surface", () => {
     else expect(screen.queryByText(/Conservative duration:/)).toBeNull();
     fireEvent.click(adminStartButton());
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["at_the_limit", "Near this deployment's capacity: about 27 seconds to answer, 90 %"],
+    ["expected_to_fail", "Beyond this deployment's capacity: about 36 seconds to answer"],
+  ] as const)("warns in the start confirmation, without blocking, when a run is %s", async (verdict, warning) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === previewPath
+        ? json(previewFixture("allowed", verdict))
+        : json(accepted("admin"), 202),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    mountAdmin();
+    await debounce();
+    expect(adminStartButton().disabled).toBe(false);
+    expect(screen.queryByText(/this deployment's capacity/)).toBeNull();
+    await act(async () => fireEvent.click(adminStartButton()));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByRole("status").textContent).toContain(warning);
+    await act(async () =>
+      fireEvent.click(within(dialog).getByRole("button", { name: "Start run" })),
+    );
+    expect(fetchMock.mock.calls.filter(([input]) => String(input) === startPath)).toHaveLength(1);
   });
 
   it("allows an authoritative start after a preview failure and hides admission after acceptance", async () => {
@@ -313,7 +357,7 @@ it.each([
   const previewPath = mode === "public" ? demoRunEstimateProxyPath : adminDemoRunEstimateProxyPath;
   const startPath = mode === "public" ? demoRunStartProxyPath : adminDemoRunStartProxyPath;
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) =>
-    String(input) === previewPath ? json({ result: estimateFixture() }) : json(accepted(mode), 202),
+    String(input) === previewPath ? json(previewFixture()) : json(accepted(mode), 202),
   );
   vi.stubGlobal("fetch", fetchMock);
   if (mode === "public") {
@@ -375,11 +419,54 @@ it.each([
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
+it("shows the API's capacity refusal of a public custom run and blocks its start", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+    String(input) === demoRunEstimateProxyPath
+      ? json(previewFixture())
+      : json(
+          {
+            code: "estimated_capacity_rejected",
+            message: "Rejected",
+            details: capacityFixture("expected_to_fail"),
+            correlationId: "start-rejected",
+            timestamp,
+          },
+          400,
+        ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const surface = publicSurface();
+  surface.presets = available({
+    presets: [{ ...preset(), slug: "public-custom", isCustom: true }],
+    timestamp,
+  });
+  surface.runtimePolicy = available({
+    id: "active",
+    policy: publicRuntimePolicyFixture(),
+    updatedAt: timestamp,
+  });
+  render(<PublicDemoEntry surface={surface} />);
+  const details = screen.getByText("Customize a scenario").closest("details");
+  if (!details) throw new Error("Expected custom builder");
+  details.open = true;
+  fireEvent(details, new Event("toggle"));
+  await debounce();
+  const start = screen.getByRole("button", { name: "Start custom run" }) as HTMLButtonElement;
+  expect(start.disabled).toBe(false);
+  expect(screen.queryByText(/too heavy/)).toBeNull();
+  await act(async () => fireEvent.click(start));
+  expect(screen.getByText(/This run is too heavy for the demo's server\./).textContent).toContain(
+    "With 5,000 buyers and 500 units, this server needs about 36 seconds to answer everyone, more than the 30-second safety cutoff. Raise the safety cutoff to 45 seconds, or lower the buyers to 3,000.",
+  );
+  expect(start.disabled).toBe(true);
+});
+
 it("retains the accepted admin handoff after failed recovery until a newer authoritative inactive read", async () => {
   vi.useFakeTimers();
   const initialRecovery = available({ ...recovery(), recoveredAt: "2026-06-20T00:00:11.000Z" });
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-    if (String(input) === adminDemoRunEstimateProxyPath) return json({ result: estimateFixture() });
+    if (String(input) === adminDemoRunEstimateProxyPath) return json(previewFixture());
     if (String(input) === adminDemoRunStartProxyPath) return json(accepted("admin"), 202);
     throw new Error("Recovery failed");
   });

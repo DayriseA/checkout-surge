@@ -3,6 +3,7 @@
 import {
   type AcceptedRunConfigSnapshot,
   calculatePlannedRequests,
+  capacityAssessmentSchema,
   type DashboardProjection,
   type DemoPresetContract,
   type DemoRunConfigOverride,
@@ -387,6 +388,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         if (rejection.success) {
           if (isCustom) customEstimate.reject(rejection.data);
           return rejection.data;
+        }
+      }
+
+      if (isCustom && result.errorCode === "estimated_capacity_rejected") {
+        const capacity = capacityAssessmentSchema.safeParse(result.details);
+        if (capacity.success) {
+          customEstimate.rejectCapacity(capacity.data);
+          return;
         }
       }
 

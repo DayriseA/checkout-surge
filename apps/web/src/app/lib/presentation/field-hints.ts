@@ -51,9 +51,9 @@ export const adminFieldHints = {
   copyToCustom:
     'Overwrites the admin "Custom" scratch preset with this preset\'s saved values, so you can experiment without touching the original. It does not change the public form.',
   vuserPool:
-    "Virtual users (VUs) are the load generator's reusable workers; each sends one request at a time. This many are ready before traffic starts. Too few for the rate and attempts are skipped, reported as partial delivery.",
+    "Virtual users (VUs) are the load generator's reusable workers; each sends one request at a time. This many are ready before traffic starts. Too few for the rate and attempts are skipped, reported as partial delivery. Leave both VU fields empty to let the deployment allocate them for the rate.",
   maxVus:
-    "The most virtual users the load generator may add when responses slow down and every prepared one is busy. At least the preallocated count. For visitors, both values are derived from the arrival rate.",
+    "The most virtual users the load generator may add when responses slow down and every prepared one is busy. At least the preallocated count. Left empty, both are set at start to the arrival rate × the deployment's latency budget, all preallocated, within the hard caps; visitors' runs always get these.",
   publicBudget:
     'Limits how many runs anonymous visitors may start per time window, per visitor and overall. "Budget" counts starts, not money. Off: visitors may start whenever the demo is free; configuration limits still apply.',
   budgetWindow:
@@ -63,7 +63,7 @@ export const adminFieldHints = {
   globalStarts:
     "Most runs all visitors together may start per window. Protects the shared host from a crowd of visitors.",
   publicDefaults:
-    'The values pre-filled in the public "Customize a scenario" form. Settings visitors cannot edit (worker concurrency, VUs) are always taken from here.',
+    'The values pre-filled in the public "Customize a scenario" form. Settings visitors cannot edit (worker concurrency) are always taken from here; virtual users are set at start from the arrival rate.',
   publicLimits:
     'The highest (or lowest) values visitors may enter in "Customize a scenario". They constrain choices; they do not set a run\'s values. Each must stay within the deployment hard caps below.',
   allowTrafficModes:
@@ -108,9 +108,9 @@ export const adminDraftFieldHints: Record<string, string> = {
     'Highest value visitors may enter for "Traffic duration" and for "Safety cutoff".',
   maxTrafficStartDelaySeconds: 'Highest value visitors may enter for "Start delay".',
   maxPreAllocatedVus:
-    "Visitors do not set virtual users; they are derived from the arrival rate. This caps the derived values, so it indirectly limits the arrival rate a visitor can use.",
+    "Applies only to virtual users a request sets explicitly. The public form sets none: they are derived at start from the arrival rate, within the deployment hard caps only, so this does not limit a visitor's arrival rate.",
   maxPublicVus:
-    "Visitors do not set virtual users; they are derived from the arrival rate. This caps the derived values, so it indirectly limits the arrival rate a visitor can use.",
+    "Applies only to virtual users a request sets explicitly. The public form sets none: they are derived at start from the arrival rate, within the deployment hard caps only, so this does not limit a visitor's arrival rate.",
   maxStartingStock: 'Highest value visitors may enter for "Starting stock".',
   maxErpLatencyMs: 'Highest value visitors may enter for "Delay per order".',
   minErpMaxTps:

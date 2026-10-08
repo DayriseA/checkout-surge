@@ -93,6 +93,8 @@ interface NumericRule {
   label: string;
   min?: number;
   max?: number;
+  /** The field may stay empty when this other field is empty too. */
+  emptyWith?: string;
 }
 
 export function draftFromPreset(preset: DemoPresetContract): PresetDraft {
@@ -143,8 +145,8 @@ export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
     durationSeconds:
       traffic.mode === "constant-arrival-rate" ? String(traffic.durationSeconds) : "30",
     startDelaySeconds: String(traffic.startDelaySeconds),
-    preAllocatedVus: String(constantArrivalVus?.preAllocatedVus ?? 20),
-    maxVus: String(constantArrivalVus?.maxVus ?? 40),
+    preAllocatedVus: constantArrivalVus ? String(constantArrivalVus.preAllocatedVus) : "",
+    maxVus: constantArrivalVus ? String(constantArrivalVus.maxVus) : "",
     startingStock: String(config.inventoryConfig.startingStock),
     erpLatencyMs: String(config.erpConfig.latencyMs),
     erpMaxTps: String(config.erpConfig.maxTps),
@@ -396,10 +398,14 @@ function buildConfigFromParsed(
             startDelaySeconds: requiredNumber(number, "startDelaySeconds"),
             durationSeconds: requiredNumber(number, "durationSeconds"),
             quantityPerAttempt: base.trafficConfig.quantityPerAttempt,
-            k6Vus: {
-              preAllocatedVus: requiredNumber(number, "preAllocatedVus"),
-              maxVus: requiredNumber(number, "maxVus"),
-            },
+            ...(number.preAllocatedVus === undefined
+              ? {}
+              : {
+                  k6Vus: {
+                    preAllocatedVus: requiredNumber(number, "preAllocatedVus"),
+                    maxVus: requiredNumber(number, "maxVus"),
+                  },
+                }),
           },
     inventoryConfig: {
       startingStock: requiredNumber(number, "startingStock"),
@@ -426,6 +432,14 @@ function parseNumericDraft(
   for (const numericRule of rules) {
     const raw = String((draft as Record<string, unknown>)[numericRule.field] ?? "");
     const trimmed = raw.trim();
+    const pairedField = numericRule.emptyWith;
+    if (
+      trimmed === "" &&
+      pairedField !== undefined &&
+      String((draft as Record<string, unknown>)[pairedField] ?? "").trim() === ""
+    ) {
+      continue;
+    }
     if (trimmed === "") {
       fieldErrors[numericRule.field] = {
         code: "required",
@@ -629,8 +643,15 @@ function runConfigRules(mode: TrafficMode, hardCaps?: DeploymentHardCaps): Numer
       : [
           rule("ratePerSecond", "Requests per second", undefined, hardCaps?.maxRequestsPerSecond),
           rule("durationSeconds", "Duration", undefined, hardCaps?.maxTrafficDurationSeconds),
-          rule("preAllocatedVus", "Preallocated VUs", undefined, hardCaps?.maxPreAllocatedVus),
-          rule("maxVus", "Maximum VUs", undefined, hardCaps?.maxVus),
+          // Both empty: the API allocates the VUs for the rate at admission.
+          {
+            ...rule("preAllocatedVus", "Preallocated VUs", undefined, hardCaps?.maxPreAllocatedVus),
+            emptyWith: "maxVus",
+          },
+          {
+            ...rule("maxVus", "Maximum VUs", undefined, hardCaps?.maxVus),
+            emptyWith: "preAllocatedVus",
+          },
         ]),
     rule("startDelaySeconds", "Start delay", undefined, hardCaps?.maxTrafficStartDelaySeconds),
     rule("startingStock", "Starting stock"),

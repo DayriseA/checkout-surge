@@ -351,6 +351,7 @@ export async function startApiServer(): Promise<void> {
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
     estimatorConstants: config.estimatorConstants,
+    deploymentCapacity: config.deploymentCapacity,
   });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     maintenanceAuthority,

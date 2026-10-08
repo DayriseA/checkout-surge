@@ -160,7 +160,19 @@ describe("duration estimator contracts", () => {
           .success,
       ).toBe(false);
     }
-    const preview = { result: { ...estimable, decision: "admitted" } };
+    const preview = {
+      result: { ...estimable, decision: "admitted" },
+      capacity: {
+        mode: "buyer-spike",
+        verdict: "expected_to_complete",
+        buyerCount: 5_000,
+        startingStock: 500,
+        acceptedOrders: 500,
+        timeToServeSeconds: 4,
+        windowSeconds: 30,
+      },
+      automaticVus: null,
+    };
     expect(estimatePreviewSchema.parse(preview)).toEqual(preview);
     expect(estimatePreviewSchema.safeParse({ ...preview, fingerprint: "obsolete" }).success).toBe(
       false,

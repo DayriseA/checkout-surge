@@ -4,6 +4,11 @@ import {
   publicVisitorCredentialMinimumSecretBytes,
 } from "@checkout-surge/contracts/public-visitor-credential";
 import {
+  type DeploymentCapacity,
+  deploymentCapacitySchema,
+  localDeploymentCapacity,
+} from "../services/capacity-admission.js";
+import {
   conservativeDurationEstimatorConstants,
   type DurationEstimatorConstants,
 } from "../services/demo-duration-estimator.js";
@@ -39,6 +44,7 @@ export interface ApiConfig {
   publicClientCookieSecret: string;
   deploymentHardCaps: DeploymentHardCaps;
   estimatorConstants: DurationEstimatorConstants;
+  deploymentCapacity: DeploymentCapacity;
   demoRunFinalizationPollIntervalSeconds: number;
   dashboardMaxSseClients: number;
   dashboardMaxSseClientsPerSource: number;
@@ -214,6 +220,38 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
         conservativeDurationEstimatorConstants.perExcessAttemptPauseSeconds,
       ),
     },
+    deploymentCapacity: deploymentCapacitySchema.parse({
+      constantArrivalSoldOutPerSecond: parsePositiveNumber(
+        env.CAPACITY_CONSTANT_ARRIVAL_SOLD_OUT_PER_SECOND,
+        "CAPACITY_CONSTANT_ARRIVAL_SOLD_OUT_PER_SECOND",
+        localDeploymentCapacity.constantArrivalSoldOutPerSecond,
+      ),
+      constantArrivalAcceptedPerSecond: parsePositiveNumber(
+        env.CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_PER_SECOND,
+        "CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_PER_SECOND",
+        localDeploymentCapacity.constantArrivalAcceptedPerSecond,
+      ),
+      constantArrivalAcceptedOrderCost: parsePositiveNumber(
+        env.CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_ORDER_COST,
+        "CAPACITY_CONSTANT_ARRIVAL_ACCEPTED_ORDER_COST",
+        localDeploymentCapacity.constantArrivalAcceptedOrderCost,
+      ),
+      buyerSpikeSoldOutPerSecond: parsePositiveNumber(
+        env.CAPACITY_BUYER_SPIKE_SOLD_OUT_PER_SECOND,
+        "CAPACITY_BUYER_SPIKE_SOLD_OUT_PER_SECOND",
+        localDeploymentCapacity.buyerSpikeSoldOutPerSecond,
+      ),
+      buyerSpikeAcceptedPerSecond: parsePositiveNumber(
+        env.CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND,
+        "CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND",
+        localDeploymentCapacity.buyerSpikeAcceptedPerSecond,
+      ),
+      vuLatencyBudgetSeconds: parsePositiveNumber(
+        env.CAPACITY_VU_LATENCY_BUDGET_SECONDS,
+        "CAPACITY_VU_LATENCY_BUDGET_SECONDS",
+        localDeploymentCapacity.vuLatencyBudgetSeconds,
+      ),
+    }),
     demoRunFinalizationPollIntervalSeconds: parsePositiveInteger(
       env.DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS,
       "DEMO_RUN_FINALIZATION_POLL_INTERVAL_SECONDS",

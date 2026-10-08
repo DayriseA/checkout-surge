@@ -44,7 +44,7 @@ import { GET as getReadiness } from "../src/app/api/health/ready/route.js";
 import { resetAdminLoginAttemptLimiterForTests } from "../src/app/lib/server/admin-login-composition.js";
 import { createAdminSessionToken } from "../src/app/lib/server/admin-session.js";
 import { initializeWebServerConfig } from "../src/app/lib/server/config.js";
-import { estimateFixture } from "./estimate-fixtures.js";
+import { estimateFixture, previewFixture } from "./estimate-fixtures.js";
 
 const originalEnv = { ...process.env };
 
@@ -260,7 +260,7 @@ describe("dashboard control proxy routes", () => {
     const handler = mode === "admin" ? previewAdminDemoRun : previewDemoRun;
     const headers = mode === "admin" ? await adminSessionHeaders() : {};
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
-      jsonResponse({ result: estimateFixture("over_ceiling") }),
+      jsonResponse(previewFixture("over_ceiling")),
     );
     vi.stubGlobal("fetch", fetchMock);
     const request = (body: unknown) =>

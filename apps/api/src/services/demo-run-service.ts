@@ -36,6 +36,13 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
+import {
+  assessCapacity,
+  automaticConstantArrivalVus,
+  type DeploymentCapacity,
+  requireCapacityAdmission,
+  withResolvedConstantArrivalVus,
+} from "./capacity-admission.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import {
   estimateAcceptedDemoRun,
@@ -128,6 +135,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
       estimatorConstants: DurationEstimatorConstants;
+      deploymentCapacity: DeploymentCapacity;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -312,9 +320,23 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
 
   async previewRun(request: StartDemoRunCommand): Promise<PreviewDemoRunResponse> {
     this.verifyVisitor(request);
-    const { snapshot, policy } = await this.resolveValidatedConfig(request);
+    const config = await this.resolveValidatedConfig(request);
+    const traffic = config.snapshot.trafficConfig;
     return previewDemoRunResponseSchema.parse({
-      result: estimateAcceptedDemoRun(snapshot, policy, this.options.estimatorConstants),
+      result: estimateAcceptedDemoRun(
+        config.snapshot,
+        config.policy,
+        this.options.estimatorConstants,
+      ),
+      capacity: this.assessRunCapacity(config),
+      automaticVus:
+        traffic.mode === "constant-arrival-rate"
+          ? automaticConstantArrivalVus(
+              traffic.ratePerSecond,
+              this.options.deploymentCapacity.vuLatencyBudgetSeconds,
+              config.policy.deploymentHardCaps,
+            )
+          : null,
     });
   }
 
@@ -340,13 +362,49 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     db?: Pick<CheckoutSurgeDatabase, "select">,
   ) {
     const policy = await this.options.runtimePolicyReader.readEffectivePolicy(db);
-    const acceptedConfig = await this.resolveAcceptedConfig(request, policy, db);
-    validateAcceptedRunSnapshot(acceptedConfig.snapshot, policy, {
+    const { preset, snapshot } = await this.resolveAcceptedConfig(request, policy, db);
+    const isPublicCustom = request.operatorMode === "public" && preset.isCustom;
+    const validation = {
       operatorMode: request.operatorMode,
-      enforcePublicCustomLimits:
-        request.operatorMode === "public" && acceptedConfig.preset.isCustom,
+      enforcePublicCustomLimits: isPublicCustom,
+    };
+    validateAcceptedRunSnapshot(snapshot, policy, validation);
+    return {
+      preset,
+      // Resolved after validation: the public VU limits bind only VUs the caller set.
+      snapshot: withResolvedConstantArrivalVus(
+        snapshot,
+        this.options.deploymentCapacity.vuLatencyBudgetSeconds,
+        policy.deploymentHardCaps,
+      ),
+      policy,
+      validation,
+      isPublicCustom,
+    };
+  }
+
+  /** A suggested safety cutoff must itself pass the duration estimate and the run limits. */
+  private assessRunCapacity({
+    snapshot,
+    policy,
+    validation,
+  }: {
+    snapshot: AcceptedRunConfigSnapshot;
+    policy: PublicRuntimePolicy;
+    validation: { operatorMode: OperatorMode; enforcePublicCustomLimits: boolean };
+  }) {
+    return assessCapacity(snapshot, this.options.deploymentCapacity, (cutoffSeconds) => {
+      if (snapshot.trafficConfig.mode !== "buyer-spike") return false;
+      const candidate = {
+        ...snapshot,
+        trafficConfig: { ...snapshot.trafficConfig, maxDurationSeconds: cutoffSeconds },
+      };
+      return (
+        estimateAcceptedDemoRun(candidate, policy, this.options.estimatorConstants).decision ===
+          "admitted" &&
+        collectAcceptedRunConfigSnapshotViolations(candidate, policy, validation).length === 0
+      );
     });
-    return { ...acceptedConfig, policy };
   }
 
   private async createAcceptedRun(
@@ -394,10 +452,14 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         }
 
-        const { preset, snapshot, policy } = await this.resolveValidatedConfig(request, tx);
+        const config = await this.resolveValidatedConfig(request, tx);
+        const { preset, snapshot, policy } = config;
         requireEstimatedDurationAdmission(
           estimateAcceptedDemoRun(snapshot, policy, this.options.estimatorConstants),
         );
+        if (config.isPublicCustom) {
+          requireCapacityAdmission(this.assessRunCapacity(config));
+        }
         await beforeInsert(policy);
 
         const [product] = await tx

@@ -10,3 +10,4 @@ export * from "./redis-inventory.js";
 export * from "./redis-stock-reservation.js";
 export * from "./run-signal-timeline.js";
 export * from "./schema.js";
+export { buildSeedPresets, type SeedPreset } from "./seed-presets.js";

@@ -41,6 +41,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
+import { localDeploymentCapacity } from "../src/services/capacity-admission.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
 import { conservativeDurationEstimatorConstants } from "../src/services/demo-duration-estimator.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
@@ -118,6 +119,7 @@ describe("demo-run lifecycle validation", () => {
       logger: createSilentLogger("api"),
       publicClientCookieSecret: publicCookieSecret,
       estimatorConstants: conservativeDurationEstimatorConstants,
+      deploymentCapacity: localDeploymentCapacity,
     });
     await expect(
       service.startRun(
@@ -454,6 +456,132 @@ describe("demo-run lifecycle start gating", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
+  it("admits a public custom run only when expected to complete, with VUs resolved past the public VU limits", async () => {
+    const db = requireConnection(connection).db;
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+    }));
+    const trafficStart = vi.fn(async (request: TrafficExecutionStartRequest) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+      trafficExecutionGateway: { start: trafficStart },
+    });
+    // Locally, 1,000 accepted orders add 14 × 1,000 / 9 s to the rate: 844/s is the last that fits.
+    const request = (ratePerSecond: number) => ({
+      presetSlug: "public-custom",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      configOverride: {
+        trafficConfig: {
+          mode: "constant-arrival-rate" as const,
+          ratePerSecond,
+          durationSeconds: 9,
+          startDelaySeconds: 0,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: { startingStock: 1000 },
+      },
+    });
+
+    expect((await service.previewRun(request(845))).capacity).toMatchObject({
+      verdict: "at_the_limit",
+      fit: { ratePerSecond: 844 },
+    });
+    await expect(service.startRun(request(845), "over-capacity")).rejects.toMatchObject({
+      code: "estimated_capacity_rejected",
+      details: { mode: "constant-arrival-rate", verdict: "at_the_limit" },
+    });
+    expect(await db.select().from(demoRuns)).toHaveLength(0);
+    expect(reserve).not.toHaveBeenCalled();
+    expect(trafficStart).not.toHaveBeenCalled();
+
+    // 844/s × the 3 s budget asks 2,532 VUs, above the public VU limit of 1,000.
+    const accepted = await service.startRun(request(844), "within-capacity");
+    const resolvedVus = { preAllocatedVus: 2_532, maxVus: 2_532 };
+    expect(accepted.run.configSnapshot.trafficConfig).toMatchObject({ k6Vus: resolvedVus });
+    const [persisted] = await db.select().from(demoRuns);
+    expect(persisted?.configSnapshot.trafficConfig).toMatchObject({ k6Vus: resolvedVus });
+    expect(trafficStart.mock.calls[0]?.[0].configSnapshot.trafficConfig).toMatchObject({
+      k6Vus: resolvedVus,
+    });
+  });
+
+  it("starts an admin run at the limit, and keeps explicit VUs bound by the public limits", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    const trafficConfig = {
+      mode: "constant-arrival-rate" as const,
+      ratePerSecond: 845,
+      durationSeconds: 9,
+      startDelaySeconds: 0,
+      quantityPerAttempt: 1,
+    };
+    const inventoryConfig = { startingStock: 1000 };
+
+    await expect(
+      service.previewRun({
+        presetSlug: "public-custom",
+        operatorMode: "public",
+        publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        configOverride: {
+          trafficConfig: { ...trafficConfig, k6Vus: { preAllocatedVus: 1001, maxVus: 1001 } },
+          inventoryConfig,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "invalid_run_configuration",
+      details: { violationCode: "public_preallocated_vus_exceeded" },
+    });
+
+    const adminRequest = {
+      presetSlug: "custom",
+      operatorMode: "admin" as const,
+      configOverride: { trafficConfig, inventoryConfig },
+    };
+    expect((await service.previewRun(adminRequest)).capacity.verdict).toBe("at_the_limit");
+    const accepted = await service.startRun(adminRequest, "admin-at-limit");
+    expect(accepted.run.status).toBe("active");
+    expect(accepted.run.configSnapshot.trafficConfig).toMatchObject({
+      k6Vus: { preAllocatedVus: 2_535, maxVus: 2_535 },
+    });
+  });
+
+  it("suggests no safety cutoff that the duration estimate would refuse", async () => {
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    // 970 orders at 5 TPS with 5 % errors fit the 600 s ceiling with a 1 s cutoff (about 591 s),
+    // but not with the 18 s cutoff the capacity model alone would suggest (about 608 s).
+    const preview = await service.previewRun({
+      presetSlug: "custom",
+      operatorMode: "admin",
+      configOverride: {
+        trafficConfig: {
+          mode: "buyer-spike",
+          buyerCount: 10_000,
+          duplicateEachBuyerAttempt: false,
+          startDelaySeconds: 0,
+          maxDurationSeconds: 1,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: { startingStock: 970 },
+        erpConfig: { latencyMs: 100, maxTps: 5, errorRate: 0.05, forcedOutage: false },
+        backpressureConfig: {
+          ...surge10kSnapshot().backpressureConfig,
+          orderProcessConcurrency: 5,
+        },
+      },
+    });
+    expect(preview.result.decision).toBe("admitted");
+    expect(preview.capacity).toMatchObject({
+      verdict: "expected_to_fail",
+      fit: { buyerCount: 124, maxDurationSeconds: null },
+    });
+  });
+
   it("uses the same visibility, override and cap validation in preview without taking the start lock", async () => {
     const primary = requireConnection(connection);
     const blocker = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
@@ -518,7 +646,11 @@ describe("demo-run lifecycle start gating", () => {
       ...request,
       configOverride: { trafficConfig: { ...traffic, duplicateEachBuyerAttempt: true } },
     });
-    expect(duplicate).toEqual(single);
+    expect(duplicate.result).toEqual(single.result);
+    expect(duplicate.capacity).toMatchObject({
+      acceptedOrders: 1000,
+      timeToServeSeconds: 1000 / 155 + 19000 / 1150,
+    });
     const incident = acceptanceScenarioFixtures()[0]?.config;
     if (!incident) throw new Error("Missing incident fixture");
     await db.update(demoPresets).set(incident).where(eq(demoPresets.slug, request.presetSlug));
@@ -526,7 +658,11 @@ describe("demo-run lifecycle start gating", () => {
       decision: "admitted",
       conservativeDurationSeconds: 75 + 888 / 9.5,
     });
-    expect((await service.startRun(request, "incident")).run.configSnapshot).toEqual(incident);
+    // The incident sets no VUs, so admission writes the automatic ones: 25/s × the 3 s budget.
+    expect((await service.startRun(request, "incident")).run.configSnapshot).toEqual({
+      ...incident,
+      trafficConfig: { ...incident.trafficConfig, k6Vus: { preAllocatedVus: 75, maxVus: 75 } },
+    });
   });
 
   it.each([
@@ -2296,6 +2432,7 @@ function createStartService(
     logger,
     publicClientCookieSecret: publicCookieSecret,
     estimatorConstants: conservativeDurationEstimatorConstants,
+    deploymentCapacity: localDeploymentCapacity,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
     generateId: () => {
       const id = ids.shift();

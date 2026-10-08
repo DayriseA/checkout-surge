@@ -3,7 +3,6 @@ import type { OperatorMode } from "./lifecycle.js";
 import {
   type AcceptedRunConfigSnapshot,
   deriveLoadExecutionPlan,
-  resolveConstantArrivalVus,
   type TrafficConfig,
 } from "./load.js";
 
@@ -140,8 +139,8 @@ function collectDeploymentSnapshotViolations(
 ): void {
   const traffic = snapshot.trafficConfig;
   const caps = policy.deploymentHardCaps;
-  const resolvedK6Vus =
-    traffic.mode === "constant-arrival-rate" ? resolveConstantArrivalVus(traffic) : undefined;
+  // Absent VUs are resolved by the API after this validation, within these caps.
+  const k6Vus = traffic.mode === "constant-arrival-rate" ? traffic.k6Vus : undefined;
 
   addCapViolation(
     violations,
@@ -180,15 +179,15 @@ function collectDeploymentSnapshotViolations(
       "buyerCount",
     ]);
   }
-  if (resolvedK6Vus) {
+  if (k6Vus) {
     addCapViolation(
       violations,
-      resolvedK6Vus.preAllocatedVus,
+      k6Vus.preAllocatedVus,
       caps.maxPreAllocatedVus,
       "deployment_preallocated_vus_exceeded",
       ["trafficConfig", "k6Vus", "preAllocatedVus"],
     );
-    addCapViolation(violations, resolvedK6Vus.maxVus, caps.maxVus, "deployment_max_vus_exceeded", [
+    addCapViolation(violations, k6Vus.maxVus, caps.maxVus, "deployment_max_vus_exceeded", [
       "trafficConfig",
       "k6Vus",
       "maxVus",

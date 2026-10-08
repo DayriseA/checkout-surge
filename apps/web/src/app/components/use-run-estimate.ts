@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CapacityAssessment,
   type EstimateAdmissionRejectionDetails,
   type EstimatorResult,
   previewDemoRunRequestSchema,
@@ -15,8 +16,20 @@ export type RunEstimateState =
   | { status: "inactive" }
   | { status: "pending" }
   | { status: "unavailable" }
-  | { status: "allowed"; result: EstimatorResult }
-  | { status: "rejected"; result: EstimatorResult | EstimateAdmissionRejectionDetails };
+  | {
+      status: "allowed";
+      result: EstimatorResult;
+      capacity: CapacityAssessment;
+      automaticVus: number | null;
+    }
+  | { status: "rejected"; result: EstimatorResult | EstimateAdmissionRejectionDetails }
+  /** Public custom runs only: the API admits them only when expected to complete. */
+  | { status: "capacity_rejected"; capacity: CapacityAssessment };
+
+type RejectedEstimateState = Extract<
+  RunEstimateState,
+  { status: "rejected" } | { status: "capacity_rejected" }
+>;
 
 export function useRunEstimate(
   request: StartDemoRunRequest | null,
@@ -29,7 +42,7 @@ export function useRunEstimate(
   const [completed, setCompleted] = useState<{ key: string; state: RunEstimateState } | null>(null);
   const [rejection, setRejection] = useState<{
     key: string;
-    result: EstimateAdmissionRejectionDetails;
+    state: RejectedEstimateState;
   } | null>(null);
 
   useEffect(() => {
@@ -57,12 +70,13 @@ export function useRunEstimate(
       setCompleted({
         key,
         state:
-          read.status === "available"
-            ? {
-                status: read.data.result.decision === "admitted" ? "allowed" : "rejected",
-                result: read.data.result,
-              }
-            : { status: "unavailable" },
+          read.status !== "available"
+            ? { status: "unavailable" }
+            : read.data.result.decision !== "admitted"
+              ? { status: "rejected", result: read.data.result }
+              : mode === "public" && read.data.capacity.verdict !== "expected_to_complete"
+                ? { status: "capacity_rejected", capacity: read.data.capacity }
+                : { status: "allowed", ...read.data },
       });
     }, 300);
     return () => {
@@ -75,13 +89,19 @@ export function useRunEstimate(
     !enabled || !body
       ? { status: "inactive" }
       : rejection?.key === key
-        ? { status: "rejected", result: rejection.result }
+        ? rejection.state
         : completed?.key === key
           ? completed.state
           : { status: "pending" };
   return {
     state,
-    blocksStart: state.status === "pending" || state.status === "rejected",
-    reject: (result: EstimateAdmissionRejectionDetails) => setRejection({ key, result }),
+    blocksStart:
+      state.status === "pending" ||
+      state.status === "rejected" ||
+      state.status === "capacity_rejected",
+    reject: (result: EstimateAdmissionRejectionDetails) =>
+      setRejection({ key, state: { status: "rejected", result } }),
+    rejectCapacity: (capacity: CapacityAssessment) =>
+      setRejection({ key, state: { status: "capacity_rejected", capacity } }),
   };
 }
