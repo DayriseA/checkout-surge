@@ -43,3 +43,10 @@ A run's evidence tells request timeouts apart from connection errors, and its re
 - **Reconciliation warning.** The reconciliation warning shown beside a timeout explanation is pre-existing and accurate, left as is (owner decision 2026-10-09).
 - **Docs.** `load_generation_metrics_streaming.md`, `core_business_entities.md`, `reference_runtime_measurements.md`, `capacity_measurement.md`; HD-58 consequence corrected in place. No new decision entry: the code comments cover the choices.
 - **Checks.** Biome clean; `pnpm type-check` and `pnpm type-check:test` pass; contracts 162, api 359, web 789 unit tests pass; load-orchestrator 166 pass, 22 fail (known Windows `EPERM fsync`, timeouts and probe). Docker unavailable, so the new API test (completion stored and read back as `request_timeouts`) was not run.
+
+### Closure (2026-10-09)
+
+- Cloud verification at `8da8c899`: the full suite passed on Linux. All-accepted spikes of 10,000 buyers timed out 1,211 and 1,283 requests, every one counted as a request timeout; the cause read `request_timeouts`, with the "Requests timed out" explanation. Constant-arrival runs cut by the graceful stop had reply counts that add up.
+- Adversarial review arbitrated, and its four low findings were fixed: "requests" instead of "buyers", "started each one" instead of "sent", tests pinned to reachable cases, these notes corrected.
+- Deployed at `94b24799`, with the API and the runner on the same version.
+- Done.
