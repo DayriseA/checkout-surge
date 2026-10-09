@@ -45,10 +45,10 @@ Owner decisions of 2026-10-09.
 
 ## Open Points
 
-- Settled when the task starts:
-  - which softenings to apply;
-  - whether the Redis section heading changes;
-  - how the known-limits section relates to the two existing passages.
+- None. Settled with the owner (2026-10-09):
+  - **Softenings:** apply them all, on the page, the README and the docs, replacing "fast" with what Redis does ("in-memory", "keeps turned-away buyers off the database").
+  - **Heading:** "Redis makes the atomic scarcity decision" stays; only the sentences under it change.
+  - **Section:** "Known limits of this demo". "One API process" stays in "What limits a run" because it explains run outcomes. The new section says what the demo cannot show and why, and refers to that passage without repeating its figures.
 
 ## Working Notes
 
