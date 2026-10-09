@@ -20,6 +20,16 @@ The demo's messages about starting and failing runs read consistently and clearl
   - **Run report header** (15d rendering review, 2026-10-08). "Completed" appears twice: the header label and the conclusion title. The environment note states both topologies on every run. Show only the relevant half when the environment is known: hosted runs record a runner region, local runs record none.
   - **Singular grammar.** "All 1 available units were reserved…" and "All 1 reservations were confirmed" on a run with stock 1 (`run-result-presentation.ts`).
   - **Pending start with relocation.** `apps/web/test/browser-workflows.test.ts` already holds a visitor's start pending, but not with the relocation notice, nor the hidden "already in progress" notice.
+- **Claims about Redis** (owner decision, 2026-10-09, after the task 21 study). The study measured no speed gain from the Redis layer at the demo's scale. The single API process is the bottleneck, and a sold-out answer costs PostgreSQL little. What Redis measurably buys is keeping turned-away buyers off the database: PostgreSQL was 7–9 % busy with Redis against 50–63 % without, for the same answers. The order queue, which lives in Redis, is what keeps buyers from waiting on the ERP. Reword every sentence that claims or implies a speed gain from Redis.
+  - Contradicted: `apps/web/src/app/page.tsx` around line 222 ("would make every buyer, turned-away buyers included, wait for it") and line 216 ("The stock decision is fast for every buyer"); `working_docs/project_description.md` line 37 (the Problem) and line 15 ("high-speed Redis layer"); `working_docs/delivery_constraints.md` line 10 (ms-level p95 for the fast path, not met under a burst).
+  - To complete: `working_docs/project_description.md` line 39 (the Benefit: add that Redis keeps turned-away buyers off the database).
+  - Optional softenings: `page.tsx` line 183 ("a fast in-memory decision"), `README.md` line 3 (the burst absorption measured comes from the order queue), `docs/architecture.md` line 176 ("fast").
+  - Still accurate: "answered from Redis alone, without touching the database", and successful buyers waiting longer (consider "usually").
+  - Line numbers are as of `7a770a9c`. The task 21 working notes hold the measurements.
+- **"Known limits" section** (owner decision, 2026-10-09). A short, separate section at the very end of the overview page, for transparency and the curious, not put forward.
+  - What the demo cannot show at its scale, and why: one API process, a local database, a single machine, so no speed gain from Redis is visible.
+  - The planned later work, without dates or details: a comparison with and without the Redis layer and with and without the order queue, several API processes, and the database at a realistic distance.
+  - Distinct from "What a production system should add", which describes industry practice, and from "What limits a run, and what makes it fail", which explains run outcomes. No repetition of either.
 
 ## Out of Scope
 
@@ -30,7 +40,7 @@ The demo's messages about starting and failing runs read consistently and clearl
 
 ## Done When
 
-- The listed messages are reworded and reviewed with the owner.
+- The listed messages and the Redis claims are reworded, the known-limits section is written, and all are reviewed with the owner.
 - The wording changes are covered at the boundaries that render them.
 
 ## Open Points
