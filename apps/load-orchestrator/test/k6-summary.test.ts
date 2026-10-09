@@ -419,14 +419,14 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
     });
   });
 
-  it("counts a reply that reached http_reqs at the stop, but not its outcome, as interrupted", () => {
+  it("counts a reply whose outcome was not recorded at the stop as interrupted", () => {
     // k6 drops the samples of a VU whose context the graceful stop ended, so the reply's
-    // http_reqs sample can be recorded while the script's own counters after it are not.
+    // http_reqs sample, and even the completion counter, can be recorded without its outcome.
     const summaryMetrics = parseK6SummaryMetrics(
       JSON.stringify({
         metrics: {
           checkout_attempts_started: { count: 10 },
-          checkout_responses_completed: { count: 9 },
+          checkout_responses_completed: { count: 10 },
           checkout_reservation_accepted: { count: 9 },
           checkout_sold_out_rejections: { count: 0 },
           checkout_transport_failures: { count: 0 },
@@ -460,47 +460,49 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
     );
   });
 
-  it("reports outcome counters from the point stream as point-stream completion evidence", () => {
+  it("sums streamed outcome counters when the export is missing", () => {
     const accumulator = createAccumulator();
-    accumulator.observe({
-      type: "Point",
-      metric: "checkout_reservation_accepted",
-      data: { value: 6 },
-    });
+    for (const [metric, value] of [
+      ["checkout_attempts_started", 10],
+      ["checkout_responses_completed", 10],
+      ["checkout_reservation_accepted", 3],
+      ["checkout_sold_out_rejections", 4],
+      ["checkout_transport_failures", 1],
+      ["checkout_unexpected_responses", 1],
+    ] as const) {
+      accumulator.observe({ type: "Point", metric, data: { value } });
+    }
     const report = accumulator.completionReport({
       status: "failed",
       completedAt,
-      summaryMetrics: {
-        attemptsStarted: 10,
-        responsesCompleted: 9,
-        soldOutResponses: 1,
-        transportFailures: 0,
-        unexpectedResponses: 0,
-        timingPhases: {},
-      },
+      summaryExportWarning: "summary_export_missing",
     });
 
     expect(report.transportAttemptCounts).toMatchObject({
-      completedRequests: 7,
-      interruptedRequests: 3,
+      completedRequests: 9,
+      interruptedRequests: 1,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
       "point_stream",
     );
   });
 
-  it("prefers the explicit completion counter to http_reqs without all outcome counters", () => {
+  it("uses the streamed completion counter, not http_reqs, when an outcome stayed at zero", () => {
+    // Without an export, an outcome counter that stayed at zero has no stream point, so the sum
+    // of outcomes is unknown.
     const accumulator = createAccumulator();
-    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 8 } });
+    for (const [metric, value] of [
+      ["checkout_attempts_started", 10],
+      ["checkout_responses_completed", 7],
+      ["checkout_reservation_accepted", 7],
+      ["http_reqs", 8],
+    ] as const) {
+      accumulator.observe({ type: "Point", metric, data: { value } });
+    }
     const report = accumulator.completionReport({
       status: "failed",
       completedAt,
-      summaryMetrics: {
-        attemptsStarted: 10,
-        responsesCompleted: 7,
-        acceptedResponses: 7,
-        timingPhases: {},
-      },
+      summaryExportWarning: "summary_export_missing",
     });
 
     expect(report.transportAttemptCounts).toMatchObject({
@@ -509,7 +511,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       unstartedRequests: 0,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
-      "summary_export",
+      "point_stream",
     );
   });
 

@@ -88,7 +88,7 @@ export function RunFailureExplanation({
             {everySentRequestSettled
               ? `The server still handled ${pluralize(requestTimeouts, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only reservation was" : `every one of the ${formatCount(business.acceptedReservations)} reservations was`} secured and its order confirmed and notified. Only ${pluralize(requestTimeouts, "its answer", "their answers")} took too long. `
               : `The server may still have handled ${pluralize(requestTimeouts, "that request", "those requests")}: a timeout only means that no answer arrived in time. `}
-            {pluralize(requestTimeouts, "This buyer", "These buyers")} waited{" "}
+            {pluralize(requestTimeouts, "This request", "These requests")} waited{" "}
             {k6RequestTimeoutSeconds} seconds without an answer, so the run counts as failed.
           </p>
         </>
@@ -250,9 +250,9 @@ function causeCopy(
     case "request_timeouts":
       return {
         heading: "Requests timed out",
-        summary: `${formatCount(http.requestTimeouts)} ${pluralize(http.requestTimeouts, "buyer")} got no answer within the load generator's ${k6RequestTimeoutSeconds}-second limit, so the generator gave up on ${pluralize(http.requestTimeouts, "that request", "those requests")}.`,
+        summary: `${formatCount(http.requestTimeouts)} ${pluralize(http.requestTimeouts, "request")} got no answer within the load generator's ${k6RequestTimeoutSeconds}-second limit, so the generator gave up on ${pluralize(http.requestTimeouts, "it", "them")}.`,
         next: `Fewer buyers, a smaller burst, or the same traffic spread over more time gives the server room to answer every request within ${k6RequestTimeoutSeconds} seconds.`,
-        why: `The load generator recorded these requests as timed out: it sent each one and received no answer within ${k6RequestTimeoutSeconds} seconds. The timeouts alone are enough to fail the run, so they explain this failure. The report does not show where the server spent that time.`,
+        why: `The load generator recorded these requests as timed out: it started each one but did not receive a complete response within ${k6RequestTimeoutSeconds} seconds. The timeouts alone are enough to fail the run, so they explain this failure. The report does not show where the server spent that time.`,
       };
     case "unidentified":
       return {
