@@ -513,7 +513,8 @@ async function deployCore(imageRefs, version, beforeUpdate) {
 }
 
 // The reason makes the gate show its relocating page rather than the fresh-install page an
-// operator's mark gets. It is set first, so the mark never stands without it.
+// operator's mark gets. It is set first, so the mark never stands without it; a failed second
+// write leaves an inert reason, which the gate ignores and the next deploy drops.
 const capacityRecreationMark = { recreate_reason: "capacity", recreate: "requested" };
 
 /**

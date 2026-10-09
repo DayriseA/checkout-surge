@@ -107,7 +107,13 @@ describe("gate server", () => {
   it("never returns the visitor to another site", async () => {
     const { gate } = await setup({ state: "stopped" });
 
-    for (const returnPath of ["//evil.example/", "/\t/evil.example/", "/\t\\evil.example"]) {
+    for (const returnPath of [
+      "//evil.example/",
+      "/\t/evil.example/",
+      "/\t\\evil.example",
+      "/.//evil.example/",
+      "/%2e//evil.example/",
+    ]) {
       const response = await gate.inject({
         method: "POST",
         url: `/__gate/start?return=${encodeURIComponent(returnPath)}`,

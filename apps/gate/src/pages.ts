@@ -122,8 +122,14 @@ main { max-width: 38rem; margin: 0 auto; padding: 12vh 1.5rem 4rem; }
 .warning { background: ${colors.warningSoft}; color: ${colors.warning}; }
 .danger { background: ${colors.dangerSoft}; color: ${colors.danger}; }
 .pulse { display: block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor;
-  animation: pulse 1.6s ease-in-out infinite; }
+  animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
+.loader { height: 3px; margin: 0 0 1.25rem; overflow: hidden; border-radius: 999px; background: ${colors.infoSoft}; }
+.loader::after { content: ""; display: block; width: 40%; height: 100%; border-radius: inherit;
+  background: ${colors.info}; animation: slide 1s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+.enter .card { animation: enter 240ms ease-out both; }
+@keyframes enter { from { opacity: 0; transform: translateY(6px); } }
 h1 { margin: 1rem 0 0; color: ${colors.ink}; font-size: 1.5rem; line-height: 1.25; font-weight: 700;
   font-stretch: 112%; letter-spacing: -0.005em; }
 .text { margin: 0.75rem 0 0; color: ${colors.mutedStrong}; font-size: 1rem; line-height: 1.75rem; }
@@ -134,8 +140,10 @@ form, .action { margin: 1.5rem 0 0; }
 .button { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem;
   padding: 0.5rem 1.25rem; border: 1px solid ${colors.accent}; border-radius: 0.5rem; background: ${colors.accent};
   color: #fff; font: inherit; font-size: 1rem; font-weight: 600; text-decoration: none; cursor: pointer;
-  transition: background-color 150ms ease; }
-.button:hover { background: ${colors.ink}; }
+  transition: background-color 150ms ease, transform 150ms ease, box-shadow 150ms ease; }
+.button:hover, .button:focus-visible { background: ${colors.ink}; transform: translateY(-1px);
+  box-shadow: 0 4px 12px color-mix(in srgb, ${colors.ink} 20%, transparent); }
+.button:active { transform: none; box-shadow: none; }
 :focus-visible { outline: 2px solid ${colors.ink}; outline-offset: 2px; }
 @media (max-width: 560px) {
   .band div { padding: 0 1rem; }
@@ -144,8 +152,9 @@ form, .action { margin: 1.5rem 0 0; }
   .button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .pulse { animation: none; }
-  .button { transition: none; }
+  .pulse, .loader::after, .enter .card { animation: none; }
+  .loader { display: none; }
+  .button, .button:hover, .button:focus-visible { transition: none; transform: none; }
 }
 `;
 
@@ -166,10 +175,8 @@ const toneMarkers: Record<Tone, string> = {
 /** The page shown for any URL while the core is not ready. `returnPath` is that URL. */
 export function renderGatePage(state: GatePageState, returnPath: string): string {
   const page = pages[state];
-  const refresh =
-    page.refreshSeconds === undefined
-      ? ""
-      : `<meta http-equiv="refresh" content="${page.refreshSeconds}">`;
+  const reloads = page.refreshSeconds !== undefined;
+  const refresh = reloads ? `<meta http-equiv="refresh" content="${page.refreshSeconds}">` : "";
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -180,10 +187,11 @@ ${refresh}
 <title>${page.title} · Checkout-Surge</title>
 <style>${styles}</style>
 </head>
-<body>
+<body${reloads ? "" : ' class="enter"'}>
 <header class="band"><div>${brandMark}<strong>Checkout-Surge</strong></div></header>
 <main>
 <div class="card">
+${reloads ? '<div class="loader" aria-hidden="true"></div>' : ""}
 <p class="status ${page.tone}"><span aria-hidden="true">${toneMarkers[page.tone]}</span>${page.status}</p>
 <h1>${page.title}</h1>
 <p class="text">${page.text}</p>
@@ -222,10 +230,12 @@ const returnBase = "http://gate.invalid";
 /**
  * A same-site path to return to, never another site. The value is parsed the way a browser would
  * (dropping tabs and newlines, reading a backslash as a slash), and only its normalized path,
- * query and fragment are kept.
+ * query and fragment are kept. A normalized path starting with `//` (from dot segments such as
+ * `/.//host`) would itself read as another site, so it returns to `/` too.
  */
 export function safeReturnPath(value: unknown): string {
   if (typeof value !== "string" || !value.startsWith("/")) return "/";
   const url = URL.parse(value, returnBase);
-  return url?.origin === returnBase ? `${url.pathname}${url.search}${url.hash}` : "/";
+  if (url?.origin !== returnBase || url.pathname.startsWith("//")) return "/";
+  return `${url.pathname}${url.search}${url.hash}`;
 }

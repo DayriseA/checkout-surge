@@ -78,11 +78,13 @@ The mark lives in the core Machine's metadata. Change it while no deploy runs, s
     https://api.machines.dev/v1/apps/checkout-surge-core/machines/<core id>/metadata/recreate
   ```
 
-- **Remove a mark set by mistake:**
+- **Remove a mark set by mistake,** then its reason, if any:
 
   ```bash
   flyctl auth token | sed 's/^/Authorization: Bearer /' | curl -sS -H @- \
     -X DELETE https://api.machines.dev/v1/apps/checkout-surge-core/machines/<core id>/metadata/recreate
+  flyctl auth token | sed 's/^/Authorization: Bearer /' | curl -sS -H @- \
+    -X DELETE https://api.machines.dev/v1/apps/checkout-surge-core/machines/<core id>/metadata/recreate_reason
   ```
 
 - **Check it:** `flyctl machine status <core id> -a checkout-surge-core -d` shows `"recreate": "requested"` under `metadata` while the mark is set, with `"recreate_reason": "capacity"` when the deploy set it for a full host.
