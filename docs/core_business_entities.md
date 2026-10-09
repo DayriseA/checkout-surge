@@ -13,7 +13,7 @@ The goal is to keep the limited-inventory checkout flow and its recovery boundar
 | Product model | Keep products as durable catalog records in PostgreSQL | Product identity and merchandising data should remain stable and sale-agnostic. |
 | Sale configuration model | Separate `SaleOffer` from `Product` | Event-specific pricing, allocated stock, and sale windows describe how a product is being sold in a specific limited-inventory event, not what the product is. |
 | Sale ownership model | Bind every generated offer through `DemoRunSaleContext` | Every purchase carries its run and sale identity; composite constraints reject cross-run ownership. |
-| Inventory model | Treat inventory as a split object: durable baseline in PostgreSQL, hot-path counters and holds in Redis | This preserves a fast reservation path without losing a durable source for resets, seeding, and reconciliation. |
+| Inventory model | Treat inventory as a split object: durable baseline in PostgreSQL, hot-path counters and holds in Redis | This keeps the stock decision in memory, and turned-away buyers off the database, without losing a durable source for resets, seeding, and reconciliation. |
 | Reservation model | Model reservations as first-class stock holds separate from orders | The project's core workflow depends on "reservation secured" not meaning "order confirmed." |
 | Rejected reservation persistence | Do not create a PostgreSQL row for every immediate sold-out rejection in the current model | At surge scale, persisting every reject would create noise without improving business recovery or operator understanding. |
 | Order model | Create an order only from a successful reservation | Orders represent the asynchronous business process, not every attempted click. |
@@ -172,7 +172,7 @@ Primary responsibilities:
 
 - represent a successful atomic stock-hold decision,
 - record the hold deadline (`expiresAt`), which only affects display: a secured reservation creates its order at once, with no payment step between them, where a real journey would hold the unit temporarily before payment,
-- connect the fast Redis decision to the slower durable order workflow.
+- connect the in-memory Redis decision to the slower durable order workflow.
 
 Recommended fields:
 
@@ -714,7 +714,7 @@ PostgreSQL is also the system of record for:
 
 ### Redis
 
-Redis owns the fast-changing operational state required for the limited-inventory hot path:
+Redis owns the frequently changing operational state, held in memory:
 
 - remaining stock counter per sale offer
 - reservation hold tokens and expiry data
@@ -807,7 +807,7 @@ Any implementation in those areas must preserve the existing reservation/order d
 This document establishes a domain model that preserves the core architectural story:
 
 - products, sale offers, and durable order history live in PostgreSQL,
-- inventory is a split object with Redis on the hot path,
+- inventory is a split object, with Redis making the atomic stock decision in memory,
 - reservations are distinct from orders,
 - ERP calls use durable call identities, bounded per-order attempt history, and cumulative outcome counters; canonical results and the current unresolved call remain protected while unsafe handoffs retain recovery/dead-letter evidence,
 - business facts are preserved in an event timeline,

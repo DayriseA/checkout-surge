@@ -52,4 +52,8 @@ Owner decisions of 2026-10-09.
 
 ## Working Notes
 
-_None yet._
+- 2026-10-09: claims reworded on the page, the README, `docs/architecture.md`, `docs/core_business_entities.md`, `working_docs/project_description.md` and `working_docs/delivery_constraints.md`. "Fast" replaced by "in-memory", "atomic" or "keeps turned-away buyers off the database"; "usually" added to successful buyers waiting longer.
+- The diagram node reads "Redis decision" (fits the 120 px box); the `redis-fast-path` anchor and the `fast` tone identifier are kept, since they are not visible text and links may target the anchor.
+- Same claim found and fixed beyond the listed lines: `core_business_entities.md:16` and `:175`.
+- "Known limits of this demo" sits after "What limits a run" and before the glossary, which is a reference appendix; it is listed in the page navigation as "Known limits".
+- Left as is: "fast reservation, slow confirmation" wording about the ERP split (true, it is the order queue's effect), and the run-presentation components owned by 16b.

@@ -126,7 +126,7 @@ describe("public visitor mental model", () => {
     for (const label of [
       "Simulated buyers",
       "API",
-      "Redis fast path",
+      "Redis decision",
       "BullMQ queue",
       "Worker",
       "Simulated ERP",

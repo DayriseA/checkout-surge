@@ -48,6 +48,7 @@ const contents = [
   ["success", "What success means"],
   ["run-reset", "Admission, grace period, reset"],
   ["limits-and-source", "What limits a run"],
+  ["known-limits", "Known limits"],
   ["glossary", "Glossary"],
 ] as const;
 
@@ -180,7 +181,10 @@ function TechnicalAbout() {
         <p className={proseClassName}>A real purchase journey has five steps:</p>
         <ol className={`${listClassName} list-decimal`}>
           <li>a waiting room;</li>
-          <li>a fast in-memory decision that turns buyers away once the stock is gone;</li>
+          <li>
+            an in-memory decision that turns buyers away once the stock is gone, keeping them off
+            the database;
+          </li>
           <li>a temporary hold on the unit, then payment;</li>
           <li>the durable order;</li>
           <li>asynchronous fulfilment and notifications.</li>
@@ -197,7 +201,7 @@ function TechnicalAbout() {
         <p className={proseClassName}>
           One simplification: a secured reservation creates its order at once; there is no payment
           step between them. The API records both durably in PostgreSQL before answering a buyer who
-          secures a unit, which is why successful buyers wait longer for their answer than
+          secures a unit, which is why successful buyers usually wait longer for their answer than
           turned-away buyers.
         </p>
         <p className="m-0 mt-4 max-w-[68ch] text-sm leading-6 text-muted">
@@ -213,14 +217,15 @@ function TechnicalAbout() {
           competing attempts cannot spend the same unit. Once the stock is gone, buyers turned away
           are answered from Redis alone, without touching the database. A buyer who secures a unit
           is answered only after the API has written its reservation and order to PostgreSQL in one
-          transaction and published the order to the queue. The stock decision is fast for every
-          buyer; the answer is not, because it also includes waiting for a busy API and, for
-          successful buyers, the database write. Run history shows the two apart: the reservation
-          timing measures the decision, the response timing measures the whole answer.
+          transaction and published the order to the queue. A buyer’s answer includes more than the
+          stock decision: waiting for a busy API and, for successful buyers, the database write. Run
+          history shows the two apart: the reservation timing measures the decision, the response
+          timing measures the whole answer.
         </p>
         <p className={proseClassName}>
-          Making the stock decision in the database instead would make every buyer, turned-away
-          buyers included, wait for it.
+          Making the stock decision in the database instead would send every buyer, turned-away
+          buyers included, to the database. Redis keeps turned-away buyers off it, leaving the
+          database to the buyers who secure a unit.
         </p>
         <ArchitectureDiagram />
       </section>
@@ -439,6 +444,25 @@ function TechnicalAbout() {
         <RepositoryLink />
       </section>
 
+      <section className={sectionClassName} id="known-limits" tabIndex={-1}>
+        <h2 className={headingClassName}>Known limits of this demo</h2>
+        <p className={proseClassName}>
+          One API process answers every buyer, and the database, Redis, and the rest of the system
+          run on the same machine as that process. That process, not the database, bounds how fast
+          turned-away buyers are answered (see{" "}
+          <a className={termLinkClassName} href="#limits-and-source">
+            What limits a run, and what makes it fail
+          </a>
+          ), so keeping them off the database spares it work but does not show here as faster
+          answers. What the demo does show holds at any scale: nothing is oversold, and turned-away
+          buyers never reach the database.
+        </p>
+        <p className={proseClassName}>
+          Later work will compare runs with and without the Redis layer and with and without the
+          order queue, with several API processes and the database at a realistic network distance.
+        </p>
+      </section>
+
       <PublicGlossary />
     </>
   );
@@ -479,10 +503,10 @@ function ArchitectureDiagram() {
           <title id="architecture-diagram-title">Checkout-Surge request and processing paths</title>
           <desc id="architecture-diagram-description">
             Simulated buyers send checkout attempts to the API. For every attempt, Redis makes the
-            fast atomic stock decision, and a buyer turned away is answered after that step alone.
-            For a buyer who secures a unit, the API first writes the reservation and its order to
-            PostgreSQL in one transaction and publishes the order to the BullMQ queue. The worker
-            takes orders from the queue to the simulated ERP and records their outcomes in
+            in-memory atomic stock decision, and a buyer turned away is answered after that step
+            alone. For a buyer who secures a unit, the API first writes the reservation and its
+            order to PostgreSQL in one transaction and publishes the order to the BullMQ queue. The
+            worker takes orders from the queue to the simulated ERP and records their outcomes in
             PostgreSQL.
           </desc>
           <defs>
@@ -528,7 +552,7 @@ function ArchitectureDiagram() {
           </g>
           <DiagramNode label="Simulated buyers" x={10} y={90} />
           <DiagramNode label="API" x={170} y={90} />
-          <DiagramNode label="Redis fast path" tone="fast" x={330} y={10} />
+          <DiagramNode label="Redis decision" tone="fast" x={330} y={10} />
           <DiagramNode label="BullMQ queue" tone="slow" x={490} y={90} />
           <DiagramNode label="Worker" tone="slow" x={650} y={90} />
           <DiagramNode label="Simulated ERP" tone="slow" x={810} y={90} />
@@ -651,7 +675,7 @@ function PublicGlossary() {
     [
       "reservation-vs-confirmation",
       "Reservation versus confirmation",
-      "A reservation secures scarce stock in one fast decision and creates its order at once; confirmation is the later successful order state after queued processing. Failure is a separate durable outcome.",
+      "A reservation secures scarce stock in one atomic decision and creates its order at once; confirmation is the later successful order state after queued processing. Failure is a separate durable outcome.",
     ],
   ] as const;
 

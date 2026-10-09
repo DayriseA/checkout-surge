@@ -12,7 +12,7 @@ To demonstrate expertise in building resilient, high-performance distributed sys
 
 ## 1. High-Level Architecture
 
-The system is designed as a series of decoupled microservices that communicate via a high-speed Redis layer and asynchronous queues.
+The system is designed as a series of decoupled microservices that communicate via an in-memory Redis layer and asynchronous queues.
 
 ### Core Components:
 
@@ -34,9 +34,9 @@ The project is a realistic systems simulation: external actors such as buyers, t
 
 ### A. Inventory Management (The Redis "Hot Path")
 
-- **Problem:** Deciding stock in a database transaction would make every buyer, turned-away buyers included, wait on the database during a 10k+ surge.
+- **Problem:** Deciding stock in a database transaction would send every buyer, turned-away buyers included, to the database during a 10k+ surge, keeping it busy with buyers who get nothing.
 - **Solution:** Use Redis for **Atomic Inventory Reservation**. Before any database record is touched, the system uses a Redis Lua script to check and reserve stock for the active sale offer. Buyers turned away are answered from Redis alone; for a buyer who secures a unit, the reservation and order are then written to PostgreSQL in one transaction before the answer.
-- **Benefit:** Prevents overselling atomically. 
+- **Benefit:** Prevents overselling atomically, and keeps turned-away buyers off the database.
 
 ### B. Asynchronous Order Processing (The Buffer)
 
