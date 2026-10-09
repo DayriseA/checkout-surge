@@ -1,9 +1,7 @@
-import type {
-  ErrorPayloadCode,
-  PublicRunFailureCategory,
-  PublicRuntimePolicyViolationCode,
-} from "@checkout-surge/contracts";
+import type { ErrorPayloadCode, PublicRuntimePolicyViolationCode } from "@checkout-surge/contracts";
 import type { BackendRead } from "../backend-read";
+import { pluralize } from "./format";
+import { publicFailureExplanation } from "./public-vocabulary";
 
 export type ErrorPresentationContextName =
   | "public-start"
@@ -63,7 +61,6 @@ export interface ErrorPresentationContext {
   budget?: "visitor" | "global";
   fieldErrors?: ReadonlyArray<{ field: string; message: string }>;
   readiness?: "degraded" | "unavailable";
-  failedRunCategory?: PublicRunFailureCategory;
 }
 
 const genericPresentation = {
@@ -155,10 +152,6 @@ export function mapErrorPresentation(
     return readinessPresentation(resolved.readiness, technicalDetails);
   }
 
-  if (resolved.failedRunCategory) {
-    return failedRunPresentation(resolved.failedRunCategory);
-  }
-
   if (resolved.fieldErrors && resolved.fieldErrors.length > 0) {
     return {
       headline: "Check the highlighted fields",
@@ -195,7 +188,7 @@ export function mapErrorPresentation(
     resolved.surface === "public-start" && resolved.startRequestOutcome === true;
   const mapped = read.errorCode
     ? resolved.surface !== "public-start" || publicStartActionCodes.has(read.errorCode)
-      ? codePresentation(read.errorCode, retryAfterMs, resolved)
+      ? codePresentation(read.errorCode, retryAfterMs, resolved, read.details?.reason)
       : isStartRequestOutcome && publicStartUncertainCodes.has(read.errorCode)
         ? publicStartUncertainRetryPresentation(retryAfterMs)
         : publicBackendRetryPresentation(retryAfterMs)
@@ -248,40 +241,11 @@ function publicStartUncertainPresentation(): Omit<ErrorPresentation, "technicalD
   };
 }
 
-function failedRunPresentation(
-  category: NonNullable<ErrorPresentationContext["failedRunCategory"]>,
-): ErrorPresentation {
-  return {
-    headline: "This run did not finish",
-    explanation: failedRunExplanation(category),
-    action: { kind: "none", label: "" },
-    tone: "danger",
-  };
-}
-
-function failedRunExplanation(
-  category: NonNullable<ErrorPresentationContext["failedRunCategory"]>,
-): string {
-  switch (category) {
-    case "inventory":
-      return "The scenario could not prepare its inventory.";
-    case "traffic":
-      return "The scenario could not complete its traffic window.";
-    case "not_started":
-      return "The load generator could not be started, so no traffic was sent.";
-    case "provider_capacity":
-      return "The hosting provider had no capacity for the load generator, so no traffic was sent.";
-    case "automatic_reset":
-      return "The scenario was cancelled by an automatic reset.";
-    case "operator":
-      return "The scenario was stopped by an operator.";
-  }
-}
-
 function codePresentation(
   code: ErrorPayloadCode,
   retryAfterMs: number | undefined,
   context: ErrorPresentationContext,
+  detailsReason: unknown,
 ): Omit<ErrorPresentation, "technicalDetails"> | null {
   switch (code) {
     case "run_conflict":
@@ -326,8 +290,8 @@ function codePresentation(
       // On a start, the API answers it only before any traffic was dispatched.
       if (context.startRequestOutcome === true) {
         return {
-          headline: "The load generator could not be started",
-          explanation: "No traffic was started. Try again shortly.",
+          headline: "The run did not start",
+          explanation: failureSentences("not_started"),
           action: { kind: "check", label: "Check again" },
           tone: "warning",
         };
@@ -336,13 +300,22 @@ function codePresentation(
         ? publicBackendRetryPresentation(retryAfterMs)
         : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
     case "dashboard_recovery_unavailable":
+      if (context.surface === "public-start") return publicBackendRetryPresentation(retryAfterMs);
+      return isProtectedSurface(context.surface)
+        ? apiBusyPresentation(detailsReason, retryAfterMs)
+        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
     case "queue_status_unavailable":
       return context.surface === "public-start"
         ? publicBackendRetryPresentation(retryAfterMs)
         : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
     case "backend_unavailable":
       if (context.surface !== "public-start")
-        return retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+        return retryPresentation(
+          isProtectedSurface(context.surface)
+            ? "The API cannot be reached"
+            : "The latest information is temporarily unavailable",
+          retryAfterMs,
+        );
       return context.startRequestOutcome === true
         ? publicStartUncertainRetryPresentation(retryAfterMs)
         : publicBackendRetryPresentation(retryAfterMs);
@@ -392,9 +365,8 @@ function codePresentation(
       };
     case "runner_capacity_unavailable":
       return {
-        headline: "Our hosting provider has no capacity right now",
-        explanation:
-          "Fly.io has no room for the load generator in Europe at the moment, so no traffic was started. Please come back later.",
+        headline: "No room at the hosting provider",
+        explanation: failureSentences("provider_capacity"),
         action: { kind: "check", label: "Fly.io status", href: providerStatusUrl },
         tone: "warning",
       };
@@ -412,6 +384,29 @@ function codePresentation(
     default:
       return null;
   }
+}
+
+/** The saved run's explanation and next step, so a failed start reads like the run it recorded. */
+function failureSentences(category: "not_started" | "provider_capacity"): string {
+  const { explanation, action } = publicFailureExplanation(category);
+  return `${explanation} ${action}`;
+}
+
+/** The API answered but could not read the current run in time; the reason says why. */
+function apiBusyPresentation(
+  reason: unknown,
+  retryAfterMs: number | undefined,
+): Omit<ErrorPresentation, "technicalDetails"> {
+  const presentation = retryPresentation("The API is busy", retryAfterMs);
+  const cause =
+    reason === "at_capacity"
+      ? "It is already serving as many status reads as it can."
+      : reason === "timed_out"
+        ? "Reading the current run took too long."
+        : null;
+  return cause
+    ? { ...presentation, explanation: `${cause} ${presentation.explanation}` }
+    : presentation;
 }
 
 function conflictPresentation(
@@ -587,9 +582,10 @@ function waitPresentation(
 
 function formatRetryDelay(milliseconds: number): string {
   const seconds = Math.max(1, Math.ceil(milliseconds / 1_000));
+  const minutes = Math.ceil(seconds / 60);
   return seconds < 60
-    ? `${seconds} second${seconds === 1 ? "" : "s"}`
-    : `${Math.ceil(seconds / 60)} minutes`;
+    ? `${seconds} ${pluralize(seconds, "second")}`
+    : `${minutes} ${pluralize(minutes, "minute")}`;
 }
 
 function toTechnicalDetails(

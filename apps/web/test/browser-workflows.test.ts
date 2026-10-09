@@ -216,6 +216,66 @@ describe("public browser starts", () => {
     ).toHaveLength(1);
   });
 
+  it("waits for a pending start in a panel that carries the relocation notice", async () => {
+    vi.useFakeTimers();
+    const start = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) return start.promise;
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return jsonResponse(
+          dashboardRecoveryFixture({
+            currentRun: demoRunFixture({ status: "starting", runnerRelocating: true }),
+            recoveredAt: "2026-06-20T00:00:11.000Z",
+            revision: 2,
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Start Preview 1k" }));
+    });
+    const panel = screen.getByRole("status", { name: "Run start" });
+    expect(within(panel).getByText("Starting the load generator")).toBeTruthy();
+    expect(within(panel).queryByText(/longer than usual/)).toBeNull();
+
+    // The pending start polls recovery, which finds the visitor's own run relocating.
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(recoveryFetchCount(fetchMock)).toBe(1);
+    expect(within(panel).getByText(/moving to another host/)).toBeTruthy();
+    expect(screen.getAllByText(/moving to another host/)).toHaveLength(1);
+    expect(screen.queryByText("A demo run is already in progress")).toBeNull();
+
+    await act(async () => vi.advanceTimersByTimeAsync(6_000));
+    expect(within(panel).getByText(/taking longer than usual/)).toBeTruthy();
+
+    await act(async () => {
+      start.resolve(jsonResponse(startDemoRunResponseFixture()));
+    });
+    expect(assign).toHaveBeenCalledOnce();
+  });
+
+  it("shows the waiting panel beside a pending custom start", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByText("Customize a scenario"));
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+
+    const panel = screen.getByRole("status", { name: "Run start" });
+    expect(screen.getByRole("form", { name: "Custom run builder" }).contains(panel)).toBe(true);
+  });
+
   it("keeps checking run status past start retry expiry until recovery completes", async () => {
     vi.useFakeTimers();
     const recovery = deferred<Response>();

@@ -106,9 +106,10 @@ export function RunConclusion({
       aria-label="Run conclusion"
     >
       <p className="m-0 text-xs font-medium text-muted">Final result</p>
-      <p className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink">
-        {runConclusionSentence(result)}
-      </p>
+      <ProofNarration
+        className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink"
+        result={result}
+      />
       {showReconciliationStatus ? <ReconciliationStatus result={result} /> : null}
       <ConclusionEvidence result={result} showCanonicalCodes={showCanonicalCodes} />
     </section>
@@ -153,22 +154,20 @@ export function PublicRunConclusion({
       aria-label="Run conclusion"
     >
       <p className="m-0 text-xs font-medium text-muted">Final result</p>
-      <p className="type-title m-0 mt-0.5 text-lg leading-7 text-ink">{summary.title}</p>
       {failureExplanation ? (
         <p className="m-0 mt-1 text-sm font-semibold text-danger">Traffic failure</p>
       ) : (
-        <p className="m-0 mt-1 leading-6 text-muted-strong">{summary.sentence}</p>
+        <p className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink">
+          {summary.sentence}
+        </p>
       )}
       {failureExplanation ? (
         <RunFailureExplanation
           evidence={failureExplanation}
           {...(stderrLines ? { stderrLines } : {})}
         />
-      ) : summary.failure ? (
-        <div className="mt-3 text-sm text-muted-strong">
-          <p className="m-0">{summary.failure.explanation}</p>
-          <p className="m-0 mt-1 font-semibold">{summary.failure.action}</p>
-        </div>
+      ) : summary.failureAction ? (
+        <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{summary.failureAction}</p>
       ) : null}
       <PublicRunCaveatList caveats={summary.caveats} />
       {measurementsTargetId && summary.hasMeasurementCaveat ? (
@@ -222,7 +221,7 @@ export function PublicRunConclusionProof({
   const content = (
     <>
       {targetId ? <h2 className="type-title m-0 text-base text-ink">Consistency</h2> : null}
-      <p className="m-0 text-sm leading-6 text-muted-strong">{runConclusionSentence(result)}</p>
+      <ProofNarration className="m-0 text-sm leading-6 text-muted-strong" result={result} />
       <ReconciliationStatus result={result} />
       <ConclusionEvidence result={result} showCanonicalCodes={false} />
     </>
@@ -242,6 +241,15 @@ export function PublicRunConclusionProof({
       {content}
     </div>
   );
+}
+
+/**
+ * The full narration that opens the proof. A failed run's narration is its verdict, which every
+ * surface showing the proof already states, so the proof does not repeat it.
+ */
+function ProofNarration({ className, result }: { className: string; result: RunResult }) {
+  if (result.outcome === "failed") return null;
+  return <p className={className}>{runConclusionSentence(result)}</p>;
 }
 
 /** Danger tracks oversell, run failure and contradictory evidence; warnings never escalate. */

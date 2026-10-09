@@ -114,6 +114,45 @@ describe("failure explanation", () => {
     ).toBeTruthy();
     expect(screen.queryByText(/never sent|requests completed|launched requests/)).toBeNull();
   });
+  it("words a single late answer in the singular", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "interrupted_requests" };
+    input.transportAttemptCounts = {
+      plannedRequests: 10000,
+      startedRequests: 10000,
+      completedRequests: 9999,
+      interruptedRequests: 1,
+      unstartedRequests: 0,
+    };
+    input.businessOutcomeSummary = {
+      ...input.businessOutcomeSummary,
+      acceptedReservations: 10000,
+      reservedUnits: 10000,
+      confirmedOrders: 10000,
+      notificationsRecorded: 10000,
+    };
+    render(<RunFailureExplanation evidence={input} />);
+    expect(
+      screen.getByText(
+        "The server needed more time than the load generator waits: 1 buyer was still waiting for their answer when the generator stopped listening, 30 seconds after its sending window closed.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The server still handled that request: all 10,000 orders were reserved, confirmed and notified. Only its answer came too late to be recorded. This buyer waited at least 30 seconds without an answer, so the run counts as failed.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "All 10,000 accepted orders were confirmed and notified, including the one whose answer arrived too late.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "1 answer arrived too late to be recorded; outcomes and latency cover only the recorded answers.",
+      ),
+    ).toBeTruthy();
+  });
   it("does not claim the server handled late answers its own counts do not cover", () => {
     const input = evidence();
     input.failureDiagnostic = { cause: "interrupted_requests" };

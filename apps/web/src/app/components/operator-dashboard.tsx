@@ -12,12 +12,16 @@ import type {
   AcceptedRunReportEvidence,
   AcceptedRunResult,
 } from "../lib/presentation/accepted-run-result";
-import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import {
+  formatCount,
+  formatDurationMs,
+  formatInstantUtc,
+  pluralize,
+} from "../lib/presentation/format";
 import {
   derivePublicRunSummary,
   type PublicRunSummary,
 } from "../lib/presentation/public-run-summary";
-import { publicFailureExplanation } from "../lib/presentation/public-vocabulary";
 import { deriveRunConfigFacts } from "../lib/presentation/run-config-presentation";
 import {
   deriveFreshnessPresentationState,
@@ -351,10 +355,6 @@ function RunCard({
   const inventory = projection.inventory;
   const terminal = composition.phase === "completed" || composition.phase === "failed";
   const summary = terminal ? terminalSummary(composition, savedEvidence) : null;
-  const failure =
-    terminal && composition.run.status === "failed"
-      ? publicFailureExplanation(composition.run.failureCategory)
-      : null;
   const counts = {
     awaiting: summary
       ? summary.counts.pendingOrders
@@ -401,9 +401,9 @@ function RunCard({
         </div>
         {savedEvidence?.failureExplanation ? (
           <RunFailureExplanation evidence={savedEvidence.failureExplanation} />
-        ) : failure ? (
-          <p className="m-0 mt-2 max-w-[66ch] text-sm leading-6 text-muted-strong">
-            <span className="font-semibold">{failure.explanation}</span> {failure.action}
+        ) : summary?.failureAction ? (
+          <p className="m-0 mt-2 max-w-[66ch] text-sm font-semibold leading-6 text-muted-strong">
+            {summary.failureAction}
           </p>
         ) : null}
       </div>
@@ -581,7 +581,9 @@ function IdentityLine({
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border pb-3">
       <p className="m-0 text-sm font-semibold text-ink">
         {composition.run.presetName} · {facts.surgeValue}{" "}
-        {facts.surgeLabel === "Buyers" ? "buyers" : "attempts"} · {facts.startingStock} units
+        {pluralize(facts.uniqueAttempts, facts.surgeLabel === "Buyers" ? "buyer" : "attempt")} ·{" "}
+        {facts.startingStock}{" "}
+        {pluralize(composition.run.configSnapshot.inventoryConfig.startingStock, "unit")}
         {sharedDemo ? " · Now running in the shared demo" : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">
@@ -652,7 +654,7 @@ function CountsRow({
         <p className={tileLabelClassName}>Orders confirmed</p>
         {progress ? (
           <meter
-            aria-label={`${format(confirmed)} of ${format(progressDenominator)} orders confirmed`}
+            aria-label={`${format(confirmed)} of ${format(progressDenominator)} ${pluralize(progressDenominator, "order")} confirmed`}
             className="meter mt-2.5 block h-1.5 w-full rounded-full border-0 bg-surface"
             max={progressDenominator}
             value={confirmed}

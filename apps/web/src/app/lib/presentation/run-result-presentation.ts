@@ -9,7 +9,8 @@ import {
   type RunResultEvidence,
   runResultEvidenceSchema,
 } from "@checkout-surge/contracts";
-import { formatCount } from "./format";
+import { formatCount, pluralize } from "./format";
+import { publicFailureExplanation } from "./public-vocabulary";
 
 type SummaryLike = RunHistorySummary | PublicRunHistorySummary;
 
@@ -174,19 +175,17 @@ function hasKnownNonZeroFailedOrPendingOrders(result: RunResult): boolean {
 }
 
 function pendingOrdersSentence(result: RunResult): string {
-  return `${formatNarrativeCount(result.pendingOrders)} orders remain pending.`;
+  return `${countOf(result.pendingOrders, "order")} ${pluralize(result.pendingOrders, "remains", "remain")} pending.`;
 }
 
+/** The shared failure explanation is the verdict; known failed orders are added to it. */
 function failedSentence(result: RunResult): string {
-  const category =
-    result.failureCategory === "not_started"
-      ? " because the load generator could not be started; no traffic was sent"
-      : result.failureCategory === "provider_capacity"
-        ? " because the hosting provider had no capacity for the load generator; no traffic was sent"
-        : result.failureCategory
-          ? ` due to a ${result.failureCategory} failure`
-          : "; the failure category is unavailable";
-  return `The run failed${category}${result.failedOrders ? ` with ${formatNarrativeCount(result.failedOrders)} failed orders` : ""}.`;
+  const failure = result.failureCategory
+    ? publicFailureExplanation(result.failureCategory).explanation
+    : "The run failed; its cause was not recorded.";
+  return result.failedOrders
+    ? `${failure} ${countOf(result.failedOrders, "order")} failed.`
+    : failure;
 }
 
 function indeterminateSentence(result: RunResult): string {
@@ -200,7 +199,7 @@ function oversellStockSentence(result: RunResult): string {
     result.startingStock === null ||
     result.oversoldUnits === null
     ? "Stock evidence is unavailable."
-    : `Durable records show ${formatNarrativeCount(result.reservedUnits)} units reserved against ${formatNarrativeCount(result.startingStock)} starting units, so ${formatNarrativeCount(result.oversoldUnits)} units were oversold.`;
+    : `Durable records show ${countOf(result.reservedUnits, "unit")} reserved against ${countOf(result.startingStock, "starting unit")}, so ${countOf(result.oversoldUnits, "unit")} ${pluralize(result.oversoldUnits, "was", "were")} oversold.`;
 }
 
 function stockSentence(result: RunResult): string {
@@ -212,13 +211,15 @@ function stockSentence(result: RunResult): string {
       result.startingStock === 0
       ? "The sale started with no stock available to reserve."
       : result.remainingStock === 0
-        ? `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
-        : `${formatNarrativeCount(result.reservedUnits)} units were reserved from ${formatNarrativeCount(result.startingStock)}, and ${formatNarrativeCount(result.remainingStock)} units remain.`;
+        ? result.startingStock === 1
+          ? "The only available unit was reserved without overselling."
+          : `All ${formatNarrativeCount(result.startingStock)} available units were reserved without overselling.`
+        : `${countOf(result.reservedUnits, "unit")} ${pluralize(result.reservedUnits, "was", "were")} reserved from ${formatNarrativeCount(result.startingStock)}, and ${countOf(result.remainingStock, "unit")} ${pluralize(result.remainingStock, "remains", "remain")}.`;
 }
 
 function soldOutSentence(result: RunResult): string {
   return result.soldOutDecisions && result.soldOutDecisions > 0
-    ? `Checkout-Surge recorded ${formatNarrativeCount(result.soldOutDecisions)} sold-out rejections.`
+    ? `Checkout-Surge recorded ${countOf(result.soldOutDecisions, "sold-out rejection")}.`
     : "";
 }
 
@@ -226,11 +227,13 @@ function orderSentence(result: RunResult): string {
   if (result.confirmedOrders === null) return "Order evidence is unavailable.";
   const pending = result.pendingOrders ?? 0;
   if ((result.failedOrders ?? 0) > 0 || pending > 0) {
-    return `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, ${formatNarrativeCount(result.failedOrders)} failed, and ${formatNarrativeCount(pending)} remain pending.`;
+    return `${countOf(result.confirmedOrders, "order")} ${pluralize(result.confirmedOrders, "was", "were")} confirmed, ${formatNarrativeCount(result.failedOrders)} failed, and ${formatNarrativeCount(pending)} ${pluralize(pending, "remains", "remain")} pending.`;
   }
   return result.uniqueReservations === result.confirmedOrders
-    ? `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
-    : `${formatNarrativeCount(result.confirmedOrders)} orders were confirmed, with no failed orders.`;
+    ? result.confirmedOrders === 1
+      ? "The only reservation was confirmed, with no failed orders."
+      : `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
+    : `${countOf(result.confirmedOrders, "order")} ${pluralize(result.confirmedOrders, "was", "were")} confirmed, with no failed orders.`;
 }
 
 function neutralOrderSentence(result: RunResult): string {
@@ -248,6 +251,10 @@ function neutralOrderSentence(result: RunResult): string {
  */
 function formatNarrativeCount(value: number | null | undefined): string {
   return formatCount(value) ?? "an unreported number of";
+}
+
+function countOf(value: number | null | undefined, noun: string): string {
+  return `${formatNarrativeCount(value)} ${pluralize(value, noun)}`;
 }
 
 export function invariantLabel(status: RunResult["invariants"][number]["status"]): string {

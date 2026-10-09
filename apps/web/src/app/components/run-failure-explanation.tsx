@@ -3,7 +3,7 @@ import {
   type RunFailureDiagnostic,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
-import { formatCount, formatDurationMs } from "../lib/presentation/format";
+import { formatCount, formatDurationMs, pluralize } from "../lib/presentation/format";
 import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import {
   hasUnknownTrafficCounts,
@@ -51,21 +51,21 @@ export function RunFailureExplanation({
         <div className="my-3 border-l-2 border-danger pl-3">
           {counts.unstartedRequests !== null && counts.unstartedRequests > 0 ? (
             <p className="m-0 font-semibold text-ink">
-              {formatCount(counts.unstartedRequests)} planned requests were never sent.
+              {unsentRequestsText(counts.unstartedRequests)}
             </p>
           ) : null}
           {lateAnswersCause ? (
             <p className="m-0">
               {formatCount(counts.interruptedRequests)} of {formatCount(counts.startedRequests)}{" "}
-              answers arrived too late (
+              {pluralize(counts.startedRequests, "answer")} arrived too late (
               {formatShortfallPercent(counts.interruptedRequests ?? 0, counts.startedRequests ?? 0)}
               %).
             </p>
           ) : (
             <p className="m-0">
               {formatCount(counts.completedRequests)} of {formatCount(counts.plannedRequests)}{" "}
-              requests completed ({formatShortfallPercent(missingRequests, counts.plannedRequests)}%
-              shortfall).
+              {pluralize(counts.plannedRequests, "request")} completed (
+              {formatShortfallPercent(missingRequests, counts.plannedRequests)}% shortfall).
             </p>
           )}
         </div>
@@ -73,10 +73,10 @@ export function RunFailureExplanation({
       {lateAnswersCause ? (
         <p className="m-0 mt-2">
           {serverHandledLateAnswers
-            ? `The server still handled those requests: all ${formatCount(business.acceptedReservations)} orders were reserved, confirmed and notified. Only their answers came too late to be recorded. `
+            ? `The server still handled ${pluralize(counts.interruptedRequests, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only order was" : `all ${formatCount(business.acceptedReservations)} orders were`} reserved, confirmed and notified. Only ${pluralize(counts.interruptedRequests, "its answer", "their answers")} came too late to be recorded. `
             : null}
-          These buyers waited at least {k6GracefulStopSeconds} seconds without an answer, so the run
-          counts as failed.
+          {pluralize(counts.interruptedRequests, "This buyer", "These buyers")} waited at least{" "}
+          {k6GracefulStopSeconds} seconds without an answer, so the run counts as failed.
         </p>
       ) : null}
       {http.unexpectedResponses !== null && http.unexpectedResponses > 0 ? (
@@ -86,25 +86,32 @@ export function RunFailureExplanation({
       ) : null}
       {http.transportFailures !== null && http.transportFailures > 0 ? (
         <p className="m-0 mt-2">
-          {formatCount(http.transportFailures)} attempts ended in transport failure.
+          {formatCount(http.transportFailures)} {pluralize(http.transportFailures, "attempt")} ended
+          in transport failure.
         </p>
       ) : null}
       {!lateAnswersCause && hasLateAnswers(counts) ? (
-        <p className="m-0 mt-2">
-          {formatCount(counts.interruptedRequests)} answers arrived too late to be recorded.
-        </p>
+        <p className="m-0 mt-2">{lateAnswersClause(counts.interruptedRequests)}.</p>
       ) : null}
       {settled ? (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3 font-semibold text-ink">
-          All {formatCount(business.confirmedOrders)} accepted orders were confirmed and notified
-          {serverHandledLateAnswers ? ", including those whose answer arrived too late" : null}.
+          {business.confirmedOrders === 1
+            ? "The only accepted order was"
+            : `All ${formatCount(business.confirmedOrders)} accepted orders were`}{" "}
+          confirmed and notified
+          {serverHandledLateAnswers
+            ? `, including ${pluralize(counts.interruptedRequests, "the one", "those")} whose answer arrived too late`
+            : null}
+          .
         </p>
       ) : (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3">
-          Business outcomes: {formatCount(business.confirmedOrders)} orders confirmed,{" "}
+          Business outcomes: {formatCount(business.confirmedOrders)}{" "}
+          {pluralize(business.confirmedOrders, "order")} confirmed,{" "}
           {formatCount(business.failedOrders)} failed,{" "}
           {formatCount(business.queuedOrders + business.processingOrders)} pending;{" "}
-          {formatCount(business.notificationsRecorded)} notifications recorded.
+          {formatCount(business.notificationsRecorded)}{" "}
+          {pluralize(business.notificationsRecorded, "notification")} recorded.
         </p>
       )}
       {counts.startedRequests !== null &&
@@ -156,7 +163,8 @@ export function RunFailureExplanation({
         </p>
         {http.transportFailures !== null && http.transportFailures > 0 ? (
           <p className="m-0 mt-1">
-            {formatCount(http.transportFailures)} completed attempts ended in transport failure.
+            {formatCount(http.transportFailures)}{" "}
+            {pluralize(http.transportFailures, "completed attempt")} ended in transport failure.
           </p>
         ) : null}
       </details>
@@ -170,11 +178,19 @@ function hasLateAnswers(counts: TransportAttemptCounts): boolean {
 
 function measurementCoverageText(counts: TransportAttemptCounts): string {
   const coverage = hasLateAnswers(counts)
-    ? `${formatCount(counts.interruptedRequests)} answers arrived too late to be recorded; outcomes and latency cover only the recorded answers.`
+    ? `${lateAnswersClause(counts.interruptedRequests)}; outcomes and latency cover only the recorded answers.`
     : "Outcomes and latency cover only the recorded answers.";
   return counts.unstartedRequests !== null && counts.unstartedRequests > 0
-    ? `${formatCount(counts.unstartedRequests)} planned requests were never sent. ${coverage}`
+    ? `${unsentRequestsText(counts.unstartedRequests)} ${coverage}`
     : coverage;
+}
+
+function unsentRequestsText(unstartedRequests: number | null): string {
+  return `${formatCount(unstartedRequests)} planned ${pluralize(unstartedRequests, "request was", "requests were")} never sent.`;
+}
+
+function lateAnswersClause(interruptedRequests: number | null): string {
+  return `${formatCount(interruptedRequests)} ${pluralize(interruptedRequests, "answer")} arrived too late to be recorded`;
 }
 
 function formatShortfallPercent(missingRequests: number, plannedRequests: number): string {
@@ -196,14 +212,14 @@ function causeCopy(
     case "virtual_user_limit":
       return {
         heading: "Virtual user limit reached",
-        summary: `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent virtual users and could not maintain the requested traffic rate.`,
+        summary: `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent ${pluralize(diagnostic.maxVus, "virtual user")} and could not maintain the requested traffic rate.`,
         next: "For the same traffic target, investigate slow responses and review virtual-user capacity. A lower request rate would test a less demanding scenario.",
         why: "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays.",
       };
     case "interrupted_requests":
       return {
         heading: "Answers arrived too late",
-        summary: `The server needed more time than the load generator waits: ${formatCount(counts.interruptedRequests)} buyers were still waiting for their answer when the generator stopped listening, ${k6GracefulStopSeconds} seconds after its sending window closed.`,
+        summary: `The server needed more time than the load generator waits: ${formatCount(counts.interruptedRequests)} ${pluralize(counts.interruptedRequests, "buyer was", "buyers were")} still waiting for their answer when the generator stopped listening, ${k6GracefulStopSeconds} seconds after its sending window closed.`,
         next: "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
         why: "The load generator sent these requests but stopped listening before their answers arrived. The late answers alone are enough to fail the run, so they explain this failure. The report shows when answers arrived, not where the server spent its time.",
       };

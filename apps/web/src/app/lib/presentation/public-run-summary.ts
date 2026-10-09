@@ -65,8 +65,11 @@ export interface PublicRunSummary {
   caveats: PublicRunCaveat[];
   /** Whether at least one caveat is explained by the detailed delivery/measurement evidence. */
   hasMeasurementCaveat: boolean;
-  /** Public-safe failure explanation and next action for a failed run. */
-  failure: { explanation: string; action: string } | null;
+  /**
+   * The next step after a failed run. Its explanation is already the verdict `sentence`, so a
+   * surface states the failure once.
+   */
+  failureAction: string | null;
 }
 
 export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunSummary {
@@ -88,7 +91,9 @@ export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunS
       oversoldUnits: result.oversoldUnits,
     },
     ...caveatSummary,
-    failure: result.failureCategory ? publicFailureExplanation(result.failureCategory) : null,
+    failureAction: result.failureCategory
+      ? publicFailureExplanation(result.failureCategory).action
+      : null,
   };
 }
 

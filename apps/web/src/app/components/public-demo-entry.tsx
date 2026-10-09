@@ -33,7 +33,7 @@ import {
   mapErrorPresentation,
 } from "../lib/presentation/error-presentation";
 import { fieldHints } from "../lib/presentation/field-hints";
-import { formatCount, formatDurationMs } from "../lib/presentation/format";
+import { formatCount, formatDurationMs, pluralize } from "../lib/presentation/format";
 import { percentToRatio, ratioToPercent } from "../lib/presentation/percent";
 import { publicVocabulary, trafficModeLabel } from "../lib/presentation/public-vocabulary";
 import {
@@ -57,6 +57,7 @@ import { ErrorNotice } from "./error-notice";
 import { FieldHint } from "./field-hint";
 import { useDashboardRecovery } from "./realtime/use-dashboard-recovery";
 import { RunEstimateNotice } from "./run-estimate-notice";
+import { RunStartWaitingPanel } from "./run-start-waiting-panel";
 import { RunnerRelocationNotice } from "./runner-relocation-notice";
 import { StatusPill } from "./status-pill";
 import { ConditionalCaveat } from "./transport-observation";
@@ -330,6 +331,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   // reconciliation while the failed-start presentation is up and the starting slug has
   // not been released (it is only released once both required reads complete).
   const postStartReconciliationPending = startingSlug !== null && startPresentation !== null;
+  // The waiting panel sits beside the start the visitor clicked, so it stays in view.
+  const startAwaitingAnswer = startingSlug !== null && startPresentation === null;
+  const customStartPending = customPreset !== null && startingSlug === customPreset.slug;
 
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
     setCustomDraft(update);
@@ -478,6 +482,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   }
             }
             postStartReconciliationPending={postStartReconciliationPending}
+            showWaitingPanel={startAwaitingAnswer && !customStartPending}
             readiness={readiness}
             readyLabel={curatedPresets.length > 0 ? "ready" : "Custom scenario ready"}
             recovery={recovery}
@@ -937,6 +942,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 />
               ) : null}
               <RunEstimateNotice state={customEstimate.state} mode="public" />
+              {startAwaitingAnswer && customStartPending ? (
+                <RunStartWaitingPanel recovery={recovery} />
+              ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="m-0 text-sm leading-5 text-muted-strong">
                   {publicRunBudgetCopy(runtimePolicy)}
@@ -1105,13 +1113,17 @@ function publicRunBudgetCopy({
   if (!isPublicRunBudgetEnforced) {
     return "Public start budgets are not enforced right now.";
   }
-  return `Up to ${formatCount(publicRunBudget.perVisitorMaxStarts)} starts per visitor and ${formatCount(publicRunBudget.globalMaxStarts)} starts total every ${formatPolicyWindow(publicRunBudget.windowSeconds)}.`;
+  return `Up to ${formatCount(publicRunBudget.perVisitorMaxStarts)} ${pluralize(publicRunBudget.perVisitorMaxStarts, "start")} per visitor and ${formatCount(publicRunBudget.globalMaxStarts)} ${pluralize(publicRunBudget.globalMaxStarts, "start")} total every ${formatPolicyWindow(publicRunBudget.windowSeconds)}.`;
 }
 
 function formatPolicyWindow(seconds: number): string {
-  if (seconds % 60 !== 0) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  if (seconds % 60 !== 0) return formatSeconds(seconds);
   const minutes = seconds / 60;
-  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  return `${minutes} ${pluralize(minutes, "minute")}`;
+}
+
+function formatSeconds(seconds: number): string {
+  return `${seconds} ${pluralize(seconds, "second")}`;
 }
 
 function navigateToWatch(acceptedRunId: string) {
@@ -1293,6 +1305,7 @@ function StartGate({
   isRetryScheduled,
   onRetry,
   postStartReconciliationPending,
+  showWaitingPanel,
   readiness,
   readyLabel,
   recovery,
@@ -1308,6 +1321,7 @@ function StartGate({
   isRetryScheduled: boolean;
   onRetry: () => void;
   postStartReconciliationPending: boolean;
+  showWaitingPanel: boolean;
   readiness: BackendRead<HealthResponse>;
   readyLabel: string;
   recovery: BackendRead<DashboardProjection>;
@@ -1370,7 +1384,8 @@ function StartGate({
           <StatusPill status={{ label: readyLabel, tone: "idle" }} />
         )}
       </div>
-      <RunnerRelocationNotice recovery={recovery} />
+      {showWaitingPanel ? <RunStartWaitingPanel className="w-full" recovery={recovery} /> : null}
+      {isStarting ? null : <RunnerRelocationNotice recovery={recovery} />}
       {activeRunPresentation ? (
         <ErrorNotice
           className="w-full"
@@ -1392,13 +1407,13 @@ function StartGate({
       (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null) ? (
         shouldShowRetryWait && retryAfterMs !== undefined ? (
           <p className="m-0 text-sm text-muted">
-            Wait {Math.ceil(retryAfterMs / 1_000)} seconds before trying again.
+            Wait {formatSeconds(Math.ceil(retryAfterMs / 1_000))} before trying again.
           </p>
         ) : null
       ) : null}
       {!activeRunPresentation && isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 text-sm text-muted">
-          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
+          Automatic retry {retryAttempt} in {formatSeconds(Math.ceil(retryDelayMs / 1_000))}.
         </p>
       ) : !activeRunPresentation && retriesExhausted ? (
         <p className="m-0 text-sm text-muted">

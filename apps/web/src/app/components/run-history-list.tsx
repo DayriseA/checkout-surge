@@ -1,6 +1,11 @@
 import type { RunHistoryListItem, RunHistoryListResponse } from "@checkout-surge/contracts";
 import Link from "next/link";
-import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import {
+  formatCount,
+  formatDurationMs,
+  formatInstantUtc,
+  pluralize,
+} from "../lib/presentation/format";
 import {
   publicVocabulary,
   runResultOutcomeLabel,
@@ -74,7 +79,8 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
           <p className="m-0 mt-0.5 flex flex-wrap gap-x-3 text-sm text-muted">
             {!summary.dataDiscarded ? (
               <span className="font-medium text-muted-strong">
-                {number(summary.plannedAttempts)} attempts · {number(summary.startingStock)} units
+                {number(summary.plannedAttempts)} {pluralize(summary.plannedAttempts, "attempt")} ·{" "}
+                {number(summary.startingStock)} {pluralize(summary.startingStock, "unit")}
               </span>
             ) : null}
             <time dateTime={summary.occurredAt}>

@@ -115,7 +115,7 @@ describe("transport observation section", () => {
     expect(markup).not.toContain("observed replies only");
   });
 
-  it("leads with the server boundary, target verdict, and shared-host caveat", () => {
+  it("leads with the server boundary and target verdict", () => {
     const markup = renderSection(counts({ completedRequests: 10 }));
 
     expect(markup.indexOf("Fast inventory reservation")).toBeLessThan(
@@ -126,7 +126,6 @@ describe("transport observation section", () => {
     expect(markup).toContain("Reservation processing p95 bound");
     expect(markup).toContain("≤ 100ms");
     expect(markup).toContain("bounded p95 estimate");
-    expect(markup).toContain("not a benchmark");
   });
 
   it("discloses coverage, cause, and survivorship bias when replies went unrecorded", () => {

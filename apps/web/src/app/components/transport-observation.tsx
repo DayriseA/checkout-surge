@@ -291,13 +291,51 @@ function FastReservationEvidence({ summary }: { summary: ServerReservationTiming
           value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
         />
       </dl>
-      <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
-        Environment note: run locally, the load generator, API, database, order-processing service,
-        and simulated ERP share one host; on the hosted demo, the load generator runs on its own
-        machine. These figures record one run in one environment, not a benchmark.
-      </p>
     </>
   );
+}
+
+/**
+ * Where a run's figures were measured. A hosted run records its load generator's region and a
+ * local run none; a run that never started traffic measured nothing, so it gets no note.
+ */
+export function EnvironmentNote({
+  runnerRegion,
+  trafficStartedAt,
+}: {
+  runnerRegion: string | undefined;
+  trafficStartedAt: string | undefined;
+}) {
+  if (!runnerRegion && !trafficStartedAt) return null;
+  return (
+    <p
+      className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted"
+      data-environment-note=""
+    >
+      Environment note:{" "}
+      {runnerRegion ? (
+        <>
+          this run was hosted, with the load generator on its own machine in region{" "}
+          <code>{runnerRegion}</code>.
+        </>
+      ) : (
+        "this run was local, with the load generator, API, database, order-processing service, and simulated ERP on one host."
+      )}{" "}
+      These figures record one run in one environment, not a benchmark.
+    </p>
+  );
+}
+
+/**
+ * When the load generator sent its last checkout attempt: the first attempt plus the observed
+ * dispatch duration. Null when it recorded no attempt.
+ */
+export function deriveSendingEndedAt(arrivalSummary: RequestArrivalSummary): string | null {
+  if (!arrivalSummary.firstAttemptStartedAt) return null;
+  return new Date(
+    Date.parse(arrivalSummary.firstAttemptStartedAt) +
+      arrivalSummary.dispatchDurationSeconds * 1_000,
+  ).toISOString();
 }
 
 function ClientTimingBreakdown({ summary }: { summary: HttpTimingBreakdownSummary }) {

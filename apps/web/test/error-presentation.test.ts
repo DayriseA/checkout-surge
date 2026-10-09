@@ -85,25 +85,30 @@ describe("error presentation", () => {
     }
   });
 
-  it("explains a provider capacity shortage with the provider's status page", () => {
-    expect(
-      mapErrorPresentation(
-        { status: "unavailable", errorCode: "runner_capacity_unavailable" },
-        "public-start",
-      ),
-    ).toMatchObject({
-      explanation: expect.stringContaining("no traffic was started"),
-      action: { href: "https://status.flyio.net/" },
-      tone: "warning",
-    });
+  it("explains a provider capacity shortage in the recorded run's words, with the status page", () => {
+    for (const surface of ["public-start", "admin-operation"] as const) {
+      expect(
+        mapErrorPresentation(
+          { status: "unavailable", errorCode: "runner_capacity_unavailable" },
+          { surface, startRequestOutcome: true },
+        ),
+      ).toMatchObject({
+        headline: "No room at the hosting provider",
+        explanation:
+          "The hosting provider (Fly.io) had no room for the load generator, so no traffic was sent. Try again later.",
+        action: { href: "https://status.flyio.net/" },
+        tone: "warning",
+      });
+    }
   });
 
   it("says plainly that the load generator did not start when a start fails before traffic", () => {
     const read = { status: "unavailable", errorCode: "load_orchestrator_unavailable" } as const;
     for (const surface of ["public-start", "admin-operation"] as const) {
       expect(mapErrorPresentation(read, { surface, startRequestOutcome: true })).toMatchObject({
-        headline: "The load generator could not be started",
-        explanation: "No traffic was started. Try again shortly.",
+        headline: "The run did not start",
+        explanation:
+          "The load generator could not be started, so no traffic was sent. Start a new run to try again.",
       });
     }
     expect(mapErrorPresentation(read, "admin-operation").headline).toBe(
@@ -111,21 +116,39 @@ describe("error presentation", () => {
     );
   });
 
-  it("explains a failed run that never sent traffic", () => {
-    const failed = (failedRunCategory: "not_started" | "provider_capacity") =>
+  it("tells an unreachable API from a busy one on admin reads", () => {
+    expect(
       mapErrorPresentation(
-        { status: "available", data: null },
+        { status: "unavailable", errorCode: "backend_unavailable" },
+        "admin-read",
+      ),
+    ).toMatchObject({ headline: "The API cannot be reached", explanation: "Try again shortly." });
+
+    const busy = (reason: string) =>
+      mapErrorPresentation(
         {
-          surface: "watch-read",
-          failedRunCategory,
+          status: "unavailable",
+          errorCode: "dashboard_recovery_unavailable",
+          details: { reason },
+          retryAfterMs: 5_000,
         },
-      ).explanation;
-    expect(failed("not_started")).toBe(
-      "The load generator could not be started, so no traffic was sent.",
+        "admin-read",
+      );
+    expect(busy("at_capacity")).toMatchObject({
+      headline: "The API is busy",
+      explanation:
+        "It is already serving as many status reads as it can. Wait 5 seconds before trying again.",
+      action: { kind: "wait", retryAfterMs: 5_000 },
+    });
+    expect(busy("timed_out").explanation).toBe(
+      "Reading the current run took too long. Wait 5 seconds before trying again.",
     );
-    expect(failed("provider_capacity")).toBe(
-      "The hosting provider had no capacity for the load generator, so no traffic was sent.",
-    );
+    expect(
+      mapErrorPresentation(
+        { status: "unavailable", errorCode: "dashboard_recovery_unavailable", retryAfterMs: 1_000 },
+        "admin-read",
+      ).explanation,
+    ).toBe("Wait 1 second before trying again.");
   });
 
   it("distinguishes projection cleanup from malformed queue work", () => {

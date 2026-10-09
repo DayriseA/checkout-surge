@@ -168,6 +168,10 @@ export function runResultOutcomeTone(
   }
 }
 
+/**
+ * The one explanation of a failed run, shared by the run's verdict on every surface and by the
+ * answer to a start that failed, so a visitor reads the same words at start time and later.
+ */
 export function publicFailureExplanation(category: PublicRunFailureCategory): {
   explanation: string;
   action: string;
@@ -180,6 +184,8 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
         action: "Start a new run to try again.",
       };
     case "not_started":
+      // A run refused while the demo is updated is stored with this category too: the stored
+      // run cannot tell the two apart, so the text stays true for both.
       return {
         explanation: "The load generator could not be started, so no traffic was sent.",
         action: "Start a new run to try again.",
@@ -187,13 +193,13 @@ export function publicFailureExplanation(category: PublicRunFailureCategory): {
     case "provider_capacity":
       return {
         explanation:
-          "The hosting provider had no capacity for the load generator, so no traffic was sent.",
+          "The hosting provider (Fly.io) had no room for the load generator, so no traffic was sent.",
         action: "Try again later.",
       };
     case "inventory":
       return {
-        explanation: "Final inventory evidence could not verify the run's stock outcome.",
-        action: "Start a new run to capture a complete inventory result.",
+        explanation: "The run could not prepare its stock, so no traffic was sent.",
+        action: "Start a new run to try again.",
       };
     case "automatic_reset":
       return {

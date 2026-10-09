@@ -363,7 +363,7 @@ describe("admin feature controllers", () => {
       />,
     );
 
-    expect(screen.getByText("Automatic retry 1 in 1 seconds.")).toBeTruthy();
+    expect(screen.getByText("Automatic retry 1 in 1 second.")).toBeTruthy();
     for (const refresh of [
       screen.getByRole("button", { name: "Retry recovery" }),
       screen.getByRole("button", { name: "Refresh current run" }),
@@ -402,7 +402,7 @@ describe("admin feature controllers", () => {
         "Wait for the automatic retry countdown before refreshing.",
       );
     }
-    expect(screen.getByText("Automatic retry 1 in 1 seconds.")).toBeTruthy();
+    expect(screen.getByText("Automatic retry 1 in 1 second.")).toBeTruthy();
 
     await act(async () => vi.advanceTimersByTimeAsync(1_000));
     await act(async () => Promise.resolve());
@@ -708,7 +708,7 @@ describe("admin feature controllers", () => {
     );
     expect(screen.getByText("2026-06-20 00:00:10 UTC · live updates unsupported")).toBeTruthy();
     expect(screen.getByText("live updates unsupported")).toBeTruthy();
-    expect(screen.getByText("The latest information is temporarily unavailable")).toBeTruthy();
+    expect(screen.getByText("The API cannot be reached")).toBeTruthy();
   });
 
   it("navigates without refreshing current-run recovery after a successful start", async () => {
@@ -825,7 +825,7 @@ describe("admin feature controllers", () => {
       .getByRole("heading", { name: "Recovery and cleanup" })
       .closest("section");
     expect(maintenance?.textContent).toContain(
-      "1 runs failed, 1 sale offers closed, 1 queues cleaned, 2 jobs cleaned.",
+      "1 run failed, 1 sale offer closed, 1 queue cleaned, 2 jobs cleaned.",
     );
   });
 
@@ -938,9 +938,7 @@ describe("admin feature controllers", () => {
     render(<AdminAuthenticatedSurface {...surfaceProps(null)} />);
 
     await user.click(screen.getByRole("button", { name: "Save preset" }));
-    expect(
-      await screen.findByText("The latest information is temporarily unavailable"),
-    ).toBeTruthy();
+    expect(await screen.findByText("The API cannot be reached")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
     expect(fetchMock).toHaveBeenCalledOnce();
 
@@ -1228,9 +1226,7 @@ describe("admin feature controllers", () => {
     await user.type(screen.getByLabelText("Buyer count"), "1234");
     expect(screen.getByText("Unsaved").closest('[role="status"]')).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Save preset" }));
-    expect(
-      await screen.findByText("The latest information is temporarily unavailable"),
-    ).toBeTruthy();
+    expect(await screen.findByText("The API cannot be reached")).toBeTruthy();
     expect((screen.getByLabelText("Buyer count") as HTMLInputElement).value).toBe("1234");
     expect(screen.getByText("Unsaved")).toBeTruthy();
 
@@ -1849,6 +1845,43 @@ describe("admin feature controllers", () => {
     );
   });
 
+  it("waits for a pending start in a panel that carries the relocation notice", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    const user = userEvent.setup();
+    const { trafficStartedAt: _notStarted, ...run } = runFixture() ?? {};
+    const { rerender } = render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
+    const panel = await screen.findByRole("status", { name: "Run start" });
+    expect(within(panel).getByText("Starting the load generator")).toBeTruthy();
+    expect(within(panel).queryByText(/moving to another host/)).toBeNull();
+
+    rerender(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(
+          recoveryFixture({
+            ...run,
+            status: "starting",
+            trafficStatus: "starting",
+            runnerRelocating: true,
+          } as DashboardProjection["currentRun"]),
+        )}
+      />,
+    );
+    expect(within(panel).getByText(/moving to another host/)).toBeTruthy();
+    expect(screen.getAllByText(/moving to another host/)).toHaveLength(1);
+  });
+
   it("rejects a duplicate when the slug is cleared", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => {
       throw new Error("Unexpected duplicate fetch");
@@ -2390,9 +2423,7 @@ describe("admin feature controllers", () => {
 
     await user.click(screen.getByRole("button", { name: "Save public policy" }));
     await user.click(confirmationButton("Save public policy"));
-    expect(
-      (await screen.findAllByText("The latest information is temporarily unavailable")).length,
-    ).toBeTruthy();
+    expect((await screen.findAllByText("The API cannot be reached")).length).toBeTruthy();
     expect(screen.getByLabelText("Max buyers")).toBeTruthy();
     await user.click(confirmationButton("Save public policy"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
@@ -2606,9 +2637,7 @@ describe("admin feature controllers", () => {
     );
     await user.click(screen.getByRole("button", { name: "Archive preset" }));
     await user.click(confirmationButton("Archive preset"));
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "The latest information is temporarily unavailable",
-    );
+    expect((await screen.findByRole("alert")).textContent).toContain("The API cannot be reached");
     expect(screen.getByText("Technical details")).toBeTruthy();
     await user.click(confirmationButton("Archive preset"));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());

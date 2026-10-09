@@ -5,6 +5,7 @@ import {
   formatInstantUtc,
   formatWindowSeconds,
   formatWindowSecondsAdjective,
+  pluralize,
 } from "../src/app/lib/presentation/format.js";
 
 describe("formatInstantUtc", () => {
@@ -184,5 +185,18 @@ describe("formatWindowSecondsAdjective", () => {
 
   it("groups a large width exactly as the value form does", () => {
     expect(formatWindowSecondsAdjective(86_400)).toBe("86,400-second");
+  });
+});
+
+describe("pluralize", () => {
+  it("is singular for exactly one and plural for zero, many and unknown counts", () => {
+    expect(pluralize(1, "unit")).toBe("unit");
+    expect([0, 2, null].map((count) => pluralize(count, "unit"))).toEqual([
+      "units",
+      "units",
+      "units",
+    ]);
+    expect(pluralize(1, "was", "were")).toBe("was");
+    expect(pluralize(3, "was", "were")).toBe("were");
   });
 });

@@ -22,6 +22,7 @@ import { RunHistoryAdminControls } from "../src/app/components/run-history-admin
 import {
   AdminRunHistoryDetail,
   PublicRunHistoryDetail,
+  scenarioRecap,
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
 import { trafficEvidenceUnavailableText } from "../src/app/lib/presentation/traffic-evidence.js";
@@ -426,24 +427,113 @@ describe("run history", () => {
     expect(lastPage).not.toContain(">Next</");
   });
 
-  it("shows the load generator region on the public and admin reports", () => {
+  it("states once the environment the run's recorded runner region implies", () => {
     const publicDetail = detailFixture();
     const adminDetail = adminDetailFixture();
-    const publicMarkup = renderToStaticMarkup(
+    const hosted = renderToStaticMarkup(
       createElement(PublicRunHistoryDetail, {
         detail: { ...publicDetail, run: { ...publicDetail.run, runnerRegion: "cdg" } },
       }),
     );
-    const adminMarkup = renderToStaticMarkup(
+    const adminHosted = renderToStaticMarkup(
       createElement(AdminRunHistoryDetail, {
         detail: { ...adminDetail, run: { ...adminDetail.run, runnerRegion: "cdg" } },
       }),
     );
+    const local = renderToStaticMarkup(publicReport(publicDetail));
+    const { trafficStartedAt: _never, ...runWithoutTraffic } = publicDetail.run;
+    const noTraffic = renderToStaticMarkup(
+      publicReport({ ...publicDetail, run: runWithoutTraffic }),
+    );
 
-    expect(publicMarkup).toContain("Load generator region: <code>cdg</code>");
-    expect(adminMarkup).toContain("Load generator region");
-    expect(adminMarkup).toContain("cdg");
-    expect(renderToStaticMarkup(publicReport(publicDetail))).not.toContain("Load generator region");
+    for (const markup of [hosted, adminHosted]) {
+      expect(markup.split("Environment note")).toHaveLength(2);
+      expect(markup).toContain(
+        "this run was hosted, with the load generator on its own machine in region <code>cdg</code>.",
+      );
+      expect(markup).not.toContain("this run was local");
+    }
+    expect(adminHosted).toContain("Load generator region");
+    expect(local.split("Environment note")).toHaveLength(2);
+    expect(local).toContain("this run was local, with the load generator, API, database");
+    expect(local).not.toContain("hosted");
+    expect(noTraffic).not.toContain("Environment note");
+  });
+
+  it("dates the end of sending from the first attempt and the dispatch duration", () => {
+    const detail = detailFixture();
+    const markup = renderToStaticMarkup(publicReport(detail));
+    const admin = renderToStaticMarkup(
+      createElement(AdminRunHistoryDetail, { detail: adminDetailFixture() }),
+    );
+
+    // The first attempt starts at 00:00:01 and dispatch lasts 1 s; the runner reported at 00:00:09.
+    expect(markup).toContain(
+      "Buyer traffic started at 00:00:00 UTC; sending ended at 00:00:02 UTC.",
+    );
+    for (const output of [markup, admin]) {
+      expect(output).toMatch(/Sending ended<\/dt><dd[^>]*><time[^>]*>2026-06-20 00:00:02 UTC/);
+      expect(output).not.toContain("00:00:09");
+    }
+
+    detail.summary.trafficDeliverySummary.requestArrivalSummary = emptyRequestArrivalSummary;
+    const unobserved = renderToStaticMarkup(publicReport(detail));
+    expect(unobserved).toContain(
+      "Buyer traffic started at 00:00:00 UTC; no checkout attempt was recorded.",
+    );
+    expect(unobserved).toMatch(/Sending ended<\/dt><dd[^>]*>no attempt recorded/);
+  });
+
+  it("words a one-unit run in the singular", () => {
+    const detail = detailFixture();
+    detail.run.configSnapshot = {
+      ...detail.run.configSnapshot,
+      inventoryConfig: { ...detail.run.configSnapshot.inventoryConfig, startingStock: 1 },
+    };
+    detail.result = deriveRunResult({
+      runStatus: "completed",
+      failureCategory: null,
+      startingStock: 1,
+      remainingStock: 0,
+      durable: {
+        reservedUnits: 1,
+        uniqueReservations: 1,
+        soldOutDecisions: 1,
+        confirmedOrders: 1,
+        failedOrders: 0,
+        queuedOrders: 0,
+        processingOrders: 0,
+        durablePendingPersistenceRecords: 0,
+        notificationsRecorded: 1,
+      },
+      heldReservationsAwaitingPersistence: 0,
+      replayPossible: false,
+      generator: {
+        transportAttemptCounts: {
+          plannedRequests: 2,
+          startedRequests: 2,
+          completedRequests: 2,
+          interruptedRequests: 0,
+          unstartedRequests: 0,
+        },
+        httpSummary: {
+          failedRequests: 0,
+          acceptedResponses: 1,
+          soldOutResponses: 1,
+          transportFailures: 0,
+          unexpectedResponses: 0,
+          p95LatencyMs: 42,
+          failureRate: 0,
+        },
+      },
+    });
+    const markup = renderToStaticMarkup(publicReport(detail));
+
+    expect(scenarioRecap(detail)).toContain("· 1 starting unit");
+    expect(markup).toContain("The only available unit was reserved without overselling.");
+    expect(markup).toContain(
+      "1 unit reserved / 1 unique reservation; 1 attempt turned away because stock ran out.",
+    );
   });
 
   it("renders the complete public report and hides clean zero-noise", () => {
@@ -638,7 +728,11 @@ describe("run history", () => {
     const detail = detailFixture();
     const { container } = render(publicReport(detail));
 
-    expect(screen.getByText("Completed").closest("[hidden]")).toBeNull();
+    expect(
+      screen
+        .getByText("All 250 available units were reserved without overselling.")
+        .closest("[hidden]"),
+    ).toBeNull();
     expect(screen.getByText("Orders confirmed").closest("[hidden]")).toBeNull();
     expect(
       screen.getByText(/250 units reserved \/ 250 unique reservations/).closest("[hidden]"),

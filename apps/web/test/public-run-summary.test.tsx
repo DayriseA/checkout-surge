@@ -146,7 +146,7 @@ describe("public run summary", () => {
     });
     expect(summary.caveats).toEqual([]);
     expect(summary.hasMeasurementCaveat).toBe(false);
-    expect(summary.failure).toBeNull();
+    expect(summary.failureAction).toBeNull();
   });
 
   it("reports partial and failed delivery only when the delivery summary is supplied", () => {
@@ -396,7 +396,7 @@ describe("public run summary", () => {
     );
     // The failed headline already states the failed count, so only pending is appended.
     expect(failedWithPending.sentence).toBe(
-      "The run failed due to a traffic failure with 50 failed orders. 10 orders remain pending.",
+      "The load generator could not deliver the planned traffic, so this run's evidence is incomplete. 50 orders failed. 10 orders remain pending.",
     );
   });
 
@@ -490,7 +490,7 @@ describe("public run summary", () => {
     expect(summary.hasMeasurementCaveat).toBe(true);
   });
 
-  it("exposes the public failure explanation for a failed run and never fakes zero stock", () => {
+  it("states a failed run's explanation once, as its verdict, and never fakes zero stock", () => {
     const failed = derivePublicRunSummary(
       summaryInput(
         {},
@@ -506,13 +506,11 @@ describe("public run summary", () => {
     );
 
     expect(failed.title).toBe("Failed");
-    expect(failed.failure).toEqual({
-      explanation:
-        "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
-      action: "Start a new run to try again.",
-    });
+    expect(failed.failureAction).toBe("Start a new run to try again.");
     expect(failed.counts.startingStock).toBeNull();
-    expect(failed.sentence).toBe("The run failed due to a traffic failure.");
+    expect(failed.sentence).toBe(
+      "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
+    );
   });
 });
 
@@ -568,7 +566,8 @@ describe("public run conclusion", () => {
     };
 
     const { container } = renderConclusion(cleanEvidence, overrides);
-    expectVisible(container, "Completed");
+    // The report header already labels the outcome; the conclusion does not repeat it.
+    expect(container.textContent).not.toContain("Completed");
     expectVisible(container, "All 250 available units were reserved without overselling.");
     expectVisible(container, "Partial delivery: not all planned checkout attempts completed.");
     expectVisible(

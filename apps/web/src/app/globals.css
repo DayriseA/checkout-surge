@@ -119,6 +119,61 @@
   border-radius: 999px;
 }
 
+/* Loading motion in the gate pages' style: a pulsing dot and a bar sliding along the bottom. */
+.loading-pulse {
+  display: block;
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: currentColor;
+  animation: loading-pulse 1s ease-in-out infinite;
+}
+
+@keyframes loading-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.loading-bar {
+  height: 3px;
+  margin-top: 0.25rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-info-soft);
+}
+
+.loading-bar::after {
+  content: "";
+  display: block;
+  width: 40%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-info);
+  animation: loading-slide 1s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-pulse,
+  .loading-bar::after {
+    animation: none;
+  }
+
+  .loading-bar {
+    display: none;
+  }
+}
+
 /* Focus on the reservoir band uses the signal colour; the mobile menu panel is light again. */
 .site-header :focus-visible {
   outline-color: var(--color-signal);

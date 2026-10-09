@@ -368,8 +368,9 @@ describe("watch narrative", () => {
     const output = markup(available(projection(null)), retainedTerminal(terminal));
 
     expect(output).toContain(">Failed</h2>");
-    expect(output).toContain("The run failed due to a traffic failure with 250 failed orders.");
-    expect(output).toContain("load generator could not deliver");
+    // The verdict is the failure explanation, stated once, then the next step.
+    expect(output.split("load generator could not deliver")).toHaveLength(2);
+    expect(output).toContain("250 orders failed.");
     expect(output).toContain("Start a new run to try again");
     expect(output).toContain("View run report");
     expect(output).not.toContain("Choose a simulation");

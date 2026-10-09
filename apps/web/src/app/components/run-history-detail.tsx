@@ -5,7 +5,12 @@ import type {
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { formatCount, formatDurationMs, formatInstantUtc } from "../lib/presentation/format";
+import {
+  formatCount,
+  formatDurationMs,
+  formatInstantUtc,
+  pluralize,
+} from "../lib/presentation/format";
 import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
   durableCheckoutLens,
@@ -33,7 +38,9 @@ import { PublicRunConclusion, PublicRunConclusionProof, RunConclusion } from "./
 import { RunDiagnostics } from "./run-diagnostics";
 import { StatusPill } from "./status-pill";
 import {
+  deriveSendingEndedAt,
   deriveTransportObservation,
+  EnvironmentNote,
   formatHistogramBoundMilliseconds,
   formatMilliseconds,
   TransportObservationSection,
@@ -135,7 +142,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               ["Started", formatDate(summary.startedAt)],
               ["Overall run duration", overallDuration],
               ["Traffic started", formatDate(run.trafficStartedAt)],
-              ["Traffic ended", formatDate(run.trafficEndedAt)],
+              ["Sending ended", formatSendingEnd(summary)],
               ["Finalized", formatDate(run.finalizedAt)],
               ["Evidence recorded", formatDate(summary.capturedAt)],
               ...(run.runnerRegion
@@ -240,6 +247,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
           surface="detail"
           {...(run.trafficStartedAt ? { trafficStartedAt: run.trafficStartedAt } : {})}
         />
+        <EnvironmentNote runnerRegion={run.runnerRegion} trafficStartedAt={run.trafficStartedAt} />
       </section>
 
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
@@ -343,10 +351,10 @@ function ExceptionSummary({
   summary: AdminRunHistoryDetailResponse["exceptionSummary"];
 }) {
   const exceptionEntries = [
-    ["broken invariants", summary.brokenInvariants],
-    ["failed orders", summary.failedOrders],
+    [pluralize(summary.brokenInvariants, "broken invariant"), summary.brokenInvariants],
+    [pluralize(summary.failedOrders, "failed order"), summary.failedOrders],
     ["pending work", summary.pendingWork],
-    ["delivery exceptions", summary.partialDelivery],
+    [pluralize(summary.partialDelivery, "delivery exception"), summary.partialDelivery],
   ] as const;
   const exceptions = exceptionEntries.filter(([, count]) => count > 0);
   const limitationEntries = [["Instrumentation limitations", summary.generatorWarnings]] as const;
@@ -635,21 +643,13 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           >
             Checkout response p95 (client-observed) covers only the{" "}
             {formatCount(transportObservation.repliesRecorded) ?? "unavailable"} of{" "}
-            {formatCount(transportObservation.counts.plannedRequests) ?? "unavailable"} planned
-            attempts that recorded a reply. Server-observed reservation timing and durable
-            reservation-to-confirmation timing use separate evidence.
+            {formatCount(transportObservation.counts.plannedRequests) ?? "unavailable"} planned{" "}
+            {pluralize(transportObservation.counts.plannedRequests, "attempt")} that recorded a
+            reply. Server-observed reservation timing and durable reservation-to-confirmation timing
+            use separate evidence.
           </p>
         ) : null}
-        <p className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted">
-          Environment note: run locally, the load generator, API, database, order-processing
-          service, and simulated ERP share one host; on the hosted demo, the load generator runs on
-          its own machine. These figures record one run in one environment, not a benchmark.
-        </p>
-        {run.runnerRegion ? (
-          <p className="m-0 mt-3 text-xs text-muted" data-runner-region="">
-            Load generator region: <code>{run.runnerRegion}</code>
-          </p>
-        ) : null}
+        <EnvironmentNote runnerRegion={run.runnerRegion} trafficStartedAt={run.trafficStartedAt} />
         <details className="mt-4 rounded border border-border px-3 py-2">
           <summary className="disclosure font-semibold text-ink">All measurements</summary>
           <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
@@ -715,7 +715,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
               facts={[
                 ["Run accepted", formatDate(summary.startedAt)],
                 ["Checkout traffic started", formatDate(run.trafficStartedAt)],
-                ["Checkout traffic ended", formatDate(run.trafficEndedAt)],
+                ["Sending ended", formatSendingEnd(summary)],
                 ["Run ended", formatDate(run.finalizedAt)],
               ]}
               title="Lifecycle"
@@ -839,10 +839,11 @@ export function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
   const traffic = configSnapshot.trafficConfig;
   const demand =
     traffic.mode === "buyer-spike"
-      ? `${formatNumber(traffic.buyerCount)} buyers`
-      : `${formatNumber(detail.plannedAttempts)} planned attempts`;
+      ? `${formatNumber(traffic.buyerCount)} ${pluralize(traffic.buyerCount, "buyer")}`
+      : `${formatNumber(detail.plannedAttempts)} planned ${pluralize(detail.plannedAttempts, "attempt")}`;
+  const startingStock = configSnapshot.inventoryConfig.startingStock;
   const details = [
-    `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(configSnapshot.inventoryConfig.startingStock)} starting units`,
+    `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(startingStock)} starting ${pluralize(startingStock, "unit")}`,
   ];
   if (traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt) {
     details.push("duplicate attempts enabled");
@@ -863,18 +864,22 @@ function runRecap(
     run.configSnapshot.trafficConfig.mode === "buyer-spike" ? "Buyer traffic" : "Checkout attempts";
   const time = (value: string | undefined) =>
     formatInstantUtc(value, { variant: "timeOnly" }) ?? "not recorded";
-  const count = (value: number | null) => formatCount(value) ?? "not recorded";
+  const value = (count: number | null) => formatCount(count) ?? "not recorded";
+  const count = (count: number | null, noun: string) => `${value(count)} ${pluralize(count, noun)}`;
+  const sendingEndedAt = deriveSendingEndedAt(
+    detail.summary.trafficDeliverySummary.requestArrivalSummary,
+  );
   const trafficRecap = run.trafficStartedAt
-    ? run.trafficEndedAt
-      ? `${trafficSubject} started at ${time(run.trafficStartedAt)} and ended at ${time(run.trafficEndedAt)}.`
-      : `${trafficSubject} started at ${time(run.trafficStartedAt)}; its end was not recorded.`
-    : run.trafficEndedAt
-      ? `${trafficSubject} start was not recorded; it ended at ${time(run.trafficEndedAt)}.`
-      : `${trafficSubject} start and end were not recorded.`;
+    ? sendingEndedAt
+      ? `${trafficSubject} started at ${time(run.trafficStartedAt)}; sending ended at ${time(sendingEndedAt)}.`
+      : `${trafficSubject} started at ${time(run.trafficStartedAt)}; no checkout attempt was recorded.`
+    : sendingEndedAt
+      ? `${trafficSubject} start was not recorded; sending ended at ${time(sendingEndedAt)}.`
+      : "No checkout attempt was recorded for this run.";
   const lines = [
     trafficRecap,
-    `${count(counts.reservedUnits)} units reserved / ${count(counts.uniqueReservations)} unique reservations; ${count(counts.soldOutDecisions)} attempts turned away because stock ran out.`,
-    `Orders reached their recorded outcome: ${count(counts.confirmedOrders)} confirmed, ${count(counts.failedOrders)} failed, ${count(counts.pendingOrders)} awaiting confirmation.`,
+    `${count(counts.reservedUnits, "unit")} reserved / ${count(counts.uniqueReservations, "unique reservation")}; ${count(counts.soldOutDecisions, "attempt")} turned away because stock ran out.`,
+    `Orders reached their recorded outcome: ${value(counts.confirmedOrders)} confirmed, ${value(counts.failedOrders)} failed, ${value(counts.pendingOrders)} awaiting confirmation.`,
     `Run ended: ${time(run.finalizedAt)}.`,
   ];
   return lines;
@@ -911,6 +916,13 @@ function formatDate(value: string | undefined): ReactNode {
   }
 
   return <time dateTime={value}>{text}</time>;
+}
+
+function formatSendingEnd(
+  summary: Pick<PublicRunHistoryDetailResponse["summary"], "trafficDeliverySummary">,
+): ReactNode {
+  const endedAt = deriveSendingEndedAt(summary.trafficDeliverySummary.requestArrivalSummary);
+  return endedAt ? formatDate(endedAt) : "no attempt recorded";
 }
 
 /** Configured guards are stored in seconds but are presented under the one duration policy. */

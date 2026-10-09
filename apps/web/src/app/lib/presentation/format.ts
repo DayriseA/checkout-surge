@@ -127,6 +127,18 @@ export function formatCount(value: number | null | undefined): string | null {
 }
 
 /**
+ * The word that agrees with a count: singular for exactly one, plural for zero, many and an
+ * unknown count alike. Callers pass irregular plurals, and verbs the same way (`was`, `were`).
+ */
+export function pluralize(
+  count: number | null | undefined,
+  singular: string,
+  plural = `${singular}s`,
+): string {
+  return count === 1 ? singular : plural;
+}
+
+/**
  * Formats the numeric part of a configured observation-window width, in seconds.
  *
  * A window width is a declared parameter, not an elapsed measurement: widths are read against

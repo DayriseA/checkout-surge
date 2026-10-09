@@ -68,4 +68,11 @@ Owner decisions of 2026-10-09 throughout.
 
 ## Working Notes
 
-_None yet._
+- 2026-10-09, implementation:
+  - One source: `publicFailureExplanation` is the failed verdict (`failedSentence`) and the start-error explanation (`failureSentences` in `error-presentation.ts`); `failedRunExplanation` and `failedRunCategory` are removed. `PublicRunSummary.failure` became `failureAction`, since the explanation is the sentence. Proof blocks (`RunConclusion`, `PublicRunConclusionProof`) skip the narration of a failed run.
+  - The `inventory` explanation now says what its only producer means (stock preparation failed before traffic), taken from the removed copy.
+  - Version mismatch: the stored run cannot tell it apart. HD-14 stores it as `load_generator_not_started`, and the run has no runner region either (the boot is never recorded). The start answer still says "The demo is being updated"; the saved run keeps the generic not-started text, which is true for both.
+  - Admin read failures: "The API cannot be reached" / "The API is busy" on protected surfaces only; public surfaces keep their wording.
+  - "Sending ended" replaces both the public "Checkout traffic ended" and the admin "Traffic ended"; the recap says "no checkout attempt was recorded" without arrivals.
+  - Environment note: shown once, hosted with region, local without; none for a run that never started traffic (no region and no `trafficStartedAt`), since it measured nothing.
+  - Waiting panel: `RunStartWaitingPanel`, beside the clicked start (start gate for presets, custom form footer for a custom run, admin start dialog), 12 s reassurance timer, relocation notice inside; CSS in `globals.css` (`.loading-pulse`, `.loading-bar`).

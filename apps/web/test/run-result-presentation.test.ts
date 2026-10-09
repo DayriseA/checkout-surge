@@ -127,7 +127,8 @@ describe("run result presentation", () => {
         failureCategory: "traffic",
         durable: { reservedUnits: 260 },
       }),
-      sentence: "The run failed due to a traffic failure.",
+      sentence:
+        "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
     },
     {
       name: "provider capacity failure",
@@ -137,7 +138,58 @@ describe("run result presentation", () => {
         durable: { reservedUnits: 0 },
       }),
       sentence:
-        "The run failed because the hosting provider had no capacity for the load generator; no traffic was sent.",
+        "The hosting provider (Fly.io) had no room for the load generator, so no traffic was sent.",
+    },
+    {
+      name: "load generator that did not start",
+      evidence: withEvidence({
+        runStatus: "failed",
+        failureCategory: "not_started",
+        durable: { reservedUnits: 0 },
+      }),
+      sentence: "The load generator could not be started, so no traffic was sent.",
+    },
+    {
+      name: "failure with one failed order",
+      evidence: withEvidence({
+        runStatus: "failed",
+        failureCategory: "traffic",
+        durable: { failedOrders: 1 },
+      }),
+      sentence:
+        "The load generator could not deliver the planned traffic, so this run's evidence is incomplete. 1 order failed.",
+    },
+    {
+      name: "single-unit sellout",
+      evidence: withEvidence({
+        startingStock: 1,
+        remainingStock: 0,
+        durable: {
+          reservedUnits: 1,
+          uniqueReservations: 1,
+          soldOutDecisions: 1,
+          confirmedOrders: 1,
+          notificationsRecorded: 1,
+        },
+      }),
+      sentence:
+        "The only available unit was reserved without overselling. Checkout-Surge recorded 1 sold-out rejection. The only reservation was confirmed, with no failed orders.",
+    },
+    {
+      name: "one unit left",
+      evidence: withEvidence({
+        startingStock: 2,
+        remainingStock: 1,
+        durable: {
+          reservedUnits: 1,
+          uniqueReservations: 1,
+          soldOutDecisions: 0,
+          confirmedOrders: 1,
+          notificationsRecorded: 1,
+        },
+      }),
+      sentence:
+        "1 unit was reserved from 2, and 1 unit remains. No units were oversold. The only reservation was confirmed, with no failed orders.",
     },
   ] as const)("states $name", ({ evidence, sentence }) => {
     expect(runConclusionSentence(deriveRunResult(evidence))).toBe(sentence);
@@ -500,7 +552,7 @@ describe("run result presentation", () => {
     expect(orderFailures).toContain(
       "100,000 orders were confirmed, 250,000 failed, and 150,000 remain pending.",
     );
-    expect(failedRun).toContain("with 100,000 failed orders");
+    expect(failedRun).toContain("100,000 orders failed.");
   });
 
   it("produces the same sentence through dashboard, history, and detail adapters", () => {

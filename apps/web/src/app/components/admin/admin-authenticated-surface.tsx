@@ -58,7 +58,7 @@ import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { adminFailureNotice } from "../../lib/presentation/admin-notice";
 import { mapErrorPresentation } from "../../lib/presentation/error-presentation";
 import { adminFieldHints } from "../../lib/presentation/field-hints";
-import { formatCount, formatInstantUtc } from "../../lib/presentation/format";
+import { formatCount, formatInstantUtc, pluralize } from "../../lib/presentation/format";
 import {
   dashboardUpdateExpected,
   deriveFreshness,
@@ -75,6 +75,7 @@ import { FieldHint } from "../field-hint";
 import { useDashboardProjections } from "../realtime/use-dashboard-projections";
 import { useDashboardRecovery } from "../realtime/use-dashboard-recovery";
 import { RunCapacityWarning, RunEstimateNotice } from "../run-estimate-notice";
+import { RunStartWaitingPanel } from "../run-start-waiting-panel";
 import { RunnerRelocationNotice } from "../runner-relocation-notice";
 import { StatusPill } from "../status-pill";
 import { useRunEstimate } from "../use-run-estimate";
@@ -481,7 +482,8 @@ export function AdminCurrentRunPanel({
       ) : null}
       {isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 mt-2 text-sm text-muted">
-          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)} seconds.
+          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)}{" "}
+          {pluralize(Math.ceil(retryDelayMs / 1_000), "second")}.
         </p>
       ) : retriesExhausted ? (
         <p className="m-0 mt-2 text-sm text-muted">
@@ -1213,7 +1215,7 @@ export function AdminPresetController({
                 trafficConfig={startConfirmation.config.trafficConfig}
               />
             ) : null}
-            {isPending ? <RunnerRelocationNotice recovery={recovery} /> : null}
+            {isPending ? <RunStartWaitingPanel recovery={recovery} /> : null}
             {startError ? <AdminNoticeView notice={startError} startRequestOutcome /> : null}
           </>
         }
@@ -1367,11 +1369,11 @@ export function AdminMaintenancePanel({
       }
       if (intent === "reset" && "failedRunCount" in result.data) {
         setNotice(
-          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount)} runs failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount)} sale offers closed, ${formatMaintenanceCount(result.data.cleanedQueueCount)} queues cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount)} jobs cleaned.`,
+          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount, "run")} failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount, "sale offer")} closed, ${formatMaintenanceCount(result.data.cleanedQueueCount, "queue")} cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount, "job")} cleaned.`,
         );
       } else if ("deletedRunCount" in result.data) {
         setNotice(
-          `Cleanup complete: ${formatMaintenanceCount(result.data.deletedRunCount)} generated runs removed.`,
+          `Cleanup complete: ${formatMaintenanceCount(result.data.deletedRunCount, "generated run")} removed.`,
         );
       }
       await onResetComplete();
@@ -1686,8 +1688,8 @@ function reconcileAcceptedPresetMutation(
 }
 
 /** Maintenance receipts report counts, so they group like every other count on the product. */
-function formatMaintenanceCount(value: number): string {
-  return formatCount(value) ?? "an unreported number of";
+function formatMaintenanceCount(value: number, noun: string): string {
+  return `${formatCount(value) ?? "an unreported number of"} ${pluralize(value, noun)}`;
 }
 
 function clearChangedErrors(
