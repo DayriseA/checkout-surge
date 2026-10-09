@@ -82,5 +82,6 @@ The owner can decide, with measured numbers, whether to build live comparative r
   - **Connection limits** used only if needed, and stated openly in the narrative as a simulation of the real-world scale.
   - **Two or three API processes** (HD-51), enough to reach the Redis script's ceiling, an estimate of about 5,000–6,000 sold-out answers per second on one core. A bigger load generator, and a recalibrated capacity model.
   - **A mode without the order queue**, to show that the buyer pays for the back office's slowness.
+  - **One or two fixed presets only** (owner decision, 2026-10-09): the comparative modes are offered only through presets tuned until they show the point. They are never available in custom runs, public or admin. This limits calibration to those presets, and the admission estimator needs no model of the comparative modes.
 - **Now:** the narrative is aligned with what the demo shows, in 16b. That covers the Redis claims and a "known limits and planned work" section at the very end of the overview page.
 - Done.
