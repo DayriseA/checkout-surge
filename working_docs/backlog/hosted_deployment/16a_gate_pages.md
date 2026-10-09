@@ -10,7 +10,7 @@ The gate's own pages match the demo's look, read clearly to a visitor who does n
 
 - The owner's view after go-live (2026-10-07): the gate pages are ugly and rudimentary, and they clash with the demo.
 - A visitor sees them before the demo, between sessions, and through the "Demo paused" link of the countdown widget.
-- Task 16 was split into 16a (gate pages) and 16b (demo messages) on 2026-10-08. Its runner counters moved to task 22.
+- Task 16 was split into 16a (gate pages) and 16b (demo messages) on 2026-10-08. Its runner counters moved to task 21.
 - One `renderGatePage` in `apps/gate/src/pages.ts` builds all eight pages: an inline `<style>` with four hard-coded colors and the system font, no brand mark.
 - The gate image does not contain `apps/web` (`turbo prune gate` in `docker/Dockerfile.node-service`), so it cannot import the web theme or its font.
 - The demo has no dark theme: `apps/web/src/app/globals.css` defines light tokens only (Tailwind v4 `@theme`), with Archivo bundled by the web and a system fallback stack.

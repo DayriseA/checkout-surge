@@ -8,7 +8,7 @@ The demo's messages about starting and failing runs read consistently and clearl
 
 ## Context
 
-- Task 16 was split into 16a (gate pages) and 16b (demo messages) on 2026-10-08. Its runner counters moved to task 22.
+- Task 16 was split into 16a (gate pages) and 16b (demo messages) on 2026-10-08. Its runner counters moved to task 21.
 - On 2026-10-09 the narrative work (Redis claims, known limits) moved to 16c.
 - A read-only inventory (2026-10-09) located every text below. Paths are under `apps/web/src/app` unless stated.
 
@@ -54,7 +54,7 @@ Owner decisions of 2026-10-09 throughout.
 - Behavior changes to waking, recovery or runs.
 - The gate's pages (16a).
 - The Redis claims and the known-limits section (16c).
-- Runner counters: request timeouts and the reply count off by one (task 22).
+- Runner counters: request timeouts and the reply count off by one (task 21).
 - Runs that failed before task 17 with `load_orchestrator_unavailable` before traffic, which keep the old traffic-failure wording: dropped (owner decision, 2026-10-08). The hosted core has been recreated empty since, and local data is disposable (HD-05).
 
 ## Done When
