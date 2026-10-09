@@ -73,7 +73,7 @@ export function RunFailureExplanation({
       {lateAnswersCause ? (
         <p className="m-0 mt-2">
           {serverHandledLateAnswers
-            ? `The server still handled ${pluralize(counts.interruptedRequests, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only order was" : `all ${formatCount(business.acceptedReservations)} orders were`} reserved, confirmed and notified. Only ${pluralize(counts.interruptedRequests, "its answer", "their answers")} came too late to be recorded. `
+            ? `The server still handled ${pluralize(counts.interruptedRequests, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only reservation was" : `every one of the ${formatCount(business.acceptedReservations)} reservations was`} secured and its order confirmed and notified. Only ${pluralize(counts.interruptedRequests, "its answer", "their answers")} came too late to be recorded. `
             : null}
           {pluralize(counts.interruptedRequests, "This buyer", "These buyers")} waited at least{" "}
           {k6GracefulStopSeconds} seconds without an answer, so the run counts as failed.

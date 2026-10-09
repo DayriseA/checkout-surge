@@ -60,7 +60,7 @@ describe("run result presentation", () => {
       name: "clean sellout",
       evidence: cleanEvidence,
       sentence:
-        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. The orders for all 250 reservations were confirmed, with no failed orders.",
     },
     {
       name: "stock remaining",
@@ -75,7 +75,7 @@ describe("run result presentation", () => {
         },
       }),
       sentence:
-        "150 units were reserved from 250, and 100 units remain. No units were oversold. All 150 reservations were confirmed, with no failed orders.",
+        "150 units were reserved from 250, and 100 units remain. No units were oversold. The orders for all 150 reservations were confirmed, with no failed orders.",
     },
     {
       name: "order failures",
@@ -113,7 +113,7 @@ describe("run result presentation", () => {
         }),
       }),
       sentence:
-        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. All 250 reservations were confirmed, with no failed orders.",
+        "All 250 available units were reserved without overselling. Checkout-Surge recorded 750 sold-out rejections. The orders for all 250 reservations were confirmed, with no failed orders.",
     },
     {
       name: "missing terminal snapshot",
@@ -173,7 +173,7 @@ describe("run result presentation", () => {
         },
       }),
       sentence:
-        "The only available unit was reserved without overselling. Checkout-Surge recorded 1 sold-out rejection. The only reservation was confirmed, with no failed orders.",
+        "The only available unit was reserved without overselling. Checkout-Surge recorded 1 sold-out rejection. The order for the only reservation was confirmed, with no failed orders.",
     },
     {
       name: "one unit left",
@@ -189,7 +189,7 @@ describe("run result presentation", () => {
         },
       }),
       sentence:
-        "1 unit was reserved from 2, and 1 unit remains. No units were oversold. The only reservation was confirmed, with no failed orders.",
+        "1 unit was reserved from 2, and 1 unit remains. No units were oversold. The order for the only reservation was confirmed, with no failed orders.",
     },
   ] as const)("states $name", ({ evidence, sentence }) => {
     expect(runConclusionSentence(deriveRunResult(evidence))).toBe(sentence);
@@ -503,7 +503,7 @@ describe("run result presentation", () => {
 
     expect(result.outcome).toBe("completed-successfully");
     expect(sentence).toBe(
-      "All 100,000 available units were reserved without overselling. Checkout-Surge recorded 250,000 sold-out rejections. All 100,000 reservations were confirmed, with no failed orders.",
+      "All 100,000 available units were reserved without overselling. Checkout-Surge recorded 250,000 sold-out rejections. The orders for all 100,000 reservations were confirmed, with no failed orders.",
     );
     expect(sentence).not.toContain("100000");
     expect(sentence).not.toContain("250000");

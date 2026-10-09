@@ -94,7 +94,7 @@ describe("failure explanation", () => {
     expect(screen.getByText("3,410 of 10,000 answers arrived too late (34.1%).")).toBeTruthy();
     expect(
       screen.getByText(
-        "The server still handled those requests: all 10,000 orders were reserved, confirmed and notified. Only their answers came too late to be recorded. These buyers waited at least 30 seconds without an answer, so the run counts as failed.",
+        "The server still handled those requests: every one of the 10,000 reservations was secured and its order confirmed and notified. Only their answers came too late to be recorded. These buyers waited at least 30 seconds without an answer, so the run counts as failed.",
       ),
     ).toBeTruthy();
     expect(
@@ -117,19 +117,22 @@ describe("failure explanation", () => {
   it("words a single late answer in the singular", () => {
     const input = evidence();
     input.failureDiagnostic = { cause: "interrupted_requests" };
+    // The late-answer cause needs more than 5% of answers late, so one late answer means a tiny run.
     input.transportAttemptCounts = {
-      plannedRequests: 10000,
-      startedRequests: 10000,
-      completedRequests: 9999,
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 9,
       interruptedRequests: 1,
       unstartedRequests: 0,
     };
+    input.httpSummary = { ...input.httpSummary, acceptedResponses: 9, soldOutResponses: 0 };
     input.businessOutcomeSummary = {
       ...input.businessOutcomeSummary,
-      acceptedReservations: 10000,
-      reservedUnits: 10000,
-      confirmedOrders: 10000,
-      notificationsRecorded: 10000,
+      acceptedReservations: 10,
+      reservedUnits: 10,
+      soldOutRejections: 0,
+      confirmedOrders: 10,
+      notificationsRecorded: 10,
     };
     render(<RunFailureExplanation evidence={input} />);
     expect(
@@ -139,12 +142,12 @@ describe("failure explanation", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "The server still handled that request: all 10,000 orders were reserved, confirmed and notified. Only its answer came too late to be recorded. This buyer waited at least 30 seconds without an answer, so the run counts as failed.",
+        "The server still handled that request: every one of the 10 reservations was secured and its order confirmed and notified. Only its answer came too late to be recorded. This buyer waited at least 30 seconds without an answer, so the run counts as failed.",
       ),
     ).toBeTruthy();
     expect(
       screen.getByText(
-        "All 10,000 accepted orders were confirmed and notified, including the one whose answer arrived too late.",
+        "All 10 accepted orders were confirmed and notified, including the one whose answer arrived too late.",
       ),
     ).toBeTruthy();
     expect(
@@ -152,6 +155,7 @@ describe("failure explanation", () => {
         "1 answer arrived too late to be recorded; outcomes and latency cover only the recorded answers.",
       ),
     ).toBeTruthy();
+    expect(screen.getByText("1 of 10 answers arrived too late (10%).")).toBeTruthy();
   });
   it("does not claim the server handled late answers its own counts do not cover", () => {
     const input = evidence();

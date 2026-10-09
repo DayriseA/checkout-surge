@@ -262,6 +262,36 @@ describe("public browser starts", () => {
     expect(assign).toHaveBeenCalledOnce();
   });
 
+  it("removes the waiting panel once a run conflict answers, while reconciliation runs", async () => {
+    const readiness = deferred<Response>();
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) return runConflictResponse("active_run_exists");
+      if (String(input) === healthReadyProxyPath) return readiness.promise;
+      if (String(input).startsWith(dashboardRecoveryProxyPath)) {
+        return jsonResponse(
+          dashboardRecoveryFixture({
+            currentRun: demoRunFixture({ status: "active" }),
+            recoveredAt: "2026-06-20T00:00:11.000Z",
+            revision: 2,
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(createElement(PublicDemoEntry, { surface: publicDemoSurfaceFixture() }));
+    await user.click(screen.getByRole("button", { name: "Start Preview 1k" }));
+
+    // Recovery found the other visitor's run; readiness still holds the start slot.
+    await waitFor(() => expect(recoveryFetchCount(fetchMock)).toBe(1));
+    expect(screen.queryByRole("status", { name: "Run start" })).toBeNull();
+
+    await act(async () => readiness.resolve(jsonResponse(readinessFixture())));
+    expect(await screen.findByText("A demo run is already in progress")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Run start" })).toBeNull();
+  });
+
   it("shows the waiting panel beside a pending custom start", async () => {
     vi.stubGlobal(
       "fetch",

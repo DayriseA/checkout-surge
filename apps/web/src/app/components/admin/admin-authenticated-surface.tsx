@@ -868,6 +868,7 @@ export function AdminPresetController({
   async function confirmStart() {
     if (!startConfirmation || controlsBlocked || acceptedRun || estimate.blocksStart) return;
     await withPending(async () => {
+      setStartError(null);
       const result = await readProxyJson(adminDemoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -1215,7 +1216,7 @@ export function AdminPresetController({
                 trafficConfig={startConfirmation.config.trafficConfig}
               />
             ) : null}
-            {isPending ? <RunStartWaitingPanel recovery={recovery} /> : null}
+            {isPending && !startError ? <RunStartWaitingPanel recovery={recovery} /> : null}
             {startError ? <AdminNoticeView notice={startError} startRequestOutcome /> : null}
           </>
         }

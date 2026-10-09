@@ -45,7 +45,7 @@ export function RunStartWaitingPanel({
           start again.
         </p>
       ) : null}
-      <RunnerRelocationNotice recovery={recovery} />
+      <RunnerRelocationNotice announce={false} recovery={recovery} />
       <div aria-hidden="true" className="loading-bar" />
     </div>
   );

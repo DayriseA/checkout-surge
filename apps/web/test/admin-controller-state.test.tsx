@@ -1882,6 +1882,51 @@ describe("admin feature controllers", () => {
     expect(screen.getAllByText(/moving to another host/)).toHaveLength(1);
   });
 
+  it("shows a start refusal without the waiting panel while recovery still refreshes", async () => {
+    const fetchMock = vi.fn(async () =>
+      canonicalErrorResponse("No capacity", 503, "runner_capacity_unavailable"),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        onStartComplete={() => new Promise<void>(() => undefined)}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
+    expect(await screen.findByText("No room at the hosting provider")).toBeTruthy();
+    expect(screen.queryByRole("status", { name: "Run start" })).toBeNull();
+  });
+
+  it("clears the previous refusal when the start is confirmed again", async () => {
+    const pendingStart = new Promise<Response>(() => undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        canonicalErrorResponse("No capacity", 503, "runner_capacity_unavailable"),
+      )
+      .mockReturnValueOnce(pendingStart);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <AdminPresetController
+        initialPresets={presetListFixture("Custom")}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
+    expect(await screen.findByText("No room at the hosting provider")).toBeTruthy();
+    await user.click(confirmationButton("Start run"));
+    expect(await screen.findByRole("status", { name: "Run start" })).toBeTruthy();
+    expect(screen.queryByText("No room at the hosting provider")).toBeNull();
+  });
+
   it("rejects a duplicate when the slug is cleared", async () => {
     const fetchMock = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => {
       throw new Error("Unexpected duplicate fetch");

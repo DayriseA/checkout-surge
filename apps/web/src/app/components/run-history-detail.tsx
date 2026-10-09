@@ -869,13 +869,18 @@ function runRecap(
   const sendingEndedAt = deriveSendingEndedAt(
     detail.summary.trafficDeliverySummary.requestArrivalSummary,
   );
+  const sentNothing = sentNoAttempt(detail.summary);
   const trafficRecap = run.trafficStartedAt
     ? sendingEndedAt
       ? `${trafficSubject} started at ${time(run.trafficStartedAt)}; sending ended at ${time(sendingEndedAt)}.`
-      : `${trafficSubject} started at ${time(run.trafficStartedAt)}; no checkout attempt was recorded.`
+      : sentNothing
+        ? `${trafficSubject} started at ${time(run.trafficStartedAt)}; no checkout attempt was recorded.`
+        : `${trafficSubject} started at ${time(run.trafficStartedAt)}; the end of sending was not recorded.`
     : sendingEndedAt
       ? `${trafficSubject} start was not recorded; sending ended at ${time(sendingEndedAt)}.`
-      : "No checkout attempt was recorded for this run.";
+      : sentNothing
+        ? "No checkout attempt was recorded for this run."
+        : `${trafficSubject} start and the end of sending were not recorded.`;
   const lines = [
     trafficRecap,
     `${count(counts.reservedUnits, "unit")} reserved / ${count(counts.uniqueReservations, "unique reservation")}; ${count(counts.soldOutDecisions, "attempt")} turned away because stock ran out.`,
@@ -919,10 +924,27 @@ function formatDate(value: string | undefined): ReactNode {
 }
 
 function formatSendingEnd(
-  summary: Pick<PublicRunHistoryDetailResponse["summary"], "trafficDeliverySummary">,
+  summary: Pick<
+    PublicRunHistoryDetailResponse["summary"],
+    "trafficDeliverySummary" | "transportAttemptCounts"
+  >,
 ): ReactNode {
   const endedAt = deriveSendingEndedAt(summary.trafficDeliverySummary.requestArrivalSummary);
-  return endedAt ? formatDate(endedAt) : "no attempt recorded";
+  return endedAt
+    ? formatDate(endedAt)
+    : sentNoAttempt(summary)
+      ? "no attempt recorded"
+      : "not recorded";
+}
+
+/**
+ * Only a known zero says that nothing was sent. Unknown counters (a lost report) leave an empty
+ * arrival summary too, and must not read as an absence of traffic.
+ */
+function sentNoAttempt(
+  summary: Pick<PublicRunHistoryDetailResponse["summary"], "transportAttemptCounts">,
+): boolean {
+  return summary.transportAttemptCounts.startedRequests === 0;
 }
 
 /** Configured guards are stored in seconds but are presented under the one duration policy. */

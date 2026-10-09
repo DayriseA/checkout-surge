@@ -476,12 +476,35 @@ describe("run history", () => {
       expect(output).not.toContain("00:00:09");
     }
 
+    // An empty arrival summary says nothing was sent only when the counters know it.
     detail.summary.trafficDeliverySummary.requestArrivalSummary = emptyRequestArrivalSummary;
-    const unobserved = renderToStaticMarkup(publicReport(detail));
-    expect(unobserved).toContain(
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 1_000,
+      startedRequests: 0,
+      completedRequests: 0,
+      interruptedRequests: 0,
+      unstartedRequests: 1_000,
+    };
+    const nothingSent = renderToStaticMarkup(publicReport(detail));
+    expect(nothingSent).toContain(
       "Buyer traffic started at 00:00:00 UTC; no checkout attempt was recorded.",
     );
-    expect(unobserved).toMatch(/Sending ended<\/dt><dd[^>]*>no attempt recorded/);
+    expect(nothingSent).toMatch(/Sending ended<\/dt><dd[^>]*>no attempt recorded/);
+
+    detail.summary.transportAttemptCounts = {
+      plannedRequests: 1_000,
+      startedRequests: null,
+      completedRequests: null,
+      interruptedRequests: null,
+      unstartedRequests: null,
+    };
+    const unknown = renderToStaticMarkup(publicReport(detail));
+    expect(unknown).toContain(
+      "Buyer traffic started at 00:00:00 UTC; the end of sending was not recorded.",
+    );
+    expect(unknown).toMatch(/Sending ended<\/dt><dd[^>]*>not recorded/);
+    expect(unknown).not.toContain("no checkout attempt");
+    expect(unknown).not.toContain("no attempt recorded");
   });
 
   it("words a one-unit run in the singular", () => {

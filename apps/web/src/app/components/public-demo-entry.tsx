@@ -95,6 +95,8 @@ type CustomSubmissionFailure =
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const [accepted, setAccepted] = useState(false);
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
+  // Only while the start request itself waits for its answer; the starting slug is held longer.
+  const [startRequestInFlight, setStartRequestInFlight] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
   const [startConflictBlock, setStartConflictBlock] = useState<
@@ -332,7 +334,6 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   // not been released (it is only released once both required reads complete).
   const postStartReconciliationPending = startingSlug !== null && startPresentation !== null;
   // The waiting panel sits beside the start the visitor clicked, so it stays in view.
-  const startAwaitingAnswer = startingSlug !== null && startPresentation === null;
   const customStartPending = customPreset !== null && startingSlug === customPreset.slug;
 
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
@@ -374,11 +375,12 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     setStartRetryUntil(null);
 
     try {
+      setStartRequestInFlight(true);
       const result = await readProxyJson(demoRunStartProxyPath, startDemoRunResponseSchema, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(request),
-      });
+      }).finally(() => setStartRequestInFlight(false));
 
       if (result.status === "available") {
         setAccepted(true);
@@ -482,7 +484,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   }
             }
             postStartReconciliationPending={postStartReconciliationPending}
-            showWaitingPanel={startAwaitingAnswer && !customStartPending}
+            showWaitingPanel={startRequestInFlight && !customStartPending}
+            startRequestInFlight={startRequestInFlight}
             readiness={readiness}
             readyLabel={curatedPresets.length > 0 ? "ready" : "Custom scenario ready"}
             recovery={recovery}
@@ -942,7 +945,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 />
               ) : null}
               <RunEstimateNotice state={customEstimate.state} mode="public" />
-              {startAwaitingAnswer && customStartPending ? (
+              {startRequestInFlight && customStartPending ? (
                 <RunStartWaitingPanel recovery={recovery} />
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1306,6 +1309,7 @@ function StartGate({
   onRetry,
   postStartReconciliationPending,
   showWaitingPanel,
+  startRequestInFlight,
   readiness,
   readyLabel,
   recovery,
@@ -1322,6 +1326,7 @@ function StartGate({
   onRetry: () => void;
   postStartReconciliationPending: boolean;
   showWaitingPanel: boolean;
+  startRequestInFlight: boolean;
   readiness: BackendRead<HealthResponse>;
   readyLabel: string;
   recovery: BackendRead<DashboardProjection>;
@@ -1385,7 +1390,7 @@ function StartGate({
         )}
       </div>
       {showWaitingPanel ? <RunStartWaitingPanel className="w-full" recovery={recovery} /> : null}
-      {isStarting ? null : <RunnerRelocationNotice recovery={recovery} />}
+      {startRequestInFlight ? null : <RunnerRelocationNotice recovery={recovery} />}
       {activeRunPresentation ? (
         <ErrorNotice
           className="w-full"

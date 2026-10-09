@@ -231,8 +231,8 @@ function orderSentence(result: RunResult): string {
   }
   return result.uniqueReservations === result.confirmedOrders
     ? result.confirmedOrders === 1
-      ? "The only reservation was confirmed, with no failed orders."
-      : `All ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
+      ? "The order for the only reservation was confirmed, with no failed orders."
+      : `The orders for all ${formatNarrativeCount(result.confirmedOrders)} reservations were confirmed, with no failed orders.`
     : `${countOf(result.confirmedOrders, "order")} ${pluralize(result.confirmedOrders, "was", "were")} confirmed, with no failed orders.`;
 }
 
