@@ -94,6 +94,7 @@ export interface K6SummaryMetrics {
   acceptedResponses?: number;
   soldOutResponses?: number;
   transportFailures?: number;
+  requestTimeouts?: number;
   unexpectedResponses?: number;
   droppedIterations?: number;
   completedIterations?: number;
@@ -129,6 +130,7 @@ export const counterMetricFields = {
   checkout_reservation_accepted: "acceptedResponses",
   checkout_sold_out_rejections: "soldOutResponses",
   checkout_transport_failures: "transportFailures",
+  checkout_request_timeouts: "requestTimeouts",
   checkout_unexpected_responses: "unexpectedResponses",
   dropped_iterations: "droppedIterations",
   iterations: "completedIterations",
@@ -188,12 +190,7 @@ export class K6RunAccumulator {
       input.summaryMetrics?.responsesCompleted,
       "checkout_responses_completed",
     );
-    // http_reqs proves that a response completed, but it is never evidence that
-    // no additional attempts started: interrupted attempts produce no http_reqs
-    // sample at shutdown.
     const httpRequests = this.selectCount(input.summaryMetrics?.httpRequests, "http_reqs");
-    const completed = this.selectCompletedEvidence(responsesCompleted, httpRequests);
-    const started = this.selectStartedEvidence(attemptsStarted, completed);
     const acceptedResponses = this.selectCount(
       input.summaryMetrics?.acceptedResponses,
       "checkout_reservation_accepted",
@@ -210,6 +207,16 @@ export class K6RunAccumulator {
       input.summaryMetrics?.unexpectedResponses,
       "checkout_unexpected_responses",
     );
+    const requestTimeouts = this.selectCount(
+      input.summaryMetrics?.requestTimeouts,
+      "checkout_request_timeouts",
+    );
+    const completed = this.selectCompletedEvidence(
+      [acceptedResponses, soldOutResponses, transportFailures, unexpectedResponses],
+      responsesCompleted,
+      httpRequests,
+    );
+    const started = this.selectStartedEvidence(attemptsStarted, completed);
     const droppedIterations = this.selectCount(
       input.summaryMetrics?.droppedIterations,
       "dropped_iterations",
@@ -269,6 +276,7 @@ export class K6RunAccumulator {
         acceptedResponses: acceptedResponses.valueOrNull,
         soldOutResponses: soldOutResponses.valueOrNull,
         transportFailures: transportFailures.valueOrNull,
+        requestTimeouts: requestTimeouts.valueOrNull,
         unexpectedResponses: unexpectedResponses.valueOrNull,
         ...(durationP95 === undefined || durationP95 === null ? {} : { p95LatencyMs: durationP95 }),
         failureRate,
@@ -323,18 +331,26 @@ export class K6RunAccumulator {
   }
 
   /**
-   * Both metrics prove that an HTTP response completed. Keep the greatest
-   * available evidence, preferring the explicit post-return counter on ties.
+   * A completed attempt is one whose outcome the script recorded, so the four outcome counters,
+   * when all known, are the completion count and the recorded replies always add up. k6 drops
+   * every sample a VU emits once the graceful stop has ended its context, so a reply that
+   * arrives at that moment can reach http_reqs, or even the explicit completion counter, without
+   * its outcome: that attempt counts as interrupted. Without all four counters, the explicit
+   * completion counter comes next, then http_reqs; never the larger of them.
    */
   private selectCompletedEvidence(
+    outcomes: SelectedCount[],
     explicitCompleted: SelectedCount,
     httpRequests: SelectedCount,
   ): SelectedCount {
-    if (explicitCompleted.source === null) return httpRequests;
-    if (httpRequests.source === null || explicitCompleted.value >= httpRequests.value) {
-      return explicitCompleted;
+    if (outcomes.every((outcome) => outcome.source !== null)) {
+      const value = outcomes.reduce((sum, outcome) => sum + outcome.value, 0);
+      const source = outcomes.some((outcome) => outcome.source === "point_stream")
+        ? "point_stream"
+        : "summary_export";
+      return { value, valueOrNull: value, source };
     }
-    return httpRequests;
+    return explicitCompleted.source === null ? httpRequests : explicitCompleted;
   }
 
   private selectCount(summaryValue: number | undefined, metric: string) {

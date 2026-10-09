@@ -6,6 +6,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import {
   buyOutcomeHeaderName,
+  k6RequestTimeoutSeconds,
   type LoadMetricIngestRequest,
   loadRunIdHeaderName,
   type TrafficCompletionReport,
@@ -968,6 +969,11 @@ describe("load-orchestrator k6 mapping", () => {
       "const expectedCheckoutStatuses = http.expectedStatuses(202, 409);",
     );
     expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
+    expect(script.contents).toContain(`timeout: "${k6RequestTimeoutSeconds}s"`);
+    expect(script.contents).toContain("const requestTimeoutErrorCode = 1050;");
+    expect(script.contents).toContain(
+      "if (response.error_code === requestTimeoutErrorCode) requestTimeouts.add(1);",
+    );
     expect(script.contents).toContain('"discardResponseBodies":true');
     expect(script.contents).toContain('"systemTags":["scenario"]');
     expect(script.contents).toContain(

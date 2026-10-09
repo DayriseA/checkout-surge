@@ -9,9 +9,9 @@ import { nonnegativeIntegerSchema } from "./primitives.js";
  * - `startedRequests`: attempts for which the generated script incremented a
  *   counter immediately before calling `http.post()`.
  * - `completedRequests`: attempts for which `http.post()` returned to script
- *   code and the script incremented a completion counter.
- * - `interruptedRequests`: started attempts that did not reach the
- *   response-completed counter before shutdown.
+ *   code and the script recorded the attempt's outcome.
+ * - `interruptedRequests`: started attempts whose outcome the script did not
+ *   record before shutdown.
  * - `unstartedRequests`: planned attempts that never reached the
  *   attempt-started counter.
  *

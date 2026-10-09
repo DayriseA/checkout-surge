@@ -372,6 +372,32 @@ describe("TrafficCompletionService", () => {
     expect(detail?.result.outcome).toBe("failed");
     expect(detail?.failureDiagnostic).toEqual({ cause: "interrupted_requests" });
   });
+
+  it("stores request timeouts and names them as the cause of a transport-loss failure", async () => {
+    const activeConnection = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const completionService = createCompletionService(
+      activeConnection,
+      redisClient,
+      createFinalizationService(activeConnection, redisClient),
+    );
+    const report = completionReport();
+    const httpSummary = {
+      ...report.httpSummary,
+      failedRequests: 1,
+      soldOutResponses: 9,
+      transportFailures: 1,
+      requestTimeouts: 1,
+    };
+
+    await expect(
+      completionService.recordTrafficCompletion({ ...report, httpSummary }),
+    ).resolves.toMatchObject({ status: "failed", failureCategory: "traffic" });
+
+    const detail = await new RunHistoryService({ db: activeConnection.db }).detail(runId);
+    expect(detail?.summary.httpSummary).toEqual(httpSummary);
+    expect(detail?.failureDiagnostic).toEqual({ cause: "request_timeouts" });
+  });
 });
 
 function createCompletionService(

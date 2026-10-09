@@ -2,6 +2,7 @@ import {
   buyOutcomeHeaderName,
   deriveLoadExecutionPlan,
   k6GracefulStopSeconds,
+  k6RequestTimeoutSeconds,
   loadRunIdHeaderName,
   type TrafficExecutionStartRequest,
 } from "@checkout-surge/contracts";
@@ -61,12 +62,16 @@ const responsesCompleted = new Counter("checkout_responses_completed");
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const transportFailures = new Counter("checkout_transport_failures");
+const requestTimeouts = new Counter("checkout_request_timeouts");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
 // k6 built-ins, declared again only to initialize them; k6 returns the existing metric.
 const httpRequests = new Counter("http_reqs");
 const completedIterations = new Counter("iterations");
 const droppedIterations = new Counter("dropped_iterations");
 const checkoutOutcomeHeaderName = "${buyOutcomeHeaderName}";
+// k6's error code for a request that hit its timeout ("request timeout"). A dial timeout has its
+// own code (1211) and stays a connection error.
+const requestTimeoutErrorCode = 1050;
 
 export const options = ${JSON.stringify({
       discardResponseBodies: true,
@@ -84,6 +89,7 @@ export function setup() {
     acceptedResponses,
     soldOutResponses,
     transportFailures,
+    requestTimeouts,
     unexpectedResponses,
     httpRequests,
     completedIterations,
@@ -125,6 +131,7 @@ export default function () {
     }),
     {
       responseCallback: expectedCheckoutStatuses,
+      timeout: "${k6RequestTimeoutSeconds}s",
       headers: {
         "content-type": "application/json",
         accept: "application/json",
@@ -144,6 +151,8 @@ export default function () {
 
   if (response.status === 0) {
     transportFailures.add(1);
+    // Added after the transport failure, so a stop between the two never counts more timeouts.
+    if (response.error_code === requestTimeoutErrorCode) requestTimeouts.add(1);
   } else if (isAccepted) {
     acceptedResponses.add(1);
   } else if (isSoldOut) {

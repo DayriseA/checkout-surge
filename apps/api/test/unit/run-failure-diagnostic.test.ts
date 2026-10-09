@@ -16,18 +16,36 @@ const warning =
 const diagnostics = { executionPlan, stderrLines: [warning] };
 const quiet = { executionPlan, stderrLines: [] };
 /** 2,557 of 30,000 requests (8.52 %) never sent; every sent request answered. */
-const unsent = { plannedRequests: 30000, unstartedRequests: 2557, interruptedRequests: 0 };
+const unsent = {
+  plannedRequests: 30000,
+  startedRequests: 27443,
+  unstartedRequests: 2557,
+  interruptedRequests: 0,
+};
 /** All but 2 requests sent; 3,410 (11.4 %) still waiting when the generator stopped. */
-const lateAnswers = { plannedRequests: 30000, unstartedRequests: 2, interruptedRequests: 3410 };
+const lateAnswers = {
+  plannedRequests: 30000,
+  startedRequests: 29998,
+  unstartedRequests: 2,
+  interruptedRequests: 3410,
+};
+/** Every request sent and completed; transport loss is graded against the 10,000 started. */
+const allCompleted = {
+  plannedRequests: 10000,
+  startedRequests: 10000,
+  unstartedRequests: 0,
+  interruptedRequests: 0,
+};
 
-/** A normal generator exit unless a test says otherwise. */
+/** A normal generator exit without request timeouts unless a test says otherwise. */
 function deriveRunFailureDiagnostic(
   reason: Parameters<typeof derive>[0],
   diagnostics: Parameters<typeof derive>[1],
   counts: Parameters<typeof derive>[2],
-  trafficStatus: Parameters<typeof derive>[3] = "succeeded",
+  trafficStatus: Parameters<typeof derive>[4] = "succeeded",
+  http: Parameters<typeof derive>[3] = { requestTimeouts: 0 },
 ) {
-  return derive(reason, diagnostics, counts, trafficStatus);
+  return derive(reason, diagnostics, counts, http, trafficStatus);
 }
 
 describe("run failure diagnostic", () => {
@@ -71,6 +89,7 @@ describe("run failure diagnostic", () => {
     expect(
       deriveRunFailureDiagnostic("traffic_delivery_major_shortfall", diagnostics, {
         plannedRequests: 30000,
+        startedRequests: 28500,
         unstartedRequests: 1500,
         interruptedRequests: 1500,
       }),
@@ -78,9 +97,27 @@ describe("run failure diagnostic", () => {
     expect(
       deriveRunFailureDiagnostic("traffic_delivery_major_shortfall", diagnostics, {
         plannedRequests: 30000,
+        startedRequests: null,
         unstartedRequests: null,
         interruptedRequests: null,
       }),
+    ).toEqual({ cause: "unidentified" });
+  });
+  it("explains transport loss by request timeouts when they alone exceed the failure tier", () => {
+    expect(
+      deriveRunFailureDiagnostic("traffic_transport_major_loss", quiet, allCompleted, "succeeded", {
+        requestTimeouts: 631,
+      }),
+    ).toEqual({ cause: "request_timeouts" });
+  });
+  it.each([
+    ["within the failure tier", { requestTimeouts: 500 }, "succeeded"],
+    ["recorded before the timeout counter", {}, "succeeded"],
+    ["with an unknown timeout counter", { requestTimeouts: null }, "succeeded"],
+    ["after an abnormal generator exit", { requestTimeouts: 631 }, "failed"],
+  ] as const)("leaves transport loss unidentified with timeouts %s", (_case, http, status) => {
+    expect(
+      deriveRunFailureDiagnostic("traffic_transport_major_loss", quiet, allCompleted, status, http),
     ).toEqual({ cause: "unidentified" });
   });
   it("does not substitute a delivery warning for a transport failure", () => {

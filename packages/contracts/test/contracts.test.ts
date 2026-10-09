@@ -951,6 +951,11 @@ describe("run lifecycle contracts", () => {
       failureRate: 0,
     };
     expect(trafficHttpSummarySchema.safeParse(httpSummary).success).toBe(true);
+    for (const requestTimeouts of [null, 0]) {
+      expect(trafficHttpSummarySchema.safeParse({ ...httpSummary, requestTimeouts }).success).toBe(
+        true,
+      );
+    }
     expect(
       trafficHttpSummarySchema.safeParse({
         ...httpSummary,

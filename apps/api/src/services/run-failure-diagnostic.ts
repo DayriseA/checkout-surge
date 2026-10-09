@@ -3,6 +3,7 @@ import type {
   LoadRunDiagnosticsSummary,
   RunFailureDiagnostic,
   TrafficExecutionStatus,
+  TrafficHttpSummary,
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { toPublicRunFailureCategory } from "@checkout-surge/contracts";
@@ -14,19 +15,30 @@ type RunDiagnostics = Pick<LoadRunDiagnosticsSummary, "executionPlan" | "stderrL
  * Explain the recorded failure without treating stderr warnings as a new verdict. A cause is
  * named only when its own requests exceed the failure tier, so a VU warning for a few unsent
  * requests never hides requests whose answers arrived after the generator stopped. Late answers
- * are named only after a normal generator exit: when k6 crashes, the counts fall back to
- * started − completed, which says nothing about the graceful stop.
+ * and request timeouts are named only after a normal generator exit: when k6 crashes, the counts
+ * fall back to started − completed, which says nothing about the graceful stop, and a starved
+ * generator can time out requests the server answered. Timeouts are graded against started
+ * requests, like the transport loss they belong to; a run recorded before the timeout counter
+ * existed has no count, so its transport loss stays unidentified.
  */
 export function deriveRunFailureDiagnostic(
   reason: InternalRunFailureReason | null,
   diagnostics: RunDiagnostics | null,
   counts: Pick<
     TransportAttemptCounts,
-    "plannedRequests" | "unstartedRequests" | "interruptedRequests"
+    "plannedRequests" | "startedRequests" | "unstartedRequests" | "interruptedRequests"
   >,
+  http: Pick<TrafficHttpSummary, "requestTimeouts">,
   trafficStatus: TrafficExecutionStatus,
 ): RunFailureDiagnostic | null {
   if (!reason || toPublicRunFailureCategory(reason) !== "traffic") return null;
+  if (reason === "traffic_transport_major_loss") {
+    return trafficStatus === "succeeded" &&
+      counts.startedRequests !== null &&
+      exceedsFailureTier(http.requestTimeouts ?? null, counts.startedRequests)
+      ? { cause: "request_timeouts" }
+      : { cause: "unidentified" };
+  }
   if (reason !== "traffic_delivery_major_shortfall") return { cause: "unidentified" };
   const maxVus = recordedVirtualUserLimit(diagnostics);
   if (maxVus !== null && exceedsFailureTier(counts.unstartedRequests, counts.plannedRequests)) {
@@ -54,6 +66,6 @@ function recordedVirtualUserLimit(diagnostics: RunDiagnostics | null): number | 
   return reachedLimit ? plan.maxVus : null;
 }
 
-function exceedsFailureTier(requests: number | null, plannedRequests: number): boolean {
-  return requests !== null && requests / plannedRequests > failureShortfallRatio;
+function exceedsFailureTier(requests: number | null, totalRequests: number): boolean {
+  return requests !== null && requests / totalRequests > failureShortfallRatio;
 }

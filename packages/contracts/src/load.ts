@@ -93,7 +93,7 @@ export const maximumAutomaticallyDerivedVUs = 10_000;
 /** How long k6 still waits for answers after the traffic ends before it interrupts the requests. */
 export const k6GracefulStopSeconds = 30;
 
-/** k6's default request timeout (the script sets none): a request unanswered this long fails. */
+/** The generated script's k6 request timeout: a request unanswered this long fails. */
 export const k6RequestTimeoutSeconds = 60;
 
 export interface ResolvedConstantArrivalVus {
@@ -324,6 +324,8 @@ export const trafficHttpSummarySchema = z
     acceptedResponses: nonnegativeIntegerSchema.nullable(),
     soldOutResponses: nonnegativeIntegerSchema.nullable(),
     transportFailures: nonnegativeIntegerSchema.nullable(),
+    /** Transport failures that hit k6's request timeout; absent from runs recorded before it. */
+    requestTimeouts: nonnegativeIntegerSchema.nullable().optional(),
     unexpectedResponses: nonnegativeIntegerSchema.nullable(),
     failureRate: percentageSchema.nullable(),
     p95LatencyMs: nonnegativeNumberSchema.optional(),

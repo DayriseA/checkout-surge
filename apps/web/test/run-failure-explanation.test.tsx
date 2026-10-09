@@ -185,6 +185,92 @@ describe("failure explanation", () => {
       ),
     ).toBeTruthy();
   });
+  it("explains request timeouts the server still handled as orders", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "request_timeouts" };
+    input.transportAttemptCounts = {
+      plannedRequests: 10000,
+      startedRequests: 10000,
+      completedRequests: 10000,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    input.httpSummary = {
+      ...input.httpSummary,
+      acceptedResponses: 9369,
+      soldOutResponses: 0,
+      transportFailures: 631,
+      requestTimeouts: 631,
+      failedRequests: 631,
+    };
+    input.businessOutcomeSummary = {
+      ...input.businessOutcomeSummary,
+      acceptedReservations: 10000,
+      reservedUnits: 10000,
+      soldOutRejections: 0,
+      confirmedOrders: 10000,
+      notificationsRecorded: 10000,
+    };
+    render(<RunFailureExplanation evidence={input} />);
+    expect(screen.getByRole("heading", { name: "Requests timed out" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "631 buyers got no answer within the load generator's 60-second limit, so the generator gave up on those requests.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("631 of 10,000 requests timed out (6.31%).")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The server still handled those requests: every one of the 10,000 reservations was secured and its order confirmed and notified. Only their answers took too long. These buyers waited 60 seconds without an answer, so the run counts as failed.",
+      ),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Fewer buyers, a smaller burst, or the same traffic spread over more time gives the server room to answer every request within 60 seconds.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("631 attempts ended in transport failure.")).toBeTruthy();
+  });
+  it("does not claim the server handled a timed-out request its counts do not cover", () => {
+    const input = evidence();
+    input.failureDiagnostic = { cause: "request_timeouts" };
+    // The timeout cause needs more than 5% of sent requests timed out, so one timeout means a tiny run.
+    input.transportAttemptCounts = {
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 10,
+      interruptedRequests: 0,
+      unstartedRequests: 0,
+    };
+    input.httpSummary = {
+      ...input.httpSummary,
+      acceptedResponses: 1,
+      soldOutResponses: 8,
+      transportFailures: 1,
+      requestTimeouts: 1,
+      failedRequests: 1,
+    };
+    input.businessOutcomeSummary = {
+      ...input.businessOutcomeSummary,
+      acceptedReservations: 1,
+      reservedUnits: 1,
+      soldOutRejections: 9,
+      confirmedOrders: 1,
+      notificationsRecorded: 1,
+    };
+    render(<RunFailureExplanation evidence={input} />);
+    expect(
+      screen.getByText(
+        "1 buyer got no answer within the load generator's 60-second limit, so the generator gave up on that request.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("1 of 10 requests timed out (10%).")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "The server may still have handled that request: a timeout only means that no answer arrived in time. This buyer waited 60 seconds without an answer, so the run counts as failed.",
+      ),
+    ).toBeTruthy();
+  });
   it("counts interrupted requests in the shortfall of an unidentified failure", () => {
     const input = evidence();
     input.failureDiagnostic = { cause: "unidentified" };

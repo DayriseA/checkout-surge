@@ -1,6 +1,8 @@
 import {
   k6GracefulStopSeconds,
+  k6RequestTimeoutSeconds,
   type RunFailureDiagnostic,
+  type TrafficHttpSummary,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import { formatCount, formatDurationMs, pluralize } from "../lib/presentation/format";
@@ -24,8 +26,10 @@ export function RunFailureExplanation({
   const http = evidence.httpSummary;
   const business = evidence.businessOutcomeSummary;
   const connectionP95 = evidence.httpTimingBreakdownSummary.connecting?.p95Ms;
-  const copy = causeCopy(diagnostic, counts);
+  const copy = causeCopy(diagnostic, counts, http);
   const lateAnswersCause = diagnostic.cause === "interrupted_requests";
+  const timeoutsCause = diagnostic.cause === "request_timeouts";
+  const requestTimeouts = http.requestTimeouts ?? null;
   const countsUnknown = hasUnknownTrafficCounts(counts);
   const settled =
     business.acceptedReservations > 0 &&
@@ -38,10 +42,11 @@ export function RunFailureExplanation({
     business.retryingOrders === 0;
   const missingRequests =
     counts.completedRequests === null ? 0 : counts.plannedRequests - counts.completedRequests;
-  // Server-side proof that late answers were handled: every sent request became a reservation,
-  // and every reservation was confirmed and notified.
-  const serverHandledLateAnswers =
-    hasLateAnswers(counts) && settled && business.acceptedReservations === counts.startedRequests;
+  // Server-side proof that late or timed-out answers were handled: every sent request became a
+  // reservation, and every reservation was confirmed and notified.
+  const everySentRequestSettled =
+    settled && business.acceptedReservations === counts.startedRequests;
+  const serverHandledLateAnswers = hasLateAnswers(counts) && everySentRequestSettled;
   return (
     <section className="mt-3 text-sm leading-6 text-muted-strong" aria-label="Failure explanation">
       <h2 className="type-title m-0 text-xl leading-tight text-ink">{copy.heading}</h2>
@@ -69,6 +74,24 @@ export function RunFailureExplanation({
             </p>
           )}
         </div>
+      ) : null}
+      {timeoutsCause ? (
+        <>
+          <div className="my-3 border-l-2 border-danger pl-3">
+            <p className="m-0">
+              {formatCount(requestTimeouts)} of {formatCount(counts.startedRequests)}{" "}
+              {pluralize(counts.startedRequests, "request")} timed out (
+              {formatShortfallPercent(requestTimeouts ?? 0, counts.startedRequests ?? 0)}%).
+            </p>
+          </div>
+          <p className="m-0 mt-2">
+            {everySentRequestSettled
+              ? `The server still handled ${pluralize(requestTimeouts, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only reservation was" : `every one of the ${formatCount(business.acceptedReservations)} reservations was`} secured and its order confirmed and notified. Only ${pluralize(requestTimeouts, "its answer", "their answers")} took too long. `
+              : `The server may still have handled ${pluralize(requestTimeouts, "that request", "those requests")}: a timeout only means that no answer arrived in time. `}
+            {pluralize(requestTimeouts, "This buyer", "These buyers")} waited{" "}
+            {k6RequestTimeoutSeconds} seconds without an answer, so the run counts as failed.
+          </p>
+        </>
       ) : null}
       {lateAnswersCause ? (
         <p className="m-0 mt-2">
@@ -202,6 +225,7 @@ function formatShortfallPercent(missingRequests: number, plannedRequests: number
 function causeCopy(
   diagnostic: RunFailureDiagnostic,
   counts: TransportAttemptCounts,
+  http: TrafficHttpSummary,
 ): {
   heading: string;
   summary: string;
@@ -222,6 +246,13 @@ function causeCopy(
         summary: `The server needed more time than the load generator waits: ${formatCount(counts.interruptedRequests)} ${pluralize(counts.interruptedRequests, "buyer was", "buyers were")} still waiting for their answer when the generator stopped listening, ${k6GracefulStopSeconds} seconds after its sending window closed.`,
         next: "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
         why: "The load generator sent these requests but stopped listening before their answers arrived. The late answers alone are enough to fail the run, so they explain this failure. The report shows when answers arrived, not where the server spent its time.",
+      };
+    case "request_timeouts":
+      return {
+        heading: "Requests timed out",
+        summary: `${formatCount(http.requestTimeouts)} ${pluralize(http.requestTimeouts, "buyer")} got no answer within the load generator's ${k6RequestTimeoutSeconds}-second limit, so the generator gave up on ${pluralize(http.requestTimeouts, "that request", "those requests")}.`,
+        next: `Fewer buyers, a smaller burst, or the same traffic spread over more time gives the server room to answer every request within ${k6RequestTimeoutSeconds} seconds.`,
+        why: `The load generator recorded these requests as timed out: it sent each one and received no answer within ${k6RequestTimeoutSeconds} seconds. The timeouts alone are enough to fail the run, so they explain this failure. The report does not show where the server spent that time.`,
       };
     case "unidentified":
       return {

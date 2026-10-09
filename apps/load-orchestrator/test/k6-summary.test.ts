@@ -1,4 +1,5 @@
 import {
+  deriveRecordedReplyCount,
   emptyHttpTimingBreakdownSummary,
   type TrafficExecutionStartRequest,
   trafficCompletionReportSchema,
@@ -58,6 +59,7 @@ describe("parseK6SummaryMetrics", () => {
           checkout_reservation_accepted: { count: 0 },
           checkout_sold_out_rejections: { count: 10 },
           checkout_transport_failures: { count: 1 },
+          checkout_request_timeouts: { count: 1 },
           checkout_unexpected_responses: { count: 2 },
           iterations: { count: 11.6 },
           dropped_iterations: { count: 1 },
@@ -81,6 +83,7 @@ describe("parseK6SummaryMetrics", () => {
       acceptedResponses: 0,
       soldOutResponses: 10,
       transportFailures: 1,
+      requestTimeouts: 1,
       unexpectedResponses: 2,
       completedIterations: 12,
       droppedIterations: 1,
@@ -180,6 +183,7 @@ describe("K6RunAccumulator summary precedence", () => {
           checkout_reservation_accepted: { count: 10 },
           checkout_sold_out_rejections: { count: 0 },
           checkout_transport_failures: { count: 0 },
+          checkout_request_timeouts: { count: 0 },
           checkout_unexpected_responses: { count: 0 },
           http_reqs: { count: 10 },
           iterations: { count: 10 },
@@ -199,6 +203,7 @@ describe("K6RunAccumulator summary precedence", () => {
       acceptedResponses: 10,
       soldOutResponses: 0,
       transportFailures: 0,
+      requestTimeouts: 0,
       unexpectedResponses: 0,
       failureRate: 0,
     });
@@ -226,6 +231,7 @@ describe("K6RunAccumulator summary precedence", () => {
       acceptedResponses: 3,
       soldOutResponses: null,
       transportFailures: null,
+      requestTimeouts: null,
       unexpectedResponses: null,
       failureRate: null,
     });
@@ -413,64 +419,86 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
     });
   });
 
-  it.each([
-    ["zero", 0, 6, 6, 4],
-    ["lower", 4, 6, 6, 4],
-    ["higher", 8, 6, 8, 2],
-  ] as const)("uses the strongest completion evidence when the explicit count is %s", (_case, responsesCompleted, httpRequests, expectedCompleted, expectedInterrupted) => {
+  it("counts a reply that reached http_reqs at the stop, but not its outcome, as interrupted", () => {
+    // k6 drops the samples of a VU whose context the graceful stop ended, so the reply's
+    // http_reqs sample can be recorded while the script's own counters after it are not.
+    const summaryMetrics = parseK6SummaryMetrics(
+      JSON.stringify({
+        metrics: {
+          checkout_attempts_started: { count: 10 },
+          checkout_responses_completed: { count: 9 },
+          checkout_reservation_accepted: { count: 9 },
+          checkout_sold_out_rejections: { count: 0 },
+          checkout_transport_failures: { count: 0 },
+          checkout_request_timeouts: { count: 0 },
+          checkout_unexpected_responses: { count: 0 },
+          http_reqs: { count: 10 },
+          iterations: { count: 9 },
+          dropped_iterations: { count: 0 },
+        },
+      }),
+    );
+    if (!summaryMetrics) throw new Error("Expected a valid k6 export");
+    const report = createAccumulator().completionReport({
+      status: "succeeded",
+      completedAt,
+      summaryMetrics,
+    });
+
+    expect(trafficCompletionReportSchema.parse(report).transportAttemptCounts).toEqual({
+      plannedRequests: 10,
+      startedRequests: 10,
+      completedRequests: 9,
+      interruptedRequests: 1,
+      unstartedRequests: 0,
+    });
+    expect(
+      deriveRecordedReplyCount(report.transportAttemptCounts, report.httpSummary.transportFailures),
+    ).toBe(9);
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
+      "summary_export",
+    );
+  });
+
+  it("reports outcome counters from the point stream as point-stream completion evidence", () => {
     const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_reservation_accepted",
+      data: { value: 6 },
+    });
     const report = accumulator.completionReport({
       status: "failed",
       completedAt,
       summaryMetrics: {
         attemptsStarted: 10,
-        responsesCompleted,
-        httpRequests,
+        responsesCompleted: 9,
+        soldOutResponses: 1,
+        transportFailures: 0,
+        unexpectedResponses: 0,
         timingPhases: {},
       },
     });
 
     expect(report.transportAttemptCounts).toMatchObject({
-      plannedRequests: 10,
-      startedRequests: 10,
-      completedRequests: expectedCompleted,
-      interruptedRequests: expectedInterrupted,
-      unstartedRequests: 0,
-    });
-  });
-
-  it("prefers the explicit completion counter on equal evidence", () => {
-    const accumulator = createAccumulator();
-    accumulator.observe({
-      type: "Point",
-      metric: "checkout_responses_completed",
-      data: { value: 7 },
-    });
-    const report = accumulator.completionReport({
-      status: "failed",
-      completedAt,
-      summaryMetrics: { attemptsStarted: 10, httpRequests: 7, timingPhases: {} },
-    });
-
-    expect(report.transportAttemptCounts).toMatchObject({
       completedRequests: 7,
       interruptedRequests: 3,
-      unstartedRequests: 0,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
       "point_stream",
     );
   });
 
-  it("reports the source of the larger mixed completion evidence", () => {
+  it("prefers the explicit completion counter to http_reqs without all outcome counters", () => {
     const accumulator = createAccumulator();
-    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 7 } });
+    accumulator.observe({ type: "Point", metric: "http_reqs", data: { value: 8 } });
     const report = accumulator.completionReport({
       status: "failed",
       completedAt,
       summaryMetrics: {
         attemptsStarted: 10,
-        responsesCompleted: 4,
+        responsesCompleted: 7,
+        acceptedResponses: 7,
         timingPhases: {},
       },
     });
@@ -481,7 +509,7 @@ describe("K6RunAccumulator transport-attempt reconciliation", () => {
       unstartedRequests: 0,
     });
     expect(report.loadRunDiagnosticsSummary.terminalMetricSources.completedRequests).toBe(
-      "point_stream",
+      "summary_export",
     );
   });
 
