@@ -7,7 +7,7 @@ Work breakdown for the hosted deployment on Fly.io.
 
 ## Rules
 
-- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel. Task 15 was split into 15a–15d. Task 16 was split into 16a–16c, and task 20 into 20a–20c; its runner counters became task 21. A first task 21, a study, became the founding study of the separate [Redis and Order Queue Proof](../redis_and_order_queue_proof/README.md) backlog, and the runner counters took its number.
+- **Order.** Tasks are handled in numeric order. A task whose dependencies are done can be pulled forward. Task 14 was added after the initial breakdown and should be done before task 13. Task 13 was split into 13a–13d when it started; 13a and 13b run in parallel. Task 15 was split into 15a–15d. Task 16 was split into 16a–16c; its runner counters became task 21. Task 20 was split into 20a–20c. A first task 21, a study, became the founding study of the separate [Redis and Order Queue Proof](../redis_and_order_queue_proof/README.md) backlog, and the runner counters took its number.
 - **Notes stay in the task.** Findings, measurements and annotations go into the task's own "Working notes" section, never into another task or into `design.md`.
 - **Decisions stay in the design.** When a task changes or refines a decision, update `design.md` in the same change.
 - **Open points are not decided.** They are settled with the owner when the task starts.
