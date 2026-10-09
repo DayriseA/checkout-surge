@@ -383,6 +383,8 @@ export const adminRunHistoryDetailResponseSchema = z
     failureDiagnostic: runFailureDiagnosticSchema.nullable(),
     httpTimingBreakdownSummary: httpTimingBreakdownSummarySchema,
     loadRunDiagnosticsSummary: loadRunDiagnosticsSummarySchema.nullable(),
+    /** Live metric batches the API dropped at capacity and never ingested; null when unknown. */
+    apiDroppedLiveMetricBatchCount: nonnegativeIntegerSchema.nullable(),
     erpAttemptSummary: runHistoryErpAttemptSummarySchema,
     runSignalTimelineSummary: runSignalTimelineSummarySchema.nullable(),
     timestamp: isoTimestampSchema,

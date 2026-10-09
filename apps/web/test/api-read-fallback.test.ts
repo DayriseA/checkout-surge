@@ -459,6 +459,7 @@ function runHistoryDetailFixture() {
       trafficEndedAt: "2026-06-20T00:00:09.000Z",
       finalizedAt: "2026-06-20T00:00:10.000Z",
     },
+    apiDroppedLiveMetricBatchCount: null,
     erpAttemptSummary: {
       totalCount: 0,
       byStatus: { succeeded: 0, failed: 0, timedOut: 0 },

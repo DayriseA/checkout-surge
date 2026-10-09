@@ -329,6 +329,7 @@ export async function startApiServer(): Promise<void> {
     }),
     terminalInventoryReadTimeoutMs,
     reservationTiming,
+    liveMetricDrops: trafficMetricIngestion,
   });
   const presetService = new DemoPresetService({ db: connection.db });
   const runtimePolicyService = new PublicRuntimePolicyService({

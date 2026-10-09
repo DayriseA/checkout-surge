@@ -232,7 +232,7 @@ describe("TrafficMetricIngestionService", () => {
     });
     const service = new TrafficMetricIngestionService({
       db: database as never,
-      store: { appendIfLive, publishDirtyIfLive },
+      store: { appendIfLive, publishDirtyIfLive, countUnacceptedBatches: vi.fn() },
       logger: { warn: vi.fn() },
     });
 
@@ -252,11 +252,60 @@ describe("TrafficMetricIngestionService", () => {
     expect(publishDirtyIfLive).toHaveBeenCalledTimes(maximumPendingTrafficMetricBatches);
     expect(maximumActiveStoreOperations).toBe(1);
   });
+
+  it("counts each batch dropped at capacity once, unless another attempt of it was accepted", async () => {
+    let releaseAppend: (() => void) | undefined;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const countUnacceptedBatches = vi.fn(
+      async (_runId: string, batchIds: string[]) =>
+        batchIds.filter((batchId) => batchId !== metricRequest.batchId).length,
+    );
+    const service = createService({
+      appendIfLive: async () => {
+        await appendGate;
+        return "appended";
+      },
+      publishDirtyIfLive: async () => ({ outcome: "published" }),
+      countUnacceptedBatches,
+      warn: vi.fn(),
+    });
+    const runStartedAt = new Date();
+    await expect(service.droppedBatchCount(metricRequest.runId, runStartedAt)).resolves.toBe(0);
+
+    const admitted = Array.from({ length: maximumPendingTrafficMetricBatches }, () =>
+      service.ingest(metricRequest),
+    );
+    const lostBatchId = "77777777-7777-4777-8777-777777777778";
+    await service.ingest({ ...metricRequest, batchId: lostBatchId });
+    await service.ingest({ ...metricRequest, batchId: lostBatchId });
+    await service.ingest(metricRequest);
+    releaseAppend?.();
+    await Promise.all(admitted);
+
+    await expect(service.droppedBatchCount(metricRequest.runId, runStartedAt)).resolves.toBe(1);
+    expect(countUnacceptedBatches).toHaveBeenCalledWith(metricRequest.runId, [
+      lostBatchId,
+      metricRequest.batchId,
+    ]);
+  });
+
+  it("reads the count as unknown for a run that started before the process", async () => {
+    const service = createService({
+      appendIfLive: async () => "appended",
+      publishDirtyIfLive: async () => ({ outcome: "published" }),
+      warn: vi.fn(),
+    });
+
+    await expect(service.droppedBatchCount(metricRequest.runId, new Date(0))).resolves.toBeNull();
+  });
 });
 
 function createService(options: {
   appendIfLive: Pick<DashboardTrafficMetricStore, "appendIfLive">["appendIfLive"];
   publishDirtyIfLive: Pick<DashboardTrafficMetricStore, "publishDirtyIfLive">["publishDirtyIfLive"];
+  countUnacceptedBatches?: DashboardTrafficMetricStore["countUnacceptedBatches"];
   warn: ReturnType<typeof vi.fn>;
   run?: { status: string; trafficStatus: string } | null;
 }): TrafficMetricIngestionService {
@@ -267,6 +316,7 @@ function createService(options: {
     store: {
       appendIfLive: options.appendIfLive,
       publishDirtyIfLive: options.publishDirtyIfLive,
+      countUnacceptedBatches: options.countUnacceptedBatches ?? (async () => 0),
     },
     logger: { warn: options.warn as never },
   });

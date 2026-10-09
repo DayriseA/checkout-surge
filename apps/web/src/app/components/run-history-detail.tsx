@@ -319,6 +319,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
       <RunDiagnostics
         summary={detail.loadRunDiagnosticsSummary}
+        apiDroppedLiveMetricBatchCount={detail.apiDroppedLiveMetricBatchCount}
         warningCount={detail.exceptionSummary.generatorWarnings}
       />
     </div>

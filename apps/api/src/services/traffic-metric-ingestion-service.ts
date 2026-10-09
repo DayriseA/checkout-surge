@@ -18,18 +18,29 @@ export interface TrafficMetricIngestionController {
 export class TrafficMetricIngestionService implements TrafficMetricIngestionController {
   private operationTail: Promise<void> = Promise.resolve();
   private pendingOperationCount = 0;
+  // Kept in memory: the single API process both drops and finalizes, so the count needs no
+  // shared store, and a restart turns it unknown (see droppedBatchCount). Entries stay for the
+  // process lifetime, one per run that dropped a batch.
+  private readonly droppedBatchIdsByRun = new Map<string, Set<string>>();
+  private readonly countingSince = new Date();
 
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
-      store: Pick<DashboardTrafficMetricStore, "appendIfLive" | "publishDirtyIfLive">;
+      store: Pick<
+        DashboardTrafficMetricStore,
+        "appendIfLive" | "publishDirtyIfLive" | "countUnacceptedBatches"
+      >;
       logger: Pick<CheckoutSurgeLogger, "warn">;
     },
   ) {}
 
   async ingest(input: LoadMetricIngestRequest): Promise<void> {
     const request = loadMetricIngestRequestSchema.parse(input);
-    if (this.pendingOperationCount >= maximumPendingTrafficMetricBatches) return;
+    if (this.pendingOperationCount >= maximumPendingTrafficMetricBatches) {
+      this.recordDroppedBatch(request);
+      return;
+    }
 
     this.pendingOperationCount += 1;
     const operation = this.operationTail
@@ -42,6 +53,24 @@ export class TrafficMetricIngestionService implements TrafficMetricIngestionCont
       () => undefined,
     );
     await operation;
+  }
+
+  /**
+   * Batches answered without ingestion that no attempt of the same batch ingested either: a
+   * dropped retry whose earlier attempt was still queued is no loss. Null (unknown) when this
+   * process started after the run did, since an earlier process may have dropped batches.
+   */
+  async droppedBatchCount(runId: string, runStartedAt: Date | null): Promise<number | null> {
+    if (!runStartedAt || runStartedAt < this.countingSince) return null;
+    const batchIds = this.droppedBatchIdsByRun.get(runId);
+    if (!batchIds) return 0;
+    return this.options.store.countUnacceptedBatches(runId, [...batchIds]);
+  }
+
+  private recordDroppedBatch(request: LoadMetricIngestRequest): void {
+    const batchIds = this.droppedBatchIdsByRun.get(request.runId) ?? new Set<string>();
+    batchIds.add(request.batchId);
+    this.droppedBatchIdsByRun.set(request.runId, batchIds);
   }
 
   private async ingestAdmitted(request: LoadMetricIngestRequest): Promise<void> {

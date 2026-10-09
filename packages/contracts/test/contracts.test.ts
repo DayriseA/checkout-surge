@@ -2277,6 +2277,7 @@ describe("public runtime policy contract", () => {
         },
         httpTimingBreakdownSummary: emptyHttpTimingBreakdownSummary,
         loadRunDiagnosticsSummary: runnerDiagnostics(),
+        apiDroppedLiveMetricBatchCount: null,
         erpAttemptSummary: detail.erpAttempts,
         runSignalTimelineSummary: null,
         timestamp,

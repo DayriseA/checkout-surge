@@ -723,6 +723,7 @@ describe("run history service", () => {
     });
     expect(adminDetail?.erpAttemptSummary.averageLatencyMs).toBeCloseTo(50.666_666, 5);
     expect(adminDetail?.erpAttemptSummary.p95LatencyMs).toBeCloseTo(94.2, 3);
+    expect(adminDetail?.apiDroppedLiveMetricBatchCount).toBeNull();
 
     await db
       .update(demoRunSummaries)
@@ -730,16 +731,21 @@ describe("run history service", () => {
         loadRunDiagnosticsSummary: {
           ...runHistoryDiagnosticsFixture(),
           accountingWarnings: ["accepted_response_accounting_incomplete"],
+          apiDroppedLiveMetricBatchCount: 3,
         },
       })
       .where(eq(demoRunSummaries.id, ids.newerSummary));
     const annotatedAdminDetail = await service.adminDetail(ids.newerRun);
+    expect(annotatedAdminDetail?.apiDroppedLiveMetricBatchCount).toBe(3);
     expect(annotatedAdminDetail?.loadRunDiagnosticsSummary).toMatchObject({
       generatorCapacity: null,
       generatorUtilisation: null,
     });
     expect(annotatedAdminDetail?.loadRunDiagnosticsSummary).not.toHaveProperty(
       "accountingWarnings",
+    );
+    expect(annotatedAdminDetail?.loadRunDiagnosticsSummary).not.toHaveProperty(
+      "apiDroppedLiveMetricBatchCount",
     );
 
     await db

@@ -204,6 +204,15 @@ describe("Redis dashboard traffic metric reset", () => {
     await store.clearRun(runA);
     expect(await redis.exists(`demo-run:${runA}:traffic-metric-batches`)).toBe(0);
   });
+
+  it("counts only the batch IDs the run never accepted", async () => {
+    const accepted = metricBatch(runA, 70);
+    await store.appendIfLive(accepted);
+
+    await expect(
+      store.countUnacceptedBatches(runA, [accepted.batchId, metricBatch(runA, 71).batchId]),
+    ).resolves.toBe(1);
+  });
 });
 
 function metricBatch(runId: string, value: number) {

@@ -9,9 +9,11 @@ const unavailable = "Could not determine";
 
 export function RunDiagnostics({
   summary,
+  apiDroppedLiveMetricBatchCount,
   warningCount = 0,
 }: {
   summary: LoadRunDiagnosticsSummary | null;
+  apiDroppedLiveMetricBatchCount: number | null;
   warningCount?: number;
 }) {
   const unavailableCount = countUnavailableLoadRunDiagnosticProbes(summary);
@@ -50,6 +52,10 @@ export function RunDiagnostics({
           <GeneratorNetwork network={summary.networkDiagnostics} />
           <K6Process summary={summary} />
           <MetricProvenance summary={summary} />
+          <LiveMetricStream
+            runnerLoss={summary.liveMetricLoss}
+            apiDroppedBatchCount={apiDroppedLiveMetricBatchCount}
+          />
           <K6Stderr summary={summary} />
         </div>
       ) : (
@@ -265,6 +271,26 @@ function MetricProvenance({ summary }: { summary: LoadRunDiagnosticsSummary }) {
   }
 
   return <DiagnosticGroup title="k6 metric provenance" facts={facts} />;
+}
+
+function LiveMetricStream({
+  runnerLoss,
+  apiDroppedBatchCount,
+}: {
+  runnerLoss: LoadRunDiagnosticsSummary["liveMetricLoss"];
+  apiDroppedBatchCount: number | null;
+}) {
+  return (
+    <DiagnosticGroup
+      title="Live metric stream"
+      note="Only the live dashboard can miss these; the final report does not."
+      facts={[
+        ["Runner dropped live metric batches", nullableNumber(runnerLoss?.batchCount ?? null)],
+        ["Runner dropped live metric samples", nullableNumber(runnerLoss?.sampleCount ?? null)],
+        ["API dropped live metric batches", nullableNumber(apiDroppedBatchCount)],
+      ]}
+    />
+  );
 }
 
 function K6Stderr({ summary }: { summary: LoadRunDiagnosticsSummary }) {

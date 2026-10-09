@@ -1410,6 +1410,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     },
     httpTimingBreakdownSummary: detail.httpTimingBreakdownSummary,
     loadRunDiagnosticsSummary: null,
+    apiDroppedLiveMetricBatchCount: null,
     erpAttemptSummary: detail.erpAttempts,
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",

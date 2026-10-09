@@ -13,6 +13,7 @@ import {
   isDestructiveResetReason,
   type LoadRunDiagnosticsSummary,
   loadRunDiagnosticsSummarySchema,
+  nonnegativeIntegerSchema,
   type PublicRunHistoryDetailResponse,
   type PublicRunHistoryRun,
   type PublicRunHistorySummary,
@@ -39,6 +40,7 @@ import {
   readCumulativeErpOutcomeCounts,
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
+import { z } from "zod";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
@@ -173,6 +175,10 @@ export class RunHistoryService implements RunHistoryController {
         "httpTimingBreakdownSummary",
       ),
       loadRunDiagnosticsSummary: diagnostics,
+      apiDroppedLiveMetricBatchCount: parseApiDroppedLiveMetricBatchCount(
+        source.summaryRow.loadRunDiagnosticsSummary,
+        `run summary ${source.summaryRow.id} for demo run ${source.summaryRow.runId}`,
+      ),
       erpAttemptSummary,
       runSignalTimelineSummary: parseRunSignalTimelineSummary(source.summaryRow),
       timestamp: this.now().toISOString(),
@@ -446,6 +452,18 @@ function parseRunHistoryDiagnostics(
     value,
     context,
     "loadRunDiagnosticsSummary",
+  );
+}
+
+const apiLiveMetricDropsSchema = z.object({
+  apiDroppedLiveMetricBatchCount: nonnegativeIntegerSchema.optional(),
+});
+
+/** Finalization stores the API's count beside the runner's diagnostics; absent is unknown. */
+function parseApiDroppedLiveMetricBatchCount(value: unknown, context: string): number | null {
+  return (
+    parsePersistedState(apiLiveMetricDropsSchema, value, context, "loadRunDiagnosticsSummary")
+      .apiDroppedLiveMetricBatchCount ?? null
   );
 }
 

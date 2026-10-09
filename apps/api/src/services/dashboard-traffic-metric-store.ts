@@ -35,6 +35,7 @@ export interface DashboardTrafficMetricStore extends DashboardTrafficMetricReade
   fenceRun(runId: string): Promise<void>;
   clearRun(runId: string): Promise<void>;
   hasRunState(runId: string): Promise<boolean>;
+  countUnacceptedBatches(runId: string, batchIds: string[]): Promise<number>;
 }
 
 export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricStore {
@@ -116,6 +117,11 @@ export class RedisDashboardTrafficMetricStore implements DashboardTrafficMetricS
         trafficMetricBatchKey(runId),
       )) > 0
     );
+  }
+
+  async countUnacceptedBatches(runId: string, batchIds: string[]): Promise<number> {
+    const accepted = await this.redis.smismember(trafficMetricBatchKey(runId), ...batchIds);
+    return accepted.filter((member) => member === 0).length;
   }
 
   async readRecent(runId: string | null): Promise<MetricSample[]> {

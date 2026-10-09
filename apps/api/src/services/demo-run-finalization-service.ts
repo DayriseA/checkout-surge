@@ -48,6 +48,7 @@ import {
   parsePersistedTrafficHttpSummary,
   parsePersistedTransportAttemptCounts,
 } from "./traffic-delivery-classifier.js";
+import type { TrafficMetricIngestionService } from "./traffic-metric-ingestion-service.js";
 
 export interface TerminalInventoryReadOperation {
   read(input: {
@@ -77,6 +78,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalInventoryRead: TerminalInventoryReadOperation;
       terminalInventoryReadTimeoutMs: number;
       reservationTiming?: TerminalReservationTimingReader;
+      liveMetricDrops?: Pick<TrafficMetricIngestionService, "droppedBatchCount">;
       now?: () => Date;
     },
   ) {
@@ -247,9 +249,16 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           trafficFailed: row.run.trafficStatus === "failed" || Boolean(finalization.errorMessage),
         });
         const accountingWarning = acceptedResponseAccountingWarning(latestAccounting);
-        const loadRunDiagnosticsSummary = accountingWarning
-          ? appendAccountingWarning(evidence.diagnostics, accountingWarning)
-          : evidence.diagnostics;
+        const apiDroppedLiveMetricBatchCount = await this.readApiDroppedLiveMetricBatchCount(
+          row.run,
+        );
+        const loadRunDiagnosticsSummary = {
+          ...(accountingWarning
+            ? appendAccountingWarning(evidence.diagnostics, accountingWarning)
+            : evidence.diagnostics),
+          // Absent means unknown, never zero.
+          ...(apiDroppedLiveMetricBatchCount === null ? {} : { apiDroppedLiveMetricBatchCount }),
+        };
         const runSignalTimelineSummary = await readRunSignalTimeline(
           lockedDb,
           {
@@ -453,6 +462,21 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         "Could not capture advisory server-side reservation timing.",
       );
       return emptyServerReservationTimingSummary;
+    }
+  }
+
+  private async readApiDroppedLiveMetricBatchCount(
+    run: typeof demoRuns.$inferSelect,
+  ): Promise<number | null> {
+    if (!this.options.liveMetricDrops) return null;
+    try {
+      return await this.options.liveMetricDrops.droppedBatchCount(run.id, run.startedAt);
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId: run.id },
+        "Could not count the live metric batches the API dropped.",
+      );
+      return null;
     }
   }
 }

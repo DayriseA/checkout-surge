@@ -171,6 +171,17 @@ describe("run diagnostics", () => {
     expectFact(markup, "k6 process peak CPU utilisation", "0.004%");
   });
 
+  it("shows the runner's and the API's live metric losses, unknown apart from zero", () => {
+    const known = render(diagnostics({ liveMetricLoss: { sampleCount: 12, batchCount: 2 } }), 0, 0);
+    expectFact(known, "Runner dropped live metric batches", "2");
+    expectFact(known, "Runner dropped live metric samples", "12");
+    expectFact(known, "API dropped live metric batches", "0");
+
+    const unknown = render(diagnostics({ liveMetricLoss: undefined }), 0, null);
+    expectFact(unknown, "Runner dropped live metric batches", "Could not determine");
+    expectFact(unknown, "API dropped live metric batches", "Could not determine");
+  });
+
   it("does not call out CPU scope when the cgroup quota is not below the host count", () => {
     const populated = diagnostics();
     const markup = render(
@@ -185,8 +196,14 @@ describe("run diagnostics", () => {
   });
 });
 
-function render(summary: LoadRunDiagnosticsSummary | null, warningCount = 0): string {
-  return renderToStaticMarkup(createElement(RunDiagnostics, { summary, warningCount }));
+function render(
+  summary: LoadRunDiagnosticsSummary | null,
+  warningCount = 0,
+  apiDroppedLiveMetricBatchCount: number | null = null,
+): string {
+  return renderToStaticMarkup(
+    createElement(RunDiagnostics, { summary, warningCount, apiDroppedLiveMetricBatchCount }),
+  );
 }
 
 const populatedFacts = [
