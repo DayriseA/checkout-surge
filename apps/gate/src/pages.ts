@@ -124,7 +124,7 @@ main { max-width: 38rem; margin: 0 auto; padding: 12vh 1.5rem 4rem; }
 .pulse { display: block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: currentColor;
   animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
-.loader { height: 3px; margin: 0 0 1.25rem; overflow: hidden; border-radius: 999px; background: ${colors.infoSoft}; }
+.loader { height: 3px; margin: 1.5rem 0 0; overflow: hidden; border-radius: 999px; background: ${colors.infoSoft}; }
 .loader::after { content: ""; display: block; width: 40%; height: 100%; border-radius: inherit;
   background: ${colors.info}; animation: slide 1s ease-in-out infinite; }
 @keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
@@ -191,11 +191,11 @@ ${refresh}
 <header class="band"><div>${brandMark}<strong>Checkout-Surge</strong></div></header>
 <main>
 <div class="card">
-${reloads ? '<div class="loader" aria-hidden="true"></div>' : ""}
 <p class="status ${page.tone}"><span aria-hidden="true">${toneMarkers[page.tone]}</span>${page.status}</p>
 <h1>${page.title}</h1>
 <p class="text">${page.text}</p>
 ${renderAction(page.action, returnPath)}
+${reloads ? '<div class="loader" aria-hidden="true"></div>' : ""}
 </div>
 </main>
 </body>
