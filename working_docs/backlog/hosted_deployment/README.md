@@ -38,7 +38,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a, 18 | done |
 | 15c | [Public limits](15c_public_limits_and_explanations.md) | 15b, deployed | done |
 | 15d | [Narrative and visitor explanations](15d_narrative_and_explanations.md) | 15b; figures from 15c | done |
-| 16a | [Gate pages](16a_gate_pages.md) | 17 | todo |
+| 16a | [Gate pages](16a_gate_pages.md) | 17 | done |
 | 16b | [Demo messages](16b_demo_messages.md) | 17 | todo |
 | 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
 | 18 | [Interrupted requests in the run outcome](18_interrupted_requests_in_run_outcome.md) | none | done |

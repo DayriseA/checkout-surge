@@ -63,3 +63,11 @@ The gate's own pages match the demo's look, read clearly to a visitor who does n
   - **Tests.** `server.test.ts`: cache header and reload seconds asserted, booting and setup-failure pages rendered. `core-wake.test.ts`: the capacity-marked core shows relocating; a timed-out start on a starting core shows starting without a second start; a timed-out start on a stopped core, or with a failed read, is unavailable. `core-recovery.test.ts`: the deployed config carries the mark and its reason, and the new core gets neither. `deploy.mjs` has no tests (it runs on import).
   - **Docs.** design 2.2, 2.3 and 3.5; `docs/hosted_runtime.md` (pages, waking, recovery); `docs/hosted_operations.md` (recreation mark). Decision log: consequences corrected in place in HD-29, HD-35 and HD-56; HD-45 unchanged; no new entry (code comments carry both reasons).
   - **Pending.** The owner's review of the eight pages on the preview.
+
+### Closure (2026-10-09)
+
+- Owner review on the preview: approved, with CSS loop animations (owner decision) and the loading bar moved to the bottom of the card.
+- Adversarial review arbitrated. Fixed: a dot-segment return path could redirect off-site (pre-existing), the reason key removal in the operations doc, and two stale `design.md` passages. Accepted: a reason left alone by a failed second metadata write is inert, and the next deploy drops it.
+- Cloud verification at `63b3208b`: the full suite passed, and the rendered pages, reloads, reduced motion and return paths were checked.
+- Deployed at `fa04a5ba`. The live gate serves the new asleep page (503, `no-store`) without waking the core.
+- Done.
