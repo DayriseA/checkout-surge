@@ -76,3 +76,10 @@ Owner decisions of 2026-10-09 throughout.
   - "Sending ended" replaces both the public "Checkout traffic ended" and the admin "Traffic ended"; without arrivals, the recap says "no checkout attempt was recorded" only when the counters know nothing was sent (`startedRequests === 0`), and "the end of sending was not recorded" when they are unknown (HD-13).
   - Environment note: shown once, hosted with region, local without; none for a run that never started traffic (no region and no `trafficStartedAt`), since it measured nothing.
   - Waiting panel: `RunStartWaitingPanel`, beside the clicked start (start gate for presets, custom form footer for a custom run, admin start dialog), 12 s reassurance timer, relocation notice inside; CSS in `globals.css` (`.loading-pulse`, `.loading-bar`).
+
+### Closure (2026-10-09)
+
+- 16b and 16c were validated together. The adversarial review of 16b was arbitrated, and its six findings were fixed. The review found nothing on 16c.
+- Cloud verification at `eed14879`: the full suite passed, with screenshots of the waiting panel, a refused start, the reports and the overview.
+- Deployed at `26f8fca1`. The owner checked it live.
+- Done.

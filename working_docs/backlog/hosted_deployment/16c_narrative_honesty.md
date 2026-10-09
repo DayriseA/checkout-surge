@@ -57,3 +57,10 @@ Owner decisions of 2026-10-09.
 - Same claim found and fixed beyond the listed lines: `core_business_entities.md:16` and `:175`.
 - "Known limits of this demo" sits after "What limits a run" and before the glossary, which is a reference appendix; it is listed in the page navigation as "Known limits".
 - Left as is: "fast reservation, slow confirmation" wording about the ERP split (true, it is the order queue's effect), and the run-presentation components owned by 16b.
+
+### Closure (2026-10-09)
+
+- 16b and 16c were validated together. The adversarial review of 16b was arbitrated, and its six findings were fixed. The review found nothing on 16c.
+- Cloud verification at `eed14879`: the full suite passed, with screenshots of the waiting panel, a refused start, the reports and the overview.
+- Deployed at `26f8fca1`. The owner checked it live.
+- Done.
