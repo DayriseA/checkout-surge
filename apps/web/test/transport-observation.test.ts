@@ -118,9 +118,7 @@ describe("transport observation section", () => {
   it("leads with the server boundary and target verdict", () => {
     const markup = renderSection(counts({ completedRequests: 10 }));
 
-    expect(markup.indexOf("Fast inventory reservation")).toBeLessThan(
-      markup.indexOf("Request arrival"),
-    );
+    expect(markup.indexOf("Inventory reservation")).toBeLessThan(markup.indexOf("Request arrival"));
     expect(markup).toContain("Observed reservation p95");
     expect(markup).toContain("≤ 25ms");
     expect(markup).toContain("Reservation processing p95 bound");

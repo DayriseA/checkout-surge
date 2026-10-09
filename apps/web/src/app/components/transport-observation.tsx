@@ -275,7 +275,7 @@ export function deriveHarnessPreparation(
 function FastReservationEvidence({ summary }: { summary: ServerReservationTimingSummary }) {
   return (
     <>
-      <h3 className="m-0 text-sm font-bold text-ink">Fast inventory reservation</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">Inventory reservation</h3>
       <p className="m-0 mt-0.5 text-xs text-muted">
         Inventory reservation start → reservation decision received
       </p>
