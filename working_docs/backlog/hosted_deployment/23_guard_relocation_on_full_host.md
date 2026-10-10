@@ -48,3 +48,14 @@ Owner decision, 2026-10-10.
 - **Not covered:** a reverted guard update (no wait for `stopped` on the guard), accepted in HD-62.
 - **Tests:** `infra/fly/capacity-refusal.test.mjs` (incident message relocates; a lease conflict, a 500 and a network error fail), added to `test:scripts`. The destroy-then-create path is verified live: on the next deploy where the guard's host is full, the log shows `The guard's host refused the update: …` then `Relocated the guard: destroyed guard Machine …, then created guard Machine … on a host with room.`, the deploy succeeds, and `flyctl machine list -a checkout-surge-gate` shows exactly one `role=guard` Machine.
 - **Live expectation:** on 2026-10-10 the guard's hourly start was also refused after the failed update (no start since 20:47 Paris), so its host is still full and the next deploy is expected to exercise the relocation live.
+
+### Closure (2026-10-11)
+
+- **Validation:**
+  - Cloud simulation at `1973f5ec`, with the real deploy script and a fake Machines API, checked the call sequence and payload.
+  - The adversarial review was arbitrated, and the order was changed to destroy-then-create (owner decision).
+  - The final change, a reorder plus messages, went straight to deploy (owner decision).
+- **Deployed at `dcb3941f`.** The guard's host had room again: its update was accepted in place, so the relocation path was not exercised live. A single guard (`8d40d9fee36ee8`) runs the deployed version.
+- **The guard resumed.** It had not started since 20:47 Paris; it missed 21:47 and 22:47, consistent with a full host. It started at 23:47 Paris and exited 0.
+- The live check of the relocation stays pending until a deploy meets a full host again.
+- Done.
