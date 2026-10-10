@@ -63,7 +63,21 @@ export function replaceFastifyCorrelation(
   request.id = normalized;
   reply.header(correlationIdHeaderName, normalized);
   const rebound = request.server.log.child({ correlationId: normalized, reqId: normalized });
+  keepRequestLoggingSwitch(request.log, rebound);
   request.log = rebound;
   reply.log = rebound;
   return normalized;
+}
+
+/**
+ * Fastify keeps its per-request `disableRequestLogging` decision on the request's own
+ * logger, under a private symbol; the rebound logger must carry it to honor that option.
+ */
+function keepRequestLoggingSwitch(previous: FastifyBaseLogger, rebound: FastifyBaseLogger): void {
+  const loggingSwitch = Object.getOwnPropertySymbols(previous).find(
+    (symbol) => symbol.description === "fastify.disableRequestLogging",
+  );
+  if (loggingSwitch) {
+    Reflect.set(rebound, loggingSwitch, Reflect.get(previous, loggingSwitch));
+  }
 }

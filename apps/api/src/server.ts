@@ -2,7 +2,7 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { normalizeCorrelationId } from "@checkout-surge/logger";
 import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import cors from "@fastify/cors";
-import { type FastifyReply, fastify } from "fastify";
+import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
 import { ZodError } from "zod";
 import type { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
@@ -68,10 +68,13 @@ export interface BuildApiServerOptions {
 export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
   const app = fastify({
     loggerInstance: options.logger,
+    // Fastify's two lines per request flood the log under load; failures are logged below.
+    disableRequestLogging: true,
     trustProxy: options.config.trustedProxyCidrs,
   }) as ApiFastifyInstance;
 
   installFastifyCorrelation(app);
+  app.addHook("onResponse", logFailedResponse);
 
   await app.register(cors, {
     origin: options.config.webOrigins.length > 0 ? options.config.webOrigins : true,
@@ -171,6 +174,26 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   });
 
   return app;
+}
+
+/**
+ * Logs one line per failed response. A 409 is a business answer (sold out, or a run or
+ * preset conflict) that a load run can receive at request rate, so it is not logged.
+ */
+async function logFailedResponse(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const { statusCode } = reply;
+  if (statusCode < 400 || statusCode === 409) return;
+  const details = {
+    method: request.method,
+    url: request.url,
+    statusCode,
+    responseTimeMs: reply.elapsedTime,
+  };
+  if (statusCode >= 500) {
+    request.log.error(details, "Request failed.");
+  } else {
+    request.log.warn(details, "Request rejected.");
+  }
 }
 
 function demoRunValidationStatus(code: DemoRunValidationError["code"]): number {

@@ -18,10 +18,14 @@ export interface AbortableDatabaseConnection extends DatabaseConnection {
 type CancellablePendingQuery = PromiseLike<unknown> & { cancel(): void };
 
 export function createSqlClient(databaseUrl: string, options: SqlClientOptions = {}): SqlClient {
-  // Connections are never recycled by age: in postgres.js 3.4.9, a pool connection that
-  // closes while a `reserve()` call waits drops that waiter, which then never resolves.
-  // The hosted core restarts its services at each wake, so connections stay short-lived.
-  return postgres(databaseUrl, { ...options, max_lifetime: null });
+  // Two postgres.js 3.4.9 defects are avoided for every pool:
+  // - Connections are never recycled by age: a pool connection that closes while a
+  //   `reserve()` call waits drops that waiter, which then never resolves. The hosted core
+  //   restarts its services at each wake, so connections stay short-lived.
+  // - Array types are not fetched: each new connection fetches them in a statement whose
+  //   failure is never handled, so a connection destroyed meanwhile (an aborted pool)
+  //   crashes the process. No column or parameter uses a PostgreSQL array type.
+  return postgres(databaseUrl, { ...options, max_lifetime: null, fetch_types: false });
 }
 
 export function createDatabase(sqlClient: SqlClient): CheckoutSurgeDatabase {
