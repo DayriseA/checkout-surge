@@ -523,10 +523,10 @@ Every entry in ID order. New entries are added here too.
 - **Status:** accepted
 - **Date:** 2026-10-05
 - **Context:** Bookmarks, deep links and pages left open must all land on the gate's own page while the core is not ready.
-- **Decision:** While the core is not ready, the gate answers every method and URL, API calls included, with its HTML page and status 503, never cached.
+- **Decision:** While the core is not ready, the gate answers every method and URL, API calls included, with its HTML page and status 503, never cached. The one exception is `GET` and `HEAD` `/robots.txt`, which the gate answers itself in every core state with a `Disallow: /` for every user agent, so the demo stays out of search engines (owner decision, 2026-10-10); that path is never relayed and never wakes the core.
 - **Consequences:** API calls and page polling get HTML instead of JSON while the core is not ready: the countdown widget reads it as "Demo paused", and the web treats it as a failed call.
 - **Rejected alternatives:** JSON answers on API paths: a second error format to keep in step with the contracts, for callers that already handle a failed call.
-- **Code:** `apps/gate/src/pages.ts`.
+- **Code:** `apps/gate/src/pages.ts`; the robots answer in `apps/gate/src/server.ts`.
 
 ### HD-31 The gate sleeps, and a visit wakes it
 

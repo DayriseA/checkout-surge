@@ -1,6 +1,6 @@
 import type { GatePageState } from "./core-status.js";
 
-/** The gate's own path for the start button. Every other path belongs to the core. */
+/** The gate's own path for the start button. Every other path but `/robots.txt` belongs to the core. */
 export const wakePath = "/__gate/start";
 
 /** The status tones of the demo's `StatusPill`, with the same colors and markers. */

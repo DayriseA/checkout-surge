@@ -69,6 +69,28 @@ describe("gate server", () => {
     expect(wake.wake).not.toHaveBeenCalled();
   });
 
+  it("answers robots.txt itself, asleep or awake, without waking or relaying", async () => {
+    const core = await startCore();
+    const asleep = await setup({ state: "stopped" });
+    const awake = await setup({ state: "ready", target: core.target });
+
+    for (const { gate, status, wake } of [asleep, awake]) {
+      const get = await gate.inject({ method: "GET", url: "/robots.txt" });
+      const head = await gate.inject({ method: "HEAD", url: "/robots.txt" });
+
+      expect(get.statusCode).toBe(200);
+      expect(get.headers["content-type"]).toBe("text/plain; charset=utf-8");
+      expect(get.headers["cache-control"]).toBe("public, max-age=86400");
+      expect(get.body).toBe("User-agent: *\nDisallow: /\n");
+      expect(head.statusCode).toBe(200);
+      expect(head.headers["content-type"]).toBe("text/plain; charset=utf-8");
+      expect(head.body).toBe("");
+      expect(status.current).not.toHaveBeenCalled();
+      expect(wake.wake).not.toHaveBeenCalled();
+    }
+    expect(core.received).toHaveLength(0);
+  });
+
   it("reloads the starting page every 3 seconds until the core is ready", async () => {
     const { gate } = await setup({ state: "booting" });
 

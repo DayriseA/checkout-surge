@@ -65,11 +65,12 @@ The gate (`apps/gate`) is a Fastify server and the only public entry point ([HD-
 
 - **Relay.** While the core is ready, the gate relays every request (pages, API, SSE) as raw bytes to the core's Caddy, at the 6PN address of the authoritative core, with retries off ([HD-27](decisions/hosted_deployment.md#hd-27-the-gate-relays-with-fastifyreply-from-retries-off)). The k6 burst goes from the runner straight to the core and never crosses the gate.
 - **Core status.** The gate reads the core's state from the Machines API and probes Caddy's `/health`, which the core never counts as activity, then caches the result briefly. Once the core is ready, a failed Fly read or an unanswered probe keeps it ready; a failed relay drops the cache ([HD-28](decisions/hosted_deployment.md#hd-28-the-gate-checks-the-cores-state-before-relaying-but-a-fly-api-failure-does-not-block-a-ready-core)).
+- **Robots.** The gate answers `GET` and `HEAD` `/robots.txt` itself, whatever the core's state, with `200`, `text/plain` and `Disallow: /` for every user agent, so the demo stays out of search engines. That path is never relayed, never reads the core's status and never wakes the core.
 - **Sleep.** Fly Proxy starts the gate Machine on a request and stops it once traffic is gone, so the first request to a sleeping gate waits a few seconds ([HD-31](decisions/hosted_deployment.md#hd-31-the-gate-sleeps-and-a-visit-wakes-it)).
 
 ### Pages
 
-While the core is not ready, the gate answers every method and URL with its own HTML page, status 503 and `Cache-Control: no-store` ([HD-30](decisions/hosted_deployment.md#hd-30-gate-pages-answer-any-request-with-html-503)). No page starts the core. The pages are self-contained, since a sleeping core cannot serve assets: they carry a copy of the demo's light theme colors and use its fallback system font stack, with no font file, external asset or script.
+While the core is not ready, the gate answers every method and URL (except `GET` and `HEAD` `/robots.txt`) with its own HTML page, status 503 and `Cache-Control: no-store` ([HD-30](decisions/hosted_deployment.md#hd-30-gate-pages-answer-any-request-with-html-503)). No page starts the core. The pages are self-contained, since a sleeping core cannot serve assets: they carry a copy of the demo's light theme colors and use its fallback system font stack, with no font file, external asset or script.
 
 | Page | When |
 | :-- | :-- |
@@ -86,7 +87,7 @@ An open demo tab on a stopped core gets the gate page as the answer to its polli
 
 ### Waking the core
 
-- The start button posts to `/__gate/start?return=<path>`, the only path the gate owns. The return path must be a same-site path; anything else returns to `/`. Visitors pressing together share one start. There is no wake quota.
+- The start button posts to `/__gate/start?return=<path>`, the only path the gate owns besides `/robots.txt`. The return path must be a same-site path; anything else returns to `/`. Visitors pressing together share one start. There is no wake quota.
 - Under the core Machine's lease, the gate reads the core again, waits for a core still `stopping`, starts it (retrying capacity, dead-host and transient errors with back-off), releases the lease, then redirects to the return path. A held lease shows the updating page ([HD-29](decisions/hosted_deployment.md#hd-29-the-gates-lease-covers-only-the-start-command)).
 - A start that times out is never sent again, since it may have taken effect and a second one would be refused. The gate reads the core again: `starting` or `started` redirects as a start does; any other state, or a failed read, shows the unavailable page.
 - A start that keeps failing for capacity or a dead host, a core on a host that is not `ok`, a core marked `recreate=requested`, or no core at all starts the [core recovery](#recovery) instead.

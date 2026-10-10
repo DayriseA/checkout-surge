@@ -15,9 +15,13 @@ export interface BuildGateServerOptions {
 // A dead core host must not hold visitors for undici's default 10 s before they see a page.
 const relayConnectTimeoutMs = 3_000;
 
+// Keeps the demo out of search engines.
+const robotsTxt = "User-agent: *\nDisallow: /\n";
+
 /**
  * The public entry point. It relays every request to the core's Caddy once the core is ready, and
- * otherwise answers with its own page. Only the start button's POST starts the core.
+ * otherwise answers with its own page. Only the start button's POST starts the core. It answers
+ * `/robots.txt` itself, without reading the core's state.
  */
 export async function buildGateServer(options: BuildGateServerOptions) {
   const app = fastify({ loggerInstance: options.logger });
@@ -29,6 +33,14 @@ export async function buildGateServer(options: BuildGateServerOptions) {
   // Request bodies are relayed as raw streams, whatever their type.
   app.removeAllContentTypeParsers();
   app.addContentTypeParser("*", (_request, payload, done) => done(null, payload));
+
+  // Fastify answers HEAD from this GET route too.
+  app.get("/robots.txt", async (_request, reply) =>
+    reply
+      .header("cache-control", "public, max-age=86400")
+      .type("text/plain; charset=utf-8")
+      .send(robotsTxt),
+  );
 
   app.post(wakePath, async (request, reply) => {
     const returnPath = safeReturnPath((request.query as { return?: unknown }).return);
