@@ -48,4 +48,25 @@ An order job always finishes or gives up within a bounded time, and the worker a
 
 ## Working Notes
 
-_None yet._
+### Reproduction (2026-10-09, cloud VM)
+
+- **Reproduced** at run 10 of a 20-run series (750/s, stock 7,500): job `5748109d…` hung at `await client.reserve()` in the publication fence (`postgres-generated-run-publication-fence.ts:23`), before the advisory lock.
+  - The order was already confirmed. The notification was recorded by the recovery scanner.
+  - All 10 worker connections were idle, and no lock was waiting.
+- **Cause: a bug in postgres.js 3.4.9** (the latest release). `reserve()` queues a placeholder. If a pool connection closes while it waits, `onclose` shifts the placeholder off the queue and never resolves it (`connection.js:563-567`).
+  - The trigger is `max_lifetime` recycling, which defaults to 30–60 min and is not set in the repo.
+  - An isolated script hung 3 times out of 3. A `begin()` waiter resolved 4 times out of 4.
+- **Stops** (`docker compose stop -t 60`):
+  - worker with the hung job: 60.6 s, killed; idle worker: 0.5 s;
+  - web with an open SSE client on its own `/dashboard/events`: 30–60 s, killed; without one: 0.5 s.
+- The API also calls `reserve()` (`postgres-buy-persistence.ts`, `postgres-demo-reset-workflow-fence.ts`). Not reproduced there.
+
+### Owner decisions (2026-10-09)
+
+- **Turn off `max_lifetime`** recycling in `packages/db/src/client.ts`, which removes the trigger for the worker and the API alike. The core sleeps after 10 idle minutes, so its connections start fresh at each wake.
+- **Two deadlines:**
+  - on the fence publish, whose callers already tolerate a failed publish (the recovery scanner takes over);
+  - on the worker's shutdown, which force-closes after it.
+- **No rewrite of `reserve()`** in the worker or the API: the hot path stays as measured.
+- **The web's slow stop with an open SSE tab is accepted.** An open tab does not keep the core awake (HD-20), and the only cost is up to 30 s at the stop.
+- Not reported upstream.

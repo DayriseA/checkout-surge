@@ -58,4 +58,21 @@ Owner decision, 2026-10-09: the cloud VM first, then Fly if needed.
 
 ## Working Notes
 
-_None yet._
+### Reproduction (2026-10-09, cloud VM, 31 overload runs at 5,000/s)
+
+- **Hypothesis 1 is not supported.** pino's default destination (sonic-boom) writes asynchronously, so a slow or paused stdout reader only grows an in-memory backlog (about 15 MB). Hypothesis 2 is not supported either: no memory pressure.
+- **The signature reproduces through the exit path.** On exit, sonic-boom flushes the backlog synchronously, retrying `EAGAIN` with a 100 ms `Atomics.wait`.
+  - With a slow reader, an exit during overload left the process at about 0.02 CPU, in `futex_wait`, with about 10k sockets open, for 21 s. It then died with exit 1, was restarted under `on-failure`, and reset every open connection.
+  - `strace` confirmed the write/wait loop.
+  - With Docker's own log reader the linger was 3 s; at `LOG_LEVEL=warn`, 1.1 s.
+- **The trigger** was an `unhandledRejection` `CONNECTION_DESTROYED` raised by `end({ timeout: 0 })` on the abort path (`packages/db/src/client.ts:92`). It happened once in 31 overload runs; the call site that leaves the promise unhandled was not found.
+- **A SIGTERM during overload** also exited 1 after an unhandled `CONNECTION_DESTROYED` (one run).
+- **Volume:** Fastify logs two info lines per request, about 50,000 lines for a run of 25,000 requests. They are collected by Fly's log stream or Docker's, and not stored by the project.
+
+### Owner decisions (2026-10-09)
+
+- **No Fly reproduction.**
+- **Stop logging successful requests.** Warnings, errors and failed requests stay logged. This removes the backlog's source, and may give the API back some CPU.
+- **Fix the real trigger:** find the query promise left unhandled on the abort path, so an aborted pool no longer crashes the API, including at a SIGTERM under overload.
+- **Correct HD-51** so its consequence matches the outcome.
+- Not reported upstream.
