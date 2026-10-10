@@ -32,7 +32,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 13a | [Measurement and tuning](13a_measurement_and_tuning.md) | 01–12, 14 | done |
 | 13b | [Documentation and continuous deployment](13b_docs_and_ci.md) | 01–12, 14 | done |
 | 13c | [Go-live](13c_go_live.md) | 13a, 13b, plus the external prerequisite | done |
-| 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | todo |
+| 13d | [Bot review](13d_bot_review.md) | 13c, plus a few days of real traffic | done |
 | 14 | [Clean-run generator warnings](14_clean_run_generator_warnings.md) | 03 | done |
 | 15a | [Capacity measurement](15a_capacity_measurement.md) | 13c | done |
 | 15b | [Capacity-aware admission](15b_capacity_aware_admission.md) | 15a, 18 | done |
@@ -48,6 +48,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 20b | [API restart under overload](20b_api_restart_under_overload.md) | none | done |
 | 20c | [Load ingestion timeouts](20c_load_ingestion_timeouts.md) | none | done |
 | 21 | [Runner counters](21_runner_counters.md) | none | done |
+| 22 | [Redis cleanup at run end](22_redis_cleanup_at_run_end.md) | none | in progress |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 

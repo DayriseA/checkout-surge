@@ -32,4 +32,24 @@ The effect of real traffic is checked, and the bot decision is taken and recorde
 
 ## Working Notes
 
-_None yet._
+### Review (2026-10-10)
+
+- **Bots (owner decision).** Bots cannot wake the core: only the start form wakes it. Once a visitor has woken it, bot requests can extend the awake time, but the guard's 3-hour cap bounds that, and the cost alerts would flag it.
+  - Over the last days the owner woke the core and let it sleep on its own dozens of times. It always slept, and was never held awake.
+  - **No signed session cookie.**
+  - **No indexing:** the gate answers `/robots.txt` itself with `Disallow: /`, whatever the core's state (`f2cadda9`), because the owner's portfolio links to the demo.
+  - The gate logs requests (path and status, no user agent or client address). `flyctl logs --no-tail` returns only the last 100 lines, so a longer review would need the Fly dashboard.
+- **Guard.** Its run after the last deploy exited 0, with no OOM. Earlier events are cleared by each deploy.
+- **Per-container secrets.** Checked live by listing variable names only. Each core container holds exactly the secrets its config lists:
+  - Caddy: none;
+  - Mock ERP: `DATABASE_URL`;
+  - worker: `DATABASE_URL` and `REDIS_URL`;
+  - web: the admin, session, control and cookie secrets.
+
+  Fly honours the per-container `secrets` list, so `docs/hosted_runtime.md` is right and nothing changes.
+- **Runner start-wait errors and `still_active` retries.** Not observed: the logs available hold only the last 100 lines. The retries are bounded in code (task 19). No change.
+- **Redis growth.** Measured live: 10.8 MB, 3,763 keys, 2,701 completed order jobs, an AOF of 37 MB, and the volume 6 % used (Redis 37 MB, PostgreSQL 140 MB).
+  - Completed order jobs and each run's inventory namespace outlive the run for no use. History reads PostgreSQL only.
+  - The retention cleanup runs only on demand.
+  - Owner decision: clean a run's Redis working state when it is finalized (task 22).
+- Done.
