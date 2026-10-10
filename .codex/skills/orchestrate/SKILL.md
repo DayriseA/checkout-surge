@@ -21,11 +21,10 @@ Record the initial working-tree and staging state. All workers operate on the sa
 
 | Rung | Execution | Model | Reasoning | Implementation attempts |
 | --- | --- | --- | --- | --- |
-| 1 | Native Codex subagent | `gpt-6-luna` | `high` | 1 |
-| 2 | Native Codex subagent | `gpt-6.1-sol` | `medium` | 2 |
-| 3 | Native Codex subagent | `gpt-6.1-sol` | `high` | 2 |
-| 4 | Native Codex subagent | `gpt-6-astra` | `medium` | 2 |
-| 5 | Native Codex subagent | `gpt-6-astra` | `xhigh` | 2 |
+| 1 | Native Codex subagent | `gpt-6.1-sol` | `medium` | 2 |
+| 2 | Native Codex subagent | `gpt-6.1-sol` | `high` | 2 |
+| 3 | Native Codex subagent | `gpt-6-astra` | `medium` | 2 |
+| 4 | Native Codex subagent | `gpt-6-astra` | `xhigh` | 2 |
 
 An attempt is one implementation turn followed by review. The first attempt includes initial implementation.
 When rotating rungs, start a **fresh** implementer session (no resume) and give it the full briefing **plus** the surviving findings, what was already tried against them, and why it didn't land — enough that it won't repeat the dead ends. If issues still remain after the last rung, stop and write a concise handoff report: current state, surviving findings by severity, what each implementer tried, and what a human should look at first.

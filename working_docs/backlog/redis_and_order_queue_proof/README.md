@@ -19,7 +19,7 @@ Work breakdown for live comparative runs: what the order queue and the Redis lay
 The project is meant to be run by an AI agent working alone on the owner's laptop. Design section 6 is binding. In short:
 
 - **Fly.io:**
-  - Only the `playground` organization, and every command names its app or organization.
+  - Only the `playground` organization (slug `playground-416`), and every command names its app or organization.
   - Never touch `checkout-surge-core`, `checkout-surge-runner`, `checkout-surge-gate`, or any app outside `playground`.
   - Machines are stopped or destroyed when not in use.
 - **Git:** only the project's own branches. Never push to or merge into `dev` or `main`.

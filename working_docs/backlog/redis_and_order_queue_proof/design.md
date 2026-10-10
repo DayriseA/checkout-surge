@@ -97,10 +97,10 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 
 - **Where:** the owner's laptop, where `flyctl` is logged in with the owner's full account. Isolation therefore rests on rules and on a check in code, not on the token.
 - **Fly.io:**
-  - Only the owner's `playground` organization (confirm its slug with `flyctl orgs list`).
+  - Only the owner's `playground` organization, whose slug is `playground-416`: commands and API calls use the slug (`--org playground-416`).
   - Never touch the production apps `checkout-surge-core`, `checkout-surge-runner` and `checkout-surge-gate`, or any app outside `playground`.
   - Every `flyctl` or Machines API call names its app or organization explicitly.
-  - The proof environment's deploy tooling checks, before any change, that the target app belongs to `playground`, and refuses otherwise.
+  - The proof environment's deploy tooling checks, before any change, that the target app belongs to `playground-416`, and refuses otherwise.
 - **Secrets:** generated for the proof environment. Never read or reuse the production secrets (`infra/fly/core/core-secrets.env`).
 - **Git:**
   - Work on the project's own branches. Never push to `dev` or `main`, and never merge into them.

@@ -12,7 +12,7 @@ It seems you have a good sense of what needs to be done. So organize this effici
 
 - **You (main thread)** — orchestrator and arbiter. You brief the implementer and the reviewer, triage the reviewer's findings (you have the warm context to judge what's real), fix trivialities directly, and decide when it's done. You do **not** review the diff yourself during the cycles — your own review happens once, at the very end (see Final pass). If hesitating between "one more polish cycle" and "good enough, note the caveat and finish", choose the latter.
 - **Implementer** — a `codex exec` subprocess that writes the code and documentation. Before reporting back it must run the project's tests, type checks, linter and formatter, and report their actual output or a concise faithful summary of it.
-- **Reviewer** — a sandbox-enforced read-only `codex exec` subprocess, model `gpt-6-astra`, reasoning effort `high`. Reviews the working tree after each implementer report: the full relevant diff plus surrounding code and tests, checked against the original request. It writes code nowhere and its findings are input to your triage, not orders.
+- **Reviewer** — a sandbox-enforced read-only `codex exec` subprocess, model `gpt-6.1-sol`, reasoning effort `xhigh`. Reviews the working tree after each implementer report: the full relevant diff plus surrounding code and tests, checked against the original request. It writes code nowhere and its findings are input to your triage, not orders.
 
 Subprocesses share the same host but **not** your context — brief them explicitly.
 
@@ -46,7 +46,7 @@ Never use `resume --last`: implementer and reviewer sessions interleave, so "mos
 **Reviewer — first cycle** (fresh session):
 
 ```bash
-codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort="high" --json \
+codex exec -s read-only -m gpt-6.1-sol -c model_reasoning_effort="xhigh" --json \
   -o "$SCRATCH/review-cycle-N.txt" \
   "<review briefing>" > "$SCRATCH/review-cycle-N.jsonl" < /dev/null
 ```
@@ -57,7 +57,7 @@ Extract and store the reviewer's session ID from its JSONL log the same way as t
 
 ```bash
 codex exec resume "<REVIEW_SESSION_ID>" \
-  -c sandbox_mode='"read-only"' -m gpt-6-astra -c model_reasoning_effort="high" \
+  -c sandbox_mode='"read-only"' -m gpt-6.1-sol -c model_reasoning_effort="xhigh" \
   -o "$SCRATCH/review-cycle-N.txt" \
   "<what changed + triage decisions>" < /dev/null
 ```
@@ -85,11 +85,11 @@ For cost management you start with a lower reasoning effort, escalating to a fre
 
 | Rung | Tool | Model | Effort | Cycles |
 | ---- | ------------ | ------------------------------ | ---------------- | ------ |
-| 1 | `codex exec` | `gpt-6-luna` | `high` | 1 |
-| 2 | `codex exec` | `gpt-6-sol` | `high` | 2 |
-| 3 | `codex exec` | `gpt-6-astra` | `low` | 2 |
+| 1 | native subagent | `claude-haiku` | `medium` | 1 |
+| 2 | `codex exec` | `gpt-6.1-sol` | `medium` | 2 |
+| 3 | `codex exec` | `gpt-6.1-sol` | `high` | 2 |
 | 4 | native subagent | `claude-opus-5-5` | `medium` | 2 |
-| 5 | `codex exec` | `gpt-6-astra` | `high` | 1 |
+| 5 | `codex exec` | `gpt-6-astra` | `xhigh` | 2 |
 
 When rotating rungs, start a **fresh** implementer session (no resume) and give it the full briefing **plus** the surviving findings, what was already tried against them, and why it didn't land — enough that it won't repeat the dead ends. If issues still remain after the last rung, stop and write a concise handoff report: current state, surviving findings by severity, what each implementer tried, and what a human should look at first.
 
