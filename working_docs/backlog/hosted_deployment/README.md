@@ -49,6 +49,7 @@ Work breakdown for the hosted deployment on Fly.io.
 | 20c | [Load ingestion timeouts](20c_load_ingestion_timeouts.md) | none | done |
 | 21 | [Runner counters](21_runner_counters.md) | none | done |
 | 22 | [Redis cleanup at run end](22_redis_cleanup_at_run_end.md) | none | done |
+| 23 | [Guard relocation on a full host](23_guard_relocation_on_full_host.md) | none | in progress |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.
 
