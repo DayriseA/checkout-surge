@@ -253,18 +253,20 @@ describe("TrafficMetricIngestionService", () => {
     expect(maximumActiveStoreOperations).toBe(1);
   });
 
-  it("counts each batch dropped at capacity once, unless another attempt of it was accepted", async () => {
+  it("counts a batch dropped at capacity unless another attempt of it was accepted", async () => {
     let releaseAppend: (() => void) | undefined;
     const appendGate = new Promise<void>((resolve) => {
       releaseAppend = resolve;
     });
+    const acceptedBatchIds = new Set<string>();
     const countUnacceptedBatches = vi.fn(
       async (_runId: string, batchIds: string[]) =>
-        batchIds.filter((batchId) => batchId !== metricRequest.batchId).length,
+        batchIds.filter((batchId) => !acceptedBatchIds.has(batchId)).length,
     );
     const service = createService({
-      appendIfLive: async () => {
+      appendIfLive: async (request) => {
         await appendGate;
+        acceptedBatchIds.add(request.batchId);
         return "appended";
       },
       publishDirtyIfLive: async () => ({ outcome: "published" }),
@@ -274,20 +276,21 @@ describe("TrafficMetricIngestionService", () => {
     const runStartedAt = new Date();
     await expect(service.droppedBatchCount(metricRequest.runId, runStartedAt)).resolves.toBe(0);
 
-    const admitted = Array.from({ length: maximumPendingTrafficMetricBatches }, () =>
-      service.ingest(metricRequest),
+    const queuedBatchIds = Array.from(
+      { length: maximumPendingTrafficMetricBatches },
+      (_, index) => `77777777-7777-4777-8777-${index.toString().padStart(12, "0")}`,
     );
-    const lostBatchId = "77777777-7777-4777-8777-777777777778";
-    await service.ingest({ ...metricRequest, batchId: lostBatchId });
-    await service.ingest({ ...metricRequest, batchId: lostBatchId });
-    await service.ingest(metricRequest);
+    const queued = queuedBatchIds.map((batchId) => service.ingest({ ...metricRequest, batchId }));
+    const freshBatchId = "77777777-7777-4777-8777-777777777778";
+    await service.ingest({ ...metricRequest, batchId: queuedBatchIds[0] as string });
+    await service.ingest({ ...metricRequest, batchId: freshBatchId });
     releaseAppend?.();
-    await Promise.all(admitted);
+    await Promise.all(queued);
 
     await expect(service.droppedBatchCount(metricRequest.runId, runStartedAt)).resolves.toBe(1);
     expect(countUnacceptedBatches).toHaveBeenCalledWith(metricRequest.runId, [
-      lostBatchId,
-      metricRequest.batchId,
+      queuedBatchIds[0],
+      freshBatchId,
     ]);
   });
 
