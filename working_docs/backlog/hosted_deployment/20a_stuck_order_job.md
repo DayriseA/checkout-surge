@@ -82,3 +82,9 @@ An order job always finishes or gives up within a bounded time, and the worker a
 - The notification consumer keeps its unbounded close: its jobs never use `reserve()`.
 - The web's slow stop with an open SSE stream: no change (owner decision).
 - Tests: a never-settling fence fails the publish at 15 s; a never-settling job does not hold `close()` past 5 s (BullMQ mocked at the module boundary, no Redis on this host). Integration tests not run.
+
+### Closure (2026-10-10)
+
+- 20a, 20b and 20c were validated together. Cloud verification at `9e54d9cb`: the full suite passed (API 354, integration db 82, worker 103, mock-erp 7); `runtime:reset` passed; the worker stopped in 1.1 s mid-run, with 7,500 orders confirmed and notified and no duplicate; 3 overload runs at 5,000/s had no API restart and no per-request log line; the API stopped under overload in 2.7 s with exit 0. All-accepted runs at 750/s failed alike on the branch and on `dev` on that slower VM.
+- Deployed at `b8ffc28c`. Live check by the owner: an admin run at 2,200/s for 10 s with stock 1,000 (the 15c confirmation run) completed, with 22,000 of 22,000 requests and p95 9.2 s, against 11.8 and 13.0 s before.
+- Done.

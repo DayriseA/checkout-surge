@@ -44,9 +44,9 @@ Work breakdown for the hosted deployment on Fly.io.
 | 17 | [Runner capacity on update](17_runner_capacity_on_update.md) | 06, 12, plus the findings of 13c | done |
 | 18 | [Interrupted requests in the run outcome](18_interrupted_requests_in_run_outcome.md) | none | done |
 | 19 | [Runner start while the previous runner stops](19_runner_start_while_stopping.md) | 17 | done |
-| 20a | [Stuck order job and slow stops](20a_stuck_order_job.md) | none | in progress |
-| 20b | [API restart under overload](20b_api_restart_under_overload.md) | none | in progress |
-| 20c | [Load ingestion timeouts](20c_load_ingestion_timeouts.md) | none | in progress |
+| 20a | [Stuck order job and slow stops](20a_stuck_order_job.md) | none | done |
+| 20b | [API restart under overload](20b_api_restart_under_overload.md) | none | done |
+| 20c | [Load ingestion timeouts](20c_load_ingestion_timeouts.md) | none | done |
 | 21 | [Runner counters](21_runner_counters.md) | none | done |
 
 Tasks 01 and 02 together are the feasibility test (design section 10). Their verdict comes before any other hosted work.

@@ -89,3 +89,9 @@ Owner decision, 2026-10-09: the cloud VM first, then Fly if needed.
   - The repo's own call sites on the abort path were traced and handle their rejections: readiness (`settleWithAbort`), pending-persistence attempts and discovery (awaited, transactions through postgres.js `begin`), dashboard recovery (`Promise.all`), `bindQueryToAbortSignal` (caught). Query cancellation promises reject only on a cancel-socket error, not with `CONNECTION_DESTROYED`.
 - **HD-51** consequence corrected in place.
 - Tests: a successful request and a sold-out 409 log nothing, a failed readiness (503) logs one error line (`apps/api/test/unit/request-logging.test.ts`). The abort test with a fake PostgreSQL server was removed with the reverted fix.
+
+### Closure (2026-10-10)
+
+- 20a, 20b and 20c were validated together. Cloud verification at `9e54d9cb`: the full suite passed (API 354, integration db 82, worker 103, mock-erp 7); `runtime:reset` passed; the worker stopped in 1.1 s mid-run, with 7,500 orders confirmed and notified and no duplicate; 3 overload runs at 5,000/s had no API restart and no per-request log line; the API stopped under overload in 2.7 s with exit 0. All-accepted runs at 750/s failed alike on the branch and on `dev` on that slower VM.
+- Deployed at `b8ffc28c`. Live check by the owner: an admin run at 2,200/s for 10 s with stock 1,000 (the 15c confirmation run) completed, with 22,000 of 22,000 requests and p95 9.2 s, against 11.8 and 13.0 s before.
+- Done.
