@@ -18,7 +18,7 @@
 //   (core recovery); a gate deploy carries that file over. A gate deploy also creates or updates
 //   the guard, a scheduled Machine of the gate app that runs the gate image from
 //   infra/fly/gate/guard-machine.json. A guard whose host has no room for the new config is
-//   recreated, then the old one destroyed.
+//   destroyed, then recreated.
 // - The script ends by comparing the core's and the runner's versions (version handshake).
 //
 // Usage, from anywhere:
@@ -593,8 +593,9 @@ function sendGuardConfig(machinesApi, config, machineId) {
 }
 
 /**
- * A guard whose host refuses the new config is replaced, since it is stateless (HD-62): the new
- * guard first, so a failed create leaves the old one scheduled, then the old one destroyed.
+ * A guard whose host refuses the new config is replaced, since it is stateless (HD-62): the old
+ * one destroyed first, so two guards never coexist, then a new one created. A failed destroy keeps
+ * the old guard; a failed create leaves none, and the deploy fails so that a re-run creates it.
  */
 async function updateOrRelocateGuard(machinesApi, machineId, config) {
   try {
@@ -603,11 +604,18 @@ async function updateOrRelocateGuard(machinesApi, machineId, config) {
     if (!isCapacityRefusal(error)) throw error;
     console.log(`The guard's host refused the update: ${error.message}`);
   }
-  const machine = await sendGuardConfig(machinesApi, config);
   // Forced: a guard in the middle of its pass is stopped; its leases expire on their own.
   await machinesApi("DELETE", `/machines/${machineId}?force=true`);
+  let machine;
+  try {
+    machine = await sendGuardConfig(machinesApi, config);
+  } catch (error) {
+    throw new Error(
+      `Destroyed guard Machine ${machineId}, but creating its replacement failed: ${error.message}; re-run the deploy, which creates the guard.`,
+    );
+  }
   console.log(
-    `Relocated the guard: created guard Machine ${machine.id} on a host with room, then destroyed guard Machine ${machineId}.`,
+    `Relocated the guard: destroyed guard Machine ${machineId}, then created guard Machine ${machine.id} on a host with room.`,
   );
   return machine;
 }

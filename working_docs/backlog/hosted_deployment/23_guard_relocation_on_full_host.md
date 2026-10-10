@@ -22,6 +22,7 @@ Owner decision, 2026-10-10.
 - **When the guard's update is refused for host capacity** (classified as such, as for the runner): create a new guard Machine from the deployed guard config, then destroy the old one.
   - Same app, same schedule, same env and metadata.
   - Never two guards left running, and never none left behind if the creation fails: say which order is safe.
+  - **Amended by the owner, 2026-10-10, after review:** destroy the old guard first, then create the new one. No order satisfies both "never two" and "never none" across an interruption. Two guards can take contradictory core decisions when their probes disagree, and block every later gate deploy until one is removed by hand; a missing guard fails the deploy loudly, a re-run creates one, and the cost alerts are the net meanwhile (the same accepted risk as a refused hourly start).
   - The deploy then succeeds.
 - **Other errors** still fail the deploy as today.
 - **Docs:** the operations doc (guard section) and the decision log. Correct an existing guard entry in place, or add one only if it passes the inclusion test.
@@ -42,7 +43,8 @@ Owner decision, 2026-10-10.
 
 ## Working Notes
 
-- **Implemented** (2026-10-10): `updateOrRelocateGuard` in `infra/fly/deploy.mjs`. A capacity refusal of the guard update (`isCapacityRefusal`, moved to `infra/fly/capacity-refusal.mjs` so it can be tested) creates a new guard from the deployed config, without `skip_launch`, then force-destroys the old one; other errors fail as before. Recorded as HD-62.
-- **Order:** create first, destroy second. A failed create keeps the old guard; an interruption in between leaves two guards, safe side by side (HD-37), and the next gate deploy fails on them until the old one is destroyed by hand (operations doc, guard section).
+- **Implemented** (2026-10-10): `updateOrRelocateGuard` in `infra/fly/deploy.mjs`. A capacity refusal of the guard update (`isCapacityRefusal`, moved to `infra/fly/capacity-refusal.mjs` so it can be tested) force-destroys the old guard, then creates a new one from the deployed config, without `skip_launch`; other errors fail as before. Recorded as HD-62.
+- **Order:** destroy first, create second (owner amendment above; the first implementation created first). A failed destroy keeps the old guard and fails the deploy; a failed create, or an interruption in between, leaves no guard and fails the deploy, and a re-run creates it. Two guards never coexist.
 - **Not covered:** a reverted guard update (no wait for `stopped` on the guard), accepted in HD-62.
-- **Tests:** `infra/fly/capacity-refusal.test.mjs` (incident message relocates; a lease conflict, a 500 and a network error fail), added to `test:scripts`. The create-then-destroy path is verified live: on the next deploy where the guard's host is full, the log shows `The guard's host refused the update: …` then `Relocated the guard: …`, the deploy succeeds, and `flyctl machine list -a checkout-surge-gate` shows one `role=guard` Machine with the new `COMMIT_SHA`.
+- **Tests:** `infra/fly/capacity-refusal.test.mjs` (incident message relocates; a lease conflict, a 500 and a network error fail), added to `test:scripts`. The destroy-then-create path is verified live: on the next deploy where the guard's host is full, the log shows `The guard's host refused the update: …` then `Relocated the guard: destroyed guard Machine …, then created guard Machine … on a host with room.`, the deploy succeeds, and `flyctl machine list -a checkout-surge-gate` shows exactly one `role=guard` Machine.
+- **Live expectation:** on 2026-10-10 the guard's hourly start was also refused after the failed update (no start since 20:47 Paris), so its host is still full and the next deploy is expected to exercise the relocation live.

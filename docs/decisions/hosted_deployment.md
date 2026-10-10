@@ -71,7 +71,7 @@ Every entry in ID order. New entries are added here too.
 | [HD-59](#hd-59-the-api-resolves-a-constant-arrival-runs-default-vus-at-admission-all-pre-allocated) | The API resolves a constant-arrival run's default VUs at admission, all pre-allocated | Platform and Topology |
 | [HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused) | Public custom runs are admitted only when expected to complete; admin runs are warned, never refused | Platform and Topology |
 | [HD-61](#hd-61-a-finished-runs-redis-working-state-is-removed-at-finalization-and-at-the-next-start) | A finished run's Redis working state is removed at finalization and at the next start | Platform and Topology |
-| [HD-62](#hd-62-a-guard-whose-host-refuses-the-deploy-is-recreated-before-the-old-one-is-destroyed) | A guard whose host refuses the deploy is recreated before the old one is destroyed | Guard |
+| [HD-62](#hd-62-a-guard-whose-host-refuses-the-deploy-is-destroyed-then-recreated) | A guard whose host refuses the deploy is destroyed, then recreated | Guard |
 
 ## Platform and Topology
 
@@ -688,15 +688,15 @@ Every entry in ID order. New entries are added here too.
 - **Consequences:** If the host never returns, the Machine and its volume linger (a few cents a month) until the owner removes them. If the host returns, the Machine shows its role again and the normal rules apply.
 - **Rejected alternatives:** Destroying it after the leftover grace like other unknown Machines: it cannot be told apart from a foreign Machine, and it may be the only real core on a host that comes back. Destroying it only once a usable core exists and after a long grace: more code for a case never observed.
 
-### HD-62 A guard whose host refuses the deploy is recreated before the old one is destroyed
+### HD-62 A guard whose host refuses the deploy is destroyed, then recreated
 
 - **Status:** accepted
 - **Date:** 2026-10-10
 - **Context:** A full host refused the deploy's guard update for capacity, so the guard kept its old version and the deploy failed after the runner, the core and the gate were updated. The guard is stateless: replacing it loses only its event history.
-- **Decision:** On a capacity refusal of the guard's update, matched as for the runner ([HD-55](#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once)), the deploy creates a new guard from the deployed guard config, without `skip_launch` ([HD-41](#hd-41-the-guard-is-deployed-without-skip_launch)), then force-destroys the old one, and succeeds. Other errors still fail the deploy.
-- **Consequences:** A failed create leaves the old guard scheduled, at its old version, and fails the deploy. Between the create and the destroy, two guards exist, and the new one runs its first pass at once; their actions are safe side by side, since each takes the Machine's lease ([HD-37](#hd-37-the-guard-acts-only-under-a-machines-lease-and-skips-a-leased-one)). A deploy interrupted, or a destroy that fails, in that window leaves both scheduled until an operator destroys the old one; the next gate deploy fails on the two guards until then. A forced destroy can cut a pass short, which the next hourly pass makes up for. A guard update that Fly accepts, then reverts, is not detected: the guard keeps its old version until the next deploy.
+- **Decision:** On a capacity refusal of the guard's update, matched as for the runner ([HD-55](#hd-55-a-host-that-refuses-the-runners-new-config-relocates-the-runner-at-once)), the deploy force-destroys the old guard, then creates a new one from the deployed guard config, without `skip_launch` ([HD-41](#hd-41-the-guard-is-deployed-without-skip_launch)), and succeeds. Other errors still fail the deploy.
+- **Consequences:** Two guards never coexist. A failed destroy keeps the old guard, at its old version, and fails the deploy. A failed create, or a deploy interrupted between the two steps, leaves no guard and fails the deploy; a re-run creates the guard, and until then the cost alerts are the only net, as for a refused hourly start. A forced destroy can cut a pass short, which the next hourly pass makes up for. A guard update that Fly accepts, then reverts, is not detected: the guard keeps its old version until the next deploy.
 - **Rejected alternatives:**
-  - Destroying the old guard first: a failed create would leave no guard at all, and nothing bounds the demo's cost until someone notices.
+  - Creating the new guard first: an interrupted deploy or a failed destroy leaves two guards, whose per-Machine leases do not prevent contradictory core decisions when their probes disagree, and every later gate deploy fails until one is destroyed by hand.
   - Failing the deploy, as before: a CI re-run meets the same full host, for a Machine that can be replaced at no cost.
   - Recreating it through the runner's create path: it sends `skip_launch` and waits for the stopped state, which would unschedule the guard or fail on its first pass.
   - Detecting a reverted update, as for the runner: it needs a wait for the stopped state, which a guard updated during its pass can outlast; the guard's version takes no part in a run.
