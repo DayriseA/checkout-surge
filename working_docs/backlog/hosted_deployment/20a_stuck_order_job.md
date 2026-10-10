@@ -70,3 +70,14 @@ An order job always finishes or gives up within a bounded time, and the worker a
 - **No rewrite of `reserve()`** in the worker or the API: the hot path stays as measured.
 - **The web's slow stop with an open SSE tab is accepted.** An open tab does not keep the core awake (HD-20), and the only cost is up to 30 s at the stop.
 - Not reported upstream.
+
+### Implementation (2026-10-10)
+
+- **`max_lifetime: null`** in `createSqlClient` (`packages/db/src/client.ts`), for every pool. In postgres.js 3.4.9, `null` (or `0`) makes the lifetime timer a no-op (`src/connection.js` `timer()`, typed `number | null`); an explicit key wins over the default (`src/index.js`).
+- **Publish deadline: 15 s**, as a decorator on the worker's fence (`withPublicationDeadline`, wired in `apps/worker/src/index.ts`). About twice the API's longest observed exclusive hold (7 s). A timeout is a plain publication failure: the order handler logs it and the notification recovery scanner republishes; the dispatch and order recovery scanners count it as failed and retry. The fenced operation is not cancelled; deterministic job IDs make a late success harmless.
+- **Shutdown deadline: 5 s** on the order consumer's `close()`: `pause()` waits for active jobs, then `close(true)` at the deadline (a second `close()` call returns the pending one in BullMQ 5.79, so the wait goes through `pause()`). It fits under the 10 s of Docker's default stop timeout and of the core databases' delayed stop; the Fly stop timeout is 30 s.
+  - A cut job stays active until its lock expires, then BullMQ's stalled check moves it back to wait (same job ID), or fails it at the stall limit and the order recovery scanner re-claims the order after its lease. No duplicate: generation and publication-owner fencing, ERP reconciliation before replay, deterministic notification job IDs.
+  - A job waiting on a slow ERP call (deadline up to 6 s) can be cut too; it is recovered the same way.
+- The notification consumer keeps its unbounded close: its jobs never use `reserve()`.
+- The web's slow stop with an open SSE stream: no change (owner decision).
+- Tests: a never-settling fence fails the publish at 15 s; a never-settling job does not hold `close()` past 5 s (BullMQ mocked at the module boundary, no Redis on this host). Integration tests not run.

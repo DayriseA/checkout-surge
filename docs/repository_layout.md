@@ -90,6 +90,7 @@ checkout-surge/
 - Is the only service that calls `apps/mock-erp`.
 - Uses generation-scoped BullMQ wake-ups with `attempts: 1`, applies one paced adaptive admission authority to actual ERP confirmation calls, durably defers denied work, restores PostgreSQL safety expiries on restart, and reconciles unresolved calls before admitted same-key replay.
 - Runs autonomous scanners for committed-but-undispatched queued orders, durable ERP-result recovery, and missing simulated-notification jobs.
+- Bounds its waits on shared resources: a fenced publication of an order or notification job fails after a deadline and the scanners republish it, and its stop waits a bounded time for active order jobs before force-closing the order worker. A job cut at the stop stays active in BullMQ until its lock expires, then is redelivered by BullMQ's stalled-job check or re-claimed by the order recovery scanner.
 - Persists poison order-job audit records and recovery/escalation state through `packages/db` adapters.
 - Publishes the internal dashboard projection-dirty signal through Redis Pub/Sub without importing or hosting the browser-facing SSE runtime.
 - Coalesces aggregate business-outcome dirty work without constructing per-order realtime payloads.
@@ -140,6 +141,7 @@ checkout-surge/
 - Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus the reviewed ordered migration SQL files, their journal entries, and their linked snapshots.
 - The baseline appends only the `pgcrypto` extension and constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup. Keys, foreign keys, uniqueness, and row-local checks remain declared in `schema.ts`; the current baseline has no trigger functions or non-internal triggers.
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
+- Its PostgreSQL clients never recycle a connection by age: in the pinned postgres.js version, a connection closing while a `reserve()` call waits loses that waiter. The hosted core restarts its services at each wake.
 - Shared by `apps/api` and `apps/worker` so durable checkout records and worker ERP-attempt semantics remain one source of truth.
 - `apps/load-orchestrator` deliberately does not use this package; its traffic execution journal is file-backed.
 

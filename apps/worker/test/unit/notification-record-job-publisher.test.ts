@@ -1,5 +1,9 @@
 import { notificationRecordJobName } from "@checkout-surge/contracts";
 import { describe, expect, it, vi } from "vitest";
+import {
+  GeneratedRunPublicationTimeoutError,
+  withPublicationDeadline,
+} from "../../src/application/generated-run-publication-fence.js";
 import { createNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
 
 const orderJob = {
@@ -49,5 +53,28 @@ describe("notification-record job publisher", () => {
       expect.objectContaining({ orderId: orderJob.orderId, runId: orderJob.runId }),
       expect.objectContaining({ jobId: `${orderJob.orderId}-email` }),
     );
+  });
+
+  it("fails the publication when the fence does not settle by its deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const publisher = createNotificationRecordPublisher(
+        { add: vi.fn(), close: vi.fn() },
+        {
+          publicationFence: withPublicationDeadline(
+            { publish: () => new Promise<never>(() => undefined) },
+            15_000,
+          ),
+        },
+      );
+
+      const publication = expect(
+        publisher.publishForConfirmedOrder(orderJob, "2026-06-21T00:00:01.000Z"),
+      ).rejects.toBeInstanceOf(GeneratedRunPublicationTimeoutError);
+      await vi.advanceTimersByTimeAsync(15_000);
+      await publication;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

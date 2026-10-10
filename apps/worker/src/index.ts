@@ -11,6 +11,7 @@ import {
   ScheduledErpOrderConfirmation,
 } from "./application/erp-reconciliation.js";
 import { erpResiliencePolicy } from "./application/erp-resilience-policy.js";
+import { withPublicationDeadline } from "./application/generated-run-publication-fence.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
@@ -38,6 +39,18 @@ import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "./server.js";
 
+/**
+ * A fenced publication waits behind the API's exclusive hold of the run fence, seen up to
+ * about 7 s at a run's end; past twice that, it fails and the recovery scanners republish.
+ */
+const publicationDeadlineMs = 15_000;
+/**
+ * Bounds the wait for active order jobs at shutdown, so that the whole stop fits in the
+ * 10 s left by Docker's default stop timeout and by the delayed stop of the hosted core's
+ * PostgreSQL and Redis.
+ */
+const orderProcessCloseDeadlineMs = 5_000;
+
 export async function startWorker(): Promise<void> {
   const config = loadWorkerConfig(process.env);
   const logger = createServiceLogger({ service: "worker" });
@@ -47,7 +60,10 @@ export async function startWorker(): Promise<void> {
     maxRetriesPerRequest: 3,
   });
   const runConfigReader = new PostgresRunConfigReader(database.db);
-  const publicationFence = new PostgresGeneratedRunPublicationFence(database.db);
+  const publicationFence = withPublicationDeadline(
+    new PostgresGeneratedRunPublicationFence(database.db),
+    publicationDeadlineMs,
+  );
   const erpAttemptPersistence = new PostgresErpAttemptPersistence(database.db);
   const businessOutcomePublications = new BusinessOutcomePublicationScheduler({
     publish: (input) =>
@@ -170,6 +186,7 @@ export async function startWorker(): Promise<void> {
     handler: orderProcessHandler,
     logger,
     recovery: orderRecoveryPersistence,
+    closeDeadlineMs: orderProcessCloseDeadlineMs,
   });
   const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
     connection: {

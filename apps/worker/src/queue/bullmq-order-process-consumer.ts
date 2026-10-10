@@ -20,6 +20,8 @@ export interface CreateBullMqOrderProcessConsumerOptions {
   concurrency: number;
   handler: OrderProcessJobHandler;
   logger: CheckoutSurgeLogger;
+  /** How long close() waits for active jobs before it force-closes the worker. */
+  closeDeadlineMs: number;
   recovery: Pick<
     OrderRecoveryPersistence,
     "isTerminalResetRun" | "recordRecoverable" | "recordDeadLetter"
@@ -154,8 +156,19 @@ export function createBullMqOrderProcessConsumer(
     async close() {
       isClosing = true;
       isQueueConnectionReady = false;
-      await worker.close();
-      await runPromise;
+      const drained = await settlesWithin(worker.pause(), options.closeDeadlineMs);
+      if (!drained) {
+        options.logger.warn(
+          { closeDeadlineMs: options.closeDeadlineMs },
+          "Order-processing jobs still active at the shutdown deadline; force-closing the worker.",
+        );
+      }
+      // A force-closed job stays active until its lock expires; BullMQ's stalled-job check
+      // then redelivers it, or fails it and the order recovery scanner re-claims the order.
+      await worker.close(!drained);
+      if (drained) {
+        await runPromise;
+      }
     },
     isRunning: () => worker.isRunning(),
     async checkConnectivity() {
@@ -164,6 +177,18 @@ export function createBullMqOrderProcessConsumer(
       }
     },
   };
+}
+
+async function settlesWithin(promise: Promise<unknown>, deadlineMs: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<false>((resolve) => {
+    timer = setTimeout(resolve, deadlineMs, false);
+  });
+  try {
+    return await Promise.race([promise.then(() => true), deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function correlationLogContext(data: unknown): { correlationId?: string } {
