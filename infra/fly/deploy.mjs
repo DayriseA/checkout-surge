@@ -17,7 +17,8 @@
 //   and writes the core config it sent into the gate Machine, which recreates the core from it
 //   (core recovery); a gate deploy carries that file over. A gate deploy also creates or updates
 //   the guard, a scheduled Machine of the gate app that runs the gate image from
-//   infra/fly/gate/guard-machine.json.
+//   infra/fly/gate/guard-machine.json. A guard whose host has no room for the new config is
+//   recreated, then the old one destroyed.
 // - The script ends by comparing the core's and the runner's versions (version handshake).
 //
 // Usage, from anywhere:
@@ -36,6 +37,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { isCapacityRefusal } from "./capacity-refusal.mjs";
 
 const region = "cdg";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -344,17 +346,6 @@ function includesConfig(current, target) {
   return Object.keys(target).every((key) => includesConfig(current[key], target[key]));
 }
 
-/**
- * Fly's refusal to reserve a host's resources for a Machine. The script has no dependencies, so it
- * matches only the observed phrases of the shared classifier (`packages/fly-machines`).
- */
-function isCapacityRefusal(error) {
-  return (
-    error.status === 409 &&
-    /could not reserve resource|insufficient \w+ available/i.test(error.message)
-  );
-}
-
 /** `placement` may be a prioritized list of regions, such as `cdg,eu`, which Fly tries in order. */
 async function createMachine(machinesApi, role, config, placement = region) {
   const { volume } = targets[role];
@@ -587,11 +578,38 @@ async function deployGuard(machinesApi, imageRefs, version) {
   const config = machineConfig("gate", imageRefs, "guard-machine.json");
   config.env.COMMIT_SHA = version;
   const existing = await findMachine(machinesApi, "guard");
-  const machine = await sendConfig(() =>
-    machinesApi("POST", `/machines${existing ? `/${existing.id}` : ""}`, { region, config }),
-  );
+  const machine = existing
+    ? await updateOrRelocateGuard(machinesApi, existing.id, config)
+    : await sendGuardConfig(machinesApi, config);
   // No wait for `stopped`: a created guard runs its first pass, which can outlast Fly's wait.
   console.log(`guard Machine ${machine.id} is scheduled ${config.schedule} at version ${version}.`);
+}
+
+/** Creates a guard from `config`, or updates the guard `machineId` to it. */
+function sendGuardConfig(machinesApi, config, machineId) {
+  return sendConfig(() =>
+    machinesApi("POST", `/machines${machineId ? `/${machineId}` : ""}`, { region, config }),
+  );
+}
+
+/**
+ * A guard whose host refuses the new config is replaced, since it is stateless (HD-62): the new
+ * guard first, so a failed create leaves the old one scheduled, then the old one destroyed.
+ */
+async function updateOrRelocateGuard(machinesApi, machineId, config) {
+  try {
+    return await sendGuardConfig(machinesApi, config, machineId);
+  } catch (error) {
+    if (!isCapacityRefusal(error)) throw error;
+    console.log(`The guard's host refused the update: ${error.message}`);
+  }
+  const machine = await sendGuardConfig(machinesApi, config);
+  // Forced: a guard in the middle of its pass is stopped; its leases expire on their own.
+  await machinesApi("DELETE", `/machines/${machineId}?force=true`);
+  console.log(
+    `Relocated the guard: created guard Machine ${machine.id} on a host with room, then destroyed guard Machine ${machineId}.`,
+  );
+  return machine;
 }
 
 /**

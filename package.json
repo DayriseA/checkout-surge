@@ -19,7 +19,7 @@
     "format:check": "biome check .",
     "test": "pnpm test:unit && pnpm test:api && pnpm test:integration",
     "test:unit": "node --test scripts/test-environment-safety.test.mjs && pnpm test:scripts && turbo run test:unit",
-    "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/env-utils.test.mjs scripts/maintenance-cleanup-runs.test.mjs scripts/run-in-compose.test.mjs scripts/runtime-image-contract.test.mjs scripts/runtime-recovery-soak.test.mjs scripts/runtime-smoke.test.mjs scripts/runtime-acceptance.test.mjs scripts/runtime-reset-client.test.mjs scripts/capacity-measurement.test.mjs",
+    "test:scripts": "pnpm --filter @checkout-surge/contracts build && node --test scripts/env-utils.test.mjs scripts/maintenance-cleanup-runs.test.mjs scripts/run-in-compose.test.mjs scripts/runtime-image-contract.test.mjs scripts/runtime-recovery-soak.test.mjs scripts/runtime-smoke.test.mjs scripts/runtime-acceptance.test.mjs scripts/runtime-reset-client.test.mjs scripts/capacity-measurement.test.mjs infra/fly/capacity-refusal.test.mjs",
     "test:integration": "turbo run test:integration",
     "test:api": "turbo run test:api",
     "test:characterization": "pnpm build:shared && node scripts/run-with-env.mjs node scripts/composition-characterization.mjs",

@@ -42,4 +42,7 @@ Owner decision, 2026-10-10.
 
 ## Working Notes
 
-_None yet._
+- **Implemented** (2026-10-10): `updateOrRelocateGuard` in `infra/fly/deploy.mjs`. A capacity refusal of the guard update (`isCapacityRefusal`, moved to `infra/fly/capacity-refusal.mjs` so it can be tested) creates a new guard from the deployed config, without `skip_launch`, then force-destroys the old one; other errors fail as before. Recorded as HD-62.
+- **Order:** create first, destroy second. A failed create keeps the old guard; an interruption in between leaves two guards, safe side by side (HD-37), and the next gate deploy fails on them until the old one is destroyed by hand (operations doc, guard section).
+- **Not covered:** a reverted guard update (no wait for `stopped` on the guard), accepted in HD-62.
+- **Tests:** `infra/fly/capacity-refusal.test.mjs` (incident message relocates; a lease conflict, a 500 and a network error fail), added to `test:scripts`. The create-then-destroy path is verified live: on the next deploy where the guard's host is full, the log shows `The guard's host refused the update: …` then `Relocated the guard: …`, the deploy succeeds, and `flyctl machine list -a checkout-surge-gate` shows one `role=guard` Machine with the new `COMMIT_SHA`.
