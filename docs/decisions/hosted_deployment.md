@@ -243,6 +243,8 @@ Every entry in ID order. New entries are added here too.
   - Left for retention: order jobs acknowledged after the finalization pass, reset jobs still active at the reset's settlement deadline, and the completed jobs of runs failed outside finalization.
   - The last run's namespace stays until the next start.
   - Each start sweeps every terminal run still in PostgreSQL with one script call, bounded by retention and by disposable core data ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path)).
+  - The sweep uses the API's shared Redis client, which has no command deadline. An unresponsive Redis blocks it, as it already blocks inventory initialization, the run budget and `/buy`.
+  - A `/buy` naming a swept run answers `inventory_not_initialized` (503) instead of `run_not_accepting_traffic` (409), as after a reset or a retention cleanup. Only the runner can send `/buy`, and its k6 has stopped before a successor can start. k6 counts both answers as unexpected.
 - **Rejected alternatives:**
   - Removing the namespace and revision key at finalization: the terminal projection, and its recovery after a missed update, could no longer be built.
   - A per-run cleanup marker swept at start: a migration, it does not cover resets whose orders are purged, and it moves thousands of job calls onto the start.

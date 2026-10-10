@@ -61,3 +61,16 @@ Revised by the owner decision of 2026-10-10 (option A+, see Working Notes).
 - **Retired scopes.** The revision allocator now throws a typed `DashboardProjectionScopeRetiredError`. Before, the scheduler re-queued a failed scope every second with an error log, indefinitely; this already happened after an admin reset whose build ran after its Redis deletion. A recovery with a retired `knownRunId` answered HTTP 500; it now answers the current projection, which the browser accepts as an authoritative idle read while keeping the retained result.
 - **Calibration.** Timings now come from `orders.processing_at` to `confirmed_at`/`failed_at`, read with the other durable evidence. `processing_at` is kept on resume, so a retried order's time includes its recovery waits.
 - **Decision log.** HD-61 records the two removal points, the accepted leftovers and the rejected alternatives.
+
+### Closure (2026-10-10)
+
+- **Cloud verification at `ff77e512`.** The full suite passed (type-check including tests, unit, API 360, integration).
+- **Live checks:**
+  - when a run finalizes, none of its completed jobs remain, and its namespace stays;
+  - the next start removes the previous run's namespace and revision key;
+  - run history is unchanged;
+  - a reset logs one warning and one info line, with no repeated error.
+- **Second adversarial review.** It listed HD-61's accepted leftovers as already accepted and raised two points, both arbitrated and accepted. HD-61's consequences now record them:
+  - with an unresponsive Redis, the start-time sweep blocks like the rest of the shared client;
+  - a stale `/buy` for a swept run answers 503 instead of 409, and only the stopped runner could send one.
+- Done once deployed.
