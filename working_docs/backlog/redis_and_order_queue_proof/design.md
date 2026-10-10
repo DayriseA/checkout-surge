@@ -106,11 +106,10 @@ A cloud session measured a throwaway baseline against the demo system. The proto
   - Work on the project's own branches. Never push to `dev` or `main`, and never merge into them.
   - Merge `dev` into the project's branches regularly.
   - The CI deploy runs only on a push to `main`, so these branches never deploy production.
-- **Costs:** Machines are stopped or destroyed when not in use. The agent records its spending in the task notes and stops if it nears the owner's budget (section 7).
+- **Costs:** no spending cap (owner decision, 2026-10-11). The owner supervises the agent and the Fly.io account. Machines serve the work and are stopped or destroyed when not in use. The agent records the Machines it keeps and their sizes in the task notes.
 - **Decisions:** the agent records each choice and its reason in the task notes. A choice that changes the owner's decisions above, the fairness rules, or production is not taken alone: it goes to the owner's review list in the README.
 - **Stop and report:**
   - any action that would touch production;
-  - the budget limit;
   - the feasibility checkpoint;
   - a result that puts the project itself in question.
 
@@ -127,4 +126,3 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 - **Run history:** how runs that fail by design (the mode without the order queue) read, without polluting public aggregates or capacity calibration.
 - **Redis script:** whether to slim the stock Lua script to raise Redis's ceiling.
 - **Load generator:** the runner size needed beyond 2,500 requests per second (it peaked at 90 % CPU there).
-- **Budget:** the owner's spending limit for the proof environment.

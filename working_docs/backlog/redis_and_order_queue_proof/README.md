@@ -27,7 +27,6 @@ The project is meant to be run by an AI agent working alone on the owner's lapto
 - **Repository rules:** `AGENTS.md` applies, including never opening `working_docs/deferred/`.
 - **Stop and report to the owner** in these cases:
   - an action that would touch production;
-  - the budget limit;
   - the task 02 checkpoint;
   - a result that puts the project in question.
 
