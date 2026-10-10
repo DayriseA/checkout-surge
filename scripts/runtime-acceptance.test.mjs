@@ -112,12 +112,12 @@ test("calibration evidence reports job overhead, settlement delay and excess att
       attempts: [{ status: "failed" }, { status: "succeeded" }, { status: "succeeded" }],
       lastNotificationAt: "2026-09-22T10:00:00.000Z",
       finalizedAt: "2026-09-22T10:00:04.500Z",
+      orderTimings: [
+        [1000, 1300],
+        [1000, 1500],
+        [1000, null], // Killed worker: the order never settled.
+      ],
     },
-    [
-      [1000, 1300],
-      [1000, 1500],
-      [0, 0], // Killed worker: no completion timestamps.
-    ],
     200,
   );
   assert.equal(evidence.jobs, 2);
@@ -127,8 +127,7 @@ test("calibration evidence reports job overhead, settlement delay and excess att
   assert.equal(evidence.settlementDelaySeconds, 4.5);
   assert.equal(evidence.excessAttempts, 1);
   const unsettled = calibrationEvidence(
-    { confirmed: 0, attempts: [], lastNotificationAt: null, finalizedAt: null },
-    [],
+    { confirmed: 0, attempts: [], lastNotificationAt: null, finalizedAt: null, orderTimings: [] },
     200,
   );
   assert.equal(unsettled.meanJobOverheadMs, null);

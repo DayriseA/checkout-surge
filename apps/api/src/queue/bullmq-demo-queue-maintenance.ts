@@ -9,6 +9,7 @@ import {
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
 import {
+  type CompletedOrderJobRemoval,
   type DemoQueueMaintenance,
   DemoQueueMaintenanceConflict,
   type QueueCleanupSummary,
@@ -40,21 +41,42 @@ export interface TargetQueueBoundary {
   close(): Promise<void>;
 }
 
+const completedJobRemovalBatchSize = 100;
+
 export function createBullMqDemoQueueMaintenance(
   connection: ConnectionOptions,
-): DemoQueueMaintenance & { close(): Promise<void> } {
-  return createDemoQueueMaintenance([
-    bullMqBoundary(
-      orderProcessQueueName,
-      new Queue(orderProcessBullMqQueueName, { connection }),
-      (data) => orderProcessJobSchema.parse(data),
-    ),
+): DemoQueueMaintenance & CompletedOrderJobRemoval & { close(): Promise<void> } {
+  const orders = new Queue(orderProcessBullMqQueueName, { connection });
+  const maintenance = createDemoQueueMaintenance([
+    bullMqBoundary(orderProcessQueueName, orders, (data) => orderProcessJobSchema.parse(data)),
     bullMqBoundary(
       notificationRecordQueueName,
       new Queue(notificationRecordBullMqQueueName, { connection }),
       (data) => notificationRecordJobSchema.parse(data),
     ),
   ]);
+  return {
+    ...maintenance,
+    removeCompletedOrderJobs: (jobIds) => removeCompletedJobs(orders, jobIds),
+  };
+}
+
+async function removeCompletedJobs(
+  queue: Pick<Queue, "getJobState" | "remove">,
+  jobIds: readonly string[],
+): Promise<number> {
+  let removedJobCount = 0;
+  for (let start = 0; start < jobIds.length; start += completedJobRemovalBatchSize) {
+    const removed = await Promise.all(
+      jobIds
+        .slice(start, start + completedJobRemovalBatchSize)
+        .map(async (jobId) =>
+          (await queue.getJobState(jobId)) === "completed" ? queue.remove(jobId) : 0,
+        ),
+    );
+    removedJobCount += removed.reduce((sum, count) => sum + count, 0);
+  }
+  return removedJobCount;
 }
 
 export function createDemoQueueMaintenance(

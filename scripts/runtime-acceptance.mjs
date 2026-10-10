@@ -133,7 +133,11 @@ export function durableEvidence(runId) {
     'calls',(SELECT coalesce(json_agg(t ORDER BY t.dispatched_at),'[]'::json) FROM
       (SELECT dispatched_at,resolved_at FROM erp_dispatch_calls WHERE run_id='${runId}') t),
     'attempts',(SELECT coalesce(json_agg(t ORDER BY t.started_at),'[]'::json) FROM
-      (SELECT started_at,finished_at,status,http_status,error_code FROM erp_attempts WHERE run_id='${runId}') t)
+      (SELECT started_at,finished_at,status,http_status,error_code FROM erp_attempts WHERE run_id='${runId}') t),
+    'orderTimings',(SELECT coalesce(json_agg(json_build_array(
+        extract(epoch FROM processing_at)*1000,
+        extract(epoch FROM coalesce(confirmed_at,failed_at))*1000)),'[]'::json)
+      FROM orders WHERE run_id='${runId}' AND processing_at IS NOT NULL)
   )`;
   return JSON.parse(
     docker(
@@ -207,39 +211,18 @@ function stableWindow(durable, http) {
   };
 }
 
-// Completed order jobs stay in Redis until exact-run teardown; [processedOn, finishedOn] per job.
-function completedJobTimings(sinceMs) {
-  const script = `local out = {}
-for _, id in ipairs(redis.call('ZRANGEBYSCORE', 'bull:orders-process:completed', ARGV[1], '+inf')) do
-  local t = redis.call('HMGET', 'bull:orders-process:' .. id, 'processedOn', 'finishedOn')
-  out[#out + 1] = { tonumber(t[1]) or 0, tonumber(t[2]) or 0 }
-end
-return out`;
-  return JSON.parse(
-    docker(
-      "compose",
-      "exec",
-      "-T",
-      "redis",
-      "redis-cli",
-      "--json",
-      "EVAL",
-      script,
-      "0",
-      String(sinceMs),
-    ),
-  );
-}
-
-// Calibration evidence; descriptive, never asserted.
-export function calibrationEvidence(durable, jobs, declaredLatencyMs) {
-  const durations = jobs.filter(([start, end]) => start && end).map(([start, end]) => end - start);
+// Calibration evidence; descriptive, never asserted. Job timings come from PostgreSQL order
+// timestamps, because finalization removes the run's completed jobs from Redis.
+export function calibrationEvidence(durable, declaredLatencyMs) {
+  const durations = durable.orderTimings
+    .filter(([start, end]) => start && end)
+    .map(([start, end]) => end - start);
   const meanMs = durations.length
     ? durations.reduce((sum, value) => sum + value, 0) / durations.length
     : null;
   return {
     definition:
-      "Full queue-job service time (BullMQ processedOn to finishedOn), finalization delay after the last notification, and ERP attempts beyond one per confirmed order.",
+      "Order job service time (orders.processing_at to confirmed_at or failed_at), finalization delay after the last notification, and ERP attempts beyond one per confirmed order.",
     jobs: durations.length,
     meanJobMs: meanMs,
     maxJobMs: durations.length ? Math.max(...durations) : null,
@@ -641,11 +624,7 @@ export async function runAcceptance(name, outputDirectory) {
         report.estimate.result.conservativeDurationSeconds / report.durationSeconds,
     };
     report.stableWindow = stableWindow(report.durable, report.erpHttp);
-    report.calibration = calibrationEvidence(
-      report.durable,
-      completedJobTimings(Date.parse(report.startedAt)),
-      snapshot.erpConfig.latencyMs,
-    );
+    report.calibration = calibrationEvidence(report.durable, snapshot.erpConfig.latencyMs);
     assert(report.erpHttp.posts > 0, "Attributable ERP HTTP evidence");
     assert(
       report.erpHttp.maximumInFlight <= snapshot.backpressureConfig.orderProcessConcurrency,

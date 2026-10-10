@@ -558,6 +558,54 @@ describe("demo run finalization service", () => {
   });
 
   it.each([
+    { name: "removes the run's order and recovery jobs", removal: "succeeds" },
+    { name: "stays finalized when the job removal fails", removal: "fails" },
+  ] as const)("after commit, $name", async ({ removal }) => {
+    const db = requireConnection(connection).db;
+    const removeCompletedOrderJobs = vi.fn(async () => {
+      if (removal === "fails") throw new Error("Redis unavailable");
+      return 3;
+    });
+    const service = createService(connection, redis, {
+      completedOrderJobs: { removeCompletedOrderJobs },
+    });
+    await seedDrainingRun({ db, redis: requireRedis(redis), trafficDeliveryStatus: "complete" });
+    await db.insert(reservations).values(reservationFixture(ids.reservation1));
+    await db.insert(orders).values(orderFixture(ids.order1, ids.reservation1, "confirmed"));
+    await db.insert(simulatedNotifications).values({
+      id: ids.notification,
+      orderId: ids.order1,
+      saleOfferId: ids.saleOffer,
+      runId: ids.run,
+      correlationId: "corr-finalize-test",
+      recipientPlaceholder: "buyer@example.invalid",
+      recordedAt: new Date("2026-06-20T00:00:08.000Z"),
+    });
+    await db.insert(orderRecoveryJobs).values({
+      recoveryKey: `order:${ids.order1}`,
+      jobId: ids.order1,
+      orderId: ids.order1,
+      payload: { orderId: ids.order1 },
+      reason: "erp_local_persistence_unavailable",
+      status: "resolved",
+      attempts: 2,
+      resolvedAt: new Date("2026-06-20T00:00:07.000Z"),
+    });
+
+    await expect(service.finalizeRun(ids.run, "corr-finalize-jobs")).resolves.toMatchObject({
+      status: "completed",
+    });
+    expect(removeCompletedOrderJobs).toHaveBeenCalledExactlyOnceWith([
+      ids.order1,
+      `recovery-${ids.order1}-1`,
+      `recovery-${ids.order1}-2`,
+    ]);
+    expect(
+      await db.select().from(demoRunSummaries).where(eq(demoRunSummaries.runId, ids.run)),
+    ).toHaveLength(1);
+  });
+
+  it.each([
     { name: "before", now: "2026-06-20T00:00:10.000Z", exhausted: false },
     { name: "after", now: "2026-06-20T00:10:00.000Z", exhausted: false },
     { name: "after as exhausted", now: "2026-06-20T00:10:00.000Z", exhausted: true },
@@ -1611,6 +1659,9 @@ function createService(
     runnerOperations?: ConstructorParameters<
       typeof DemoRunFinalizationService
     >[0]["runnerOperations"];
+    completedOrderJobs?: NonNullable<
+      ConstructorParameters<typeof DemoRunFinalizationService>[0]["completedOrderJobs"]
+    >;
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({

@@ -25,6 +25,7 @@ import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
+  deleteSettledRunInventory,
   demoRunSaleContexts,
   demoRuns,
   getInventoryStatus,
@@ -34,7 +35,7 @@ import {
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import {
   assessCapacity,
@@ -190,6 +191,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         reservePublicBudget,
       );
       const saleOfferId = requireRunSaleOfferId(accepted.run);
+      await this.removePreviousRunInventories();
 
       try {
         await this.options.queueLimits.synchronize();
@@ -716,6 +718,45 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       saleOfferId: run.saleOfferId,
       runId: run.id,
     });
+  }
+
+  /**
+   * Removes earlier terminal runs' inventory namespaces and dashboard revisions. Not at
+   * finalization: the dashboard rebuilds a finished run's terminal projection from them until a
+   * new run is admitted. A run with a hold still awaiting persistence, or an unfinished reset,
+   * keeps its namespace. Best effort: retention cleanup remains the fallback.
+   */
+  private async removePreviousRunInventories(): Promise<void> {
+    try {
+      const rows = await this.options.db
+        .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+        .from(demoRuns)
+        .where(
+          and(
+            inArray(demoRuns.status, ["completed", "failed"]),
+            not(incompleteAdminResetPredicate() ?? sql`false`),
+          ),
+        );
+      const runs = rows.flatMap(({ runId, saleOfferId }) =>
+        saleOfferId ? [{ runId, saleOfferId }] : [],
+      );
+      const results = await Promise.allSettled(
+        runs.map((run) => deleteSettledRunInventory(this.options.redis, run)),
+      );
+      for (const [index, result] of results.entries()) {
+        if (result.status === "rejected") {
+          this.options.logger.warn(
+            { err: result.reason, runId: runs[index]?.runId },
+            "Could not remove a previous run's inventory namespace; the retention cleanup remains the fallback.",
+          );
+        }
+      }
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error },
+        "Could not list previous runs' inventory namespaces; the retention cleanup remains the fallback.",
+      );
+    }
   }
 
   private async captureTerminalInventorySnapshot(

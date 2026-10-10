@@ -32,6 +32,7 @@ import {
   acceptedResponseAccountingWarning,
   reconcileAcceptedResponses,
 } from "./accepted-response-accounting.js";
+import type { CompletedOrderJobRemoval } from "./demo-queue-maintenance.js";
 import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
 import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import {
@@ -79,6 +80,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       terminalInventoryReadTimeoutMs: number;
       reservationTiming?: TerminalReservationTimingReader;
       liveMetricDrops?: Pick<TrafficMetricIngestionService, "droppedBatchCount">;
+      completedOrderJobs?: CompletedOrderJobRemoval;
       now?: () => Date;
     },
   ) {
@@ -310,6 +312,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         correlationId ?? row.run.correlationId,
         correlationId ? "completion-report" : "sweep",
       );
+      await this.removeCompletedOrderJobs(runId);
     }
 
     return updatedRun;
@@ -444,6 +447,25 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       this.options.logger.warn(
         { err: error, runId: run.runId, correlationId, finalizationActor },
         "Could not publish terminal projection dirty signal.",
+      );
+    }
+  }
+
+  /** History reads PostgreSQL only, so a finalized run's completed order jobs serve nothing. */
+  private async removeCompletedOrderJobs(runId: string): Promise<void> {
+    if (!this.options.completedOrderJobs) return;
+    try {
+      const removedJobCount = await this.options.completedOrderJobs.removeCompletedOrderJobs(
+        await readRunOrderJobIds(this.options.db, runId),
+      );
+      this.options.logger.info(
+        { runId, removedJobCount },
+        "Removed the finalized run's completed order jobs.",
+      );
+    } catch (error) {
+      this.options.logger.warn(
+        { err: error, runId },
+        "Could not remove the finalized run's completed order jobs; the retention cleanup remains the fallback.",
       );
     }
   }
@@ -603,6 +625,25 @@ async function readRecoveryObligations(
     pendingCount: rows.filter((row) => row.status !== "resolved").length,
     unresolvedCallCount: rows.filter((row) => row.unresolvedErpCallId !== null).length,
   };
+}
+
+/**
+ * An order's first job id is the order id; each recovery publication adds
+ * `recovery-<orderId>-<attempt>`, as the worker's recovery claim names it.
+ */
+async function readRunOrderJobIds(db: CheckoutSurgeDatabase, runId: string): Promise<string[]> {
+  const rows = await db
+    .select({ orderId: orders.id, recoveryAttempts: orderRecoveryJobs.attempts })
+    .from(orders)
+    .leftJoin(orderRecoveryJobs, eq(orderRecoveryJobs.orderId, orders.id))
+    .where(eq(orders.runId, runId));
+  return rows.flatMap(({ orderId, recoveryAttempts }) => [
+    orderId,
+    ...Array.from(
+      { length: recoveryAttempts ?? 0 },
+      (_, index) => `recovery-${orderId}-${index + 1}`,
+    ),
+  ]);
 }
 
 function requireSaleOfferId(run: typeof demoRuns.$inferSelect): string {

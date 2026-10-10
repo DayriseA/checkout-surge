@@ -17,6 +17,7 @@ import {
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
+  DashboardProjectionScopeRetiredError,
   demoRunFinalizations,
   demoRunSummaries,
   demoRuns,
@@ -406,7 +407,14 @@ export class DashboardProjectionService {
       }
     }
 
-    const revision = await settleWithAbort(dependencies.revisionAllocator.allocate(scope), signal);
+    let revision: number;
+    try {
+      revision = await settleWithAbort(dependencies.revisionAllocator.allocate(scope), signal);
+    } catch (error) {
+      if (!knownScope || !(error instanceof DashboardProjectionScopeRetiredError)) throw error;
+      // A known run whose Redis state was removed falls back to the current projection.
+      return this.assembleProjection(correlationId, signal, dependencies);
+    }
     return dashboardProjectionSchema.parse({
       schema: dashboardProjectionSchemaName,
       correlationId,

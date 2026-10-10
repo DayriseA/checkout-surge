@@ -22,14 +22,18 @@ import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
   createRedisClient,
+  dashboardProjectionRevisionKey,
   demoPresets,
   demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
+  InventoryNotInitializedError,
+  inventoryKeys,
   isRunSaleEligible,
   products,
   publicRuntimePolicies,
+  reserveInventoryStock,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
@@ -277,6 +281,9 @@ describe("fresh bootstrap run inventory", () => {
           allowedCurrentStatuses: ["active"],
         }),
       ).resolves.toBe(true);
+      const firstIdempotencyKey = inventoryKeys(firstOfferId).idempotency("bootstrap-first");
+      await redis.set(firstIdempotencyKey, "{}", "EX", 1_800);
+      await redis.set(dashboardProjectionRevisionKey(first.run.runId), "3");
       const second = await service.startRun(
         { presetSlug: "custom", operatorMode: "admin" },
         "bootstrap-second",
@@ -292,11 +299,13 @@ describe("fresh bootstrap run inventory", () => {
         remainingStock: 3,
         reservedStock: 0,
       });
-      expect(await getInventoryStatus(redis, firstOfferId)).toMatchObject({
-        allocatedStock: 7,
-        remainingStock: 7,
-        reservedStock: 0,
-      });
+      // The second start removed the finished first run's inventory and dashboard revision,
+      // leaving only keys that expire on their own.
+      await expect(getInventoryStatus(redis, firstOfferId)).rejects.toBeInstanceOf(
+        InventoryNotInitializedError,
+      );
+      expect(await redis.exists(dashboardProjectionRevisionKey(first.run.runId))).toBe(0);
+      expect(await redis.exists(firstIdempotencyKey)).toBe(1);
       const [storedFirst] = await connection.db
         .select()
         .from(demoRuns)
@@ -1986,6 +1995,60 @@ describe("demo-run lifecycle start gating", () => {
       runId: started.runId,
       bootId: testRunnerBootId,
     });
+  });
+
+  it("keeps a failed run's inventory at the next start while a hold awaits persistence", async () => {
+    const redisClient = requireRedis(redis);
+    const service = createStartService(requireConnection(connection), redisClient);
+    const { run: lost } = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-lost",
+    );
+    const lostOfferId = lost.saleOfferId ?? "";
+    await reserveInventoryStock(redisClient, {
+      idempotencyKey: "lost-run-pending",
+      idempotencyTtlSeconds: 1_800,
+      reservation: {
+        id: "12121212-1212-4212-8212-121212121212",
+        saleOfferId: lostOfferId,
+        runId: lost.runId,
+        correlationId: "corr-lost",
+        quantity: 1,
+        reservationToken: "lost-run-pending-token",
+        securedAt: "2026-06-20T00:00:12.000Z",
+        expiresAt: "2026-06-20T00:15:12.000Z",
+      },
+    });
+    await service.failLostRun(lost.runId);
+
+    await service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-next");
+
+    expect(await getInventoryStatus(redisClient, lostOfferId)).toMatchObject({
+      pendingPersistenceCount: 1,
+    });
+  });
+
+  it("starts a new run when an earlier run's inventory cannot be removed", async () => {
+    const redisClient = requireRedis(redis);
+    const logger = createSilentLogger("api");
+    const warn = vi.spyOn(logger, "warn");
+    const service = createStartService(requireConnection(connection), redisClient, { logger });
+    const { run: lost } = await service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "corr-lost",
+    );
+    await service.failLostRun(lost.runId);
+    const lostState = inventoryKeys(lost.saleOfferId ?? "").state;
+    await redisClient.del(lostState);
+    await redisClient.set(lostState, "not a hash");
+
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-next"),
+    ).resolves.toMatchObject({ run: { status: "active" } });
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ runId: lost.runId }),
+      expect.stringContaining("Could not remove a previous run's inventory namespace"),
+    );
   });
 
   it("fails a starting run that was never dispatched with zero counters and stops its runner", async () => {

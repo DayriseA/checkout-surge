@@ -4,6 +4,7 @@ import {
   type DashboardProjectionScope,
   dashboardProjectionScopeId,
 } from "@checkout-surge/contracts";
+import { DashboardProjectionScopeRetiredError } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { normalizeCorrelationId } from "@checkout-surge/logger";
 import {
@@ -136,6 +137,14 @@ export class DashboardProjectionPublicationScheduler {
     )
       .catch((error: unknown) => {
         if (!this.accepting) return;
+        if (error instanceof DashboardProjectionScopeRetiredError) {
+          // A retired scope never builds again: retrying would only repeat this refusal.
+          this.options.logger.info(
+            { scopeId: key, correlationId: dirty.correlationId },
+            "Dropped a dirty dashboard scope whose run's Redis state was removed.",
+          );
+          return;
+        }
         const retained = this.pending.get(key);
         if (!retained) {
           this.pending.set(key, {

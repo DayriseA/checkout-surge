@@ -20,6 +20,7 @@ import { previewRunConfigSnapshotFixture as configSnapshot } from "@checkout-sur
 import {
   type CheckoutSurgeDatabase,
   createDatabaseConnection,
+  DashboardProjectionScopeRetiredError,
   demoPresets,
   demoRunFinalizations,
   demoRunSummaries,
@@ -593,6 +594,31 @@ describe("DashboardProjectionService", () => {
 
     expect(readContext).toHaveBeenCalledWith(undefined, knownScope);
     expect(projection.currentRun?.status).toBe("completed");
+  });
+
+  it("answers a known run whose Redis state was removed with the current projection", async () => {
+    const harness = serviceHarness({ currentRun: null, saleOfferId: null }, undefined, {
+      contextReader: async (_scope, knownScope) =>
+        knownScope
+          ? {
+              currentRun: runSnapshot({
+                status: "completed",
+                trafficStatus: "succeeded",
+                trafficEndedAt: now.toISOString(),
+                finalizedAt: now.toISOString(),
+              }),
+              saleOfferId,
+            }
+          : { currentRun: null, saleOfferId: null },
+    });
+    harness.allocateRevision.mockRejectedValueOnce(new DashboardProjectionScopeRetiredError(runId));
+
+    const projection = await harness.service.build({
+      correlationId: "corr-known-retired",
+      knownScope: { runId, saleOfferId },
+    });
+
+    expect(projection).toMatchObject({ scope: null, currentRun: null });
   });
 
   it("rejects context failure, closes resources, and does not allocate a revision", async () => {

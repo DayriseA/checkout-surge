@@ -71,9 +71,7 @@ export async function incrementDashboardProjectionRevision(
     runId,
     saleOfferId,
   );
-  if (result === "scope_retired") {
-    throw new Error(`Dashboard projection scope for run ${runId} is retired.`);
-  }
+  if (result === "scope_retired") throw new DashboardProjectionScopeRetiredError(runId);
   return positiveIntegerSchema.max(Number.MAX_SAFE_INTEGER).parse(result);
 }
 
@@ -86,16 +84,8 @@ export async function deleteGeneratedRunRedisState(
   const saleOfferId = input.saleOfferId ? uuidSchema.parse(input.saleOfferId) : null;
 
   let deletedKeyCount = saleOfferId
-    ? Number(
-        await redis.eval(
-          retireDashboardProjectionScopeScript,
-          2,
-          inventoryKeys(saleOfferId).state,
-          dashboardProjectionRevisionKey(runId),
-          runId,
-          saleOfferId,
-        ),
-      ) + (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
+    ? (await deleteRunInventoryKeys(redis, runId, saleOfferId)) +
+      (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
     : await redis.unlink(dashboardProjectionRevisionKey(runId));
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
@@ -107,6 +97,56 @@ export async function deleteGeneratedRunRedisState(
     `demo-run:${runId}:reservation-timing-fence`,
   );
   return { deletedKeyCount };
+}
+
+/**
+ * Removes a terminal run's inventory namespace and dashboard revision key, unless a hold
+ * still awaits persistence. Its idempotency keys are left to expire on their own.
+ */
+export async function deleteSettledRunInventory(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<{ outcome: "deleted"; deletedKeyCount: number } | { outcome: "pending_persistence" }> {
+  const runId = uuidSchema.parse(input.runId);
+  const saleOfferId = uuidSchema.parse(input.saleOfferId);
+  if ((await redis.zcard(inventoryKeys(saleOfferId).pendingPersistence)) > 0) {
+    return { outcome: "pending_persistence" };
+  }
+  return {
+    outcome: "deleted",
+    deletedKeyCount: await deleteRunInventoryKeys(redis, runId, saleOfferId),
+  };
+}
+
+/** Retires the dashboard scope with the inventory state, then removes the fixed inventory keys. */
+async function deleteRunInventoryKeys(
+  redis: CheckoutSurgeRedis,
+  runId: string,
+  saleOfferId: string,
+): Promise<number> {
+  const keys = inventoryKeys(saleOfferId);
+  const retiredKeyCount = Number(
+    await redis.eval(
+      retireDashboardProjectionScopeScript,
+      2,
+      keys.state,
+      dashboardProjectionRevisionKey(runId),
+      runId,
+      saleOfferId,
+    ),
+  );
+  return (
+    retiredKeyCount +
+    (await redis.unlink(
+      keys.reservations,
+      keys.reservationExpirations,
+      keys.pendingPersistence,
+      keys.pendingPersistenceRecords,
+      keys.events,
+      keys.soldOut,
+      keys.reservationThroughput,
+    ))
+  );
 }
 
 export async function setRunSaleEligibility(
@@ -161,6 +201,17 @@ export interface InitializeInventoryInput {
   source?: string;
   initializedAt?: Date;
   run: RunInventoryConfig;
+}
+
+/** The run's Redis state was removed, so its dashboard scope can never allocate a revision again. */
+export class DashboardProjectionScopeRetiredError extends Error {
+  readonly runId: string;
+
+  constructor(runId: string) {
+    super(`Dashboard projection scope for run ${runId} is retired.`);
+    this.name = "DashboardProjectionScopeRetiredError";
+    this.runId = runId;
+  }
 }
 
 export class InventoryNotInitializedError extends Error {

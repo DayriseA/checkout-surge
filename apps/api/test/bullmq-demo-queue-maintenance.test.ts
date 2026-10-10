@@ -87,6 +87,44 @@ describe("BullMQ exact-run maintenance", () => {
     }
   });
 
+  it("removes only the listed completed order jobs without pausing the queues", async () => {
+    const orders = new Queue(orderProcessBullMqQueueName, { connection });
+    await orders.obliterate({ force: true });
+    const maintenance = createBullMqDemoQueueMaintenance(connection);
+    resources.push(maintenance, orders);
+    const listed = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "listed" });
+    const unlisted = await orders.add(orderProcessJobName, orderJob(otherRunId), {
+      jobId: "unlisted",
+    });
+    const failed = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "failed" });
+    const worker = new Worker(
+      orderProcessBullMqQueueName,
+      async (job) => {
+        if (job.id === "failed") throw new Error("order job failed");
+      },
+      { connection },
+    );
+    await bounded(
+      (async () => {
+        while ((await orders.getCompletedCount()) + (await orders.getFailedCount()) < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+      })(),
+    );
+    await worker.close();
+    const waiting = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "waiting" });
+
+    await expect(
+      maintenance.removeCompletedOrderJobs(["listed", "failed", "waiting", "absent"]),
+    ).resolves.toBe(1);
+
+    expect(await listed.getState()).toBe("unknown");
+    expect(await unlisted.getState()).toBe("completed");
+    expect(await failed.getState()).toBe("failed");
+    expect(await waiting.getState()).toBe("waiting");
+    expect(await orders.isPaused()).toBe(false);
+  });
+
   it("uses one elapsed settlement budget, removes non-active work, and leaves active work", async () => {
     const first = new FakeQueue("orders:process", (data) => orderProcessJobSchema.parse(data));
     const second = new FakeQueue(

@@ -2,6 +2,7 @@ import type {
   DashboardProjection,
   DashboardProjectionDirtySignal,
 } from "@checkout-surge/contracts";
+import { DashboardProjectionScopeRetiredError } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardProjectionPublicationScheduler } from "../../src/services/dashboard-projection-publication-scheduler.js";
@@ -116,6 +117,28 @@ describe("DashboardProjectionPublicationScheduler", () => {
     expect(build).toHaveBeenCalledTimes(2);
     await scheduler.close();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("drops a retired scope once while still retrying another failed scope", async () => {
+    vi.useFakeTimers();
+    const otherRunId = "66666666-6666-4666-8666-666666666667";
+    const build = vi.fn(async ({ scope }: { scope?: { runId: string } }) => {
+      if (scope?.runId === runId) throw new DashboardProjectionScopeRetiredError(runId);
+      throw new Error("projection unavailable");
+    });
+    const logger = createSilentLogger("api");
+    const info = vi.spyOn(logger, "info");
+    const scheduler = createScheduler({ build, logger });
+
+    scheduler.markDirty(exactSignal("corr-retired"));
+    scheduler.markDirty(exactSignal("corr-other", { runId: otherRunId, saleOfferId }));
+    await vi.advanceTimersByTimeAsync(3_000);
+
+    const builtRunIds = build.mock.calls.map(([input]) => input.scope?.runId);
+    expect(builtRunIds.filter((id) => id === runId)).toHaveLength(1);
+    expect(builtRunIds.filter((id) => id === otherRunId).length).toBeGreaterThan(1);
+    expect(info).toHaveBeenCalledOnce();
+    await scheduler.close();
   });
 
   it("runs a terminal trailing build immediately after an older build settles", async () => {
@@ -243,11 +266,12 @@ function createScheduler(options: {
   }) => Promise<DashboardProjection>;
   publish?: (projection: DashboardProjection) => void;
   buildTimeoutMs?: number;
+  logger?: ReturnType<typeof createSilentLogger>;
 }) {
   return new DashboardProjectionPublicationScheduler({
     projectionService: { build: options.build } as never,
     publish: options.publish ?? vi.fn(),
-    logger: createSilentLogger("api"),
+    logger: options.logger ?? createSilentLogger("api"),
     buildTimeoutMs: options.buildTimeoutMs ?? 5_000,
   });
 }

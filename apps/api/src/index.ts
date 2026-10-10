@@ -330,6 +330,7 @@ export async function startApiServer(): Promise<void> {
     terminalInventoryReadTimeoutMs,
     reservationTiming,
     liveMetricDrops: trafficMetricIngestion,
+    completedOrderJobs: demoQueueMaintenance,
   });
   const presetService = new DemoPresetService({ db: connection.db });
   const runtimePolicyService = new PublicRuntimePolicyService({

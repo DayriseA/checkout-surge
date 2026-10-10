@@ -12,6 +12,11 @@ export interface ExactRunQueueMaintenance {
 
 export type DemoQueueMaintenance = ExactRunQueueMaintenance;
 
+export interface CompletedOrderJobRemoval {
+  /** Removes those of the given order jobs that are completed, without pausing any queue. */
+  removeCompletedOrderJobs(jobIds: readonly string[]): Promise<number>;
+}
+
 export type DemoQueueMaintenanceConflictCode = "active_job" | "malformed_claimed_job";
 
 export class DemoQueueMaintenanceConflict extends Error {

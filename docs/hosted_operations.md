@@ -277,6 +277,12 @@ What can go wrong:
 
 `POST /admin/demo/runner/recreate` (control token) recreates the runner as a capacity failure would, from the deployed runner config, and leaves the new runner stopped. It needs an awake core, answers 409 while the runner is not stopped, and otherwise answers 200 with the new runner's Machine ID and region. Call it from the API container as above, for example with a `node -e` script that posts to `http://127.0.0.1:4000/admin/demo/runner/recreate` with the header taken from `process.env.CONTROL_SERVICE_TOKEN`.
 
+### Cleanup runs
+
+- **Cleanup runs** on `/admin` is the run history retention policy: it deletes terminal runs older than seven days beyond the latest 15, with their rows, Redis state and queue jobs.
+- Redis does not depend on it. Finalization removes a run's completed order jobs, and the next run's start removes earlier runs' inventory namespaces ([Redis lifecycle](redis_inventory_hot_path.md#after-a-run)).
+- **Not during a run.** It pauses both queues for each run it cleans, which a run in progress notices.
+
 ---
 
 ## Freeing a Lease
