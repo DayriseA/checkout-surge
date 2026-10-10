@@ -45,9 +45,9 @@ import { buildWorkerHealthServer } from "./server.js";
  */
 const publicationDeadlineMs = 15_000;
 /**
- * Bounds the wait for active order jobs at shutdown, so that the whole stop fits in the
- * 10 s left by Docker's default stop timeout and by the delayed stop of the hosted core's
- * PostgreSQL and Redis.
+ * Bounds the wait for active order jobs at shutdown, leaving the rest of the stop room
+ * within the 10 s of Docker's default stop timeout and of the delayed stop of the hosted
+ * core's PostgreSQL and Redis.
  */
 const orderProcessCloseDeadlineMs = 5_000;
 

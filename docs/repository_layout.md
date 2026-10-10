@@ -141,7 +141,7 @@ checkout-surge/
 - Drizzle ORM schema definitions and migration tooling; the package artifact includes the compiled modules plus the reviewed ordered migration SQL files, their journal entries, and their linked snapshots.
 - The baseline appends only the `pgcrypto` extension and constant-expression single-nonterminal-run index because those objects do not reliably round-trip through this repository's schema and generator setup. Keys, foreign keys, uniqueness, and row-local checks remain declared in `schema.ts`; the current baseline has no trigger functions or non-internal triggers.
 - Owns PostgreSQL connection construction, Redis inventory/dashboard/resilience helpers, the reusable bounded business-outcome publication scheduler used by API and worker composition roots, seed/reset helpers, and the public testing entry point.
-- Its PostgreSQL clients work around two defects of the pinned postgres.js version. They never recycle a connection by age, since a connection closing while a `reserve()` call waits loses that waiter; the hosted core restarts its services at each wake. They never fetch array types, since a connection destroyed during that fetch, as when an operation pool is aborted, leaves a rejection unhandled and crashes the process; no column or parameter uses a PostgreSQL array type.
+- Its PostgreSQL clients never recycle a connection by age: in the pinned postgres.js version, a connection closing while a `reserve()` call waits loses that waiter. The hosted core restarts its services at each wake.
 - Shared by `apps/api` and `apps/worker` so durable checkout records and worker ERP-attempt semantics remain one source of truth.
 - `apps/load-orchestrator` deliberately does not use this package; its traffic execution journal is file-backed.
 

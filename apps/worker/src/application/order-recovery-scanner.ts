@@ -233,6 +233,7 @@ export function createOrderRecoveryScanner(dependencies: {
       0,
     );
     for (const candidate of candidates) {
+      if (closed) break;
       if (candidate.publicationOwner) {
         let deliveryPending: boolean;
         try {

@@ -160,12 +160,13 @@ export function createBullMqOrderProcessConsumer(
       if (!drained) {
         options.logger.warn(
           { closeDeadlineMs: options.closeDeadlineMs },
-          "Order-processing jobs still active at the shutdown deadline; force-closing the worker.",
+          "Order-processing jobs did not settle by the shutdown deadline; force-closing the worker.",
         );
       }
-      // A force-closed job stays active until its lock expires; BullMQ's stalled-job check
-      // then redelivers it, or fails it and the order recovery scanner re-claims the order.
-      await worker.close(!drained);
+      // Always forced, so that closing the Redis connections never waits on QUIT. A job cut
+      // here stays active until its lock expires; BullMQ's stalled-job check then redelivers
+      // it, or fails it and the order recovery scanner re-claims the order.
+      await worker.close(true);
       if (drained) {
         await runPromise;
       }
@@ -185,7 +186,13 @@ async function settlesWithin(promise: Promise<unknown>, deadlineMs: number): Pro
     timer = setTimeout(resolve, deadlineMs, false);
   });
   try {
-    return await Promise.race([promise.then(() => true), deadline]);
+    return await Promise.race([
+      promise.then(
+        () => true,
+        () => false,
+      ),
+      deadline,
+    ]);
   } finally {
     clearTimeout(timer);
   }

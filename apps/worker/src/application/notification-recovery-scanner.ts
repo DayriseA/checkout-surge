@@ -44,6 +44,7 @@ export function createNotificationRecoveryScanner(dependencies: {
     let failed = 0;
 
     for (const candidate of candidates) {
+      if (closed) break;
       try {
         await dependencies.publisher.publishForConfirmedOrder(candidate.job, candidate.confirmedAt);
         published += 1;

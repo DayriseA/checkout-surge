@@ -53,7 +53,7 @@ An order job always finishes or gives up within a bounded time, and the worker a
 - **Reproduced** at run 10 of a 20-run series (750/s, stock 7,500): job `5748109d…` hung at `await client.reserve()` in the publication fence (`postgres-generated-run-publication-fence.ts:23`), before the advisory lock.
   - The order was already confirmed. The notification was recorded by the recovery scanner.
   - All 10 worker connections were idle, and no lock was waiting.
-- **Cause: a bug in postgres.js 3.4.9** (the latest release). `reserve()` queues a placeholder. If a pool connection closes while it waits, `onclose` shifts the placeholder off the queue and never resolves it (`connection.js:563-567`).
+- **Cause: a bug in postgres.js 3.4.9** (the latest release). `reserve()` queues a placeholder. If a pool connection closes while it waits, `onclose` shifts the placeholder off the queue and never resolves it (`index.js:420-427`, shift at `:426`).
   - The trigger is `max_lifetime` recycling, which defaults to 30–60 min and is not set in the repo.
   - An isolated script hung 3 times out of 3. A `begin()` waiter resolved 4 times out of 4.
 - **Stops** (`docker compose stop -t 60`):
@@ -78,6 +78,7 @@ An order job always finishes or gives up within a bounded time, and the worker a
 - **Shutdown deadline: 5 s** on the order consumer's `close()`: `pause()` waits for active jobs, then `close(true)` at the deadline (a second `close()` call returns the pending one in BullMQ 5.79, so the wait goes through `pause()`). It fits under the 10 s of Docker's default stop timeout and of the core databases' delayed stop; the Fly stop timeout is 30 s.
   - A cut job stays active until its lock expires, then BullMQ's stalled check moves it back to wait (same job ID), or fails it at the stall limit and the order recovery scanner re-claims the order after its lease. No duplicate: generation and publication-owner fencing, ERP reconciliation before replay, deterministic notification job IDs.
   - A job waiting on a slow ERP call (deadline up to 6 s) can be cut too; it is recovered the same way.
+- Fix pass after review (2026-10-10): a rejected `pause()` counts as not drained, and `close(true)` is always called after the wait, so the final Redis close never waits on QUIT. The three scanners stop a batch once closing (`if (closed) break;`), so a stop no longer waits for the rest of a batch's publications.
 - The notification consumer keeps its unbounded close: its jobs never use `reserve()`.
 - The web's slow stop with an open SSE stream: no change (owner decision).
 - Tests: a never-settling fence fails the publish at 15 s; a never-settling job does not hold `close()` past 5 s (BullMQ mocked at the module boundary, no Redis on this host). Integration tests not run.

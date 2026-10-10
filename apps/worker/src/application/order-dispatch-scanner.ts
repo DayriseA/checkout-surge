@@ -50,6 +50,7 @@ export function createOrderDispatchScanner(dependencies: {
     let failed = 0;
 
     for (const job of candidates) {
+      if (closed) break;
       try {
         await dependencies.publisher.enqueue(job);
         published += 1;

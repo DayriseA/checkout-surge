@@ -58,12 +58,14 @@ describe("order-processing consumer shutdown", () => {
     expect(worker.close).toHaveBeenCalledExactlyOnceWith(true);
   });
 
-  it("closes gracefully once the active jobs settle", async () => {
-    worker.pause.mockResolvedValue(undefined);
+  it("closes once the active jobs settle, or as soon as waiting for them fails", async () => {
     worker.close.mockResolvedValue(undefined);
+    worker.pause.mockResolvedValueOnce(undefined);
+    worker.pause.mockRejectedValueOnce(new Error("Redis unavailable"));
 
     await createConsumer().close();
+    await createConsumer().close();
 
-    expect(worker.close).toHaveBeenCalledExactlyOnceWith(false);
+    expect(worker.close.mock.calls).toEqual([[true], [true]]);
   });
 });

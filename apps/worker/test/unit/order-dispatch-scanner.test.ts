@@ -103,4 +103,37 @@ describe("order dispatch scanner", () => {
     await closePromise;
     expect(closed).toBe(true);
   });
+
+  it("stops publishing the rest of its batch once closed", async () => {
+    let releaseFirst: () => void = () => undefined;
+    let firstStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const publisher = {
+      enqueue: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+            firstStarted();
+          }),
+      ),
+    };
+    const scanner = createOrderDispatchScanner({
+      persistence: { findQueuedOrdersForDispatch: vi.fn().mockResolvedValue(jobs) },
+      publisher,
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 60_000,
+      batchSize: 25,
+      minimumQueuedAgeMs: 0,
+    });
+
+    scanner.start();
+    await started;
+    const closing = scanner.close();
+    releaseFirst();
+    await closing;
+
+    expect(publisher.enqueue).toHaveBeenCalledOnce();
+  });
 });
