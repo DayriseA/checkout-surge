@@ -724,7 +724,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
    * Removes earlier terminal runs' inventory namespaces and dashboard revisions. Not at
    * finalization: the dashboard rebuilds a finished run's terminal projection from them until a
    * new run is admitted. A run with a hold still awaiting persistence, or an unfinished reset,
-   * keeps its namespace. Best effort: retention cleanup remains the fallback.
+   * keeps its namespace. Best effort: retention cleanup remains the fallback. Decision HD-61
+   * (docs/decisions/hosted_deployment.md).
    */
   private async removePreviousRunInventories(): Promise<void> {
     try {

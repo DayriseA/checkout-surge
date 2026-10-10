@@ -92,15 +92,18 @@ describe("BullMQ exact-run maintenance", () => {
     await orders.obliterate({ force: true });
     const maintenance = createBullMqDemoQueueMaintenance(connection);
     resources.push(maintenance, orders);
-    const listed = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "listed" });
-    const unlisted = await orders.add(orderProcessJobName, orderJob(otherRunId), {
-      jobId: "unlisted",
-    });
-    const failed = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "failed" });
+    // Production job ids: the order id, as the publisher sets it.
+    const addOrderJob = (attributedRunId: string) => {
+      const payload = orderJob(attributedRunId);
+      return orders.add(orderProcessJobName, payload, { jobId: payload.orderId });
+    };
+    const listed = await addOrderJob(runId);
+    const unlisted = await addOrderJob(otherRunId);
+    const failed = await addOrderJob(runId);
     const worker = new Worker(
       orderProcessBullMqQueueName,
       async (job) => {
-        if (job.id === "failed") throw new Error("order job failed");
+        if (job.id === failed.id) throw new Error("order job failed");
       },
       { connection },
     );
@@ -112,10 +115,15 @@ describe("BullMQ exact-run maintenance", () => {
       })(),
     );
     await worker.close();
-    const waiting = await orders.add(orderProcessJobName, orderJob(runId), { jobId: "waiting" });
+    const waiting = await addOrderJob(runId);
 
     await expect(
-      maintenance.removeCompletedOrderJobs(["listed", "failed", "waiting", "absent"]),
+      maintenance.removeCompletedOrderJobs([
+        String(listed.id),
+        String(failed.id),
+        String(waiting.id),
+        crypto.randomUUID(),
+      ]),
     ).resolves.toBe(1);
 
     expect(await listed.getState()).toBe("unknown");

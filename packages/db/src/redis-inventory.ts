@@ -84,8 +84,16 @@ export async function deleteGeneratedRunRedisState(
   const saleOfferId = input.saleOfferId ? uuidSchema.parse(input.saleOfferId) : null;
 
   let deletedKeyCount = saleOfferId
-    ? (await deleteRunInventoryKeys(redis, runId, saleOfferId)) +
-      (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
+    ? Number(
+        await redis.eval(
+          retireDashboardProjectionScopeScript,
+          2,
+          inventoryKeys(saleOfferId).state,
+          dashboardProjectionRevisionKey(runId),
+          runId,
+          saleOfferId,
+        ),
+      ) + (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
     : await redis.unlink(dashboardProjectionRevisionKey(runId));
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
@@ -109,44 +117,25 @@ export async function deleteSettledRunInventory(
 ): Promise<{ outcome: "deleted"; deletedKeyCount: number } | { outcome: "pending_persistence" }> {
   const runId = uuidSchema.parse(input.runId);
   const saleOfferId = uuidSchema.parse(input.saleOfferId);
-  if ((await redis.zcard(inventoryKeys(saleOfferId).pendingPersistence)) > 0) {
-    return { outcome: "pending_persistence" };
-  }
-  return {
-    outcome: "deleted",
-    deletedKeyCount: await deleteRunInventoryKeys(redis, runId, saleOfferId),
-  };
-}
-
-/** Retires the dashboard scope with the inventory state, then removes the fixed inventory keys. */
-async function deleteRunInventoryKeys(
-  redis: CheckoutSurgeRedis,
-  runId: string,
-  saleOfferId: string,
-): Promise<number> {
   const keys = inventoryKeys(saleOfferId);
-  const retiredKeyCount = Number(
-    await redis.eval(
-      retireDashboardProjectionScopeScript,
-      2,
-      keys.state,
-      dashboardProjectionRevisionKey(runId),
-      runId,
-      saleOfferId,
-    ),
+  const result = await redis.eval(
+    deleteSettledRunInventoryScript,
+    9,
+    keys.pendingPersistence,
+    keys.state,
+    dashboardProjectionRevisionKey(runId),
+    keys.reservations,
+    keys.reservationExpirations,
+    keys.pendingPersistenceRecords,
+    keys.events,
+    keys.soldOut,
+    keys.reservationThroughput,
+    runId,
+    saleOfferId,
   );
-  return (
-    retiredKeyCount +
-    (await redis.unlink(
-      keys.reservations,
-      keys.reservationExpirations,
-      keys.pendingPersistence,
-      keys.pendingPersistenceRecords,
-      keys.events,
-      keys.soldOut,
-      keys.reservationThroughput,
-    ))
-  );
+  return result === "pending_persistence"
+    ? { outcome: "pending_persistence" }
+    : { outcome: "deleted", deletedKeyCount: Number(result) };
 }
 
 export async function setRunSaleEligibility(
@@ -456,6 +445,27 @@ if redis.call("HGET", KEYS[1], "saleOfferId") ~= ARGV[2] then
   return redis.error_reply("Inventory sale offer ID must match retired dashboard projection scope")
 end
 return redis.call("DEL", KEYS[1], KEYS[2])
+`;
+
+// KEYS[1] is the pending-persistence set and KEYS[2] the state hash; the dashboard revision
+// and the fixed inventory keys follow. Idempotency children are left to expire.
+const deleteSettledRunInventoryScript = `
+if redis.call("ZCARD", KEYS[1]) > 0 then
+  return "pending_persistence"
+end
+local stateType = redis.call("TYPE", KEYS[2]).ok
+if stateType ~= "none" then
+  if stateType ~= "hash" then
+    return redis.error_reply("Inventory state key must be a hash")
+  end
+  if redis.call("HGET", KEYS[2], "runId") ~= ARGV[1] then
+    return redis.error_reply("Inventory run ID must match retired dashboard projection scope")
+  end
+  if redis.call("HGET", KEYS[2], "saleOfferId") ~= ARGV[2] then
+    return redis.error_reply("Inventory sale offer ID must match retired dashboard projection scope")
+  end
+end
+return redis.call("DEL", unpack(KEYS))
 `;
 
 function buildThroughputFields(): string[] {

@@ -222,7 +222,7 @@ export function calibrationEvidence(durable, declaredLatencyMs) {
     : null;
   return {
     definition:
-      "Order job service time (orders.processing_at to confirmed_at or failed_at), finalization delay after the last notification, and ERP attempts beyond one per confirmed order.",
+      "Order processing time from first processing to the terminal state, recovery waits included (orders.processing_at to confirmed_at or failed_at), finalization delay after the last notification, and ERP attempts beyond one per confirmed order.",
     jobs: durations.length,
     meanJobMs: meanMs,
     maxJobMs: durations.length ? Math.max(...durations) : null,

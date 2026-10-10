@@ -70,6 +70,7 @@ Every entry in ID order. New entries are added here too.
 | [HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones) | Interrupted requests count in the delivery shortfall, like unstarted ones | Runner |
 | [HD-59](#hd-59-the-api-resolves-a-constant-arrival-runs-default-vus-at-admission-all-pre-allocated) | The API resolves a constant-arrival run's default VUs at admission, all pre-allocated | Platform and Topology |
 | [HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused) | Public custom runs are admitted only when expected to complete; admin runs are warned, never refused | Platform and Topology |
+| [HD-61](#hd-61-a-finished-runs-redis-working-state-is-removed-at-finalization-and-at-the-next-start) | A finished run's Redis working state is removed at finalization and at the next start | Platform and Topology |
 
 ## Platform and Topology
 
@@ -228,6 +229,24 @@ Every entry in ID order. New entries are added here too.
   - Counting k6's graceful stop as capacity for a backlog: completion would rest on the generator waiting, not on the server keeping up.
   - Refusing admin runs: the operator must be able to push past capacity ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput)).
 - **Code:** `assessCapacity` and `requireCapacityAdmission` in `apps/api/src/services/capacity-admission.ts`; `CAPACITY_*` in the API env of `infra/fly/core/machine.json` and `docker-compose.yml`.
+
+### HD-61 A finished run's Redis working state is removed at finalization and at the next start
+
+- **Status:** accepted
+- **Date:** 2026-10-10
+- **Context:** Run history reads PostgreSQL only, yet each run left its completed order jobs and its inventory namespace in Redis until the on-demand retention cleanup, which pauses both queues and so cannot run during a run. The live dashboard still builds a finished run's terminal projection from that namespace and its revision key.
+- **Decision:**
+  - Finalization removes the run's completed order jobs after the terminal summary commits. It finds them by id from PostgreSQL, checks each state, and never pauses a queue.
+  - The next run's start removes the inventory namespace and dashboard revision key of earlier terminal runs, once no earlier run's projection is displayed. One atomic script per run skips a run with a hold awaiting persistence, and an unfinished reset is skipped.
+  - Both are best effort; retention remains the fallback. The dashboard treats a retired scope as final.
+- **Consequences:**
+  - Left for retention: order jobs acknowledged after the finalization pass, reset jobs still active at the reset's settlement deadline, and the completed jobs of runs failed outside finalization.
+  - The last run's namespace stays until the next start.
+  - Each start sweeps every terminal run still in PostgreSQL with one script call, bounded by retention and by disposable core data ([HD-05](#hd-05-core-data-is-disposable-with-no-restore-path)).
+- **Rejected alternatives:**
+  - Removing the namespace and revision key at finalization: the terminal projection, and its recovery after a missed update, could no longer be built.
+  - A per-run cleanup marker swept at start: a migration, it does not cover resets whose orders are purged, and it moves thousands of job calls onto the start.
+- **Code:** `removeCompletedOrderJobs` in `apps/api/src/services/demo-run-finalization-service.ts`, `removePreviousRunInventories` in `apps/api/src/services/demo-run-service.ts`, `deleteSettledRunInventory` in `packages/db/src/redis-inventory.ts`.
 
 ## Runner
 

@@ -2039,8 +2039,11 @@ describe("demo-run lifecycle start gating", () => {
     );
     await service.failLostRun(lost.runId);
     const lostState = inventoryKeys(lost.saleOfferId ?? "").state;
-    await redisClient.del(lostState);
-    await redisClient.set(lostState, "not a hash");
+    const realEval = redisClient.eval.bind(redisClient) as (...args: unknown[]) => Promise<unknown>;
+    vi.spyOn(redisClient, "eval").mockImplementation(((...args: unknown[]) =>
+      args.includes(lostState)
+        ? Promise.reject(new Error("Redis unavailable"))
+        : realEval(...args)) as typeof redisClient.eval);
 
     await expect(
       service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "corr-next"),
