@@ -22,6 +22,16 @@ PostgreSQL and Redis sit at the same realistic network distance from the API, as
 
 ## Working Notes
 
+### Common-runtime deployment preflight failure — 2026-10-11
+
+The seven application images for clean source `96b8994f64be0aaf32fbf12d48b301313a48bacd` were built and pushed remotely, but the deployment stopped at 20:25:16 UTC when the stores Machine create returned HTTP 422: the provider rejected the PostgreSQL `tag@sha256` reference as invalid. No workload was dispatched, and this operational preflight supplies no capacity result. The existing proof/lab evidence and Machines were unaffected.
+
+Readback at 20:30:22 UTC, retained in `.tmp/common-runtime-v2/partial-deployment-96b8994f.json`, showed only stopped gate `814292b952d998` and guard `899393c6d2e118` Machines in the new proof apps, with zero core, runner or stores Machines. The newly allocated 6 GiB stores volume `vol_re1wng73qkxnd554` was unattached and pending destruction after the existing deployer's failure cleanup. Canonical digest-only references for all three pinned base images require provider validation before a corrected deployment; their exact digests and provenance must remain unchanged.
+
+The isolated PostgreSQL image check accepted `registry-1.docker.io/library/postgres@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3`, and readback resolved the exact same digest (`.tmp/common-runtime-v2/image-reference-preflight/postgres-verified.json`). Its subsequent cleanup returned HTTP 412 because `skip_launch` left the check Machine in `created`; the operator stopped and retained this failure. A separately bounded continuation inspected the exact unstarted Machine and removed it under its lease, then verified the canonical Redis and Caddy references sequentially. All three resolved to the original attested digests. Each temporary Machine was removed under its exact lease, and the isolated temporary app was confirmed absent at 20:38:34 UTC (`.tmp/common-runtime-v2/image-reference-preflight-continuation/complete.json`). No guest or workload ran. Source uses this fully qualified digest-only shape without changing the digests or falling back to tags. This validates provider image parsing and resolution, not startup, functional behavior or capacity.
+
+Read-only proof readback at 20:39:07 UTC confirmed that gate and guard identities, stopped states, configuration hashes and guard schedule were unchanged; core, runner and stores still had no Machines, and the failed deployment's unattached volume remained pending destruction (`.tmp/common-runtime-v2/post-image-reference-proof-readback.json`).
+
 ### Proof topology source — 2026-10-11
 
 - The owner authorized continuation after the feasibility checkpoint. This source slice chooses the measured native `cdg` distance: PostgreSQL and Redis share a separate authenticated private stores Machine, performance 2 CPUs / 4 GiB, with one 6 GiB volume. No simulated delay is added. Native RTT and hosted functional behavior still require measurement.

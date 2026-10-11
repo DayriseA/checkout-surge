@@ -37,6 +37,7 @@ Choices waiting for the owner, added by the agent with the task, the options and
 - **Task 02 checkpoint — GO received (2026-10-11).** The owner authorized autonomous continuation after the completed [feasibility report](02_feasibility_checkpoint.md#working-notes), including commits on the project's branches. Tasks 03–06 can proceed with the report's disclosed caveats. Production changes remain subject to the review boundary below.
 - **Public demonstration clarified (2026-10-11).** The owner wants one visible immutable public preset/start button showing both benefits, with no visitor configuration. Internally it runs two fixed matched workloads: Redis versus PostgreSQL and queued versus inline ERP, four normal child runs in total. The agent owns sequencing/reset: one public-budget and exclusive reservation, a total 600-second estimated occupancy ceiling and the existing 900-second hard cleanup grace anchored to demonstration acceptance, with all four summaries retained. Production intervention still waits for final review.
 - **Final production review.** The agent prepares and validates the complete demonstration in the proof environment, then presents its behavior, measurements and costs. Production rollout remains subject to the owner's final review; infrastructure questions do not block autonomous implementation.
+- **Production topology candidate (Task 09A).** Source preparation selects the proof's common physical topology for every run: one control and three buyer APIs on the existing core, separate private PostgreSQL/Redis stores, and the same runner allocation. The default deployment adds `checkout-surge-stores` in `personal` and disables proof evidence capture. This is a reviewable candidate on the project's branch, not production authorization; production resources, secrets, deployment and merges still wait for final review.
 
 ## Tasks
 
@@ -50,5 +51,5 @@ Choices waiting for the owner, added by the agent with the task, the options and
 | 06 | [Mode without the order queue](06_mode_without_order_queue.md) | 02, owner's go | in progress |
 | 07 | [Comparative presets and load generator](07_comparative_presets.md) | 03–06 | in progress |
 | 08 | [Comparative runs](08_comparative_runs.md) | 07 | in progress |
-| 09 | [Narrative and decisions](09_narrative.md) | 08 | todo |
+| 09 | [Narrative and decisions](09_narrative.md) | 08 | in progress |
 | 10 | [Production rollout](10_production_rollout.md) | 09 | todo |

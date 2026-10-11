@@ -41,8 +41,9 @@ function fixture(t, configuration = proof) {
   return { directory, configPath, apps, reads, mutations, dependencies };
 }
 
-test("production defaults preserve every machine template", () => {
+test("default production and proof use remote stores with isolated app names", () => {
   assert.deepEqual(loadEnvironment(), production);
+  assert.equal(production.apps.stores, "checkout-surge-stores");
   for (const path of [
     "core/machine.json",
     "runner/machine.json",
@@ -50,13 +51,163 @@ test("production defaults preserve every machine template", () => {
     "gate/guard-machine.json",
   ]) {
     const config = JSON.parse(readFileSync(new URL(`./${path}`, import.meta.url), "utf8"));
-    assert.deepEqual(configureMachine(structuredClone(config), production), config);
+    const candidate = configureMachine(structuredClone(config), production);
+    if (config.metadata.role === "core") {
+      assert.equal(candidate.mounts, undefined);
+      assert.equal(candidate.containers.filter((c) => c.env?.API_ROLE === "buyer").length, 3);
+    }
     const configured = configureMachine(structuredClone(config), proof);
     assert.ok(!JSON.stringify(configured).includes("checkout-surge-core"));
     assert.ok(!JSON.stringify(configured).includes("checkout-surge-runner"));
     assert.ok(!JSON.stringify(configured).includes("checkout-surge-gate"));
   }
 });
+
+test("proof files accept an explicit evidence flag and retain the three-app variant", (t) => {
+  const f = fixture(t, { ...proof, proofEvidenceCapture: true });
+  assert.equal(loadEnvironment(f.configPath).proofEvidenceCapture, true);
+  writeFileSync(f.configPath, JSON.stringify({ ...proof, proofEvidenceCapture: "true" }));
+  assert.throws(() => loadEnvironment(f.configPath), /must be a boolean/);
+  const apps = { core: proof.apps.core, runner: proof.apps.runner, gate: proof.apps.gate };
+  writeFileSync(f.configPath, JSON.stringify({ ...proof, apps }));
+  const legacy = loadEnvironment(f.configPath);
+  const template = JSON.parse(
+    readFileSync(new URL("./core/machine.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(configureMachine(structuredClone(template), legacy).mounts, template.mounts);
+  assert.ok(configureMachine(template, legacy).containers.some((c) => c.name === "postgres"));
+});
+
+test("a production stores app is also forbidden in proof configuration", (t) => {
+  const f = fixture(t, { ...proof, apps: { ...proof.apps, stores: production.apps.stores } });
+  assert.throws(() => loadEnvironment(f.configPath), /Production apps are forbidden/);
+});
+
+for (const [name, environment, sameVersion] of [
+  ["default all deploy sends the candidate topology and recovery configs", production, false],
+  [
+    "same-SHA proof all removes capture with explicit false",
+    { ...proof, proofEvidenceCapture: false },
+    true,
+  ],
+  ["same-SHA proof all removes capture with the flag omitted", proof, true],
+]) {
+  test(name, (t) => {
+    const f = fixture(t, environment);
+    const template = (role) =>
+      JSON.parse(readFileSync(new URL(`./${role}/machine.json`, import.meta.url), "utf8"));
+    const oldRunner = sameVersion
+      ? configureMachine(template("runner"), {
+          ...environment,
+          proofEvidenceCapture: true,
+        })
+      : template("runner");
+    oldRunner.env.COMMIT_SHA = sameVersion ? "candidate-sha" : "previous";
+    oldRunner.image = `registry.fly.io/${environment.apps.runner}:load-orchestrator-${oldRunner.env.COMMIT_SHA}`;
+    if (oldRunner.files)
+      oldRunner.files = oldRunner.files.map(({ guest_path, local_path }) => ({
+        guest_path,
+        raw_value: readFileSync(local_path).toString("base64"),
+      }));
+    const initial = [
+      [environment.apps.gate, [{ id: "gate", state: "stopped", config: template("gate") }]],
+      [environment.apps.core, [{ id: "core", state: "stopped", config: template("core") }]],
+      [environment.apps.runner, [{ id: "runner", state: "stopped", config: oldRunner }]],
+      [environment.apps.stores, []],
+    ];
+    const preload = join(f.directory, "default-deploy.mjs");
+    const resultPath = join(f.directory, "deployed.json");
+    writeFileSync(
+      preload,
+      `
+    import childProcess from "node:child_process";
+    import { syncBuiltinESMExports } from "node:module";
+    import { writeFileSync } from "node:fs";
+    const machines = new Map(${JSON.stringify(initial)});
+    const builds = [];
+    const volumes = [];
+    const save = () => writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({
+      machines: [...machines], builds, volumes,
+    }));
+    childProcess.execFileSync = (_command, args) => {
+      if (args.join(" ") === "auth token") return "mock-token";
+      if (_command === "git") return args[0] === "rev-parse" ? "candidate-sha" : "";
+      if (args[0] !== "deploy" || !args.includes("--build-only"))
+        throw new Error("Unexpected command: " + args.join(" "));
+      builds.push(args);
+      save();
+      return "";
+    };
+    syncBuiltinESMExports();
+    globalThis.fetch = async (url, options) => {
+      const { pathname } = new URL(url);
+      const [, , , app, ...segments] = pathname.split("/");
+      const path = segments.length ? "/" + segments.join("/") : "";
+      if (!machines.has(app)) throw new Error("Unexpected app: " + app);
+      const list = machines.get(app);
+      const body = options.body ? JSON.parse(options.body) : undefined;
+      let result;
+      if (options.method === "GET" && !path) result = { organization: { slug: ${JSON.stringify(environment.organization)} } };
+      else if (options.method === "GET" && path === "/machines") result = list;
+      else if (options.method === "POST" && path === "/volumes") {
+        volumes.push({ app, ...body });
+        result = { id: "store-volume" };
+      } else if (path.endsWith("/lease")) result = { data: { nonce: "mock-lease" } };
+      else if (options.method === "GET" && path.endsWith("/wait")) result = {};
+      else if (options.method === "GET") result = list.find((m) => path === "/machines/" + m.id);
+      else if (options.method === "POST" && body?.config) {
+        const id = path === "/machines" ? body.config.metadata.role : path.split("/").at(-1);
+        result = { id, state: "stopped", config: body.config };
+        const index = list.findIndex((m) => m.id === id);
+        if (index === -1) list.push(result); else list[index] = result;
+      } else throw new Error("Unexpected request: " + options.method + " " + path);
+      if (!result) throw new Error("Missing mock response: " + path);
+      save();
+      return new Response(JSON.stringify(result));
+    };
+  `,
+    );
+    const output = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        preload,
+        "infra/fly/deploy.mjs",
+        "all",
+        ...(environment.name === "proof" ? ["--environment", f.configPath] : []),
+      ],
+      { encoding: "utf8", stdio: "pipe" },
+    );
+    assert.match(output, /both run version candidate-sha/);
+    const result = JSON.parse(readFileSync(resultPath, "utf8"));
+    assert.equal(result.builds.length, 7);
+    assert.deepEqual(
+      result.volumes.map(({ app, size_gb }) => ({ app, size_gb })),
+      [{ app: environment.apps.stores, size_gb: 6 }],
+    );
+    const machines = new Map(result.machines);
+    const core = machines.get(environment.apps.core)[0].config;
+    const runner = machines.get(environment.apps.runner)[0].config;
+    const gate = machines.get(environment.apps.gate).find((m) => m.id === "gate").config;
+    assert.equal(core.mounts, undefined);
+    assert.equal(core.containers.filter((c) => c.env?.API_ROLE === "buyer").length, 3);
+    assert.equal(runner.guest.cpus, 16);
+    assert.equal(runner.env.PROOF_K6_CAPTURE_DIR, undefined);
+    assert.equal(runner.files, undefined);
+    assert.equal(runner.init, undefined);
+    const embedded = (holder, path) =>
+      JSON.parse(
+        Buffer.from(
+          holder.files.find((file) => file.guest_path === path).raw_value,
+          "base64",
+        ).toString("utf8"),
+      );
+    const api = core.containers.find((c) => c.name === "api");
+    assert.deepEqual(embedded(api, api.env.RUNNER_MACHINE_CONFIG_FILE), runner);
+    assert.deepEqual(embedded(gate, gate.env.CORE_MACHINE_CONFIG_FILE), core);
+    assert.equal(gate.env.STORES_FLY_APP, environment.apps.stores);
+  });
+}
 
 test("production target is refused before any lookup by lifecycle and deploy CLI", async (t) => {
   const f = fixture(t, { ...proof, apps: { ...proof.apps, runner: production.apps.runner } });

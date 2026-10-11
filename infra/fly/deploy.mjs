@@ -404,8 +404,11 @@ async function deployRunner(imageRefs, version) {
       existing.id,
       runnerLeaseTtlSeconds,
       async (machine, nonce) => {
-        // A deploy of the same commit leaves the runner untouched, even during a run.
-        if (includesConfig(machine.config, config)) return true;
+        // Capture can be disabled without changing the commit; replace its whole config then.
+        const sameCapture =
+          Object.hasOwn(machine.config.env, "PROOF_K6_CAPTURE_DIR") ===
+          Object.hasOwn(config.env, "PROOF_K6_CAPTURE_DIR");
+        if (sameCapture && includesConfig(machine.config, config)) return true;
         await requireStopped(machinesApi, machine, nonce);
         if (!(await updateInPlace(machinesApi, machine.id, config, nonce))) {
           await relocateRunner(machinesApi, machine.id, config, nonce);

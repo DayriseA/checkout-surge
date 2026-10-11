@@ -8,6 +8,7 @@ export const production = {
     core: "checkout-surge-core",
     runner: "checkout-surge-runner",
     gate: "checkout-surge-gate",
+    stores: "checkout-surge-stores",
   },
   publicOrigin: "https://checkout-surge-gate.fly.dev",
 };
@@ -18,7 +19,13 @@ export function loadEnvironment(path) {
   if (environment.name !== "proof" || environment.organization !== "playground-416") {
     throw new Error("A proof config must name proof and organization playground-416.");
   }
-  const roles = [...Object.keys(production.apps), ...(environment.apps?.stores ? ["stores"] : [])];
+  if (
+    environment.proofEvidenceCapture !== undefined &&
+    typeof environment.proofEvidenceCapture !== "boolean"
+  ) {
+    throw new Error("proofEvidenceCapture must be a boolean.");
+  }
+  const roles = ["core", "runner", "gate", ...(environment.apps?.stores ? ["stores"] : [])];
   const names = roles.map((role) => environment.apps?.[role]);
   if (
     Object.values(environment.apps ?? {}).some((name) =>

@@ -89,11 +89,19 @@ export function loadGuardConfig(env: Record<string, string | undefined>): GuardC
 
 function loadStoresConfig(env: Record<string, string | undefined>) {
   const organization = required(env, "EXPECTED_FLY_ORGANIZATION");
-  if (organization !== "playground-416")
-    throw new Error("Remote stores are restricted to the proof organization.");
   const names = [env.CORE_FLY_APP, env.RUNNER_FLY_APP, env.STORES_FLY_APP].filter(Boolean);
-  if (names.some((name) => name?.startsWith("checkout-surge-")))
-    throw new Error("Production apps cannot use proof stores lifecycle.");
+  const production =
+    organization === "personal" &&
+    env.FLY_APP_NAME === "checkout-surge-gate" &&
+    env.CORE_FLY_APP === "checkout-surge-core" &&
+    env.RUNNER_FLY_APP === "checkout-surge-runner" &&
+    env.STORES_FLY_APP === "checkout-surge-stores";
+  if (!production) {
+    if (organization !== "playground-416")
+      throw new Error("Remote stores require the proof organization or the production app tuple.");
+    if (names.some((name) => name?.startsWith("checkout-surge-")))
+      throw new Error("Production apps cannot use proof stores lifecycle.");
+  }
   return {
     appName: required(env, "STORES_FLY_APP"),
     token: required(env, "STORES_FLY_API_TOKEN"),

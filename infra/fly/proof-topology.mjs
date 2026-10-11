@@ -1,15 +1,15 @@
-// Explicit proof variant; production machine templates remain the reference inputs.
+// Shared remote-store topology; proof evidence capture is a separate, opt-in layer.
 export function configureProofTopology(config, environment) {
   if (!environment.apps.stores) return config;
   const role = config.metadata?.role;
   if (role === "stores") {
     config.guest = { cpu_kind: "performance", cpus: 2, memory_mb: 4096 };
     config.containers = config.containers.filter((c) => ["postgres", "redis"].includes(c.name));
-    // Pin proof dependencies so role evidence identifies immutable images.
+    // Both environments use the same immutable dependencies.
     config.containers.find((c) => c.name === "postgres").image =
-      "postgres:17-alpine@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3";
+      "registry-1.docker.io/library/postgres@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3";
     config.containers.find((c) => c.name === "redis").image =
-      "redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2";
+      "registry-1.docker.io/library/redis@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2";
     config.containers[0].cmd[2] = config.containers[0].cmd[2].replace(
       "listen_addresses=127.0.0.1",
       "listen_addresses='*'",
@@ -81,7 +81,7 @@ export function configureProofTopology(config, environment) {
     config.containers.find((c) => c.name === "web").env.API_BASE_URL = "http://127.0.0.1:4004";
     const caddy = config.containers.find((c) => c.name === "caddy");
     caddy.image =
-      "caddy:2-alpine@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229";
+      "registry-1.docker.io/library/caddy@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229";
     caddy.files[0].local_path = "infra/caddy/Caddyfile.proof";
     // The proof's k6 ingress now crosses this process as well as the buyer API.
     caddy.cmd = [
@@ -91,6 +91,7 @@ export function configureProofTopology(config, environment) {
     ];
   } else if (role === "runner") {
     config.guest = { cpu_kind: "performance", cpus: 16, memory_mb: 32768 };
+    if (environment.name !== "proof" || environment.proofEvidenceCapture !== true) return config;
     config.env.PROOF_K6_CAPTURE_DIR = "/var/lib/checkout-surge/load-orchestrator/proof-capture";
     config.files = [
       ...(config.files ?? []),
@@ -120,6 +121,7 @@ export function configureProofTopology(config, environment) {
       ],
     };
   } else if (role === "gate" || role === "guard") {
+    config.env.RUNNER_FLY_APP = environment.apps.runner;
     config.env.STORES_FLY_APP = environment.apps.stores;
     config.env.EXPECTED_FLY_ORGANIZATION = environment.organization;
     // Single-container gate/guard Machines receive the gate app's staged secrets normally.

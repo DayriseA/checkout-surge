@@ -5,8 +5,8 @@ import { configureMachine, loadEnvironment } from "./environment.mjs";
 import { waitForStores } from "./wait-for-stores.mjs";
 
 const proof = loadEnvironment(new URL("./proof.json", import.meta.url));
-const template = (role) =>
-  JSON.parse(readFileSync(new URL(`./${role}/machine.json`, import.meta.url), "utf8"));
+const template = (role, file = "machine.json") =>
+  JSON.parse(readFileSync(new URL(`./${role}/${file}`, import.meta.url), "utf8"));
 
 test("proof moves stores out and installs one authority with three buyers and private ingress", () => {
   const core = configureMachine(template("core"), proof);
@@ -47,18 +47,18 @@ test("proof moves stores out and installs one authority with three buyers and pr
   assert.ok(stores.containers[1].cmd[2].includes("--bind 0.0.0.0 ::"));
   assert.equal(
     stores.containers.find((c) => c.name === "postgres").image,
-    "postgres:17-alpine@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3",
+    "registry-1.docker.io/library/postgres@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3",
   );
   assert.equal(
     stores.containers.find((c) => c.name === "redis").image,
-    "redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
+    "registry-1.docker.io/library/redis@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
   );
   assert.equal(
     core.containers.find((c) => c.name === "caddy").image,
-    "caddy:2-alpine@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229",
+    "registry-1.docker.io/library/caddy@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229",
   );
   assert.equal(stores.services, undefined);
-  const runner = configureMachine(template("runner"), proof);
+  const runner = configureMachine(template("runner"), { ...proof, proofEvidenceCapture: true });
   assert.equal(runner.guest.cpus, 16);
   assert.equal(runner.guest.memory_mb, 32768);
   assert.equal(
@@ -73,17 +73,45 @@ test("proof moves stores out and installs one authority with three buyers and pr
   assert.ok(runner.init.exec[3].includes("mktemp -d /tmp/proof-observer.XXXXXX"));
   assert.ok(runner.init.exec[3].includes("timeout 10 sh -c"));
   assert.ok(runner.init.exec[3].endsWith("exec node dist/index.js"));
-  const original = template("runner");
-  assert.deepEqual(configureMachine(structuredClone(original), loadEnvironment()), original);
-  const originalCore = template("core");
-  const productionCore = configureMachine(structuredClone(originalCore), loadEnvironment());
-  assert.deepEqual(productionCore, originalCore);
-  assert.deepEqual(
-    ["postgres", "redis", "caddy"].map(
-      (name) => productionCore.containers.find((c) => c.name === name).image,
-    ),
-    ["postgres:17-alpine", "redis:7-alpine", "caddy:2-alpine"],
-  );
+});
+
+test("capture off preserves the measured physical topology and production never captures", () => {
+  for (const role of ["core", "runner", "gate", "guard", "stores"]) {
+    const input = () => {
+      const config =
+        role === "guard"
+          ? template("gate", "guard-machine.json")
+          : template(role === "stores" ? "core" : role);
+      config.metadata.role = role;
+      return config;
+    };
+    const captured = configureMachine(input(), { ...proof, proofEvidenceCapture: true });
+    const normal = configureMachine(input(), { ...proof, proofEvidenceCapture: false });
+    if (role === "runner") {
+      delete captured.env.PROOF_K6_CAPTURE_DIR;
+      delete captured.files;
+      delete captured.init;
+      assert.equal(normal.env.PROOF_K6_CAPTURE_DIR, undefined);
+      assert.equal(normal.files, undefined);
+      assert.equal(normal.init, undefined);
+    }
+    assert.deepEqual(normal, captured);
+    assert.deepEqual(configureMachine(input(), proof), normal);
+    const production = loadEnvironment();
+    assert.deepEqual(
+      configureMachine(input(), { ...production, proofEvidenceCapture: true }),
+      configureMachine(input(), production),
+    );
+    // Normalize identities in the generated config to compare every physical field.
+    let candidate = JSON.stringify(configureMachine(input(), production));
+    for (const [from, to] of [
+      [production.publicOrigin, proof.publicOrigin],
+      [production.organization, proof.organization],
+      ...Object.keys(production.apps).map((key) => [production.apps[key], proof.apps[key]]),
+    ])
+      candidate = candidate.replaceAll(from, to);
+    assert.deepEqual(JSON.parse(candidate), normal);
+  }
 });
 
 test("store setup retries authentication/connectivity and fails at its finite deadline", async () => {
