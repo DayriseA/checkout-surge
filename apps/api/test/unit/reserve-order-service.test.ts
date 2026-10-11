@@ -4,6 +4,8 @@ import type { OrderProcessJobPublisher } from "../../src/services/order-process-
 import {
   type BusinessOutcomeUpdateFailureReport,
   type BuyPersistence,
+  DefinitivePersistenceRejectionError,
+  type InlineOrderConfirmation,
   type OrderEnqueueFailureReport,
   type PendingPersistenceRecovery,
   type PersistedBuyAcceptance,
@@ -26,6 +28,7 @@ function buildService(options: {
   persistence: BuyPersistence;
   stockReservations: StockReservationGateway;
   orderProcessJobPublisher?: OrderProcessJobPublisher;
+  inlineConfirmation?: InlineOrderConfirmation;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   pendingPersistenceRecovery?: PendingPersistenceRecovery;
   reportPendingPersistenceEnsureFailure?: (report: ReservationPartialFailureReport) => void;
@@ -50,9 +53,13 @@ function buildService(options: {
   return new ReserveOrderService({
     persistence: options.persistence,
     stockReservations: options.stockReservations,
-    orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
-      enqueue: async () => undefined,
-    },
+    ...(options.inlineConfirmation
+      ? { inlineConfirmation: options.inlineConfirmation }
+      : {
+          orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
+            enqueue: async () => undefined,
+          },
+        }),
     reservationHoldMinutes: 15,
     idempotencyTtlSeconds: 1800,
     pendingPersistenceRetryAfterSeconds: 30,
@@ -133,6 +140,163 @@ function persistedBuy(hold: SecuredReservationHold): PersistedBuyAcceptance {
 }
 
 describe("ReserveOrderService queue handoff", () => {
+  it.each([
+    "fresh",
+    "replay",
+    "adoption",
+    "recovery",
+  ] as const)("confirms %s only after reservation cleanup, without ORDER publication", async (branch) => {
+    let releaseCleanup!: () => void;
+    let signalCleanup!: () => void;
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    const cleanupStarted = new Promise<void>((resolve) => {
+      signalCleanup = resolve;
+    });
+    const finishCleanup = async () => {
+      signalCleanup();
+      await cleanup;
+    };
+    const hold: SecuredReservationHold = {
+      id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      saleOfferId: request.saleOfferId,
+      runId: request.runId,
+      correlationId,
+      quantity: 1,
+      reservationToken: "res_canonical",
+      securedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 900_000).toISOString(),
+    };
+    const persisted = persistedBuy(hold);
+    const enqueue = vi.fn();
+    const confirm = vi.fn(async () => ({
+      outcome: "order_confirmed" as const,
+      order: {
+        ...persisted.order,
+        status: "confirmed" as const,
+        confirmedAt: "2026-06-20T12:00:01.000Z",
+      },
+    }));
+    const persistence: BuyPersistence = {
+      ...passThroughRunLocks,
+      persistSecuredReservation: async () => persisted,
+      getPersistedBuyByReservationId: async () => persisted,
+      async withRunAdmissionLock({ operation }) {
+        if (branch === "adoption") throw new DefinitivePersistenceRejectionError();
+        const result = await operation(persistence);
+        await finishCleanup();
+        return result;
+      },
+      async withRunPendingPersistenceLock({ operation }) {
+        const result = await operation(persistence, "admissible");
+        await finishCleanup();
+        return result;
+      },
+    };
+    const service = buildService({
+      persistence,
+      stockReservations: acceptingGateway({
+        reserve: async () => ({
+          outcome:
+            branch === "replay"
+              ? "idempotent_replay"
+              : branch === "recovery"
+                ? "reservation_pending_persistence"
+                : "reservation_secured",
+          reservation: hold,
+        }),
+      }),
+      // The helper selects the exclusive inline alternative, with no publisher installed.
+      orderProcessJobPublisher: { enqueue },
+      inlineConfirmation: { confirm },
+      pendingPersistenceRecovery: {
+        recoverReservation: async () => {
+          await finishCleanup();
+          return persisted;
+        },
+      },
+    });
+    const result = service.reserve({ request, correlationId, now });
+    await cleanupStarted;
+    expect(confirm).not.toHaveBeenCalled();
+    releaseCleanup();
+    await expect(result).resolves.toMatchObject({ outcome: "order_confirmed", reservation: hold });
+    expect(confirm).toHaveBeenCalledWith({ ...persisted, correlationId });
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("awaits promotion and preserves accepted identity when confirmation is unresolved", async () => {
+    let releasePromotion!: () => void;
+    let signalPromotion!: () => void;
+    const promotion = new Promise<void>((resolve) => {
+      releasePromotion = resolve;
+    });
+    const promotionStarted = new Promise<void>((resolve) => {
+      signalPromotion = resolve;
+    });
+    const confirm = vi.fn(async () => {
+      throw new Error("worker unavailable");
+    });
+    const service = buildService({
+      persistence: {
+        ...passThroughRunLocks,
+        persistSecuredReservation: async ({ reservation }) => persistedBuy(reservation),
+        getPersistedBuyByReservationId: async () => null,
+      },
+      stockReservations: acceptingGateway({
+        promoteAccepted: async () => {
+          signalPromotion();
+          await promotion;
+        },
+      }),
+      inlineConfirmation: { confirm },
+    });
+    const result = service.reserve({ request, correlationId, now });
+    await promotionStarted;
+    expect(confirm).not.toHaveBeenCalled();
+    releasePromotion();
+    await expect(result).resolves.toMatchObject({
+      outcome: "order_confirmation_pending",
+      order: { id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" },
+    });
+  });
+
+  it("keeps pending persistence non-successful and retries the same canonical identity", async () => {
+    let hold: SecuredReservationHold;
+    let recover = false;
+    const confirm = vi.fn(async (input: Parameters<InlineOrderConfirmation["confirm"]>[0]) => ({
+      outcome: "order_confirmation_pending" as const,
+      order: input.order,
+    }));
+    const service = buildService({
+      persistence: {
+        ...passThroughRunLocks,
+        persistSecuredReservation: vi.fn(),
+        getPersistedBuyByReservationId: vi.fn(),
+      },
+      stockReservations: acceptingGateway({
+        reserve: async (input) => {
+          hold ??= input.reservation;
+          return { outcome: "reservation_pending_persistence", reservation: hold };
+        },
+      }),
+      pendingPersistenceRecovery: {
+        recoverReservation: async () => (recover ? persistedBuy(hold) : null),
+      },
+      inlineConfirmation: { confirm },
+    });
+    const pending = await service.reserve({ request, correlationId, now });
+    expect(pending).toMatchObject({ outcome: "order_confirmation_pending", order: null });
+    expect(confirm).not.toHaveBeenCalled();
+    recover = true;
+    const retry = await service.reserve({ request, correlationId, now });
+    expect(retry.reservation).toEqual(pending.reservation);
+    expect(retry).toMatchObject({
+      outcome: "order_confirmation_pending",
+      order: { reservationId: pending.reservation?.id },
+    });
+  });
   it("observes the Redis and whole-service boundaries without changing the outcome", async () => {
     const observations: unknown[] = [];
     const observe = vi.fn((input) => {

@@ -88,6 +88,14 @@ function parseLoadRunIdHeader(headerValue: string | string[] | undefined): strin
 
 function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outcome"]): number {
   switch (outcome) {
+    case "order_confirmed":
+      return 200;
+    case "order_confirmation_pending":
+      return 503;
+    case "order_confirmation_timed_out":
+      return 504;
+    case "order_confirmation_failed":
+      return 502;
     case "reservation_secured":
     case "reservation_pending_persistence":
       return 202;

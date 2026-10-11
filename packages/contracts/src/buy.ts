@@ -86,6 +86,52 @@ export const acceptedOrderSummarySchema = orderSummarySchema
   .extend({ status: z.literal("queued") });
 export type AcceptedOrderSummary = z.infer<typeof acceptedOrderSummarySchema>;
 
+export const confirmedOrderSummarySchema = orderSummarySchema.extend({
+  status: z.literal("confirmed"),
+  confirmedAt: isoTimestampSchema,
+});
+export const failedOrderSummarySchema = orderSummarySchema.extend({
+  status: z.literal("failed"),
+  failedAt: isoTimestampSchema,
+});
+export const pendingOrderSummarySchema = orderSummarySchema.extend({
+  status: z.enum(["queued", "processing"]),
+});
+
+const confirmationResponseBaseShape = {
+  correlationId: correlationIdSchema,
+  timestamp: isoTimestampSchema,
+  reservation: reservationSummarySchema,
+};
+const orderConfirmedResponseSchema = z
+  .object({
+    ...confirmationResponseBaseShape,
+    outcome: z.literal("order_confirmed"),
+    order: confirmedOrderSummarySchema,
+  })
+  .strict();
+const orderConfirmationPendingResponseSchema = z
+  .object({
+    ...confirmationResponseBaseShape,
+    outcome: z.literal("order_confirmation_pending"),
+    order: pendingOrderSummarySchema.nullable(),
+  })
+  .strict();
+const orderConfirmationTimedOutResponseSchema = z
+  .object({
+    ...confirmationResponseBaseShape,
+    outcome: z.literal("order_confirmation_timed_out"),
+    order: pendingOrderSummarySchema.nullable(),
+  })
+  .strict();
+const orderConfirmationFailedResponseSchema = z
+  .object({
+    ...confirmationResponseBaseShape,
+    outcome: z.literal("order_confirmation_failed"),
+    order: failedOrderSummarySchema,
+  })
+  .strict();
+
 export const reservationAcceptedResponseSchema = z
   .object({
     outcome: z.literal("reservation_secured"),
@@ -156,6 +202,10 @@ export const reservationRejectedResponseSchema = z.discriminatedUnion(
 export type ReservationRejectedResponse = z.infer<typeof reservationRejectedResponseSchema>;
 
 export const buyResponseSchema = z.discriminatedUnion("outcome", [
+  orderConfirmedResponseSchema,
+  orderConfirmationPendingResponseSchema,
+  orderConfirmationTimedOutResponseSchema,
+  orderConfirmationFailedResponseSchema,
   reservationAcceptedResponseSchema,
   reservationPendingPersistenceResponseSchema,
   ...rejectedResponseVariants,

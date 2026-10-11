@@ -17,6 +17,7 @@ export function createPostgresReserveOrderService(
     | "persistence"
     | "stockReservations"
     | "orderProcessJobPublisher"
+    | "inlineConfirmation"
     | "soldOutObservations"
     | "recordRedisReservationTiming"
   >,

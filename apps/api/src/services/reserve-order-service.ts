@@ -5,6 +5,8 @@ import {
   type BuyRequest,
   type BuyResponse,
   buyResponseSchema,
+  type InlineConfirmationResult,
+  inlineConfirmationResultSchema,
   type OrderProcessJob,
   type ReservationRejectedResponse,
   type SecuredReservationHold,
@@ -56,6 +58,16 @@ export interface PersistedBuyAcceptance {
   reservation: AcceptedReservationSummary;
   order: AcceptedOrderSummary;
 }
+
+export interface InlineOrderConfirmation {
+  confirm(
+    input: PersistedBuyAcceptance & { correlationId: string },
+  ): Promise<InlineConfirmationResult>;
+}
+
+type OrderProcessingOptions =
+  | { orderProcessJobPublisher: OrderProcessJobPublisher; inlineConfirmation?: never }
+  | { inlineConfirmation: InlineOrderConfirmation; orderProcessJobPublisher?: never };
 
 export interface BuyPersistenceOperations {
   persistSecuredReservation(input: {
@@ -177,7 +189,8 @@ type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
-  private readonly orderProcessJobPublisher: OrderProcessJobPublisher;
+  private readonly orderProcessJobPublisher: OrderProcessJobPublisher | undefined;
+  private readonly inlineConfirmation: InlineOrderConfirmation | undefined;
   private readonly reservationHoldMinutes: number;
   private readonly idempotencyTtlSeconds: number;
   private readonly pendingPersistenceRetryAfterSeconds: number;
@@ -199,32 +212,34 @@ export class ReserveOrderService {
   private readonly monotonicNow: () => number;
   private readonly recordRedisReservationTiming: boolean;
 
-  constructor(options: {
-    persistence: BuyPersistence;
-    stockReservations: StockReservationGateway;
-    orderProcessJobPublisher: OrderProcessJobPublisher;
-    reservationHoldMinutes: number;
-    idempotencyTtlSeconds: number;
-    pendingPersistenceRetryAfterSeconds: number;
-    pendingPersistenceRecovery: PendingPersistenceRecovery;
-    generateId?: () => string;
-    reportPersistenceFailure?: ReservationPartialFailureReporter;
-    reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
-    reportPromotionFailure?: ReservationPartialFailureReporter;
-    reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
-    reportReservationReversalFailure?: ReservationPartialFailureReporter;
-    publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
-    scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
-    reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
-    dashboardSourceDirtyScheduler?: DashboardSourceDirtySchedulerPort;
-    soldOutObservations?: SoldOutObservationPort;
-    reservationTimingObservations?: ReservationTimingObservationPort;
-    monotonicNow?: () => number;
-    recordRedisReservationTiming?: boolean;
-  }) {
+  constructor(
+    options: OrderProcessingOptions & {
+      persistence: BuyPersistence;
+      stockReservations: StockReservationGateway;
+      reservationHoldMinutes: number;
+      idempotencyTtlSeconds: number;
+      pendingPersistenceRetryAfterSeconds: number;
+      pendingPersistenceRecovery: PendingPersistenceRecovery;
+      generateId?: () => string;
+      reportPersistenceFailure?: ReservationPartialFailureReporter;
+      reportPendingPersistenceEnsureFailure?: ReservationPartialFailureReporter;
+      reportPromotionFailure?: ReservationPartialFailureReporter;
+      reportOrderEnqueueFailure?: (report: OrderEnqueueFailureReport) => void;
+      reportReservationReversalFailure?: ReservationPartialFailureReporter;
+      publishBusinessOutcomeUpdate?: BusinessOutcomeUpdatePublisher;
+      scheduleBusinessOutcomeUpdate?: BusinessOutcomeUpdateScheduler;
+      reportBusinessOutcomeUpdateFailure?: (report: BusinessOutcomeUpdateFailureReport) => void;
+      dashboardSourceDirtyScheduler?: DashboardSourceDirtySchedulerPort;
+      soldOutObservations?: SoldOutObservationPort;
+      reservationTimingObservations?: ReservationTimingObservationPort;
+      monotonicNow?: () => number;
+      recordRedisReservationTiming?: boolean;
+    },
+  ) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
     this.orderProcessJobPublisher = options.orderProcessJobPublisher;
+    this.inlineConfirmation = options.inlineConfirmation;
     this.reservationHoldMinutes = options.reservationHoldMinutes;
     this.idempotencyTtlSeconds = options.idempotencyTtlSeconds;
     this.pendingPersistenceRetryAfterSeconds = options.pendingPersistenceRetryAfterSeconds;
@@ -266,9 +281,12 @@ export class ReserveOrderService {
     const serviceStartedAt = this.monotonicNow();
     let redisAtomicReservationMs: number | undefined;
     try {
-      return await this.performReservation(input, (durationMs) => {
+      const response = await this.performReservation(input, (durationMs) => {
         if (this.recordRedisReservationTiming) redisAtomicReservationMs = durationMs;
       });
+      // Await the full reservation workflow, including lock/session release and promotion,
+      // before starting the longer ERP wait.
+      return this.inlineConfirmation ? await this.confirmReservation(response) : response;
     } finally {
       try {
         this.reservationTimingObservations.observe({
@@ -280,6 +298,40 @@ export class ReserveOrderService {
         // Timing observability is advisory and cannot alter the reservation outcome.
       }
     }
+  }
+
+  private async confirmReservation(response: BuyResponse): Promise<BuyResponse> {
+    if (response.outcome === "reservation_pending_persistence") {
+      return buyResponseSchema.parse({
+        outcome: "order_confirmation_pending",
+        correlationId: response.correlationId,
+        timestamp: response.timestamp,
+        reservation: response.reservation,
+        order: null,
+      });
+    }
+    if (response.outcome !== "reservation_secured" || !this.inlineConfirmation) return response;
+
+    let result: InlineConfirmationResult;
+    try {
+      result = inlineConfirmationResultSchema.parse(
+        await this.inlineConfirmation.confirm({
+          reservation: response.reservation,
+          order: response.order,
+          correlationId: response.correlationId,
+        }),
+      );
+    } catch {
+      // A transport or technical error cannot establish a durable business failure.
+      result = { outcome: "order_confirmation_pending", order: response.order };
+    }
+    return buyResponseSchema.parse({
+      ...result,
+      correlationId: response.correlationId,
+      timestamp: new Date().toISOString(),
+      reservation: response.reservation,
+      order: result.order ?? response.order,
+    });
   }
 
   private async performReservation(
@@ -532,12 +584,14 @@ export class ReserveOrderService {
     idempotencyKey: string,
     reservation: SecuredReservationHold,
   ): Promise<void> {
+    if (!this.orderProcessJobPublisher) return;
+    const publisher = this.orderProcessJobPublisher;
     const enqueue = async (): Promise<void> => {
       try {
         // PostgreSQL and BullMQ are not atomic. Every durable replay re-asserts this
         // deterministic job before Redis can be promoted to an accepted response.
         const job = this.toOrderProcessJob(persisted);
-        await this.orderProcessJobPublisher.enqueue(job);
+        await publisher.enqueue(job);
         this.scheduleQueueSnapshot(reservation);
       } catch (error) {
         safelyReportPartialFailure(this.reportOrderEnqueueFailure, {

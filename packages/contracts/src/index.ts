@@ -8,6 +8,7 @@ export * from "./erp-outcomes.js";
 export * from "./error.js";
 export * from "./estimate.js";
 export * from "./health.js";
+export * from "./inline-confirmation.js";
 export * from "./inventory.js";
 export * from "./lifecycle.js";
 export * from "./load.js";

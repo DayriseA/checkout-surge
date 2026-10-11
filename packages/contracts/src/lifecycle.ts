@@ -7,9 +7,21 @@ export const publicBuyOutcomeValues = [
   "run_not_accepting_traffic",
   "inventory_not_initialized",
   "idempotency_conflict",
+  "order_confirmed",
+  "order_confirmation_pending",
+  "order_confirmation_timed_out",
+  "order_confirmation_failed",
 ] as const;
 
-export const reservationDecisionValues = [...publicBuyOutcomeValues, "idempotent_replay"] as const;
+export const reservationDecisionValues = [
+  "reservation_secured",
+  "reservation_pending_persistence",
+  "sold_out",
+  "run_not_accepting_traffic",
+  "inventory_not_initialized",
+  "idempotency_conflict",
+  "idempotent_replay",
+] as const;
 export const reservationDecisionSchema = z.enum(reservationDecisionValues);
 
 export const orderStatusValues = ["queued", "processing", "confirmed", "failed"] as const;
