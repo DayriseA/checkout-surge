@@ -789,6 +789,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "comparison_id": {
+          "name": "comparison_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -874,6 +880,15 @@
           "tableFrom": "demo_runs",
           "tableTo": "sale_offers",
           "columnsFrom": ["sale_offer_id"],
+          "columnsTo": ["id"],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "demo_runs_comparison_id_demo_comparisons_id_fk": {
+          "name": "demo_runs_comparison_id_demo_comparisons_id_fk",
+          "tableFrom": "demo_runs",
+          "tableTo": "demo_comparisons",
+          "columnsFrom": ["comparison_id"],
           "columnsTo": ["id"],
           "onDelete": "restrict",
           "onUpdate": "no action"
@@ -2729,7 +2744,12 @@
       "name": "postgres_run_sold_out_counts",
       "schema": "",
       "columns": {
-        "run_id": { "name": "run_id", "type": "uuid", "primaryKey": true, "notNull": true },
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
         "count": {
           "name": "count",
           "type": "integer",
@@ -3751,6 +3771,86 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.demo_comparisons": {
+      "name": "demo_comparisons",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "children": {
+          "name": "children",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_stage": {
+          "name": "current_stage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "state": {
+          "name": "state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "terminal_reason": {
+          "name": "terminal_reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "terminal_at": {
+          "name": "terminal_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "budget_compensation": {
+          "name": "budget_compensation",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "demo_comparisons_stage_check": {
+          "name": "demo_comparisons_stage_check",
+          "value": "\"demo_comparisons\".\"current_stage\" BETWEEN 0 AND 3"
+        },
+        "demo_comparisons_state_check": {
+          "name": "demo_comparisons_state_check",
+          "value": "\"demo_comparisons\".\"state\" IN ('running', 'cleanup_pending', 'completed', 'failed')"
+        },
+        "demo_comparisons_children_check": {
+          "name": "demo_comparisons_children_check",
+          "value": "jsonb_array_length(\"demo_comparisons\".\"children\") = 4"
+        }
+      },
       "isRLSEnabled": false
     }
   },

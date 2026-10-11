@@ -50,6 +50,7 @@ import { Queue } from "bullmq";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRunInventoryLifecycle } from "../../../api/src/runtime/run-inventory-lifecycle.js";
 import { DemoRunFinalizationService } from "../../../api/src/services/demo-run-finalization-service.js";
 import { PostgresBuyPersistence } from "../../../api/src/services/postgres-buy-persistence.js";
 import { ReserveOrderService } from "../../../api/src/services/reserve-order-service.js";
@@ -3241,6 +3242,7 @@ function createFinalizationService(
     runnerOperations: { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: connection.db,
+    inventory: createRunInventoryLifecycle(connection.db, redis),
     redis,
     logger: createSilentLogger("api"),
     terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(connection.db, {

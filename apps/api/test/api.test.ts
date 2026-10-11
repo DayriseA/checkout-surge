@@ -122,6 +122,7 @@ import {
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
+import { createRedisPendingPersistenceStorage } from "../src/runtime/pending-persistence-operation-factory.js";
 import { type BuildApiServerOptions, buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import {
@@ -441,7 +442,7 @@ function createTestPendingPersistenceRecovery(input: {
   now?: () => Date;
 }): PendingPersistenceRecoveryService {
   return new PendingPersistenceRecoveryService({
-    redis: input.redis,
+    storage: createRedisPendingPersistenceStorage(input.redis),
     persistence: input.persistence,
     audit: {
       recordAttempt: (attempt) => input.auditPersistence.recordPendingPersistenceAttempt(attempt),
@@ -3529,7 +3530,7 @@ describe("API buy persistence", () => {
     const jobs: OrderProcessJob[] = [];
     const persistence = new PostgresBuyPersistence(connection.db);
     const recovery = new PendingPersistenceRecoveryService({
-      redis,
+      storage: createRedisPendingPersistenceStorage(redis),
       persistence,
       audit: {
         recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),
@@ -3603,7 +3604,7 @@ describe("API buy persistence", () => {
     if (!decision.reservation) throw new Error("Expected a secured Redis hold.");
     const persistence = new PostgresBuyPersistence(connection.db);
     const recovery = new PendingPersistenceRecoveryService({
-      redis,
+      storage: createRedisPendingPersistenceStorage(redis),
       persistence,
       audit: {
         recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),

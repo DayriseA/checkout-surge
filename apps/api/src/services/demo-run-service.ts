@@ -25,15 +25,17 @@ import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  demoRunSaleContexts,
   demoRuns,
   InventoryNotInitializedError,
-  products,
-  saleOffers,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
+import { and, eq, inArray, not, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
+import {
+  AcceptedRunLaunchRejectedError,
+  insertStartingRun,
+  requireDemoStartSlot,
+} from "./accepted-demo-run.js";
 import {
   assessCapacity,
   automaticConstantArrivalVus,
@@ -79,7 +81,6 @@ import {
 
 export const demoRunStartLockKey = "checkout_surge_demo_run_start";
 const singleNonTerminalRunIndexName = "demo_runs_single_non_terminal_idx";
-const generatedRunSaleDurationMs = 24 * 60 * 60 * 1000;
 
 export interface DemoRunLifecycleController {
   previewRun(request: StartDemoRunCommand): Promise<PreviewDemoRunResponse>;
@@ -190,99 +191,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         now,
         reservePublicBudget,
       );
-      const saleOfferId = requireRunSaleOfferId(accepted.run);
-      await this.removePreviousRunInventories();
-
-      try {
-        // Select the buying implementation on every peer before stock becomes accepting.
-        await this.options.onRunAccepted?.(accepted.run.runId);
-        await this.options.queueLimits.synchronize();
-        await this.options.inventory.initialize(
-          {
-            runId: accepted.run.runId,
-            saleOfferId,
-            executionMode: accepted.run.executionMode,
-          },
-          accepted.run.configSnapshot.inventoryConfig.startingStock,
-          now,
-        );
-      } catch (error) {
-        await this.failRun(
-          accepted.run.runId,
-          "inventory_initialization_failed",
-          correlationId,
-          "no_traffic_started",
-        );
-        throw error;
-      }
-
-      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
-        run: accepted.run,
-        correlationId,
-      });
-
-      let boot: RunnerBoot;
-      try {
-        boot = await this.options.runnerOperations.bootForRun(accepted.run.runId, {
-          onRelocating: () => this.markRunnerRelocating(accepted.run.runId, correlationId),
-        });
-      } catch (error) {
-        // The runner failed before any start was dispatched: no traffic can have started.
-        await this.failRun(
-          accepted.run.runId,
-          error instanceof RunnerCapacityUnavailableError
-            ? "runner_capacity_unavailable"
-            : "load_generator_not_started",
-          correlationId,
-          "no_traffic_started",
-        );
-        throw error;
-      }
-      // If this write fails, the run stays starting: reconciliation then fails it when the boot
-      // is not recorded, or replays it against the boot when the write did commit.
-      await this.recordRunnerBoot(accepted.run.runId, boot);
-
-      let trafficResponse: TrafficExecutionStartResponse;
-      try {
-        trafficResponse = await this.options.trafficExecutionGateway.start({
-          runId: accepted.run.runId,
-          saleOfferId,
-          apiBaseUrl: this.options.apiBaseUrl,
-          expectedBootId: boot.bootId,
-          correlationId,
-          configSnapshot: accepted.run.configSnapshot,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
-        ) {
-          const rejected = error instanceof TrafficStartRejectedError;
-          await this.failRun(
-            accepted.run.runId,
-            rejected ? "load_generator_not_started" : "load_orchestrator_unavailable",
-            correlationId,
-            rejected ? "no_traffic_started" : "unavailable",
-          );
-        }
-        throw error;
-      }
-
-      const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
-        accepted.run.runId,
-        trafficResponse,
-        now,
-      );
-      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
-        run: runAfterTrafficStart,
-        correlationId,
-      });
-
-      return startDemoRunResponseSchema.parse({
-        run: runAfterTrafficStart,
-        recovery: { establishedAt: now.toISOString() },
-        correlationId,
-        timestamp: now.toISOString(),
-      });
+      return await this.launchAcceptedRunExclusive(accepted.run, correlationId);
     } catch (error) {
       if (reservation) {
         try {
@@ -294,8 +203,109 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         }
       }
-      throw error;
+      throw error instanceof AcceptedRunLaunchRejectedError ? error.cause : error;
     }
+  }
+
+  /** Caller holds the composed control maintenance authority; no SQL transaction is open. */
+  async launchAcceptedRunExclusive(
+    acceptedRun: DemoRunSnapshot,
+    correlationId: string,
+  ): Promise<StartDemoRunResponse> {
+    const now = acceptedRun.startedAt ? new Date(acceptedRun.startedAt) : this.now();
+    const saleOfferId = requireRunSaleOfferId(acceptedRun);
+    await this.removePreviousRunInventories();
+
+    try {
+      // Select the buying implementation on every peer before stock becomes accepting.
+      await this.options.onRunAccepted?.(acceptedRun.runId);
+      await this.options.queueLimits.synchronize();
+      await this.options.inventory.initialize(
+        {
+          runId: acceptedRun.runId,
+          saleOfferId,
+          executionMode: acceptedRun.executionMode,
+        },
+        acceptedRun.configSnapshot.inventoryConfig.startingStock,
+        now,
+      );
+    } catch (error) {
+      await this.failRun(
+        acceptedRun.runId,
+        "inventory_initialization_failed",
+        correlationId,
+        "no_traffic_started",
+      );
+      throw new AcceptedRunLaunchRejectedError(error);
+    }
+
+    await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+      run: acceptedRun,
+      correlationId,
+    });
+
+    let boot: RunnerBoot;
+    try {
+      boot = await this.options.runnerOperations.bootForRun(acceptedRun.runId, {
+        onRelocating: () => this.markRunnerRelocating(acceptedRun.runId, correlationId),
+      });
+    } catch (error) {
+      // The runner failed before any start was dispatched: no traffic can have started.
+      await this.failRun(
+        acceptedRun.runId,
+        error instanceof RunnerCapacityUnavailableError
+          ? "runner_capacity_unavailable"
+          : "load_generator_not_started",
+        correlationId,
+        "no_traffic_started",
+      );
+      throw new AcceptedRunLaunchRejectedError(error);
+    }
+    // If this write fails, the run stays starting: reconciliation then fails it when the boot
+    // is not recorded, or replays it against the boot when the write did commit.
+    await this.recordRunnerBoot(acceptedRun.runId, boot);
+
+    let trafficResponse: TrafficExecutionStartResponse;
+    try {
+      trafficResponse = await this.options.trafficExecutionGateway.start({
+        runId: acceptedRun.runId,
+        saleOfferId,
+        apiBaseUrl: this.options.apiBaseUrl,
+        expectedBootId: boot.bootId,
+        correlationId,
+        configSnapshot: acceptedRun.configSnapshot,
+      });
+    } catch (error) {
+      if (!(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")) {
+        const rejected = error instanceof TrafficStartRejectedError;
+        await this.failRun(
+          acceptedRun.runId,
+          rejected ? "load_generator_not_started" : "load_orchestrator_unavailable",
+          correlationId,
+          rejected ? "no_traffic_started" : "unavailable",
+        );
+      }
+      throw error instanceof TrafficStartRejectedError
+        ? new AcceptedRunLaunchRejectedError(error)
+        : error;
+    }
+
+    const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
+      acceptedRun.runId,
+      trafficResponse,
+      now,
+    );
+    await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+      run: runAfterTrafficStart,
+      correlationId,
+    });
+
+    return startDemoRunResponseSchema.parse({
+      run: runAfterTrafficStart,
+      recovery: { establishedAt: now.toISOString() },
+      correlationId,
+      timestamp: now.toISOString(),
+    });
   }
 
   /**
@@ -426,37 +436,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       return await this.options.db.transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
 
-        const [existingRun] = await tx
-          .select({ id: demoRuns.id, status: demoRuns.status })
-          .from(demoRuns)
-          .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
-          .limit(1);
-
-        if (existingRun) {
-          throw new DemoRunValidationError(
-            "run_conflict",
-            "A demo run is already starting, active, or draining.",
-            {
-              conflictReason: "active_run_exists",
-              runId: existingRun.id,
-              status: existingRun.status,
-            },
-          );
-        }
-
-        const [incompleteReset] = await tx
-          .select({ runId: demoRuns.id })
-          .from(demoRuns)
-          .where(incompleteAdminResetPredicate())
-          .limit(1);
-
-        if (incompleteReset) {
-          throw new DemoRunValidationError(
-            "run_conflict",
-            "The prior demo reset must be repaired before another run can start.",
-            { conflictReason: "reset_incomplete", runId: incompleteReset.runId },
-          );
-        }
+        await requireDemoStartSlot(tx);
 
         const config = await this.resolveValidatedConfig(request, tx);
         const { preset, snapshot, policy } = config;
@@ -468,62 +448,18 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         }
         await beforeInsert(policy);
 
-        const [product] = await tx
-          .select({ id: products.id })
-          .from(products)
-          .where(eq(products.isActive, true))
-          .orderBy(desc(products.updatedAt))
-          .limit(1);
-
-        if (!product) {
-          throw new DemoRunValidationError(
-            "resource_not_found",
-            "No active product is available for demo runs.",
-          );
-        }
-
-        await tx.insert(saleOffers).values({
-          id: saleOfferId,
-          productId: product.id,
-          name: `${preset.display.name} Generated Run Offer`,
-          allocatedStock: snapshot.inventoryConfig.startingStock,
-          saleStartsAt: now,
-          saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        const [run] = await tx
-          .insert(demoRuns)
-          .values({
-            id: runId,
-            presetId: preset.id,
-            presetName: preset.display.name,
-            operatorMode: request.operatorMode,
-            status: "starting",
-            trafficStatus: "starting",
-            configSnapshot: snapshot,
-            correlationId,
-            saleOfferId,
-            startedAt: now,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning();
-
-        if (!run) {
-          throw new Error("Failed to create demo run.");
-        }
-
-        await tx.insert(demoRunSaleContexts).values({
+        const run = await insertStartingRun(tx, {
           runId,
           saleOfferId,
-          createdAt: now,
-          updatedAt: now,
+          presetId: preset.id,
+          presetName: preset.display.name,
+          snapshot,
+          executionMode: "demo",
+          operatorMode: request.operatorMode,
+          correlationId,
+          acceptedAt: now,
         });
-
-        return { run: toDemoRunSnapshot(run) };
+        return { run };
       });
     } catch (error) {
       if (isSingleNonTerminalRunViolation(error)) {

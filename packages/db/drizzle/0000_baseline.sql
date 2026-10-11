@@ -12,6 +12,21 @@ CREATE TYPE "public"."order_waiting_reason" AS ENUM('local_admission', 'erp_capa
 CREATE TYPE "public"."recovery_job_status" AS ENUM('pending', 'enqueued', 'escalated', 'resolved');--> statement-breakpoint
 CREATE TYPE "public"."reservation_pending_persistence_status" AS ENUM('pending_reconciliation', 'reconciled', 'exhausted');--> statement-breakpoint
 CREATE TYPE "public"."traffic_completion_enrichment_status" AS ENUM('pending', 'completed');--> statement-breakpoint
+CREATE TABLE "demo_comparisons" (
+ "id" uuid PRIMARY KEY NOT NULL,
+ "accepted_at" timestamp with time zone NOT NULL,
+ "correlation_id" text NOT NULL,
+ "children" jsonb NOT NULL,
+ "current_stage" integer NOT NULL,
+ "state" text NOT NULL,
+ "terminal_reason" text,
+ "terminal_at" timestamp with time zone,
+ "budget_compensation" jsonb,
+ CONSTRAINT "demo_comparisons_stage_check" CHECK ("demo_comparisons"."current_stage" BETWEEN 0 AND 3),
+ CONSTRAINT "demo_comparisons_state_check" CHECK ("demo_comparisons"."state" IN ('running', 'cleanup_pending', 'completed', 'failed')),
+ CONSTRAINT "demo_comparisons_children_check" CHECK (jsonb_array_length("demo_comparisons"."children") = 4)
+);
+--> statement-breakpoint
 CREATE TABLE "demo_presets" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"slug" text NOT NULL,
@@ -92,6 +107,7 @@ CREATE TABLE "demo_runs" (
 	"preset_name" text NOT NULL,
 	"operator_mode" "demo_run_operator_mode" NOT NULL,
 	"execution_mode" "run_execution_mode" DEFAULT 'demo' NOT NULL,
+ "comparison_id" uuid,
 	"status" "demo_run_status" DEFAULT 'starting' NOT NULL,
 	"traffic_status" "demo_run_traffic_status" DEFAULT 'not_started' NOT NULL,
 	"config_snapshot" jsonb NOT NULL,
@@ -502,3 +518,7 @@ CREATE TABLE "postgres_order_deliveries" (
 --> statement-breakpoint
 ALTER TABLE "postgres_order_deliveries" ADD CONSTRAINT "postgres_order_deliveries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "postgres_order_deliveries_due_idx" ON "postgres_order_deliveries" USING btree ("due_at") WHERE "postgres_order_deliveries"."settled_at" is null;
+--> statement-breakpoint
+ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_comparison_id_demo_comparisons_id_fk" FOREIGN KEY ("comparison_id") REFERENCES "public"."demo_comparisons"("id") ON DELETE restrict ON UPDATE no action;
+--> statement-breakpoint
+CREATE UNIQUE INDEX "demo_comparisons_single_open_idx" ON "demo_comparisons" USING btree ((true)) WHERE "state" IN ('running', 'cleanup_pending');

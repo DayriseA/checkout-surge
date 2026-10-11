@@ -202,7 +202,9 @@ describe("capacity-aware admission model", () => {
   });
 
   it("classifies every public preset as expected to complete on both deployments", () => {
-    const publicPresets = buildSeedPresets().filter((preset) => preset.visibility === "public");
+    const publicPresets = buildSeedPresets().filter(
+      (preset) => preset.visibility === "public" && !preset.archivedAt,
+    );
     expect(publicPresets.length).toBeGreaterThan(0);
     for (const capacity of [fly, local]) {
       for (const preset of publicPresets) {

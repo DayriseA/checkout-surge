@@ -40,6 +40,7 @@ it("recovers through real PostgreSQL acceptance/publication with pool one, backo
       close: async () => undefined,
     });
     const publisher = scope.orderProcessJobPublisher;
+    if (!publisher) throw new Error("PostgreSQL attempt must provide its session-bound publisher.");
     scope.orderProcessJobPublisher = {
       enqueue: async (job) => {
         if (rejectPublication) throw new Error("Publication unavailable.");
@@ -53,8 +54,11 @@ it("recovers through real PostgreSQL acceptance/publication with pool one, backo
     return scope;
   };
   const base = await openAttemptScope({ signal: new AbortController().signal });
+  if (!base.orderProcessJobPublisher)
+    throw new Error("PostgreSQL attempt must provide its session-bound publisher.");
   const service = new PendingPersistenceRecoveryService({
     ...base,
+    orderProcessJobPublisher: base.orderProcessJobPublisher,
     storage,
     openAttemptScope,
     listRunScopes: async () => [{ runId, saleOfferId }],
@@ -177,8 +181,11 @@ it("routes scheduled and authenticated direct recovery through durable PG owners
     signal: new AbortController().signal,
     close: async () => {},
   });
+  if (!base.orderProcessJobPublisher)
+    throw new Error("PostgreSQL attempt must provide its session-bound publisher.");
   const service = new PendingPersistenceRecoveryService({
     ...base,
+    orderProcessJobPublisher: base.orderProcessJobPublisher,
     storage: operations.storage,
     listRunScopes: (signal) => operations.listRunScopes(signal),
     resolveRunScope: (reservation) => operations.resolveRunScope(reservation),

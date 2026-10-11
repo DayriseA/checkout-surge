@@ -11,6 +11,7 @@ import type {
   OrderProcessJob,
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
+  RunExecutionMode,
   RunSignalTimelineSummary,
   SecuredReservationHold,
   ServerReservationTimingSummary,
@@ -177,6 +178,51 @@ export const demoPresets = pgTable(
   ],
 );
 
+export interface ComparisonChildDefinition {
+  runId: string;
+  saleOfferId: string;
+  executionMode: RunExecutionMode;
+  presetId: string;
+  presetName: string;
+  snapshot: AcceptedRunConfigSnapshot;
+}
+
+export type ComparisonChildren = [
+  ComparisonChildDefinition,
+  ComparisonChildDefinition,
+  ComparisonChildDefinition,
+  ComparisonChildDefinition,
+];
+
+export const demoComparisons = pgTable(
+  "demo_comparisons",
+  {
+    id: uuid("id").primaryKey(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull(),
+    correlationId: text("correlation_id").notNull(),
+    children: jsonObject<ComparisonChildren>("children"),
+    currentStage: integer("current_stage").notNull(),
+    state: text("state").$type<"running" | "cleanup_pending" | "completed" | "failed">().notNull(),
+    terminalReason: text("terminal_reason"),
+    terminalAt: timestamp("terminal_at", { withTimezone: true }),
+    budgetCompensation: jsonb("budget_compensation").$type<{
+      reservationId: string;
+      globalKey: string;
+      visitorKey: string;
+      reservationKey: string;
+    }>(),
+  },
+  (table) => [
+    check("demo_comparisons_stage_check", sql`${table.currentStage} BETWEEN 0 AND 3`),
+    check(
+      "demo_comparisons_state_check",
+      sql`${table.state} IN ('running', 'cleanup_pending', 'completed', 'failed')`,
+    ),
+    check("demo_comparisons_children_check", sql`jsonb_array_length(${table.children}) = 4`),
+    // Constant-expression partial unique index is hand-authored in the baseline, as for demo_runs.
+  ],
+);
+
 export const demoRuns = pgTable(
   "demo_runs",
   {
@@ -187,6 +233,9 @@ export const demoRuns = pgTable(
     presetName: text("preset_name").notNull(),
     operatorMode: demoRunOperatorModeEnum("operator_mode").notNull(),
     executionMode: runExecutionModeEnum("execution_mode").default("demo").notNull(),
+    comparisonId: uuid("comparison_id").references(() => demoComparisons.id, {
+      onDelete: "restrict",
+    }),
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),

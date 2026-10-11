@@ -20,6 +20,11 @@ const seedPresetIds = {
   adminCustomPreset: "44444444-4444-4444-8444-444444444443",
 } as const;
 
+export const comparisonPresetRegistry = {
+  id: "33333333-3333-4333-8333-333333333338",
+  slug: "architecture-comparison",
+} as const;
+
 export interface SeedPreset {
   id: string;
   slug: string;
@@ -33,10 +38,39 @@ export interface SeedPreset {
   erpConfig: ErpRunConfig;
   backpressureConfig: BackpressureConfig;
   overwriteOnConflict: boolean;
+  archivedAt?: Date;
 }
 
 export function buildSeedPresets(): SeedPreset[] {
   return [
+    {
+      ...comparisonPresetRegistry,
+      visibility: "public",
+      isEditable: false,
+      isCustom: false,
+      isSystem: true,
+      // Publication waits for the comparison dispatcher and coordinator.
+      archivedAt: new Date("2026-10-11T00:00:00.000Z"),
+      display: {
+        name: "Architecture comparison",
+        description: "Two fixed matched workloads compare Redis and the order queue.",
+        sortOrder: 50,
+        outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
+      },
+      // Legacy preset FK backing only; the comparison freezes its four code-owned snapshots.
+      trafficConfig: {
+        mode: "constant-arrival-rate",
+        ratePerSecond: 1000,
+        startDelaySeconds: 0,
+        durationSeconds: 10,
+        quantityPerAttempt: 1,
+        k6Vus: { preAllocatedVus: 10000, maxVus: 10000 },
+      },
+      inventoryConfig: inventoryConfig({ startingStock: 1 }),
+      erpConfig: erpConfig({ latencyMs: 0, maxTps: 1000, errorRate: 0 }),
+      backpressureConfig: backpressureConfig({ orderProcessConcurrency: 5 }),
+      overwriteOnConflict: true,
+    },
     {
       id: seedPresetIds.previewPreset,
       slug: "preview-1k",

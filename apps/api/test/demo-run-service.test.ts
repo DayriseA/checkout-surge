@@ -21,10 +21,13 @@ import {
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import {
+  buildSeedPresets,
+  comparisonPresetRegistry,
   createDatabaseConnection,
   createRedisClient,
   dashboardProjectionRevisionKey,
   deleteGeneratedRunRedisState,
+  demoComparisons,
   demoPresets,
   demoRunSaleContexts,
   demoRunSummaries,
@@ -51,6 +54,7 @@ import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecy
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { localDeploymentCapacity } from "../src/services/capacity-admission.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
+import { DemoComparisonService } from "../src/services/demo-comparison-service.js";
 import { conservativeDurationEstimatorConstants } from "../src/services/demo-duration-estimator.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { DemoPresetService } from "../src/services/demo-preset-service.js";
@@ -352,6 +356,341 @@ describe("demo-run lifecycle start gating", () => {
       await redis.flushdb();
       redis.disconnect();
     }
+  });
+
+  function comparisonService(overrides: Parameters<typeof createStartService>[2] = {}) {
+    if (!connection || !redis) throw new Error("Missing test infrastructure.");
+    const authority = new ProcessLocalDemoMaintenanceAuthority();
+    const lifecycle = createStartService(connection, redis, {
+      ...overrides,
+      maintenanceAuthority: authority,
+    });
+    return new DemoComparisonService({
+      db: connection.db,
+      maintenanceAuthority: authority,
+      lifecycle,
+      runtimePolicyReader: new PublicRuntimePolicyService({
+        db: connection.db,
+        deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
+      }),
+      publicRunBudgetStore: overrides.publicRunBudgetStore ?? {
+        reserve: async () => ({
+          outcome: "allowed",
+          reservation: {
+            reservationId: "comparison-charge",
+            globalKey: "g",
+            visitorKey: "v",
+            reservationKey: "r",
+          },
+        }),
+        release: async () => {},
+      },
+      publicClientCookieSecret: publicCookieSecret,
+      estimatorConstants: conservativeDurationEstimatorConstants,
+      logger: createSilentLogger("api"),
+    });
+  }
+
+  it("rejects the complete occupancy before charging when each child fits separately", async () => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    await connection.db
+      .update(publicRuntimePolicies)
+      .set({
+        policy: { ...publicRuntimePolicyMutable(), estimatedDemoOccupancyCeilingSeconds: 200 },
+      })
+      .where(eq(publicRuntimePolicies.id, "active"));
+    const reserve = vi.fn();
+    const release = vi.fn();
+    await expect(
+      comparisonService({ publicRunBudgetStore: { reserve, release } }).startComparison(
+        signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "comparison-over-ceiling",
+      ),
+    ).rejects.toMatchObject({
+      code: "estimated_duration_rejected",
+      message: "The complete comparison exceeds the estimated demo occupancy ceiling.",
+    });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(await connection.db.select().from(demoComparisons)).toEqual([]);
+    expect(await connection.db.select().from(demoRuns)).toEqual([]);
+  });
+
+  it("requires a visitor credential before persistence or budget mutation", async () => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    const reserve = vi.fn();
+    await expect(
+      comparisonService({ publicRunBudgetStore: { reserve, release: vi.fn() } }).startComparison(
+        undefined,
+        "comparison-no-credential",
+      ),
+    ).rejects.toMatchObject({ code: "public_visitor_forbidden" });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(await connection.db.select().from(demoComparisons)).toEqual([]);
+  });
+
+  it("atomically freezes four matched children and launches the first with a pool of one", async () => {
+    if (!connection || !redis) throw new Error("Missing test infrastructure.");
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "comparison-charge",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    const release = vi.fn(async () => {});
+    const activation = vi.fn(async (runId: string) => {
+      const [parent] = (await connection?.db.select().from(demoComparisons)) ?? [];
+      expect(parent?.children[0].runId).toBe(runId);
+    });
+    const started = await comparisonService({
+      onRunAccepted: activation,
+      publicRunBudgetStore: { reserve, release },
+    }).startComparison(signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), "comparison-start");
+    const [parent] = await connection.db.select().from(demoComparisons);
+    expect(parent).toMatchObject({
+      id: started.comparisonId,
+      state: "running",
+      currentStage: 0,
+      correlationId: "comparison-start",
+    });
+    expect(parent?.children.map((child) => child.executionMode)).toEqual([
+      "demo",
+      "without_redis",
+      "demo",
+      "without_order_queue",
+    ]);
+    expect(parent?.children[0].snapshot).toEqual(parent?.children[1].snapshot);
+    expect(parent?.children[2].snapshot).toEqual(parent?.children[3].snapshot);
+    expect(
+      new Set(parent?.children.flatMap((child) => [child.runId, child.saleOfferId])).size,
+    ).toBe(8);
+    expect(await connection.db.select().from(demoRuns)).toHaveLength(1);
+    expect(started.run).toMatchObject({
+      status: "active",
+      presetId: comparisonPresetRegistry.id,
+      presetName: "Redis comparison: Redis",
+    });
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    // A settled child does not release its parent's exclusive reservation.
+    await connection.db
+      .update(demoRuns)
+      .set({ status: "completed" })
+      .where(eq(demoRuns.id, started.run.runId));
+    await expect(
+      createStartService(connection, redis).startRun(
+        { presetSlug: "preview-1k", operatorMode: "admin" },
+        "ordinary-blocked",
+      ),
+    ).rejects.toMatchObject({
+      code: "run_conflict",
+      details: { conflictReason: "comparison_in_progress" },
+    });
+  });
+
+  it.each([
+    "rejected",
+    "ambiguous",
+  ] as const)("keeps parent ownership and accounts for a %s first-child dispatch", async (kind) => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "comparison-charge",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    const release = vi.fn(async () => {});
+    const error =
+      kind === "rejected"
+        ? new TrafficStartRejectedError(503, null)
+        : new ApiHttpError({
+            statusCode: 503,
+            code: "load_orchestrator_start_ambiguous",
+            message: "Start acknowledgement was lost.",
+          });
+    const service = comparisonService({
+      publicRunBudgetStore: { reserve, release },
+      trafficExecutionGateway: {
+        start: async () => {
+          throw error;
+        },
+      },
+    });
+    await expect(
+      service.startComparison(
+        signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "comparison-failure",
+      ),
+    ).rejects.toBe(error);
+    const [parent] = await connection.db.select().from(demoComparisons);
+    expect(parent).toMatchObject({
+      state: "cleanup_pending",
+      terminalReason: "child_launch_failed",
+      terminalAt: null,
+    });
+    expect(release).toHaveBeenCalledTimes(kind === "rejected" ? 1 : 0);
+    expect(parent?.budgetCompensation === null).toBe(kind === "rejected");
+  });
+
+  it("retains the charge and durable owner when COMMIT succeeds but its response is lost", async () => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "comparison-charge",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    const release = vi.fn(async () => {});
+    const activation = vi.fn(async () => {});
+    const commitError = new Error("COMMIT acknowledgement lost");
+    const originalTransaction = connection.db.transaction.bind(connection.db);
+    const transaction = vi
+      .spyOn(connection.db, "transaction")
+      .mockImplementationOnce(async (callback) => {
+        await originalTransaction(callback);
+        throw commitError;
+      });
+    try {
+      await expect(
+        comparisonService({
+          onRunAccepted: activation,
+          publicRunBudgetStore: { reserve, release },
+        }).startComparison(
+          signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+          "comparison-commit-ambiguous",
+        ),
+      ).rejects.toBe(commitError);
+      expect(await connection.db.select().from(demoComparisons)).toHaveLength(1);
+      expect(await connection.db.select().from(demoRuns)).toHaveLength(1);
+      expect(release).not.toHaveBeenCalled();
+      expect(activation).not.toHaveBeenCalled();
+    } finally {
+      transaction.mockRestore();
+    }
+  });
+
+  it("waits for the original acceptance transaction to settle before verifying absence", async () => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    const originalSession = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const observer = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    let allowCommit: (() => void) | undefined;
+    const commitAllowed = new Promise<void>((resolve) => {
+      allowCommit = resolve;
+    });
+    let prepared: (() => void) | undefined;
+    const acceptancePrepared = new Promise<void>((resolve) => {
+      prepared = resolve;
+    });
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "comparison-charge",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    const release = vi.fn(async () => {});
+    const activation = vi.fn(async () => {});
+    const connectionError = new Error("Acceptance connection closed before transaction settlement");
+    let originalTransaction: Promise<unknown> | undefined;
+    const transaction = vi
+      .spyOn(connection.db, "transaction")
+      .mockImplementationOnce(async (callback) => {
+        // Keep the actual server transaction and START lock alive after surfacing a lost-client
+        // response. Verification uses the ordinary pool-of-one connection, a distinct session.
+        originalTransaction = originalSession.db.transaction(async (tx) => {
+          const accepted = await callback(tx);
+          prepared?.();
+          await commitAllowed;
+          return accepted;
+        });
+        await acceptancePrepared;
+        throw connectionError;
+      });
+    let outcome: Promise<unknown> | undefined;
+    try {
+      let settled = false;
+      outcome = comparisonService({
+        onRunAccepted: activation,
+        publicRunBudgetStore: { reserve, release },
+      })
+        .startComparison(
+          signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+          "comparison-late-commit",
+        )
+        .then(
+          () => {
+            settled = true;
+            return null;
+          },
+          (error) => {
+            settled = true;
+            return error;
+          },
+        );
+      await acceptancePrepared;
+      const deadline = Date.now() + 5_000;
+      let waiterCount = 0;
+      while (Date.now() < deadline) {
+        const [row] =
+          await observer.sql`select count(*)::integer as waiting_count from pg_locks where locktype = 'advisory' and granted = false and objid = hashtext(${demoRunStartLockKey})::oid`;
+        waiterCount = row?.waiting_count ?? 0;
+        if (waiterCount > 0 || settled) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiterCount).toBe(1);
+      expect(settled).toBe(false);
+      expect(release).not.toHaveBeenCalled();
+      expect(await observer.db.select().from(demoComparisons)).toEqual([]);
+      allowCommit?.();
+      await originalTransaction;
+      expect(await outcome).toBe(connectionError);
+      expect(await observer.db.select().from(demoComparisons)).toHaveLength(1);
+      expect(await observer.db.select().from(demoRuns)).toHaveLength(1);
+      expect(release).not.toHaveBeenCalled();
+      expect(activation).not.toHaveBeenCalled();
+    } finally {
+      allowCommit?.();
+      await originalTransaction;
+      await outcome;
+      transaction.mockRestore();
+      await originalSession.close();
+      await observer.close();
+    }
+  });
+
+  it("rolls back parent and child acceptance and compensates a verified precommit failure", async () => {
+    if (!connection) throw new Error("Missing test infrastructure.");
+    await connection.db.delete(products);
+    const release = vi.fn(async () => {});
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "comparison-charge",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    await expect(
+      comparisonService({ publicRunBudgetStore: { reserve, release } }).startComparison(
+        signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "comparison-rollback",
+      ),
+    ).rejects.toMatchObject({ code: "resource_not_found" });
+    expect(await connection.db.select().from(demoComparisons)).toEqual([]);
+    expect(await connection.db.select().from(demoRuns)).toEqual([]);
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("does not publish accepting stock until buyer activation completes", async () => {
@@ -2760,6 +3099,11 @@ async function seedStartFixtures(
     updatedAt: new Date("2026-06-20T00:00:00.000Z"),
   });
   await seedPresetFixtures(connection);
+  const comparisonPreset = buildSeedPresets().find(
+    (preset) => preset.id === comparisonPresetRegistry.id,
+  );
+  if (!comparisonPreset) throw new Error("Missing comparison registry seed.");
+  await connection.db.insert(demoPresets).values(comparisonPreset);
   await connection.db.insert(publicRuntimePolicies).values({
     id: "active",
     policy: publicRuntimePolicyMutable(),
