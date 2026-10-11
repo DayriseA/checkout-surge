@@ -55,13 +55,14 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       if (input.run.id !== runId) {
         throw new Error(`Prepared terminal summary run ${input.run.id} does not match ${runId}.`);
       }
-      return this.writeInsideLock(tx, input);
+      return this.writeInsideLock(tx, input, input.businessSettledAt);
     });
   }
 
   private async writeInsideLock(
     tx: TerminalDemoRunTransitionTransaction,
     input: TerminalDemoRunSummaryInput,
+    businessSettledAt?: Date,
   ): Promise<boolean> {
     const [existingSummary] = await tx
       .select()
@@ -99,7 +100,7 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       return false;
     }
 
-    return this.insertTerminalSummaryInsideLock(tx, input);
+    return this.insertTerminalSummaryInsideLock(tx, input, businessSettledAt);
   }
 
   /**
@@ -196,6 +197,7 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
   private async insertTerminalSummaryInsideLock(
     tx: TerminalDemoRunTransitionTransaction,
     input: TerminalDemoRunSummaryInput,
+    businessSettledAt?: Date,
   ): Promise<true> {
     const capturedAt = input.capturedAt ?? input.finalizedAt;
     await tx.insert(demoRunSummaries).values({
@@ -206,6 +208,7 @@ export class PostgresTerminalDemoRunSummaryWriter implements TerminalDemoRunWrit
       replayPossible: input.replayPossible,
       startedAt: input.run.startedAt,
       endedAt: input.finalizedAt,
+      businessSettledAt: businessSettledAt ?? null,
       transportAttemptCounts: transportAttemptCountsSchema.parse(input.transportAttemptCounts),
       httpSummary: trafficHttpSummarySchema.parse(input.httpSummary),
       trafficDeliverySummary: trafficDeliverySummarySchema.parse(input.trafficDeliverySummary),

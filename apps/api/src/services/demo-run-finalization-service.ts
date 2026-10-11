@@ -290,6 +290,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           failureReason: latestFailureReason,
           replayPossible: isReplayPossible(evidence.config),
           finalizedAt: now,
+          businessSettledAt: now,
           transportAttemptCounts: evidence.transportAttemptCounts,
           httpSummary: evidence.http,
           trafficDeliverySummary: evidence.delivery,

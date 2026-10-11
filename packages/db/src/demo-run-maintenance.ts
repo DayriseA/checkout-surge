@@ -3,6 +3,7 @@ import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import { terminalDemoRunTransitionLockKey } from "./demo-run-locks.js";
 import {
+  demoComparisons,
   demoRunFinalizations,
   demoRunSaleContexts,
   demoRunSoldOutCounts,
@@ -116,6 +117,148 @@ export async function purgeResetRunDurable(
       .where(eq(postgresRunInventory.runId, runId));
     await tx.select({ id: orders.id }).from(orders).where(eq(orders.runId, runId)).for("update");
     await deleteGeneratedRunInternalRows(tx as CheckoutSurgeDatabase, runId);
+  });
+}
+
+/** Purges only the open comparison's failed current child, retaining its original history. */
+export async function purgeFailedComparisonChildDurable(
+  db: CheckoutSurgeDatabase,
+  input: { comparisonId: string; runId: string },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(input.runId)}))`,
+    );
+    const [parent] = await tx
+      .select()
+      .from(demoComparisons)
+      .where(
+        and(
+          eq(demoComparisons.id, input.comparisonId),
+          eq(demoComparisons.state, "cleanup_pending"),
+        ),
+      )
+      .limit(1);
+    const [row] = await tx
+      .select({ run: demoRuns, summary: demoRunSummaries })
+      .from(demoRuns)
+      .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+      .where(eq(demoRuns.id, input.runId))
+      .for("no key update", { of: demoRuns });
+    if (
+      !parent ||
+      parent.children[parent.currentStage]?.runId !== input.runId ||
+      row?.run.comparisonId !== parent.id ||
+      row.run.status !== "failed" ||
+      !row.summary ||
+      row.summary.businessSettledAt
+    )
+      throw new Error("Comparison cleanup requires its uncertified failed current child.");
+    await tx
+      .update(postgresRunInventory)
+      .set({ accepting: false })
+      .where(eq(postgresRunInventory.runId, input.runId));
+    await tx
+      .select({ id: orders.id })
+      .from(orders)
+      .where(eq(orders.runId, input.runId))
+      .for("update");
+    await deleteGeneratedRunInternalRows(tx as CheckoutSurgeDatabase, input.runId);
+  });
+}
+
+export interface ComparisonRetentionInput {
+  comparisonId: string;
+  cutoffBefore: Date;
+  protectedRunIds: string[];
+}
+
+export type ComparisonRetentionInspection =
+  | { outcome: "protected" }
+  | { outcome: "unavailable" }
+  | {
+      outcome: "ready";
+      runs: Array<
+        GeneratedRunIdentity & { executionMode: typeof demoRuns.$inferSelect.executionMode }
+      >;
+    };
+
+/** Eligibility belongs to the complete closed parent, including every actually created child. */
+export function inspectComparisonRetentionGroup(
+  db: CheckoutSurgeDatabase,
+  input: ComparisonRetentionInput,
+): Promise<ComparisonRetentionInspection> {
+  return db.transaction((tx) =>
+    inspectComparisonRetentionGroupInsideLock(tx as CheckoutSurgeDatabase, input),
+  );
+}
+
+async function inspectComparisonRetentionGroupInsideLock(
+  tx: CheckoutSurgeDatabase,
+  input: ComparisonRetentionInput,
+): Promise<ComparisonRetentionInspection> {
+  const [parent] = await tx
+    .select()
+    .from(demoComparisons)
+    .where(eq(demoComparisons.id, input.comparisonId))
+    .limit(1)
+    .for("update");
+  if (!parent || ["running", "cleanup_pending"].includes(parent.state))
+    return { outcome: "protected" };
+  const runs: Array<
+    GeneratedRunIdentity & { executionMode: typeof demoRuns.$inferSelect.executionMode }
+  > = [];
+  for (const child of parent.children.slice(0, parent.currentStage + 1)) {
+    const [row] = await tx
+      .select({ run: demoRuns, summary: demoRunSummaries })
+      .from(demoRuns)
+      .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+      .where(eq(demoRuns.id, child.runId))
+      .limit(1)
+      .for("update", { of: demoRuns });
+    if (!row?.summary || row.run.comparisonId !== parent.id) return { outcome: "unavailable" };
+    if (row.run.createdAt >= input.cutoffBefore || input.protectedRunIds.includes(row.run.id))
+      return { outcome: "protected" };
+    const inspected = await inspectLockedGeneratedRunTeardown(tx, child.runId);
+    if (inspected.outcome !== "ready") return { outcome: "protected" };
+    runs.push({
+      runId: inspected.runId,
+      saleOfferId: inspected.saleOfferId,
+      executionMode: inspected.executionMode,
+    });
+  }
+  return { outcome: "ready", runs };
+}
+
+/** Called only after every exact external cleanup succeeded; durable history disappears together. */
+export function deleteComparisonRetentionGroupDurable(
+  db: CheckoutSurgeDatabase,
+  input: ComparisonRetentionInput,
+): Promise<number> {
+  return db.transaction(async (tx) => {
+    const [parent] = await tx
+      .select()
+      .from(demoComparisons)
+      .where(eq(demoComparisons.id, input.comparisonId))
+      .limit(1);
+    if (!parent) return 0;
+    for (const child of [...parent.children.slice(0, parent.currentStage + 1)].sort((left, right) =>
+      left.runId.localeCompare(right.runId),
+    )) {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(child.runId)}))`,
+      );
+    }
+    const inspected = await inspectComparisonRetentionGroupInsideLock(
+      tx as CheckoutSurgeDatabase,
+      input,
+    );
+    if (inspected.outcome !== "ready")
+      throw new Error(`Comparison retention became ${inspected.outcome} before durable deletion.`);
+    for (const run of inspected.runs)
+      await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, run);
+    await tx.delete(demoComparisons).where(eq(demoComparisons.id, input.comparisonId));
+    return inspected.runs.length;
   });
 }
 

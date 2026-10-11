@@ -587,6 +587,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "business_settled_at": {
+          "name": "business_settled_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -793,6 +799,12 @@
         "comparison_id": {
           "name": "comparison_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "comparison_accepted_at": {
+          "name": "comparison_accepted_at",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         }

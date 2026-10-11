@@ -1,5 +1,5 @@
 import type { CoreIdleStatus } from "@checkout-surge/contracts";
-import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
+import { type CheckoutSurgeDatabase, demoComparisons, demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { inArray } from "drizzle-orm";
 
@@ -36,7 +36,13 @@ export class PostgresNonterminalRunReader implements NonterminalRunReader {
       .from(demoRuns)
       .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
       .limit(1);
-    return rows.length > 0;
+    if (rows.length > 0) return true;
+    const parents = await this.db
+      .select({ id: demoComparisons.id })
+      .from(demoComparisons)
+      .where(inArray(demoComparisons.state, ["running", "cleanup_pending"]))
+      .limit(1);
+    return parents.length > 0;
   }
 }
 

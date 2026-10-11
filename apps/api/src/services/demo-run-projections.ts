@@ -28,7 +28,8 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
       ? {
           startedAt: run.startedAt.toISOString(),
           autoResetAt: new Date(
-            run.startedAt.getTime() + automaticRunResetDeadlineSeconds * 1000,
+            (run.comparisonAcceptedAt ?? run.startedAt).getTime() +
+              automaticRunResetDeadlineSeconds * 1000,
           ).toISOString(),
         }
       : {}),

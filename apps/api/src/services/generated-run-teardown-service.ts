@@ -5,12 +5,20 @@ import {
 import type {
   CheckoutSurgeDatabase,
   CheckoutSurgeRedis,
+  ComparisonRetentionInput,
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
+  GeneratedRunIdentity,
   inspectGeneratedRunTeardown,
 } from "@checkout-surge/db";
-import { InventoryNotInitializedError } from "@checkout-surge/db";
+import {
+  deleteComparisonRetentionGroupDurable,
+  demoRuns,
+  InventoryNotInitializedError,
+  inspectComparisonRetentionGroup,
+} from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import { eq } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import {
@@ -35,6 +43,9 @@ export interface RetentionGeneratedRunTeardown {
   teardownRetentionCandidate(
     input: GeneratedRunTeardownInput,
   ): Promise<AdminGeneratedRunTeardownResponse>;
+  teardownComparisonRetentionGroup(
+    input: ComparisonRetentionInput & { correlationId: string },
+  ): Promise<number>;
 }
 
 export class GeneratedRunTeardownService
@@ -67,6 +78,17 @@ export class GeneratedRunTeardownService
     input: GeneratedRunTeardownInput,
   ): Promise<AdminGeneratedRunTeardownResponse> {
     try {
+      const [run] = await this.options.db
+        .select({ comparisonId: demoRuns.comparisonId })
+        .from(demoRuns)
+        .where(eq(demoRuns.id, input.runId))
+        .limit(1);
+      if (run?.comparisonId)
+        throw new ApiHttpError({
+          statusCode: 409,
+          code: "run_cleanup_conflict",
+          message: "Comparison children must be retained and deleted together.",
+        });
       const result = await this.teardownExactGeneratedRun(input);
       this.options.logger.info(result, "Generated demo run teardown completed.");
       return result;
@@ -86,6 +108,22 @@ export class GeneratedRunTeardownService
     }
   }
 
+  /** The shared maintenance authority is already held by the retention service. */
+  async teardownComparisonRetentionGroup(
+    input: ComparisonRetentionInput & { correlationId: string },
+  ): Promise<number> {
+    const inspected = await inspectComparisonRetentionGroup(this.options.db, input);
+    if (inspected.outcome === "protected") return 0;
+    if (inspected.outcome === "unavailable")
+      throw new ApiHttpError({
+        statusCode: 409,
+        code: "run_cleanup_conflict",
+        message: "Comparison history is incomplete; retention preserved the entire group.",
+      });
+    for (const run of inspected.runs) await this.cleanupExternal(run, input.correlationId);
+    return deleteComparisonRetentionGroupDurable(this.options.db, input);
+  }
+
   private async teardownExactGeneratedRun(
     input: GeneratedRunTeardownInput,
   ): Promise<AdminGeneratedRunTeardownResponse> {
@@ -101,26 +139,10 @@ export class GeneratedRunTeardownService
     }
     if (inspected.outcome !== "ready") throw teardownConflict(inspected.outcome);
 
-    await this.options.inventory.close(inspected).catch((error: unknown) => {
-      if (!(error instanceof InventoryNotInitializedError)) throw error;
-    });
-    const queueCleanup = await this.options.queueMaintenance.cleanRuns([input.runId]);
-    let redisCleanup: Awaited<ReturnType<typeof deleteGeneratedRunRedisState>>;
-    try {
-      redisCleanup = await this.options.deleteGeneratedRunRedisState(this.options.redis, inspected);
-    } catch (error) {
-      this.options.logger.warn(
-        {
-          err: error,
-          runId: input.runId,
-          saleOfferId: inspected.saleOfferId,
-          correlationId: input.correlationId,
-        },
-        "Generated-run Redis cleanup failed before durable deletion; retry the same request.",
-      );
-      throw error;
-    }
-
+    const { queueCleanup, redisCleanup } = await this.cleanupExternal(
+      inspected,
+      input.correlationId,
+    );
     const deleted = await this.options.deleteGeneratedRunDurable(this.options.db, inspected);
     if (deleted.outcome !== "deleted") throw teardownConflict(deleted.outcome);
     return adminGeneratedRunTeardownResponseSchema.parse({
@@ -134,6 +156,33 @@ export class GeneratedRunTeardownService
       cleanedAt: now.toISOString(),
       correlationId: input.correlationId,
     });
+  }
+
+  private async cleanupExternal(
+    inspected: GeneratedRunIdentity & { executionMode: typeof demoRuns.$inferSelect.executionMode },
+    correlationId: string,
+  ) {
+    await this.options.inventory.close(inspected).catch((error: unknown) => {
+      if (!(error instanceof InventoryNotInitializedError)) throw error;
+    });
+    const queueCleanup = await this.options.queueMaintenance.cleanRuns([inspected.runId]);
+    let redisCleanup: Awaited<ReturnType<typeof deleteGeneratedRunRedisState>>;
+    try {
+      redisCleanup = await this.options.deleteGeneratedRunRedisState(this.options.redis, inspected);
+    } catch (error) {
+      this.options.logger.warn(
+        {
+          err: error,
+          runId: inspected.runId,
+          saleOfferId: inspected.saleOfferId,
+          correlationId,
+        },
+        "Generated-run Redis cleanup failed before durable deletion; retry the same request.",
+      );
+      throw error;
+    }
+
+    return { queueCleanup, redisCleanup };
   }
 }
 

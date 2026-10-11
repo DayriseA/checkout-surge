@@ -2,8 +2,13 @@ import {
   type AdminMaintenanceCleanupRunsResponse,
   adminMaintenanceCleanupRunsResponseSchema,
 } from "@checkout-surge/contracts";
-import { type CheckoutSurgeDatabase, demoRunSaleContexts, demoRuns } from "@checkout-surge/db";
-import { and, asc, desc, eq, inArray, lt, notInArray } from "drizzle-orm";
+import {
+  type CheckoutSurgeDatabase,
+  demoComparisons,
+  demoRunSaleContexts,
+  demoRuns,
+} from "@checkout-surge/db";
+import { and, asc, desc, eq, inArray, isNull, lt, notInArray } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { RetentionGeneratedRunTeardown } from "./generated-run-teardown-service.js";
 
@@ -51,6 +56,7 @@ export class GeneratedRunRetentionService implements GeneratedRunRetentionWorkfl
     const activeRunIds = activeRows.map((row) => row.id);
 
     const filters = [
+      isNull(demoRuns.comparisonId),
       inArray(demoRuns.status, ["completed", "failed"]),
       lt(demoRuns.createdAt, cutoffBefore),
       ...(latestRunIds.length > 0 ? [notInArray(demoRuns.id, latestRunIds)] : []),
@@ -80,6 +86,21 @@ export class GeneratedRunRetentionService implements GeneratedRunRetentionWorkfl
         deletedRunCount += 1;
         deletedSaleOfferCount += 1;
       }
+    }
+    const closedParents = await this.options.db
+      .select({ id: demoComparisons.id })
+      .from(demoComparisons)
+      .where(inArray(demoComparisons.state, ["completed", "failed"]))
+      .orderBy(asc(demoComparisons.acceptedAt));
+    for (const parent of closedParents) {
+      const deleted = await this.options.generatedRunTeardown.teardownComparisonRetentionGroup({
+        comparisonId: parent.id,
+        cutoffBefore,
+        protectedRunIds: [...latestRunIds, ...activeRunIds],
+        correlationId: input.correlationId,
+      });
+      deletedRunCount += deleted;
+      deletedSaleOfferCount += deleted;
     }
 
     return adminMaintenanceCleanupRunsResponseSchema.parse({

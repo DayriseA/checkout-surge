@@ -38,6 +38,7 @@ describe("demo-run projections", () => {
       presetName: "Scarcity spike",
       executionMode: "demo",
       comparisonId: null,
+      comparisonAcceptedAt: null,
       operatorMode: "admin",
       status: "failed",
       trafficStatus: "failed",
@@ -92,6 +93,7 @@ describe("demo-run projections", () => {
       presetName: "Scarcity spike",
       executionMode: "demo",
       comparisonId: null,
+      comparisonAcceptedAt: null,
       operatorMode: "public",
       status: "starting",
       trafficStatus: "starting",
@@ -114,6 +116,13 @@ describe("demo-run projections", () => {
 
     expect(toDemoRunSnapshot(row)).toMatchObject({ status: "starting", runnerRelocating: true });
     expect(toDemoRunSnapshot(row)).not.toHaveProperty("runnerRegion");
+    expect(
+      toDemoRunSnapshot({
+        ...row,
+        comparisonId: "55555555-5555-4555-8555-555555555555",
+        comparisonAcceptedAt: new Date("2026-07-21T09:55:00.000Z"),
+      }).autoResetAt,
+    ).toBe("2026-07-21T10:10:00.000Z");
   });
 
   it.each([

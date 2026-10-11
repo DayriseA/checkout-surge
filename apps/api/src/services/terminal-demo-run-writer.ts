@@ -30,6 +30,8 @@ export interface TerminalDemoRunSummaryInput {
   replayPossible: boolean;
   finalizedAt: Date;
   capturedAt?: Date;
+  /** Supplied only by normal finalization after its fenced business-settlement checks. */
+  businessSettledAt?: Date;
   transportAttemptCounts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
   trafficDeliverySummary: TrafficDeliverySummary;

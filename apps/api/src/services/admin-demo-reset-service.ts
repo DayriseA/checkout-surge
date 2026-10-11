@@ -21,17 +21,19 @@ import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   deleteGeneratedRunRedisState,
+  demoComparisons,
   demoRunFinalizations,
   demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
   InventoryNotInitializedError,
   publishDashboardProjectionDirtySignal,
+  purgeFailedComparisonChildDurable,
   purgeResetRunDurable,
   readBusinessOutcomeSummary,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { and, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { ExactRunQueueMaintenance } from "./demo-queue-maintenance.js";
@@ -107,6 +109,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       inlineConfirmation?: { cancelRun(runId: string, correlationId: string): Promise<void> };
       deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
       purgeResetRunDurable?: typeof purgeResetRunDurable;
+      purgeFailedComparisonChildDurable?: typeof purgeFailedComparisonChildDurable;
       now?: () => Date;
       elapsedNow?: () => number;
     },
@@ -118,11 +121,96 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
   ): Promise<AdminDemoResetResponse> {
     return this.options.maintenanceAuthority.runExclusive(() =>
       this.options.resetWorkflowFence.runExclusive(async () => {
-        const result = await this.resetWithoutConcurrentReset(correlationId, reason);
+        const result = await this.resetInsideFence(correlationId, reason);
         await this.options.queueLimits.synchronize();
         return result;
       }),
     );
+  }
+
+  /** The comparison coordinator already holds the shared maintenance authority. */
+  async cleanupComparisonExclusive(comparisonId: string, correlationId: string): Promise<void> {
+    await this.options.resetWorkflowFence.runExclusive(async () => {
+      await this.resetInsideFence(correlationId, "admin_reset", comparisonId);
+      await this.options.queueLimits.synchronize();
+    });
+  }
+
+  private async resetInsideFence(
+    correlationId: string,
+    reason: DestructiveResetReason,
+    comparisonId?: string,
+  ): Promise<AdminDemoResetResponse> {
+    // The reset fence already owns START on its reserved session. Do not reacquire it here.
+    const now = this.now();
+    const [parent] = await this.options.db
+      .select()
+      .from(demoComparisons)
+      .where(
+        and(
+          inArray(demoComparisons.state, ["running", "cleanup_pending"]),
+          comparisonId ? eq(demoComparisons.id, comparisonId) : undefined,
+          reason === "auto_reset"
+            ? lte(
+                demoComparisons.acceptedAt,
+                new Date(now.getTime() - automaticRunResetDeadlineSeconds * 1000),
+              )
+            : undefined,
+        ),
+      )
+      .limit(1);
+    if (!parent) {
+      if (comparisonId) throw new Error("Comparison cleanup requires an open parent owner.");
+      return this.resetWithoutConcurrentReset(correlationId, reason);
+    }
+    await this.options.db
+      .update(demoComparisons)
+      .set({ state: "cleanup_pending", terminalReason: parent.terminalReason ?? reason })
+      .where(eq(demoComparisons.id, parent.id));
+    const child = parent.children[parent.currentStage];
+    if (!child) throw new Error("Comparison has no current child definition.");
+    const [current] = await this.options.db
+      .select({ run: demoRuns, summary: demoRunSummaries })
+      .from(demoRuns)
+      .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+      .where(eq(demoRuns.id, child.runId))
+      .limit(1);
+    const finishParent = () =>
+      this.options.db
+        .update(demoComparisons)
+        .set({ state: "failed", terminalAt: this.now() })
+        .where(eq(demoComparisons.id, parent.id));
+    const finishParentAfterCurrentCleanup = async () => {
+      const [cleaned] = await this.options.db
+        .select({ completedAt: demoRuns.adminResetCompletedAt })
+        .from(demoRuns)
+        .where(eq(demoRuns.id, child.runId))
+        .limit(1);
+      // An older run's projection retry can succeed without cleaning this child.
+      if (cleaned?.completedAt) await finishParent();
+    };
+    if (!current || current.summary?.businessSettledAt) {
+      // A reset between stages closes ownership without destroying a successful child.
+      await finishParent();
+      return adminDemoResetResponseSchema.parse({
+        failedRunCount: 0,
+        closedSaleOfferCount: 0,
+        cleanedQueueCount: 0,
+        cleanedJobCount: 0,
+        resetAt: now.toISOString(),
+        correlationId,
+      });
+    }
+    try {
+      const cleanupReason = parent.terminalReason === "auto_reset" ? "auto_reset" : reason;
+      const result = await this.resetWithoutConcurrentReset(correlationId, cleanupReason, parent);
+      await finishParentAfterCurrentCleanup();
+      return result;
+    } catch (error) {
+      // Preserve the existing rule: post-marker advisory projection retry does not reserve runs.
+      await finishParentAfterCurrentCleanup();
+      throw error;
+    }
   }
 
   async hasPendingAutomaticResetCleanup(): Promise<boolean> {
@@ -136,7 +224,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         and(
           inArray(demoRuns.id, runIds),
           eq(demoRuns.status, "failed"),
-          eq(demoRuns.failureReason, "auto_reset"),
+          or(eq(demoRuns.failureReason, "auto_reset"), isNotNull(demoRuns.comparisonId)),
         ),
       )
       .limit(1);
@@ -146,9 +234,13 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
   private async resetWithoutConcurrentReset(
     correlationId: string,
     reason: DestructiveResetReason,
+    comparison?: typeof demoComparisons.$inferSelect,
   ): Promise<AdminDemoResetResponse> {
     const now = this.now();
     const elapsedNow = this.options.elapsedNow ?? (() => performance.now());
+    const comparisonChild = comparison?.children[comparison.currentStage];
+    if (comparison && !comparisonChild)
+      throw new Error("Comparison has no current child definition.");
     const requestStartedAt = elapsedNow();
     const resetCandidates = await this.options.db
       .select({
@@ -166,12 +258,22 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
             isNull(demoRunSummaries.id),
             reason === "auto_reset"
               ? lte(
-                  demoRuns.startedAt,
-                  new Date(now.getTime() - automaticRunResetDeadlineSeconds * 1000),
+                  sql`coalesce(${demoRuns.comparisonAcceptedAt}, ${demoRuns.startedAt})`,
+                  new Date(now.getTime() - automaticRunResetDeadlineSeconds * 1000).toISOString(),
                 )
               : undefined,
           ),
           incompleteAdminResetPredicate(),
+          comparison && comparisonChild
+            ? and(
+                eq(demoRuns.id, comparisonChild.runId),
+                eq(demoRuns.comparisonId, comparison.id),
+                eq(demoRuns.status, "failed"),
+                isNotNull(demoRunSummaries.id),
+                isNull(demoRunSummaries.businessSettledAt),
+                isNull(demoRuns.adminResetCompletedAt),
+              )
+            : undefined,
         ),
       );
 
@@ -181,7 +283,10 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       .where(
         and(
           eq(demoRuns.status, "failed"),
-          inArray(demoRuns.failureReason, destructiveResetReasonValues),
+          or(
+            inArray(demoRuns.failureReason, destructiveResetReasonValues),
+            isNotNull(demoRuns.comparisonId),
+          ),
           isNotNull(demoRuns.adminResetCompletedAt),
         ),
       );
@@ -440,10 +545,17 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     for (const row of fencedRuns) await this.publishRecoveryDirty(row.run.id, correlationId);
 
     for (const row of fencedRuns) {
-      await (this.options.purgeResetRunDurable ?? purgeResetRunDurable)(this.options.db, {
-        runId: row.run.id,
-        failureReason: row.reason,
-      });
+      if (comparison && row.run.comparisonId === comparison.id) {
+        await (this.options.purgeFailedComparisonChildDurable ?? purgeFailedComparisonChildDurable)(
+          this.options.db,
+          { comparisonId: comparison.id, runId: row.run.id },
+        );
+      } else {
+        await (this.options.purgeResetRunDurable ?? purgeResetRunDurable)(this.options.db, {
+          runId: row.run.id,
+          failureReason: row.reason,
+        });
+      }
       await (this.options.deleteGeneratedRunRedisState ?? deleteGeneratedRunRedisState)(
         this.options.redis,
         {

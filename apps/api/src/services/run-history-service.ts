@@ -34,14 +34,17 @@ import {
 } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoComparisons,
   demoRunSummaries,
   demoRuns,
   erpAttempts,
   readCumulativeErpOutcomeCounts,
 } from "@checkout-surge/db";
-import { count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
+import { demoRunStartLockKey } from "./demo-run-service.js";
+import { DemoRunValidationError } from "./demo-run-validation-error.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
   parsePersistedBusinessOutcomeSummary,
@@ -239,12 +242,41 @@ export class RunHistoryService implements RunHistoryController {
     correlationId: string,
   ): Promise<AdminDeleteRunHistoryResponse> {
     const now = this.now();
-    const deletedRows = input.deleteAllConfirmation
-      ? await this.options.db.delete(demoRunSummaries).returning({ runId: demoRunSummaries.runId })
-      : await this.options.db
-          .delete(demoRunSummaries)
-          .where(inArray(demoRunSummaries.runId, input.runIds ?? []))
-          .returning({ runId: demoRunSummaries.runId });
+    const deletedRows = await this.options.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+      const [openParent] = await tx
+        .select({ id: demoComparisons.id })
+        .from(demoComparisons)
+        .where(inArray(demoComparisons.state, ["running", "cleanup_pending"]))
+        .limit(1);
+      if (openParent)
+        throw new DemoRunValidationError(
+          "run_conflict",
+          "Run history cannot be deleted while a comparison owns the run slot.",
+        );
+      const [comparisonChild] = await tx
+        .select({ id: demoRuns.id })
+        .from(demoRuns)
+        .innerJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+        .where(
+          and(
+            isNotNull(demoRuns.comparisonId),
+            input.deleteAllConfirmation ? undefined : inArray(demoRuns.id, input.runIds ?? []),
+          ),
+        )
+        .limit(1);
+      if (comparisonChild)
+        throw new DemoRunValidationError(
+          "run_conflict",
+          "Comparison history is retained as a group and cannot be individually deleted.",
+        );
+      return input.deleteAllConfirmation
+        ? tx.delete(demoRunSummaries).returning({ runId: demoRunSummaries.runId })
+        : tx
+            .delete(demoRunSummaries)
+            .where(inArray(demoRunSummaries.runId, input.runIds ?? []))
+            .returning({ runId: demoRunSummaries.runId });
+    });
 
     return adminDeleteRunHistoryResponseSchema.parse({
       deletedSummaryCount: deletedRows.length,

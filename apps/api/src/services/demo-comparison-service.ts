@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  automaticRunResetDeadlineSeconds,
   type DemoRunSnapshot,
   estimatedDemoOccupancyCeilingSeconds,
 } from "@checkout-surge/contracts";
@@ -10,9 +11,12 @@ import {
   comparisonPresetRegistry,
   demoComparisons,
   demoPresets,
+  demoRunFinalizations,
+  demoRunSummaries,
+  demoRuns,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   AcceptedRunLaunchRejectedError,
   insertStartingRun,
@@ -37,7 +41,7 @@ import type {
 } from "./public-run-budget-store.js";
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
 
-/** The control authority owns acceptance and launch. Sequencing is added separately. */
+/** The control authority owns acceptance, one-stage advancement and exact cleanup. */
 export class DemoComparisonService {
   constructor(
     private readonly options: {
@@ -49,6 +53,7 @@ export class DemoComparisonService {
       publicClientCookieSecret: string;
       estimatorConstants: DurationEstimatorConstants;
       logger: CheckoutSurgeLogger;
+      cleanupComparisonExclusive: (comparisonId: string, correlationId: string) => Promise<void>;
       now?: () => Date;
       generateId?: () => string;
     },
@@ -158,6 +163,7 @@ export class DemoComparisonService {
             correlationId,
             acceptedAt: now,
             comparisonId,
+            comparisonAcceptedAt: now,
           });
         });
       } catch (error) {
@@ -202,6 +208,129 @@ export class DemoComparisonService {
             .set({ budgetCompensation: null })
             .where(eq(demoComparisons.id, comparisonId));
         }
+        throw error instanceof AcceptedRunLaunchRejectedError ? error.cause : error;
+      }
+    });
+  }
+
+  /** Each pass advances at most one stage. Starting-run recovery owns all dispatch replay. */
+  reconcile(): Promise<void> {
+    return this.options.maintenanceAuthority.runExclusive(async () => {
+      const now = this.options.now?.() ?? new Date();
+      const action = await this.options.db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+        const [parent] = await tx
+          .select()
+          .from(demoComparisons)
+          .where(inArray(demoComparisons.state, ["running", "cleanup_pending"]))
+          .limit(1)
+          .for("update");
+        if (!parent) return null;
+        const current = parent.children[parent.currentStage];
+        if (!current) throw new Error("Comparison has no current child definition.");
+        const [row] = await tx
+          .select({ run: demoRuns, summary: demoRunSummaries, finalization: demoRunFinalizations })
+          .from(demoRuns)
+          .leftJoin(demoRunSummaries, eq(demoRunSummaries.runId, demoRuns.id))
+          .leftJoin(demoRunFinalizations, eq(demoRunFinalizations.runId, demoRuns.id))
+          .where(eq(demoRuns.id, current.runId))
+          .limit(1);
+        const certified = Boolean(
+          row?.summary?.businessSettledAt &&
+            row.finalization?.completionEnrichmentStatus === "completed" &&
+            ["completed", "failed"].includes(row.run.status),
+        );
+        const overdue =
+          now.getTime() >= parent.acceptedAt.getTime() + automaticRunResetDeadlineSeconds * 1000;
+        if (
+          parent.state === "cleanup_pending" ||
+          overdue ||
+          (row?.run.status === "failed" && !certified)
+        ) {
+          if (certified || !row) {
+            // A settled stage gap has no failed working child to reset.
+            await tx
+              .update(demoComparisons)
+              .set({
+                state: "failed",
+                terminalAt: now,
+                terminalReason: parent.terminalReason ?? (overdue ? "auto_reset" : "child_failed"),
+              })
+              .where(eq(demoComparisons.id, parent.id));
+            return null;
+          }
+          await tx
+            .update(demoComparisons)
+            .set({
+              state: "cleanup_pending",
+              terminalReason:
+                parent.terminalReason ??
+                (overdue ? "auto_reset" : (row.run.failureReason ?? "child_failed")),
+            })
+            .where(eq(demoComparisons.id, parent.id));
+          return {
+            kind: "cleanup" as const,
+            comparisonId: parent.id,
+            correlationId: parent.correlationId,
+          };
+        }
+        if (!certified) return null;
+        if (parent.currentStage === 3) {
+          await tx
+            .update(demoComparisons)
+            .set({ state: "completed", terminalAt: now })
+            .where(
+              and(
+                eq(demoComparisons.id, parent.id),
+                eq(demoComparisons.state, "running"),
+                eq(demoComparisons.currentStage, 3),
+              ),
+            );
+          return null;
+        }
+        const nextStage = parent.currentStage + 1;
+        const next = parent.children[nextStage];
+        if (!next) throw new Error("Comparison has no next child definition.");
+        const [claimed] = await tx
+          .update(demoComparisons)
+          .set({ currentStage: nextStage })
+          .where(
+            and(
+              eq(demoComparisons.id, parent.id),
+              eq(demoComparisons.state, "running"),
+              eq(demoComparisons.currentStage, parent.currentStage),
+            ),
+          )
+          .returning({ id: demoComparisons.id });
+        if (!claimed) return null;
+        const run = await insertStartingRun(tx, {
+          ...next,
+          operatorMode: "public",
+          correlationId: parent.correlationId,
+          acceptedAt: now,
+          comparisonId: parent.id,
+          comparisonAcceptedAt: parent.acceptedAt,
+        });
+        return {
+          kind: "launch" as const,
+          comparisonId: parent.id,
+          correlationId: parent.correlationId,
+          run,
+        };
+      });
+      if (!action) return;
+      if (action.kind === "cleanup") {
+        await this.options.cleanupComparisonExclusive(action.comparisonId, action.correlationId);
+        return;
+      }
+      try {
+        await this.options.lifecycle.launchAcceptedRunExclusive(action.run, action.correlationId);
+      } catch (error) {
+        await this.options.db
+          .update(demoComparisons)
+          .set({ state: "cleanup_pending", terminalReason: "child_launch_failed" })
+          .where(eq(demoComparisons.id, action.comparisonId));
+        // Earlier children have already run: a successor rejection never refunds the parent.
         throw error instanceof AcceptedRunLaunchRejectedError ? error.cause : error;
       }
     });

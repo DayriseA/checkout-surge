@@ -76,6 +76,7 @@ export async function insertStartingRun(
     correlationId: string;
     acceptedAt: Date;
     comparisonId?: string;
+    comparisonAcceptedAt?: Date;
   },
 ): Promise<DemoRunSnapshot> {
   const [product] = await tx
@@ -110,6 +111,7 @@ export async function insertStartingRun(
       operatorMode: input.operatorMode,
       executionMode: input.executionMode,
       comparisonId: input.comparisonId,
+      comparisonAcceptedAt: input.comparisonAcceptedAt,
       status: "starting",
       trafficStatus: "starting",
       configSnapshot: input.snapshot,

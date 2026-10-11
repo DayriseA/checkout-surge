@@ -236,6 +236,7 @@ export const demoRuns = pgTable(
     comparisonId: uuid("comparison_id").references(() => demoComparisons.id, {
       onDelete: "restrict",
     }),
+    comparisonAcceptedAt: timestamp("comparison_accepted_at", { withTimezone: true }),
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),
@@ -887,6 +888,7 @@ export const demoRunSummaries = pgTable(
     replayPossible: boolean("replay_possible").notNull(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }).notNull(),
+    businessSettledAt: timestamp("business_settled_at", { withTimezone: true }),
     transportAttemptCounts: jsonObject<TransportAttemptCounts>("transport_attempt_counts"),
     httpSummary: jsonObject<TrafficHttpSummary>("http_summary"),
     trafficDeliverySummary: jsonObject<TrafficDeliverySummary>("traffic_delivery_summary"),

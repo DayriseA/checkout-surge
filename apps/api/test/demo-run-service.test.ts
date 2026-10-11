@@ -369,6 +369,9 @@ describe("demo-run lifecycle start gating", () => {
       db: connection.db,
       maintenanceAuthority: authority,
       lifecycle,
+      cleanupComparisonExclusive: async () => {
+        throw new Error("Acceptance-only test has no cleanup coordinator.");
+      },
       runtimePolicyReader: new PublicRuntimePolicyService({
         db: connection.db,
         deploymentHardCaps: publicRuntimePolicy().deploymentHardCaps,
@@ -1693,6 +1696,97 @@ describe("demo-run lifecycle start gating", () => {
           ?.status,
       ).toBe("active");
       expect(await metrics.hasRunState(runId)).toBe(false);
+    } finally {
+      await resetConnection.close();
+    }
+  });
+
+  it.each([
+    "admin_reset",
+    "auto_reset",
+  ] as const)("retains comparison ownership after an older projection retry during %s", async (reason) => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const oldRun = await createStartService(primary, redisClient).startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "before-comparison-projection-failure",
+    );
+    const metrics = new RedisDashboardTrafficMetricStore(redisClient);
+    let clearFailure = true;
+    let resetNow = new Date();
+    const resetService = new AdminDemoResetService({
+      db: primary.db,
+      redis: redisClient,
+      inventory: createRunInventoryLifecycle(primary.db, redisClient),
+      runnerOperations: { releaseAfterRun: () => undefined },
+      queueLimits: { synchronize: async () => {} },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(primary.db, {
+        synchronize: async () => {},
+      }),
+      queueMaintenance: {
+        cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }),
+      },
+      trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+      dashboardLiveStateReset: {
+        fenceRun: (id) => metrics.fenceRun(id),
+        hasRunState: (id) => metrics.hasRunState(id),
+        clearRun: async (id) => {
+          if (clearFailure) throw new Error("projection unavailable");
+          await metrics.clearRun(id);
+        },
+      },
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      logger: createSilentLogger("api"),
+      now: () => resetNow,
+    });
+    try {
+      await expect(resetService.reset("old-projection-failed")).rejects.toMatchObject({
+        details: { conflictReason: "projection_cleanup_incomplete" },
+      });
+      const oldHistory = await primary.db.select().from(demoRunSummaries);
+      expect(oldHistory).toHaveLength(1);
+      expect(
+        (await primary.db.select().from(demoRuns).where(eq(demoRuns.id, oldRun.run.runId)))[0]
+          ?.adminResetCompletedAt,
+      ).toBeInstanceOf(Date);
+      const accepted = await comparisonService({ generateId: randomUUID }).startComparison(
+        signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        "comparison-after-projection-failure",
+      );
+      const [parent] = await primary.db.select().from(demoComparisons);
+      if (!parent) throw new Error("Missing accepted comparison.");
+      const childId = parent.children[0].runId;
+      resetNow = new Date(parent.acceptedAt.getTime() + 900_000);
+      clearFailure = false;
+      await expect(resetService.reset("old-projection-retry", reason)).resolves.toMatchObject({
+        failedRunCount: 0,
+      });
+      expect((await primary.db.select().from(demoComparisons))[0]).toMatchObject({
+        id: accepted.comparisonId,
+        state: "cleanup_pending",
+        terminalAt: null,
+      });
+      expect(
+        (await primary.db.select().from(demoRuns).where(eq(demoRuns.id, childId)))[0],
+      ).toMatchObject({ status: "active", adminResetCompletedAt: null });
+      expect(await primary.db.select().from(demoRunSummaries)).toEqual(oldHistory);
+      await resetService.reset("comparison-exact-cleanup", reason);
+      expect((await primary.db.select().from(demoComparisons))[0]?.state).toBe("failed");
+      expect(
+        (await primary.db.select().from(demoRuns).where(eq(demoRuns.id, childId)))[0],
+      ).toMatchObject({ status: "failed", failureReason: reason });
+      expect(
+        (await primary.db.select().from(demoRuns).where(eq(demoRuns.id, childId)))[0]
+          ?.adminResetCompletedAt,
+      ).toBeInstanceOf(Date);
+      expect(
+        await primary.db
+          .select()
+          .from(demoRunSummaries)
+          .where(eq(demoRunSummaries.runId, oldRun.run.runId)),
+      ).toEqual(oldHistory);
     } finally {
       await resetConnection.close();
     }
