@@ -28,11 +28,15 @@ The owner knows, from measurements in the proof environment, whether a configura
 
 ## Working Notes
 
-### Checkpoint report — recommendation: GO to tasks 03–06, owner decision pending
+### Owner decision — GO received (2026-10-11)
+
+The owner approved autonomous continuation after this checkpoint and authorized conventional commits on the project's own branches. This releases tasks 03–06. The historical recommendation and measured limits below remain unchanged; production access and the open production/preset choices still require the owner's review under the backlog rules.
+
+### Checkpoint report — recommendation: GO to tasks 03–06
 
 Recommend **GO to tasks 03–06**, subject to the owner's explicit checkpoint decision, for two proposed fixed presets: Redis database offload at native store distance (1,000 arrivals/s for ten seconds, stock one), and queue buyer decoupling (5,000-buyer spike, stock 500, ERP 100 ms / 20 TPS). Each comparison passed six independently audited interleaved pairs. Redis reduced PostgreSQL CPU by a median 95.388% within pairs at approximately 0.8 ms protocol RTT. The queue reduced accepted-buyer wall-p95 from a median 33.748 s inline to 2.275 s queued, a median paired ratio of 14.919×, while ERP work continued after buyers were answered. These are bounded preset results; they do not prove universal Redis speed/capacity, a Lua ceiling, faster ERP processing, queue CPU efficiency or a minimum sixteen-CPU runner.
 
-The report is complete for the feasibility checkpoint. Production topology, public/admin exposure and run-slot behavior remain owner decisions. **Work stops before task 03 until the owner chooses GO or NO-GO.** The recommendation does not deploy or authorize production changes.
+The report is complete for the feasibility checkpoint. Production topology, public/admin exposure and run-slot behavior remain owner decisions. The owner's GO above releases the next implementation phase. The recommendation does not deploy or authorize production changes.
 
 #### What the prototype establishes
 
