@@ -50,4 +50,33 @@ describe("unavailable traffic evidence", () => {
     expect(trafficHttpSummarySchema.safeParse({ ...http, failureRate: 0 }).success).toBe(true);
     expect(trafficHttpSummarySchema.safeParse({ ...http, p95LatencyMs: 0 }).success).toBe(true);
   });
+
+  it("retains optional wall latency cohorts without inventing empty-cohort zeros", () => {
+    const http = {
+      failedRequests: 0,
+      acceptedResponses: 2,
+      soldOutResponses: 0,
+      transportFailures: 0,
+      unexpectedResponses: 0,
+      failureRate: 0,
+    };
+    expect(trafficHttpSummarySchema.parse(http)).not.toHaveProperty("buyerWallLatencySummary");
+    const measured = {
+      ...http,
+      buyerWallLatencySummary: {
+        accepted: { sampleCount: 2, averageMs: 0, p95Ms: 0 },
+        soldOut: null,
+      },
+    };
+    expect(trafficHttpSummarySchema.parse(measured)).toEqual(measured);
+    expect(
+      trafficHttpSummarySchema.safeParse({
+        ...http,
+        buyerWallLatencySummary: {
+          accepted: { sampleCount: 0, averageMs: 0, p95Ms: 0 },
+          soldOut: null,
+        },
+      }).success,
+    ).toBe(false);
+  });
 });

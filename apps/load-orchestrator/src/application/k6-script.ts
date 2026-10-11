@@ -53,10 +53,10 @@ export function generateK6Script(input: TrafficExecutionStartRequest) {
     contents: `import http from "k6/http";
 import { check } from "k6";
 import exec from "k6/execution";
-import { Counter } from "k6/metrics";
+import { Counter, Trend } from "k6/metrics";
 
 const config = ${JSON.stringify(scriptConfig)};
-const expectedCheckoutStatuses = http.expectedStatuses(202, 409);
+const expectedCheckoutStatuses = http.expectedStatuses(200, 202, 409);
 const attemptsStarted = new Counter("checkout_attempts_started");
 const responsesCompleted = new Counter("checkout_responses_completed");
 const acceptedResponses = new Counter("checkout_reservation_accepted");
@@ -64,6 +64,8 @@ const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const transportFailures = new Counter("checkout_transport_failures");
 const requestTimeouts = new Counter("checkout_request_timeouts");
 const unexpectedResponses = new Counter("checkout_unexpected_responses");
+const acceptedBuyerWallLatency = new Trend("checkout_accepted_buyer_wall_latency", true);
+const soldOutBuyerWallLatency = new Trend("checkout_sold_out_buyer_wall_latency", true);
 // k6 built-ins, declared again only to initialize them; k6 returns the existing metric.
 const httpRequests = new Counter("http_reqs");
 const completedIterations = new Counter("iterations");
@@ -76,6 +78,7 @@ const requestTimeoutErrorCode = 1050;
 export const options = ${JSON.stringify({
       discardResponseBodies: true,
       systemTags: ["scenario"],
+      summaryTrendStats: ["avg", "min", "med", "max", "p(90)", "p(95)", "count"],
       scenarios: { checkout: scenario },
     })};
 
@@ -119,34 +122,36 @@ export default function () {
     ? \`run:\${config.runId}:buyer:\${buyerId}\`
     : \`run:\${config.runId}:attempt:\${iteration}\`;
   const correlationId = \`\${config.correlationId}:k6:\${iteration}\`;
-  attemptsStarted.add(1);
-  const response = http.post(
-    \`\${config.apiBaseUrl}/buy\`,
-    JSON.stringify({
-      saleOfferId: config.saleOfferId,
-      runId: config.runId,
-      idempotencyKey,
-      quantity: config.quantity,
-      correlationId,
-    }),
-    {
-      responseCallback: expectedCheckoutStatuses,
-      timeout: "${k6RequestTimeoutSeconds}s",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-        "${correlationIdHeaderName}": correlationId,
-        "${loadRunIdHeaderName}": config.runId,
-      },
+  const url = \`\${config.apiBaseUrl}/buy\`;
+  const body = JSON.stringify({
+    saleOfferId: config.saleOfferId,
+    runId: config.runId,
+    idempotencyKey,
+    quantity: config.quantity,
+    correlationId,
+  });
+  const requestOptions = {
+    responseCallback: expectedCheckoutStatuses,
+    timeout: "${k6RequestTimeoutSeconds}s",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      "${correlationIdHeaderName}": correlationId,
+      "${loadRunIdHeaderName}": config.runId,
     },
-  );
+  };
+  attemptsStarted.add(1);
+  const requestStartedAt = Date.now();
+  const response = http.post(url, body, requestOptions);
+  const wallLatencyMs = Date.now() - requestStartedAt;
   responsesCompleted.add(1);
 
   const outcome = readResponseHeader(response, checkoutOutcomeHeaderName);
   const isAccepted =
-    response.status === 202 &&
-    (outcome === "reservation_secured" ||
-      outcome === "reservation_pending_persistence");
+    (response.status === 200 && outcome === "order_confirmed") ||
+    (response.status === 202 &&
+      (outcome === "reservation_secured" ||
+        outcome === "reservation_pending_persistence"));
   const isSoldOut = response.status === 409 && outcome === "sold_out";
 
   if (response.status === 0) {
@@ -155,8 +160,10 @@ export default function () {
     if (response.error_code === requestTimeoutErrorCode) requestTimeouts.add(1);
   } else if (isAccepted) {
     acceptedResponses.add(1);
+    acceptedBuyerWallLatency.add(wallLatencyMs);
   } else if (isSoldOut) {
     soldOutResponses.add(1);
+    soldOutBuyerWallLatency.add(wallLatencyMs);
   } else {
     unexpectedResponses.add(1);
   }

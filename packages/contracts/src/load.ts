@@ -317,6 +317,14 @@ export const trafficCompletionAcknowledgementSchema = z
   })
   .strict();
 
+const buyerWallLatencyMeasurementSchema = z
+  .object({
+    sampleCount: positiveIntegerSchema,
+    averageMs: nonnegativeNumberSchema,
+    p95Ms: nonnegativeNumberSchema,
+  })
+  .strict();
+
 /** HTTP counters stay independently unknown when neither export nor stream supplies evidence. */
 export const trafficHttpSummarySchema = z
   .object({
@@ -329,6 +337,14 @@ export const trafficHttpSummarySchema = z
     unexpectedResponses: nonnegativeIntegerSchema.nullable(),
     failureRate: percentageSchema.nullable(),
     p95LatencyMs: nonnegativeNumberSchema.optional(),
+    /** Accepted HTTP replies include replays; null cohorts have no usable exported statistics. */
+    buyerWallLatencySummary: z
+      .object({
+        accepted: buyerWallLatencyMeasurementSchema.nullable(),
+        soldOut: buyerWallLatencyMeasurementSchema.nullable(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((summary, context) => {

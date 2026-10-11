@@ -9,6 +9,7 @@ import type {
   TerminalMetricSource,
   TerminalMetricSources,
   TrafficCompletionReport,
+  TrafficHttpSummary,
 } from "@checkout-surge/contracts";
 import { emptyRequestArrivalSummary } from "@checkout-surge/contracts";
 import type { InitialLoadRunDiagnostics } from "./load-run-diagnostics.js";
@@ -87,6 +88,12 @@ export interface K6TrendSummary {
   p95Ms: number | null;
 }
 
+interface K6BuyerWallLatencySummary {
+  sampleCount: number;
+  averageMs: number;
+  p95Ms: number;
+}
+
 export interface K6SummaryMetrics {
   httpRequests?: number;
   attemptsStarted?: number;
@@ -100,6 +107,8 @@ export interface K6SummaryMetrics {
   completedIterations?: number;
   httpFailureRate?: number;
   requestDuration?: K6TrendSummary;
+  acceptedBuyerWallLatency?: K6BuyerWallLatencySummary;
+  soldOutBuyerWallLatency?: K6BuyerWallLatencySummary;
   timingPhases: Partial<Record<K6TimingMetric, K6TrendSummary>>;
 }
 
@@ -280,6 +289,16 @@ export class K6RunAccumulator {
         unexpectedResponses: unexpectedResponses.valueOrNull,
         ...(durationP95 === undefined || durationP95 === null ? {} : { p95LatencyMs: durationP95 }),
         failureRate,
+        buyerWallLatencySummary: {
+          accepted: this.buyerWallLatency(
+            input.summaryMetrics?.acceptedBuyerWallLatency,
+            acceptedResponses,
+          ),
+          soldOut: this.buyerWallLatency(
+            input.summaryMetrics?.soldOutBuyerWallLatency,
+            soldOutResponses,
+          ),
+        },
       },
       trafficOutcomeSummary: {
         acceptedResponses: acceptedResponses.valueOrNull,
@@ -413,6 +432,14 @@ export class K6RunAccumulator {
     return result;
   }
 
+  private buyerWallLatency(
+    summary: K6BuyerWallLatencySummary | undefined,
+    outcome: SelectedCount,
+  ): NonNullable<TrafficHttpSummary["buyerWallLatencySummary"]>["accepted"] {
+    // Exported statistics are independent of lossy stdout/live dashboard observations.
+    return summary && summary.sampleCount === outcome.valueOrNull ? summary : null;
+  }
+
   private summaryWarnings(input: {
     initial: SummaryExportWarning | undefined;
     outcomes: SelectedCount[];
@@ -469,6 +496,16 @@ function parseSummaryObject(value: unknown): K6SummaryMetrics | null {
     summary.requestDuration = requestDuration;
     supported = true;
   }
+  for (const [metric, field] of [
+    ["checkout_accepted_buyer_wall_latency", "acceptedBuyerWallLatency"],
+    ["checkout_sold_out_buyer_wall_latency", "soldOutBuyerWallLatency"],
+  ] as const) {
+    const trend = readBuyerWallLatency(value.metrics[metric]);
+    if (trend) {
+      summary[field] = trend;
+      supported = true;
+    }
+  }
   for (const metric of Object.keys(timingMetricFields) as K6TimingMetric[]) {
     const trend = readTrend(value.metrics[metric]);
     if (trend) {
@@ -493,6 +530,23 @@ function readTrend(value: unknown): K6TrendSummary | undefined {
   const averageMs = finiteNonnegative(values.avg) ?? null;
   const p95Ms = finiteNonnegative(values["p(95)"]) ?? null;
   return averageMs === null && p95Ms === null ? undefined : { averageMs, p95Ms };
+}
+
+function readBuyerWallLatency(value: unknown): K6BuyerWallLatencySummary | undefined {
+  if (!isRecord(value)) return undefined;
+  const values = isRecord(value.values) ? value.values : value;
+  const sampleCount = finiteNonnegative(values.count);
+  const averageMs = finiteNonnegative(values.avg);
+  const p95Ms = finiteNonnegative(values["p(95)"]);
+  if (
+    sampleCount === undefined ||
+    !Number.isSafeInteger(sampleCount) ||
+    sampleCount === 0 ||
+    averageMs === undefined ||
+    p95Ms === undefined
+  )
+    return undefined;
+  return { sampleCount, averageMs, p95Ms };
 }
 
 function readRate(value: unknown): number | undefined {

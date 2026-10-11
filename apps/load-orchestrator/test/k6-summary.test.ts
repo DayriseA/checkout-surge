@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import {
   deriveRecordedReplyCount,
   emptyHttpTimingBreakdownSummary,
@@ -173,6 +174,210 @@ describe("k6 counter initialization", () => {
   });
 });
 
+describe("generated k6 buyer wall latency", () => {
+  it.each([
+    [200, "order_confirmed", "checkout_accepted_buyer_wall_latency"],
+    [202, "reservation_secured", "checkout_accepted_buyer_wall_latency"],
+    [202, "reservation_pending_persistence", "checkout_accepted_buyer_wall_latency"],
+    [409, "sold_out", "checkout_sold_out_buyer_wall_latency"],
+    [200, "reservation_secured", null],
+    [202, "order_confirmed", null],
+    [200, "sold_out", null],
+    [409, "reservation_secured", null],
+    [202, undefined, null],
+    [0, undefined, null],
+  ])("classifies HTTP %s / %s and samples only its wall cohort", (status, outcome, metric) => {
+    const execution = executeGeneratedScript({ status, outcome });
+    execution.run();
+    expect(execution.samples.get("checkout_accepted_buyer_wall_latency")).toEqual(
+      metric === "checkout_accepted_buyer_wall_latency" ? [42] : [],
+    );
+    expect(execution.samples.get("checkout_sold_out_buyer_wall_latency")).toEqual(
+      metric === "checkout_sold_out_buyer_wall_latency" ? [42] : [],
+    );
+    expect(execution.samples.get("checkout_unexpected_responses")).toEqual(
+      metric === null && status !== 0 ? [0, 1] : [0],
+    );
+    expect(execution.checks).toEqual([metric !== null]);
+  });
+
+  it("does not seed Trends and counts replay replies in the accepted cohort", () => {
+    const execution = executeGeneratedScript({ status: 202, outcome: "reservation_secured" });
+    expect(execution.samples.get("checkout_accepted_buyer_wall_latency")).toEqual([]);
+    execution.run();
+    execution.run();
+    expect(execution.samples.get("checkout_reservation_accepted")).toEqual([0, 1, 1]);
+    expect(execution.samples.get("checkout_accepted_buyer_wall_latency")).toEqual([42, 42]);
+    expect(execution.options.summaryTrendStats).toEqual([
+      "avg",
+      "min",
+      "med",
+      "max",
+      "p(90)",
+      "p(95)",
+      "count",
+    ]);
+  });
+});
+
+function executeGeneratedScript(response: { status: number; outcome: string | undefined }) {
+  const samples = new Map<string, number[]>();
+  const checks: boolean[] = [];
+  let now = 1_000;
+  class Metric {
+    constructor(private readonly name: string) {
+      samples.set(name, []);
+    }
+    add(value: number) {
+      samples.get(this.name)?.push(value);
+    }
+  }
+  const script = generateK6Script({
+    ...request,
+    configSnapshot: {
+      ...request.configSnapshot,
+      trafficConfig: { ...request.configSnapshot.trafficConfig, duplicateEachBuyerAttempt: true },
+    },
+  })
+    .contents.replace(/^import .*;$/gm, "")
+    .replace("export const options", "const options")
+    .replace("export function setup", "function setup")
+    .replace("export default function ()", "globalThis.run = function ()");
+  const context = {
+    Counter: Metric,
+    Trend: Metric,
+    __VU: 1,
+    exec: { scenario: { iterationInTest: 0 } },
+    Date: { now: () => now },
+    http: {
+      expectedStatuses: (...statuses: number[]) => statuses,
+      post: (_url: string, body: string, options: { responseCallback: number[] }) => {
+        expect(JSON.parse(body).idempotencyKey).toContain(":buyer:1");
+        expect(options.responseCallback).toEqual([200, 202, 409]);
+        now += 42;
+        return {
+          status: response.status,
+          headers: response.outcome === undefined ? {} : { "X-Checkout-Outcome": response.outcome },
+          timings: { duration: 7 },
+        };
+      },
+    },
+    check: (_response: unknown, predicates: Record<string, () => boolean>) => {
+      checks.push(...Object.values(predicates).map((predicate) => predicate()));
+    },
+    run: () => {},
+    options: { summaryTrendStats: [] as string[] },
+  };
+  runInNewContext(`${script}\nsetup(); globalThis.options = options;`, context);
+  return { samples, checks, run: context.run, options: context.options };
+}
+
+describe("buyer wall latency summary evidence", () => {
+  const exported = (acceptedCount = 3, soldOutCount = 2) => ({
+    checkout_reservation_accepted: { count: acceptedCount },
+    checkout_sold_out_rejections: { count: soldOutCount },
+    checkout_accepted_buyer_wall_latency: { count: 3, avg: 80, "p(95)": 120 },
+    checkout_sold_out_buyer_wall_latency: { values: { count: 2, avg: 9, "p(95)": 12 } },
+  });
+  const reportFor = (metrics: Record<string, unknown>) => {
+    const summaryMetrics = parseK6SummaryMetrics(JSON.stringify({ metrics }));
+    if (!summaryMetrics) throw new Error("Expected supported summary metrics");
+    return createAccumulator().completionReport({
+      status: "succeeded",
+      completedAt,
+      summaryMetrics,
+    });
+  };
+
+  it("retains flat and wrapped exported cohort statistics despite lost live samples", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_reservation_accepted",
+      data: { value: 1 },
+    });
+    const summaryMetrics = parseK6SummaryMetrics(JSON.stringify({ metrics: exported() }));
+    if (!summaryMetrics) throw new Error("Expected supported summary metrics");
+    const report = accumulator.completionReport({
+      status: "succeeded",
+      completedAt,
+      summaryMetrics,
+      liveMetricLoss: { sampleCount: 4, batchCount: 1 },
+    });
+    expect(trafficCompletionReportSchema.parse(report).httpSummary.buyerWallLatencySummary).toEqual(
+      {
+        accepted: { sampleCount: 3, averageMs: 80, p95Ms: 120 },
+        soldOut: { sampleCount: 2, averageMs: 9, p95Ms: 12 },
+      },
+    );
+    expect(report.loadRunDiagnosticsSummary.liveMetricLoss).toEqual({
+      sampleCount: 4,
+      batchCount: 1,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.acceptedResponses).toBe(
+      "summary_export",
+    );
+  });
+
+  it("makes only the disagreeing cohort unknown", () => {
+    expect(reportFor(exported(4)).httpSummary.buyerWallLatencySummary).toEqual({
+      accepted: null,
+      soldOut: { sampleCount: 2, averageMs: 9, p95Ms: 12 },
+    });
+  });
+
+  it.each([
+    undefined,
+    { count: 0, avg: 0, "p(95)": 0 },
+    { count: 3, avg: 80 },
+  ])("keeps an absent, empty, or incomplete cohort unknown", (trend) => {
+    const metrics = { ...exported(0), checkout_accepted_buyer_wall_latency: trend };
+    expect(reportFor(metrics).httpSummary.buyerWallLatencySummary?.accepted).toBeNull();
+  });
+
+  it("compares an exported Trend with the selected point-stream outcome fallback", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_reservation_accepted",
+      data: { value: 3 },
+    });
+    const metrics = { ...exported(), checkout_reservation_accepted: undefined };
+    const summaryMetrics = parseK6SummaryMetrics(JSON.stringify({ metrics }));
+    if (!summaryMetrics) throw new Error("Expected supported summary metrics");
+    const report = accumulator.completionReport({ status: "failed", completedAt, summaryMetrics });
+    expect(report.httpSummary.buyerWallLatencySummary?.accepted).toEqual({
+      sampleCount: 3,
+      averageMs: 80,
+      p95Ms: 120,
+    });
+    expect(report.loadRunDiagnosticsSummary.terminalMetricSources.acceptedResponses).toBe(
+      "point_stream",
+    );
+  });
+
+  it("does not borrow aggregate HTTP p95 or infer a percentile from raw points", () => {
+    const accumulator = createAccumulator();
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_reservation_accepted",
+      data: { value: 1 },
+    });
+    accumulator.observe({
+      type: "Point",
+      metric: "checkout_accepted_buyer_wall_latency",
+      data: { value: 42 },
+    });
+    const report = accumulator.completionReport({
+      status: "failed",
+      completedAt,
+      summaryMetrics: { requestDuration: { averageMs: 7, p95Ms: 10 }, timingPhases: {} },
+    });
+    expect(report.httpSummary.p95LatencyMs).toBe(10);
+    expect(report.httpSummary.buyerWallLatencySummary).toEqual({ accepted: null, soldOut: null });
+  });
+});
+
 describe("K6RunAccumulator summary precedence", () => {
   it("reports a clean run's initialized zero counters from the export without warnings", () => {
     const summaryMetrics = parseK6SummaryMetrics(
@@ -206,6 +411,7 @@ describe("K6RunAccumulator summary precedence", () => {
       requestTimeouts: 0,
       unexpectedResponses: 0,
       failureRate: 0,
+      buyerWallLatencySummary: { accepted: null, soldOut: null },
     });
     expect(report.trafficDeliverySummary.droppedIterations).toBe(0);
     expect(Object.values(report.loadRunDiagnosticsSummary.terminalMetricSources)).toEqual(
@@ -234,6 +440,7 @@ describe("K6RunAccumulator summary precedence", () => {
       requestTimeouts: null,
       unexpectedResponses: null,
       failureRate: null,
+      buyerWallLatencySummary: { accepted: null, soldOut: null },
     });
     expect(report.transportAttemptCounts).toEqual({
       plannedRequests: 10,
@@ -316,6 +523,7 @@ describe("K6RunAccumulator summary precedence", () => {
     accumulator.observe({ type: "Point", metric: "http_req_duration", data: { value: 10 } });
     const report = accumulator.completionReport({ status: "succeeded", completedAt });
     expect(report.httpSummary).not.toHaveProperty("p95LatencyMs");
+    expect(report.httpSummary.buyerWallLatencySummary).toEqual({ accepted: null, soldOut: null });
     expect(report.httpTimingBreakdownSummary).toEqual(emptyHttpTimingBreakdownSummary);
   });
 });
