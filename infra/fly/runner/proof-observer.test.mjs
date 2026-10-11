@@ -205,7 +205,11 @@ test("proof startup refuses an exited observer before launching the unchanged ap
   const proof = loadEnvironment(new URL("../proof.json", import.meta.url));
   const template = JSON.parse(readFileSync(new URL("./machine.json", import.meta.url), "utf8"));
   const runner = configureMachine(template, proof);
-  const result = spawnSync(runner.cmd[0], runner.cmd.slice(1), {
+  assert.equal(runner.init.exec[0], "/usr/local/bin/fly-entrypoint.sh");
+  // Exercise the actual init.exec argument vector without privileged kernel/UID setup.
+  const forwardingEntrypoint = path.join(f.root, "fly-entrypoint.sh");
+  writeFileSync(forwardingEntrypoint, '#!/bin/sh\nexec "$@"\n', { mode: 0o755 });
+  const result = spawnSync(forwardingEntrypoint, runner.init.exec.slice(1), {
     env: { ...process.env, PATH: `${f.root}:${process.env.PATH}` },
     timeout: 11_000,
   });
