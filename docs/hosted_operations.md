@@ -13,6 +13,24 @@ Procedures for operating the hosted demo on Fly.io. How the hosted runtime behav
 
 ---
 
+## Disposable proof environment
+
+The comparative proof uses `infra/fly/proof.json`: three separate app names, organization `playground-416`, and its HTTPS public origin. The production deploy command still defaults to `personal` and the existing production names. A supplied environment file is always a proof configuration: production app names and any other organization are refused before Fly is contacted. Every existing target app must belong to the configured organization before builds or mutations; a failed or unauthorized lookup fails closed. Each remote build and local registry push rechecks its target app immediately before the command. Machine mutations recheck ownership, including the apps used by recovery and the guard.
+
+Run from the repository root with Node.js 22 or newer and the logged-in Fly CLI. Set `FLYCTL` to the executable path if it is not on `PATH` (PowerShell: `$env:FLYCTL = 'C:\Users\dayri\.fly\bin\flyctl.exe'`). Each lifecycle operation takes the same explicit config:
+
+```sh
+node infra/fly/proof.mjs create infra/fly/proof.json
+node infra/fly/proof.mjs deploy infra/fly/proof.json
+node infra/fly/proof.mjs destroy infra/fly/proof.json
+```
+
+`create` creates the apps, allocates only the gate's shared IPv4 and IPv6 addresses, generates new secrets and app-scoped core/runner deploy tokens, and stages each app's secrets. The core and runner receive no public addresses. Credentials live only in `.tmp/fly-proof/<gate-app>/{core,runner,gate}.env`, excluded by both Git and the Docker build context; the command never prints them. Local file permissions are restricted on POSIX systems; on Windows the directory inherits the user's filesystem ACL. Read the generated admin passphrase from the local `core.env` only when needed for proof sign-in; never paste it into logs, task notes or commits. Do not read or copy production secret files.
+
+`deploy` builds the current working tree remotely and deploys all three apps. On the first proof deploy it creates the gate before the core so the gate can receive the core recovery configuration. All registries, service pointers, origins, runner recovery and core recovery configurations use the proof names. Images and Machine sizes otherwise match production. An optional `--no-depot`, `--local-build`, `--force` or `--fresh-core` follows the config path and has the normal deploy meaning. Direct deployment also supports `node infra/fly/deploy.mjs all --environment infra/fly/proof.json`; use the lifecycle command for the complete setup.
+
+Open the configured public origin, deliberately wake the core, and complete a demo run. Keep Machines stopped between experiments. `destroy` removes only the configured apps (and their Machines/volumes) after checking every existing app's organization, then removes its local secret files. Calling `create` again generates independent credentials and a new empty environment. A failed destroy retains the files so the operation can be retried. If a create failed before saving complete local secrets, destroy its disposable apps and retry create; it refuses to reset credentials on an existing database. After the apps have disappeared outside this tooling, run destroy to clear stale local secrets before recreating. No production workflow invokes these commands.
+
 ## Deploying
 
 ### Continuous deployment

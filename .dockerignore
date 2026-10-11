@@ -23,6 +23,8 @@ out
 *.key
 **/*.key
 .checkout-surge
+# Proof lifecycle credentials and operator scratch files.
+.tmp
 **/*.log
 **/*.tsbuildinfo
 working_docs

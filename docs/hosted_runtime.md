@@ -210,7 +210,7 @@ The guard is a scheduled Machine in the gate app (`infra/fly/gate/guard-machine.
 
 ## Deployment and Versioning
 
-`infra/fly/deploy.mjs` deploys one commit to the three apps. It runs from the operator's workstation or from GitHub Actions. Its usage and failure messages are in [Hosted Operations](hosted_operations.md#deploying).
+`infra/fly/deploy.mjs` deploys one commit to the three apps. It runs from the operator's workstation or from GitHub Actions. An explicit proof environment config rewrites app names, private service pointers and public origins before recovery configs are embedded; its lifecycle is documented in [Disposable proof environment](hosted_operations.md#disposable-proof-environment). Its usage and failure messages are in [Hosted Operations](hosted_operations.md#deploying).
 
 - **One version is one commit.** Every image is built, by default on Fly's remote builder, labelled `<service>-<commit-sha>` (plus `-dirty` and a build timestamp for an uncommitted tree), and pushed to its app's Fly registry ([HD-24](decisions/hosted_deployment.md#hd-24-deploys-build-remotely-and-replace-whole-machine-configs)).
 - **Full configs, nothing started.** Machines are created and updated through the Machines API with their full config from `infra/fly/<app>/`, without being started. The script then waits until Fly has prepared them.

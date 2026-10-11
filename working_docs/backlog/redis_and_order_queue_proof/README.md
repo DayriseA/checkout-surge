@@ -40,8 +40,8 @@ Choices waiting for the owner, added by the agent with the task, the options and
 
 | # | Task | Depends on | Status |
 | :-- | :-- | :-- | :-- |
-| 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | todo |
-| 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | todo |
+| 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | done |
+| 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | in progress |
 | 03 | [Multi-process API](03_multi_process_api.md) | 02, owner's go | todo |
 | 04 | [Store distance](04_store_distance.md) | 02, owner's go | todo |
 | 05 | [Mode without Redis](05_mode_without_redis.md) | 02, owner's go | todo |

@@ -38,7 +38,15 @@ import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isCapacityRefusal } from "./capacity-refusal.mjs";
+import { configureMachine, createAppRequest, loadEnvironment, verifyApps } from "./environment.mjs";
 
+const environmentIndex = process.argv.indexOf("--environment");
+if (environmentIndex !== -1 && !process.argv[environmentIndex + 1]) {
+  throw new Error("--environment requires a config path.");
+}
+const environment = loadEnvironment(
+  environmentIndex === -1 ? undefined : process.argv[environmentIndex + 1],
+);
 const region = "cdg";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: operator script, not a Turborepo task.
@@ -64,7 +72,7 @@ const unknownImageRetryMs = 10_000;
 // Image fields in machine.json hold an image name from `images`; the script replaces them.
 const targets = {
   core: {
-    app: "checkout-surge-core",
+    app: environment.apps.core,
     volume: { name: "core_data", sizeGb: 3 },
     images: {
       api: { dockerfile: "docker/Dockerfile.node-service", target: "runtime-fly", service: "api" },
@@ -83,7 +91,7 @@ const targets = {
     },
   },
   runner: {
-    app: "checkout-surge-runner",
+    app: environment.apps.runner,
     images: {
       "load-orchestrator": {
         dockerfile: "apps/load-orchestrator/Dockerfile",
@@ -92,7 +100,7 @@ const targets = {
     },
   },
   gate: {
-    app: "checkout-surge-gate",
+    app: environment.apps.gate,
     images: {
       gate: { dockerfile: "docker/Dockerfile.node-service", target: "runtime", service: "gate" },
     },
@@ -133,7 +141,8 @@ function buildArgs(image) {
   return image.service ? ["--build-arg", `SERVICE_NAME=${image.service}`] : [];
 }
 
-function buildAndPushRemotely(role, image, label) {
+async function buildAndPushRemotely(role, image, label) {
+  await verifyApps({ ...environment, apps: { [role]: targets[role].app } }, appRequest);
   run(
     flyctl,
     [
@@ -158,7 +167,7 @@ function buildAndPushRemotely(role, image, label) {
   );
 }
 
-function buildAndPushLocally(image, ref) {
+async function buildAndPushLocally(role, image, ref) {
   run(
     "docker",
     [
@@ -176,10 +185,11 @@ function buildAndPushLocally(image, ref) {
     ],
     { stdio: "inherit" },
   );
+  await verifyApps({ ...environment, apps: { [role]: targets[role].app } }, appRequest);
   run("docker", ["push", ref], { stdio: "inherit" });
 }
 
-function buildAndPushImages(role, version) {
+async function buildAndPushImages(role, version) {
   const refs = {};
   // Uncommitted trees share one version, and Fly keeps a Machine's image when the reference is
   // unchanged, so each dirty build gets its own label.
@@ -190,14 +200,14 @@ function buildAndPushImages(role, version) {
     const label = `${name}-${version}${buildStamp}`;
     refs[name] = `registry.fly.io/${targets[role].app}:${label}`;
     console.log(`Building ${refs[name]} (${builder} builder)`);
-    if (builder === "local") buildAndPushLocally(image, refs[name]);
-    else buildAndPushRemotely(role, image, label);
+    if (builder === "local") await buildAndPushLocally(role, image, refs[name]);
+    else await buildAndPushRemotely(role, image, label);
   }
   return refs;
 }
 
 function machineConfig(role, imageRefs, file = "machine.json") {
-  const config = readRepoJson(`infra/fly/${role}/${file}`);
+  const config = configureMachine(readRepoJson(`infra/fly/${role}/${file}`), environment);
   // A multi-container Machine (core) sets images per container; a single-image one (runner) at the top.
   for (const holder of [config, ...(config.containers ?? [])]) {
     if (holder.image in imageRefs) holder.image = imageRefs[holder.image];
@@ -221,26 +231,12 @@ function jsonFile(guestPath, value) {
   };
 }
 
+const appRequest = createAppRequest(run, flyctl);
+
 function createMachinesApi(app) {
   return async (method, path, body, nonce) => {
-    // Read per call: a token read before the builds was refused (403) once they had finished.
-    const token = run(flyctl, ["auth", "token"], { stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const response = await fetch(`https://api.machines.dev/v1/apps/${app}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        ...(nonce ? { "fly-machine-lease-nonce": nonce } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw Object.assign(new Error(`${method} ${path} failed with ${response.status}: ${text}`), {
-        status: response.status,
-      });
-    }
-    return text ? JSON.parse(text) : undefined;
+    if (method !== "GET") await verifyApps(environment, appRequest);
+    return appRequest(method, app, path, body, nonce);
   };
 }
 
@@ -660,9 +656,15 @@ async function deploy() {
   // Fails before the builds on two Machines of one role (a recovery in progress, or its leftover).
   for (const role of roles) await findMachine(createMachinesApi(targets[role].app), role);
   if (builder === "local") run(flyctl, ["auth", "docker"], { stdio: "inherit" });
-  const imageRefs = Object.fromEntries(
-    roles.map((role) => [role, buildAndPushImages(role, version)]),
-  );
+  const imageRefs = {};
+  for (const role of roles) imageRefs[role] = await buildAndPushImages(role, version);
+  // On a first complete deploy the gate must exist before the core writes its recovery file.
+  const bootstrapGate =
+    environment.name === "proof" &&
+    roles.includes("gate") &&
+    roles.includes("core") &&
+    !(await findMachine(createMachinesApi(targets.gate.app), "gate"));
+  if (bootstrapGate) await deployGate(imageRefs.gate, version);
   if (roles.includes("core")) {
     await deployCore(imageRefs.core, version, async () => {
       if (roles.includes("runner")) await deployRunner(imageRefs.runner, version);
@@ -670,7 +672,7 @@ async function deploy() {
   } else if (roles.includes("runner")) {
     await deployRunner(imageRefs.runner, version);
   }
-  if (roles.includes("gate")) await deployGate(imageRefs.gate, version);
+  if (roles.includes("gate") && !bootstrapGate) await deployGate(imageRefs.gate, version);
 }
 
 function fail(error) {
@@ -678,6 +680,12 @@ function fail(error) {
   process.exitCode = 1;
 }
 
-// A failed step can leave a partial deployment, so the versions are compared in every case.
-await deploy().catch(fail);
-await verifyVersions().catch(fail);
+// A failed safety check must not fall through into version reads against unverified apps.
+try {
+  await verifyApps(environment, appRequest);
+  // A failed step can leave a partial deployment, so compare versions after a verified deploy.
+  await deploy().catch(fail);
+  await verifyVersions().catch(fail);
+} catch (error) {
+  fail(error);
+}
