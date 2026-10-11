@@ -1,7 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";--> statement-breakpoint
 CREATE TYPE "public"."demo_preset_visibility" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> statement-breakpoint
-CREATE TYPE "public"."run_execution_mode" AS ENUM('demo', 'without_redis');--> statement-breakpoint
+CREATE TYPE "public"."run_execution_mode" AS ENUM('demo', 'without_redis', 'without_order_queue');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint

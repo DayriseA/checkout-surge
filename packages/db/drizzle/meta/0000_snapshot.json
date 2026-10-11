@@ -3829,7 +3829,7 @@
     "public.run_execution_mode": {
       "name": "run_execution_mode",
       "schema": "public",
-      "values": ["demo", "without_redis"]
+      "values": ["demo", "without_redis", "without_order_queue"]
     },
     "public.traffic_completion_enrichment_status": {
       "name": "traffic_completion_enrichment_status",

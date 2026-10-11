@@ -9,16 +9,20 @@ import {
   createReadinessResponse,
 } from "@checkout-surge/logger";
 import { fastify } from "fastify";
+import { registerInlineOrderConfirmationRoutes } from "./routes/inline-order-confirmation.js";
 import type { WorkerReadiness } from "./runtime/readiness.js";
 
 export interface BuildWorkerHealthServerOptions {
   logger: CheckoutSurgeLogger;
   readiness: WorkerReadiness;
   startedAt?: Date;
+  inlineConfirmation?: Parameters<typeof registerInlineOrderConfirmationRoutes>[1];
 }
 
 export function buildWorkerHealthServer(options: BuildWorkerHealthServerOptions) {
   const app = fastify({ loggerInstance: options.logger });
+  if (options.inlineConfirmation)
+    registerInlineOrderConfirmationRoutes(app, options.inlineConfirmation);
 
   app.get("/health/live", async () =>
     livenessResponseSchema.parse(

@@ -137,7 +137,7 @@ export const previewDemoRunRequestSchema = startDemoRunRequestSchema;
 export const previewDemoRunResponseSchema = estimatePreviewSchema;
 export type PreviewDemoRunResponse = z.infer<typeof previewDemoRunResponseSchema>;
 
-export const runExecutionModeValues = ["demo", "without_redis"] as const;
+export const runExecutionModeValues = ["demo", "without_redis", "without_order_queue"] as const;
 export const runExecutionModeSchema = z.enum(runExecutionModeValues);
 export type RunExecutionMode = z.infer<typeof runExecutionModeSchema>;
 

@@ -49,7 +49,7 @@ export function createRunInventoryLifecycle(
         ? getPostgresInventoryStatus(db, scope.saleOfferId, observedAt)
         : getInventoryStatus(redis, scope.saleOfferId, observedAt),
     async retire(scope) {
-      if (scope.executionMode === "demo")
+      if (scope.executionMode !== "without_redis")
         return (await deleteSettledRunInventory(redis, scope)).outcome;
       const result = await retireSettledPostgresRunInventory(db, scope);
       if (result === "deleted") await retireDashboardProjectionScope(redis, scope);

@@ -1,5 +1,13 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { type CheckoutSurgeLogger, childLoggerWithCorrelationId } from "@checkout-surge/logger";
+import type { ErpProcessingBudget } from "./erp-confirmation-client.js";
+
+export interface OrderProcessingContext {
+  budget?: ErpProcessingBudget;
+  /** Inline uncertainty and background recovery never replay an unknown POST. */
+  replayUnknown?: boolean;
+  allowDispatch?: boolean;
+}
 
 export interface OrderProcessDeliveryMetadata {
   attemptNumber: number;
@@ -14,7 +22,11 @@ export interface OrderProcessDeliveryMetadata {
 }
 
 export interface OrderProcessJobHandler {
-  handle(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<void>;
+  handle(
+    job: OrderProcessJob,
+    delivery: OrderProcessDeliveryMetadata,
+    context?: OrderProcessingContext,
+  ): Promise<void>;
 }
 
 export type ProcessingTransitionResult =
@@ -62,7 +74,11 @@ export interface OrderTransitionPersistence {
 }
 
 export interface OrderConfirmation {
-  confirm(job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata): Promise<unknown>;
+  confirm(
+    job: OrderProcessJob,
+    delivery: OrderProcessDeliveryMetadata,
+    context?: OrderProcessingContext,
+  ): Promise<unknown>;
 }
 
 export interface RecoverableOrderHandoff {
@@ -138,7 +154,7 @@ export function createOrderProcessJobHandler(dependencies: {
   recovery: OrderRecoveryHandoff;
 }): OrderProcessJobHandler {
   return {
-    handle: async (job, delivery) => {
+    handle: async (job, delivery, context) => {
       const logger = childLoggerWithCorrelationId(dependencies.logger, job.correlationId);
       const logContext = {
         orderId: job.orderId,
@@ -211,7 +227,11 @@ export function createOrderProcessJobHandler(dependencies: {
 
       let confirmationResult: unknown;
       try {
-        confirmationResult = await dependencies.confirmation.confirm(job, delivery);
+        confirmationResult = await dependencies.confirmation.confirm(
+          job,
+          delivery,
+          ...(context ? [context] : []),
+        );
       } catch (confirmationError) {
         if (isAcceptedConfirmationPersistenceError(confirmationError)) {
           await handoffAcceptedResult(dependencies.recovery, job, delivery, confirmationError);

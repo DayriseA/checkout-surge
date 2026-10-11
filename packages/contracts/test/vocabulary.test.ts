@@ -22,7 +22,7 @@ describe("shared PostgreSQL vocabulary", () => {
     expect(terminalInventorySnapshotSchema.shape.source.options).toEqual(["redis", "postgres"]);
   });
   it("preserves every behavior-bearing ordered tuple", () => {
-    expect(runExecutionModeValues).toEqual(["demo", "without_redis"]);
+    expect(runExecutionModeValues).toEqual(["demo", "without_redis", "without_order_queue"]);
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
     expect(erpAttemptStatusValues).toEqual(["succeeded", "failed", "timed_out"]);
     expect(recoveryJobStatusValues).toEqual(["pending", "enqueued", "escalated", "resolved"]);

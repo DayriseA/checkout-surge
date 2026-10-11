@@ -5,6 +5,7 @@ import type {
   ErpConfirmationOutcome,
   ErpLookupOutcome,
 } from "../../src/application/erp-confirmation-client.js";
+import { ErpRequestStoppedBeforeFetchError } from "../../src/application/erp-confirmation-client.js";
 import { createErpDeclaredDispatchGate } from "../../src/application/erp-declared-dispatch-gate.js";
 import {
   ErpUnresolvedCallReconciler,
@@ -42,6 +43,58 @@ const context = {
 };
 
 describe("adaptive ERP reconciliation", () => {
+  it("propagates inline budgets to lookup and never replays an unknown dispatched call", async () => {
+    const client = {
+      ...clientPort(lookupUnknown()),
+      findUnresolvedCall: vi.fn().mockResolvedValue(call),
+    };
+    const admission = runtimeAdmission();
+    const control = { defer: vi.fn().mockResolvedValue(true) };
+    const reconciler = new ErpUnresolvedCallReconciler({
+      client,
+      admission,
+      callResolution: { resolveDispatchedCall: vi.fn() },
+    });
+    const scheduled = new ScheduledErpOrderConfirmation({ client, admission, reconciler, control });
+    const budget = { deadlineAt: new Date(55_000), signal: new AbortController().signal };
+    await expect(
+      scheduled.confirm(job, delivery, { budget, replayUnknown: false }),
+    ).resolves.toMatchObject({ disposition: "deferred", reason: "erp_result_unknown_lookup_only" });
+    expect(client.lookup).toHaveBeenCalledWith(call.idempotencyKey, job.correlationId, budget);
+    expect(client.dispatch).not.toHaveBeenCalled();
+    // A restarted/background caller gets a fresh lookup allowance and no POST permission.
+    await scheduled.confirm(job, delivery, { allowDispatch: false });
+    expect(client.dispatch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    "dispatch",
+    "lookup",
+  ] as const)("durably defers a local stop before %s without adaptive feedback", async (operation) => {
+    const client = {
+      ...clientPort(lookupUnknown()),
+      findUnresolvedCall: vi.fn().mockResolvedValue(operation === "lookup" ? call : null),
+    };
+    client[operation].mockRejectedValue(new ErpRequestStoppedBeforeFetchError("cancelled"));
+    const admission = runtimeAdmission();
+    const feedback = vi.spyOn(admission, "feedback");
+    const control = { defer: vi.fn().mockResolvedValue(true) };
+    const reconciler = new ErpUnresolvedCallReconciler({
+      client,
+      admission,
+      callResolution: { resolveDispatchedCall: vi.fn() },
+    });
+    const scheduled = new ScheduledErpOrderConfirmation({ client, admission, reconciler, control });
+    const budget = { deadlineAt: new Date(55_000), signal: new AbortController().signal };
+    await expect(
+      scheduled.confirm(job, delivery, { budget, replayUnknown: false }),
+    ).resolves.toMatchObject({ disposition: "deferred", reason: "erp_local_cancelled" });
+    expect(control.defer).toHaveBeenCalledOnce();
+    expect(feedback).not.toHaveBeenCalled();
+    expect(admission.state()).toMatchObject({ counters: { released: 1, settled: 0 } });
+    if (operation === "dispatch")
+      expect(client.dispatch).toHaveBeenCalledWith(job, delivery, expect.any(Number), budget);
+  });
   it("shares the declared POST quota between initial confirmation and unknown-call replay", async () => {
     let now = 0;
     const declaredDispatchGate = createErpDeclaredDispatchGate({

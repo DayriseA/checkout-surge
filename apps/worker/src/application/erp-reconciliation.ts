@@ -10,8 +10,10 @@ import type {
   ErpAttemptRecord,
   ErpConfirmationOutcome,
   ErpLookupOutcome,
+  ErpProcessingBudget,
   HttpErpOrderConfirmation,
 } from "./erp-confirmation-client.js";
+import { ErpRequestStoppedBeforeFetchError } from "./erp-confirmation-client.js";
 import type { ErpDeclaredDispatchGate } from "./erp-declared-dispatch-gate.js";
 import type { ErpAdmissionScope } from "./erp-resilience-policy.js";
 import type {
@@ -19,7 +21,10 @@ import type {
   AdmittedErpOperation,
   ErpAdmissionContext,
 } from "./order-process-admission.js";
-import type { OrderProcessDeliveryMetadata } from "./order-process-job-handler.js";
+import type {
+  OrderProcessDeliveryMetadata,
+  OrderProcessingContext,
+} from "./order-process-job-handler.js";
 import type { OrderRecoveryPersistence } from "./order-recovery-scanner.js";
 import { acceptedRunSnapshotFailureCode } from "./run-config.js";
 
@@ -71,6 +76,7 @@ export class ScheduledErpOrderConfirmation {
   async confirm(
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
+    processing: OrderProcessingContext = {},
   ): Promise<ScheduledErpOutcome> {
     const generation = delivery.processingGeneration;
     if (generation === undefined) throw new Error("Order delivery has no processing generation.");
@@ -99,7 +105,13 @@ export class ScheduledErpOrderConfirmation {
           const reconciliationContext = this.options.admission.reconciliationContext(job);
           const result = await this.options.reconciler.reconcile(
             { job, delivery, call: unresolved, context: reconciliationContext },
-            { unknownFailure: failure, replayUnknown: this.options.allowDispatch !== false },
+            {
+              unknownFailure: failure,
+              replayUnknown:
+                processing.replayUnknown ??
+                (processing.allowDispatch !== false && this.options.allowDispatch !== false),
+              budget: processing.budget,
+            },
           );
           return this.scheduleResult(job, generation, reconciliationContext.scope, result);
         }
@@ -111,12 +123,17 @@ export class ScheduledErpOrderConfirmation {
     if (unresolved) {
       const result = await this.options.reconciler.reconcile(
         { job, delivery, call: unresolved, context },
-        { replayUnknown: this.options.allowDispatch !== false },
+        {
+          replayUnknown:
+            processing.replayUnknown ??
+            (processing.allowDispatch !== false && this.options.allowDispatch !== false),
+          budget: processing.budget,
+        },
       );
       return this.scheduleResult(job, generation, context.scope, result);
     }
 
-    if (this.options.allowDispatch === false) {
+    if (this.options.allowDispatch === false || processing.allowDispatch === false) {
       return this.deferAt(
         job,
         generation,
@@ -136,7 +153,7 @@ export class ScheduledErpOrderConfirmation {
         admission.decision.nextEligibleAtMs,
       );
     }
-    const result = await this.dispatch(job, delivery, admission.operation);
+    const result = await this.dispatch(job, delivery, admission.operation, processing.budget);
     return this.scheduleResult(job, generation, context.scope, result);
   }
 
@@ -144,6 +161,7 @@ export class ScheduledErpOrderConfirmation {
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
     operation: AdmittedErpOperation,
+    budget?: ErpProcessingBudget,
   ): Promise<ErpReconciliationResult> {
     try {
       const declared = await this.options.declaredDispatchGate?.tryAcquire(operation.context);
@@ -154,10 +172,14 @@ export class ScheduledErpOrderConfirmation {
         job,
         delivery,
         operation.requestDeadlineMs,
+        ...(budget ? [budget] : []),
       );
       const settlement = await this.options.admission.feedback(operation, outcome);
       return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
     } catch (error) {
+      if (error instanceof ErpRequestStoppedBeforeFetchError) {
+        return nonCallDeferral(`erp_local_${error.reason}`, this.options.admission.nextRecheckAt());
+      }
       const outcome = dispatchedOutcomeFromError(error);
       if (!outcome) throw error;
       const settlement = await this.options.admission.feedback(operation, outcome);
@@ -264,6 +286,7 @@ export class ErpUnresolvedCallReconciler {
     options: {
       unknownFailure?: { errorCode: string; errorMessage: string };
       replayUnknown?: boolean;
+      budget?: ErpProcessingBudget | undefined;
     } = {},
   ): Promise<ErpReconciliationResult> {
     if (this.activeOrders.has(input.job.orderId)) {
@@ -292,11 +315,20 @@ export class ErpUnresolvedCallReconciler {
         lookup = await this.options.client.lookup(
           input.call.idempotencyKey,
           input.job.correlationId,
+          ...(options.budget ? [options.budget] : []),
         );
         const settlement = await this.options.admission.feedback(lookupOperation, lookup);
         if (lookup.disposition !== "succeeded") {
           return { ...lookup, nextEligibleAtMs: settlement.nextEligibleAtMs };
         }
+      } catch (error) {
+        if (error instanceof ErpRequestStoppedBeforeFetchError) {
+          return nonCallDeferral(
+            `erp_local_${error.reason}`,
+            this.options.admission.nextRecheckAt(),
+          );
+        }
+        throw error;
       } finally {
         this.options.admission.release(lookupOperation);
       }
@@ -311,7 +343,7 @@ export class ErpUnresolvedCallReconciler {
         if (options.unknownFailure) {
           return { ...lookup, ...options.unknownFailure, disposition: "technical_failure" };
         }
-        return this.replay(input, lookupOperation.permit.probe);
+        return this.replay(input, lookupOperation.permit.probe, options.budget);
       }
       if (!sameIdentity(lookup.lookup.lookup.identity, input.job, input.call.idempotencyKey)) {
         return {
@@ -358,6 +390,7 @@ export class ErpUnresolvedCallReconciler {
       context: ErpAdmissionContext;
     },
     confirmationProbeContinuation: boolean,
+    budget?: ErpProcessingBudget,
   ): Promise<ErpReconciliationResult> {
     const admission = await this.options.admission.tryAcquire(input.context, "confirmation", {
       confirmationProbeContinuation,
@@ -377,10 +410,14 @@ export class ErpUnresolvedCallReconciler {
         input.job,
         delivery,
         operation.requestDeadlineMs,
+        ...(budget ? [budget] : []),
       );
       const settlement = await this.options.admission.feedback(operation, outcome);
       return { ...outcome, nextEligibleAtMs: settlement.nextEligibleAtMs };
     } catch (error) {
+      if (error instanceof ErpRequestStoppedBeforeFetchError) {
+        return nonCallDeferral(`erp_local_${error.reason}`, this.options.admission.nextRecheckAt());
+      }
       const outcome = dispatchedOutcomeFromError(error);
       if (!outcome) throw error;
       const settlement = await this.options.admission.feedback(operation, outcome);
