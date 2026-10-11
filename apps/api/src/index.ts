@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import {
   BusinessOutcomePublicationScheduler,
   type CheckoutSurgeDatabase,
+  createAbortableDatabaseConnection,
   createDatabaseConnection,
   createRedisClient,
   createRedisDashboardProjectionDirtySubscriber,
@@ -46,6 +47,7 @@ import {
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
 import { BuyerReservationTimingBarrier } from "./services/buyer-reservation-timing-barrier.js";
+import { ComparisonReadService } from "./services/comparison-read-service.js";
 import {
   type CoreIdleShutdown,
   CoreIdleStop,
@@ -60,6 +62,7 @@ import {
 } from "./services/dashboard-recovery-service.js";
 import { DashboardSourceDirtyScheduler } from "./services/dashboard-source-dirty-scheduler.js";
 import { RedisDashboardTrafficMetricStore } from "./services/dashboard-traffic-metric-store.js";
+import { DemoComparisonService } from "./services/demo-comparison-service.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "./services/demo-maintenance-authority.js";
 import { DemoPresetService } from "./services/demo-preset-service.js";
 import { DemoRunFinalizationService } from "./services/demo-run-finalization-service.js";
@@ -436,6 +439,31 @@ export async function startApiServer(): Promise<void> {
     estimatorConstants: config.estimatorConstants,
     deploymentCapacity: config.deploymentCapacity,
   });
+  const comparisonService = new DemoComparisonService({
+    db: connection.db,
+    maintenanceAuthority,
+    lifecycle: demoRunLifecycleService,
+    runtimePolicyReader: runtimePolicyService,
+    publicRunBudgetStore: new RedisPublicRunBudgetStore(redis),
+    publicClientCookieSecret: config.publicClientCookieSecret,
+    estimatorConstants: config.estimatorConstants,
+    logger,
+    cleanupComparisonExclusive: (id, correlationId) =>
+      adminDemoReset.cleanupComparisonExclusive(id, correlationId),
+  });
+  const comparisonReader = new ComparisonReadService({
+    open: (signal) => {
+      const database = createAbortableDatabaseConnection(config.databaseUrl, signal, {
+        max: 1,
+        connect_timeout: Math.ceil(config.dashboardRecoveryTimeoutMs / 1000),
+      });
+      return {
+        db: database.db,
+        history: new RunHistoryService({ db: database.db }),
+        close: () => database.close(),
+      };
+    },
+  });
   const demoRunStartupReconciliationService = new DemoRunStartupReconciliationService({
     maintenanceAuthority,
     logger,
@@ -474,6 +502,8 @@ export async function startApiServer(): Promise<void> {
   let server: ApiFastifyInstance | null = null;
   let closePromise: Promise<void> | null = null;
   let finalizationPoller: ReturnType<typeof setInterval> | null = null;
+  let maintenancePass: Promise<void> | null = null;
+  let listenerReady = false;
   const readiness = createApiReadiness({
     databaseUrl: config.databaseUrl,
     redisUrl: config.redisUrl,
@@ -486,6 +516,7 @@ export async function startApiServer(): Promise<void> {
         clearInterval(finalizationPoller);
       }
       if (automaticResetPoller) clearInterval(automaticResetPoller);
+      await maintenancePass;
       await automaticRunReset.close().catch((err: unknown) => {
         logger.error({ err }, "Automatic run reset failed during shutdown.");
       });
@@ -539,6 +570,8 @@ export async function startApiServer(): Promise<void> {
     }, 5_000);
     automaticResetPoller.unref();
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
+    await demoRunFinalizationService.finalizeReadyRuns();
+    await runnerLossMonitor.check();
     await buyingContext.hydrate();
     pendingPersistenceRecovery.start();
     if (startupReconciliation.discoveredRunCount > 0) {
@@ -546,17 +579,22 @@ export async function startApiServer(): Promise<void> {
     }
 
     finalizationPoller = setInterval(() => {
-      void demoRunStartupReconciliationService.reconcileStartingRuns().catch((error: unknown) => {
-        logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
+      if (!listenerReady || maintenancePass) return;
+      maintenancePass = (async () => {
+        await demoRunStartupReconciliationService.reconcileStartingRuns();
+        await demoRunFinalizationService.finalizeReadyRuns();
+        await runnerLossMonitor.check();
+        await comparisonService.reconcile();
+      })().catch((error: unknown) => {
+        logger.error({ err: error }, "Demo run maintenance pass failed.");
       });
-      void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
-        logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
-      });
-      void runnerLossMonitor.check().catch((error: unknown) => {
-        logger.error({ err: error }, "Runner loss check failed.");
-      });
-      void coreIdleShutdown.check().catch((error: unknown) => {
-        logger.error({ err: error }, "Core idle stop check failed.");
+      void maintenancePass.then(() => {
+        maintenancePass = null;
+        if (closePromise) return;
+        // The gate waits for this process to exit before answering self-stop; shutdown must not join it.
+        void coreIdleShutdown.check().catch((error: unknown) => {
+          logger.error({ err: error }, "Core idle stop check failed.");
+        });
       });
     }, config.demoRunFinalizationPollIntervalSeconds * 1000);
     finalizationPoller.unref();
@@ -576,6 +614,7 @@ export async function startApiServer(): Promise<void> {
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,
+      comparison: { comparisonService, comparisonReader },
       trafficCompletionService,
       trafficMetricIngestion,
       adminDemoReset,
@@ -607,6 +646,9 @@ export async function startApiServer(): Promise<void> {
       listenTextResolver: (address) => `API gateway listening at ${address}`,
       backlog: config.listenBacklog,
     });
+    // Fresh comparison children must reach this listener in the combined/local role.
+    await comparisonService.reconcile();
+    listenerReady = true;
   } catch (error) {
     process.exitCode = 1;
     logger.error({ err: error }, "API server failed to start.");

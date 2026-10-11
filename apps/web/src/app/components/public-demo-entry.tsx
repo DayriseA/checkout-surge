@@ -282,7 +282,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   const isReadinessBlocked = readinessBlocksRunStart(readiness);
   const presets =
     surface.presets.status === "available"
-      ? surface.presets.data.presets.filter((preset) => preset.visibility === "public")
+      ? surface.presets.data.presets.filter(
+          (preset) => preset.visibility === "public" && preset.startKind !== "comparison",
+        )
       : [];
   const curatedPresets = presets
     .filter((preset) => preset.slug !== "public-custom")

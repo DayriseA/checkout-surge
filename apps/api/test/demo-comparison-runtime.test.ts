@@ -33,6 +33,7 @@ import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecy
 import { insertStartingRun } from "../src/services/accepted-demo-run.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "../src/services/automatic-run-reset-service.js";
+import { ComparisonReadService } from "../src/services/comparison-read-service.js";
 import { comparisonWorkloads } from "../src/services/comparison-workloads.js";
 import { PostgresNonterminalRunReader } from "../src/services/core-idle-stop.js";
 import { DemoComparisonService } from "../src/services/demo-comparison-service.js";
@@ -242,6 +243,92 @@ describe("comparison runtime ownership", () => {
     return finalizer;
   }
 
+  function comparisonReader(history = new RunHistoryService({ db: database.db, now: () => now })) {
+    return new ComparisonReadService({
+      open: () => ({ db: database.db, history, close: async () => {} }),
+      now: () => now,
+    });
+  }
+
+  it("reads the current child and not-run future identities without inventing metrics", async () => {
+    const parent = await seedParent();
+    const detail = await comparisonReader().detail(parent.id, new AbortController().signal);
+    expect(detail).toMatchObject({
+      comparisonId: parent.id,
+      state: "running",
+      currentStage: 0,
+      currentRunId: parent.children[0].runId,
+      autoResetAt: new Date(parent.acceptedAt.getTime() + 900000).toISOString(),
+    });
+    expect(detail?.stages.map((stage) => stage.availability)).toEqual([
+      "pending",
+      "not_run",
+      "not_run",
+      "not_run",
+    ]);
+    expect(detail?.stages[0]).toMatchObject({
+      role: "redis_demo",
+      run: { comparisonId: parent.id },
+    });
+    expect(await comparisonReader().detail(randomUUID(), new AbortController().signal)).toBeNull();
+  });
+
+  it("keeps complete ordinary child reports, membership and missing history explicit", async () => {
+    const parent = await seedParent();
+    for (const child of parent.children) {
+      await settle(child.runId);
+      await service.reconcile();
+    }
+    const history = new RunHistoryService({ db: database.db, now: () => now });
+    const readOrdinaryDetail = history.detail.bind(history);
+    vi.spyOn(history, "detail").mockImplementation(async (runId) => {
+      const report = await readOrdinaryDetail(runId);
+      if (!report) return null;
+      return {
+        ...report,
+        summary: {
+          ...report.summary,
+          httpSummary: {
+            ...report.summary.httpSummary,
+            buyerWallLatencySummary: {
+              accepted: { sampleCount: 2, averageMs: 25, p95Ms: 40 },
+              soldOut: { sampleCount: 5, averageMs: 5, p95Ms: 8 },
+            },
+          },
+        },
+      };
+    });
+    const detail = await comparisonReader(history).detail(parent.id, new AbortController().signal);
+    expect(detail?.state).toBe("completed");
+    for (const stage of detail?.stages ?? []) {
+      expect(stage.availability).toBe("available");
+      if (stage.availability !== "available") throw new Error("Expected retained child report.");
+      expect(stage.detail).toEqual(await history.detail(stage.runId));
+      expect(stage.detail.summary.httpSummary).toEqual(
+        (await history.detail(stage.runId))?.summary.httpSummary,
+      );
+      expect(stage.detail.summary.httpSummary.buyerWallLatencySummary).toEqual({
+        accepted: { sampleCount: 2, averageMs: 25, p95Ms: 40 },
+        soldOut: { sampleCount: 5, averageMs: 5, p95Ms: 8 },
+      });
+      expect(stage.detail.result).toHaveProperty("uniqueReservations");
+      expect(stage.detail.run.comparisonId).toBe(parent.id);
+      expect((await history.adminDetail(stage.runId))?.run.comparisonId).toBe(parent.id);
+    }
+    expect(
+      (await history.list({ page: 1, pageSize: 10 })).summaries.every(
+        (row) => row.comparisonId === parent.id,
+      ),
+    ).toBe(true);
+    await database.db
+      .delete(demoRunSummaries)
+      .where(eq(demoRunSummaries.runId, parent.children[1].runId));
+    expect(
+      (await comparisonReader().detail(parent.id, new AbortController().signal))?.stages[1]
+        ?.availability,
+    ).toBe("unavailable");
+  });
+
   it("advances certified failed business runs once per pass and keeps the charge through final completion", async () => {
     const parent = await seedParent();
     for (let stage = 0; stage < 4; stage += 1) {
@@ -320,6 +407,11 @@ describe("comparison runtime ownership", () => {
     queueMaintenance.cleanRuns.mockRejectedValueOnce(new Error("Queue settlement unavailable."));
     await expect(service.reconcile()).rejects.toThrow("Queue settlement unavailable.");
     expect((await database.db.select().from(demoComparisons))[0]?.state).toBe("cleanup_pending");
+    expect(await comparisonReader().detail(parent.id, new AbortController().signal)).toMatchObject({
+      state: "cleanup_pending",
+      terminalReason: "load_generator_lost",
+      currentFailureReason: "load_generator_lost",
+    });
     expect((await database.db.select().from(demoRuns))[0]?.adminResetCompletedAt).toBeNull();
     await service.reconcile();
     expect((await database.db.select().from(demoComparisons))[0]).toMatchObject({

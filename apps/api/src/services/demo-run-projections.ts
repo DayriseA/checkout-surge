@@ -16,6 +16,7 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
   const context = `demo run ${run.id}`;
   return demoRunSnapshotSchema.parse({
     runId: run.id,
+    ...(run.comparisonId ? { comparisonId: run.comparisonId } : {}),
     presetId: run.presetId,
     presetName: run.presetName,
     operatorMode: run.operatorMode,

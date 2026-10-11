@@ -49,8 +49,6 @@ export function buildSeedPresets(): SeedPreset[] {
       isEditable: false,
       isCustom: false,
       isSystem: true,
-      // Publication waits for the comparison dispatcher and coordinator.
-      archivedAt: new Date("2026-10-11T00:00:00.000Z"),
       display: {
         name: "Architecture comparison",
         description: "Two fixed matched workloads compare Redis and the order queue.",

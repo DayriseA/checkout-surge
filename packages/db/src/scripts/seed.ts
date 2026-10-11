@@ -80,7 +80,7 @@ try {
               isEditable: preset.isEditable,
               isCustom: preset.isCustom,
               isSystem: preset.isSystem,
-              ...(preset.archivedAt ? { archivedAt: preset.archivedAt } : {}),
+              archivedAt: preset.archivedAt ?? null,
               display: preset.display,
               trafficConfig: preset.trafficConfig,
               inventoryConfig: preset.inventoryConfig,

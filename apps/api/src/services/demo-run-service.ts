@@ -4,6 +4,7 @@ import {
   acceptedRunConfigWriteSchema,
   type BusinessOutcomeSummary,
   collectAcceptedRunConfigSnapshotViolations,
+  comparisonPresetSlug,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
@@ -479,6 +480,12 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     db?: Pick<CheckoutSurgeDatabase, "select">,
   ): Promise<{ preset: DemoPresetContract; snapshot: AcceptedRunConfigSnapshot }> {
     const preset = await this.options.presetReader.readActivePreset(request.presetSlug, db);
+    if (preset.slug === comparisonPresetSlug) {
+      throw new DemoRunValidationError(
+        "preset_operation_not_allowed",
+        "Use the fixed comparison start for this preset.",
+      );
+    }
 
     if (request.operatorMode === "public" && preset.visibility !== "public") {
       throw new DemoRunValidationError(

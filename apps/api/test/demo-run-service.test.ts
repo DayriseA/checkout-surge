@@ -394,6 +394,30 @@ describe("demo-run lifecycle start gating", () => {
     });
   }
 
+  it.each([
+    "public",
+    "admin",
+  ] as const)("rejects ordinary comparison estimate and start for %s admission", async (operatorMode) => {
+    if (!connection || !redis) throw new Error("Missing test infrastructure.");
+    const reserve = vi.fn();
+    const service = createStartService(connection, redis, {
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+    });
+    const request = {
+      presetSlug: comparisonPresetRegistry.slug,
+      operatorMode,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+    await expect(service.previewRun(request)).rejects.toMatchObject({
+      code: "preset_operation_not_allowed",
+    });
+    await expect(service.startRun(request, "ordinary-comparison")).rejects.toMatchObject({
+      code: "preset_operation_not_allowed",
+    });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(await connection.db.select().from(demoRuns)).toEqual([]);
+  });
+
   it("rejects the complete occupancy before charging when each child fits separately", async () => {
     if (!connection) throw new Error("Missing test infrastructure.");
     await connection.db

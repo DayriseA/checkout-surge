@@ -83,7 +83,7 @@ export class DemoComparisonService {
           await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
           await requireDemoStartSlot(tx);
           const policy = await this.options.runtimePolicyReader.readEffectivePolicy(tx);
-          // One archived backing row until publication; never one selectable preset per child.
+          // All four children share the immutable public comparison preset's provenance.
           const [preset] = await tx
             .select({ id: demoPresets.id })
             .from(demoPresets)

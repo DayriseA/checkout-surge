@@ -32,6 +32,14 @@ describe("API request logging", () => {
         PUBLIC_CLIENT_COOKIE_SECRET: "test-public-cookie-secret",
       }),
       logger,
+      comparison: {
+        comparisonService: {
+          startComparison: async () => {
+            throw new Error("Unexpected comparison start.");
+          },
+        },
+        comparisonReader: { detail: async () => null },
+      },
       readiness: {
         checks: async () => [{ name: "database_reachable", status: "unavailable" }],
         close: async () => undefined,

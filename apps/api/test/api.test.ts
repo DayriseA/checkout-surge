@@ -385,6 +385,14 @@ async function buildTestServer(options: {
     presetService: options.presetService ?? demoPresetControllerFixture(),
     runtimePolicyService: options.runtimePolicyService ?? publicRuntimePolicyControllerFixture(),
     demoRunLifecycleService: options.demoRunLifecycleService ?? demoRunLifecycleControllerFixture(),
+    comparison: {
+      comparisonService: {
+        startComparison: async () => {
+          throw new Error("Unexpected comparison start.");
+        },
+      },
+      comparisonReader: { detail: async () => null },
+    },
     trafficCompletionService:
       options.trafficCompletionService ?? trafficCompletionControllerFixture(),
     trafficMetricIngestion: options.trafficMetricIngestion ?? { ingest: async () => undefined },

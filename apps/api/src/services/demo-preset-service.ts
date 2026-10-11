@@ -11,6 +11,7 @@ import {
   adminPresetMutationResponseSchema,
   archiveAdminPresetResponseSchema,
   type CopyDemoPresetToCustomRequest,
+  comparisonPresetSlug,
   type DemoPresetContract,
   type DuplicateDemoPresetRequest,
   demoPresetContractSchema,
@@ -101,6 +102,7 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
   async duplicatePreset(request: DuplicateDemoPresetRequest): Promise<AdminPresetMutationResponse> {
     const now = this.now();
     const source = await this.readActivePreset(request.sourceSlug);
+    ensureOrdinaryPreset(source);
     acceptedErpRunConfigSchema.parse(source.erpConfig);
     const targetSlug = normalizeSlug(request.targetSlug);
     const [existingTarget] = await this.options.db
@@ -156,6 +158,7 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
   ): Promise<AdminPresetMutationResponse> {
     const now = this.now();
     const source = await this.readActivePreset(request.sourceSlug);
+    ensureOrdinaryPreset(source);
     acceptedErpRunConfigSchema.parse(source.erpConfig);
     const custom = await this.readActivePreset("custom");
     ensureEditableAdminPreset(custom);
@@ -272,6 +275,7 @@ function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPres
   return demoPresetContractSchema.parse({
     id: preset.id,
     slug: preset.slug,
+    ...(preset.slug === comparisonPresetSlug ? { startKind: "comparison" } : {}),
     visibility: preset.visibility,
     isEditable: preset.isEditable,
     isCustom: preset.isCustom,
@@ -321,11 +325,21 @@ function toAdminPresetListItem(row: typeof demoPresets.$inferSelect): AdminPrese
 }
 
 function ensureEditableAdminPreset(preset: DemoPresetContract): void {
+  ensureOrdinaryPreset(preset);
   if (preset.visibility !== "admin" || !preset.isEditable) {
     throw new DemoRunValidationError(
       "preset_operation_not_allowed",
       "Only editable admin presets can be changed.",
       { slug: preset.slug },
+    );
+  }
+}
+
+function ensureOrdinaryPreset(preset: DemoPresetContract): void {
+  if (preset.slug === comparisonPresetSlug) {
+    throw new DemoRunValidationError(
+      "preset_operation_not_allowed",
+      "The comparison preset can only start the fixed comparison.",
     );
   }
 }

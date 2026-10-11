@@ -94,6 +94,7 @@ export const demoPresetContractSchema = demoPresetSchema
     inventoryConfig: inventoryConfigSchema,
     erpConfig: erpRunConfigSchema,
     backpressureConfig: backpressureConfigSchema,
+    startKind: z.literal("comparison").optional(),
   })
   .strict();
 export type DemoPresetContract = z.infer<typeof demoPresetContractSchema>;
@@ -142,6 +143,7 @@ export const runExecutionModeSchema = z.enum(runExecutionModeValues);
 export type RunExecutionMode = z.infer<typeof runExecutionModeSchema>;
 
 const demoRunSnapshotBaseShape = {
+  comparisonId: uuidSchema.optional(),
   executionMode: runExecutionModeSchema.default("demo"),
   runId: uuidSchema,
   presetId: uuidSchema,
@@ -305,6 +307,7 @@ export type RunHistorySummary = z.infer<typeof runHistorySummarySchema>;
 
 export const runHistoryListItemSchema = z
   .object({
+    comparisonId: uuidSchema.optional(),
     runId: uuidSchema,
     presetName: z.string().trim().min(1),
     occurredAt: isoTimestampSchema,
@@ -462,6 +465,7 @@ export type PublicRunHistorySummary = z.infer<typeof publicRunHistorySummarySche
 
 export const publicRunHistoryRunSchema = z
   .object({
+    comparisonId: uuidSchema.optional(),
     executionMode: runExecutionModeSchema.default("demo"),
     runId: uuidSchema,
     presetName: z.string().trim().min(1),

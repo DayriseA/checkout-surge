@@ -83,6 +83,7 @@ export class RunHistoryService implements RunHistoryController {
         .select({
           summary: demoRunSummaries,
           configSnapshot: demoRuns.configSnapshot,
+          comparisonId: demoRuns.comparisonId,
         })
         .from(demoRunSummaries)
         .innerJoin(demoRuns, eq(demoRuns.id, demoRunSummaries.runId))
@@ -93,8 +94,8 @@ export class RunHistoryService implements RunHistoryController {
     ]);
 
     return runHistoryListResponseSchema.parse({
-      summaries: rows.map(({ configSnapshot, summary }) =>
-        toRunHistoryListItem(summary, configSnapshot),
+      summaries: rows.map(({ configSnapshot, summary, comparisonId }) =>
+        toRunHistoryListItem(summary, configSnapshot, comparisonId),
       ),
       page: input.page,
       pageSize: input.pageSize,
@@ -350,6 +351,7 @@ function generatorWarningCount(summary: LoadRunDiagnosticsSummary | null): numbe
 function toRunHistoryListItem(
   row: typeof demoRunSummaries.$inferSelect,
   persistedConfigSnapshot: (typeof demoRuns.$inferSelect)["configSnapshot"],
+  comparisonId: string | null,
 ): RunHistoryListItem {
   const summary = toPublicRunHistorySummary(row);
   const result = derivePublicRunResult(summary);
@@ -359,6 +361,7 @@ function toRunHistoryListItem(
   );
   return runHistoryListItemSchema.parse({
     runId: summary.runId,
+    ...(comparisonId ? { comparisonId } : {}),
     presetName: summary.presetName,
     occurredAt: summary.startedAt ?? summary.endedAt,
     overallDurationMs: deriveOverallDurationMs(summary.startedAt, summary.endedAt),
@@ -503,6 +506,7 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
   const context = `demo run ${row.id}`;
   return publicRunHistoryRunSchema.parse({
     runId: row.id,
+    ...(row.comparisonId ? { comparisonId: row.comparisonId } : {}),
     presetName: row.presetName,
     operatorMode: row.operatorMode,
     executionMode: row.executionMode,

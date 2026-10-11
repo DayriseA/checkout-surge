@@ -38,6 +38,8 @@ import {
 } from "../src/app/api/admin/demo/runtime-policy/route.js";
 import { POST as createAdminSession } from "../src/app/api/admin/session/route.js";
 import { GET as getDashboardRecovery } from "../src/app/api/dashboard/recovery/route.js";
+import { GET as readComparison } from "../src/app/api/demo/comparisons/[comparisonId]/route.js";
+import { POST as startComparison } from "../src/app/api/demo/comparisons/start/route.js";
 import { POST as previewDemoRun } from "../src/app/api/demo/runs/estimate/route.js";
 import { POST as startDemoRun } from "../src/app/api/demo/runs/start/route.js";
 import { GET as getReadiness } from "../src/app/api/health/ready/route.js";
@@ -444,6 +446,75 @@ describe("dashboard control proxy routes", () => {
 
     expect(response.status).toBe(202);
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("starts the fixed comparison with public transport and no visitor configuration", async () => {
+    const comparisonId = "11111111-1111-4111-8111-111111111111";
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string>;
+      expect(headers[demoRunOperatorModeHeaderName]).toBe("public");
+      expect(headers[controlServiceTokenHeaderName]).toBe("control-token");
+      expect(headers[publicVisitorIdHeaderName]).toMatch(/^[0-9a-f-]{36}\.\d+\.[0-9a-f]{64}$/);
+      expect(JSON.parse(String(init?.body))).toEqual({});
+      const ordinary = startDemoRunPayload();
+      return jsonResponse(
+        { ...ordinary, comparisonId, run: { ...ordinary.run, comparisonId } },
+        202,
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await startComparison(
+      new Request("http://dashboard.local/api/demo/comparisons/start", {
+        method: "POST",
+        body: "{}",
+      }),
+    );
+    expect(response.status).toBe(202);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("set-cookie")).toContain("checkout_surge_public_visitor=");
+    expect(
+      (
+        await startComparison(
+          new Request("http://dashboard.local/api/demo/comparisons/start", {
+            method: "POST",
+            body: JSON.stringify({ presetSlug: "preview-1k" }),
+          }),
+        )
+      ).status,
+    ).toBe(400);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("validates comparison IDs and forwards bounded-read retry guidance", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      expect((init?.headers as Record<string, string>)[publicVisitorIdHeaderName]).toBeDefined();
+      return Response.json(
+        {
+          code: "comparison_read_rate_limited",
+          message: "Try later.",
+          correlationId: "comparison-read",
+          timestamp: "2026-10-11T00:00:00.000Z",
+        },
+        {
+          status: 429,
+          headers: { "retry-after": "5", [correlationIdHeaderName]: "comparison-read" },
+        },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = new Request("http://dashboard.local/api/demo/comparisons/id");
+    expect(
+      (await readComparison(request, { params: Promise.resolve({ comparisonId: "invalid" }) }))
+        .status,
+    ).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const response = await readComparison(request, {
+      params: Promise.resolve({ comparisonId: "11111111-1111-4111-8111-111111111111" }),
+    });
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("5");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get(correlationIdHeaderName)).toBe("comparison-read");
   });
 
   it("sets a signed HttpOnly admin session after passphrase validation", async () => {

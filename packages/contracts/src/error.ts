@@ -22,6 +22,8 @@ export const errorPayloadCodes = [
   "queue_status_unavailable",
   "dashboard_recovery_unavailable",
   "dashboard_recovery_rate_limited",
+  "comparison_read_unavailable",
+  "comparison_read_rate_limited",
   "dashboard_sse_at_capacity",
   "dashboard_sse_source_limit_exceeded",
   "run_conflict",

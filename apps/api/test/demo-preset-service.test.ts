@@ -1,4 +1,10 @@
-import { createDatabaseConnection, demoPresets, demoRuns } from "@checkout-surge/db";
+import {
+  buildSeedPresets,
+  comparisonPresetRegistry,
+  createDatabaseConnection,
+  demoPresets,
+  demoRuns,
+} from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
@@ -76,6 +82,40 @@ describe("demo preset service", () => {
     expect(copied.preset).toMatchObject({
       slug: "custom",
       display: { name: "Custom Saved", description: "Scratch copy of Preview 1k." },
+    });
+  });
+
+  it("publishes the same immutable comparison row only for its fixed dispatcher", async () => {
+    const activeConnection = requireConnection(connection);
+    const preset = buildSeedPresets().find((row) => row.id === comparisonPresetRegistry.id);
+    if (!preset) throw new Error("Missing comparison preset.");
+    await activeConnection.db.insert(demoPresets).values(preset);
+    const service = createService(activeConnection);
+    expect(
+      (await service.listPublicPresets()).presets.find((row) => row.id === preset.id),
+    ).toMatchObject({
+      slug: "architecture-comparison",
+      isEditable: false,
+      startKind: "comparison",
+    });
+    expect(
+      (await service.listAdminPresets()).presets.find((row) => row.id === preset.id)?.canArchive,
+    ).toBe(false);
+    await expect(
+      service.duplicatePreset({ sourceSlug: preset.slug, targetSlug: "comparison-copy" }),
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
+    await expect(service.copyPresetToCustom({ sourceSlug: preset.slug })).rejects.toMatchObject({
+      code: "preset_operation_not_allowed",
+    });
+    await expect(
+      service.saveAdminPreset({
+        slug: preset.slug,
+        display: preset.display,
+        ...acceptedRunConfigSnapshotFixture(),
+      }),
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
+    await expect(service.archiveAdminPreset({ slug: preset.slug })).rejects.toMatchObject({
+      code: "preset_conflict",
     });
   });
 

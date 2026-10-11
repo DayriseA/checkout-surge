@@ -3,6 +3,10 @@ import type { DashboardProjectionFanout } from "./realtime/dashboard-projection-
 import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
 import { registerPendingRecoveryRoute } from "./routes/api-peer-routes.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
+import {
+  type RegisterComparisonRoutesOptions,
+  registerComparisonRoutes,
+} from "./routes/comparison-routes.js";
 import { registerCoreIdleRoutes } from "./routes/core-idle-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
 import { registerDemoRunRoutes } from "./routes/demo-run-routes.js";
@@ -60,6 +64,7 @@ export interface BuildApiServerOptions {
   runnerRecreation: Pick<RunnerOperations, "recreate">;
   runHistoryService: RunHistoryController;
   coreIdleShutdown: CoreIdleShutdown;
+  comparison: Pick<RegisterComparisonRoutesOptions, "comparisonService" | "comparisonReader">;
   pendingPersistenceRecovery?: PendingPersistenceRecovery;
   startedAt?: Date;
 }
@@ -84,6 +89,14 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
+  registerComparisonRoutes(app, {
+    ...options.comparison,
+    admission: options.dashboardRecoveryAdmission,
+    sourceResolver: createDashboardSourceResolver(options.config.publicClientCookieSecret),
+    controlServiceToken: options.config.controlServiceToken,
+    timeoutMs: options.config.dashboardRecoveryTimeoutMs,
+    retryAfterSeconds: options.config.dashboardRecoveryRetryAfterSeconds,
+  });
   registerDemoRunRoutes(app, {
     presetService: options.presetService,
     runtimePolicyService: options.runtimePolicyService,
