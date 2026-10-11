@@ -11,7 +11,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
-import { toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
+import { toTerminalInventorySnapshot } from "./demo-run-projections.js";
 
 export type TrafficCompletionEnrichmentResult = "completed" | "already_completed" | "not_found";
 
@@ -64,7 +64,8 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
       runId: row.run.id,
     });
     const terminalInventorySnapshot = inventory
-      ? toRedisTerminalInventorySnapshot({
+      ? toTerminalInventorySnapshot({
+          source: "redis",
           saleOfferId: row.run.saleOfferId,
           inventory,
           businessOutcome,

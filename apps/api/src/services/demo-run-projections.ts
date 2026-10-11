@@ -51,9 +51,10 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
   });
 }
 
-export function toRedisTerminalInventorySnapshot(input: {
+export function toTerminalInventorySnapshot(input: {
   saleOfferId: string;
   inventory: InventoryStatus;
+  source: TerminalInventorySnapshot["source"];
   businessOutcome: Pick<BusinessOutcomeSummary, "acceptedReservations">;
   capturedAt: Date;
 }): TerminalInventorySnapshot {
@@ -66,7 +67,7 @@ export function toRedisTerminalInventorySnapshot(input: {
     soldOutRejections: input.inventory.soldOutPressure.rejectionCount,
     pendingPersistenceCount: input.inventory.pendingPersistenceCount,
     capturedAt: input.capturedAt.toISOString(),
-    source: "redis",
+    source: input.source,
   };
 }
 

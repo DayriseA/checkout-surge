@@ -434,8 +434,11 @@ describe("DashboardProjectionService", () => {
     expect(harness.queue).toHaveBeenCalledOnce();
   });
 
-  it("passes one selected run scope and one captured time to every owned projection", async () => {
-    const currentRun = runSnapshot();
+  it.each([
+    "demo",
+    "without_redis",
+  ] as const)("passes the selected %s scope and one captured time to every projection", async (executionMode) => {
+    const currentRun = runSnapshot({ executionMode });
     const harness = serviceHarness({ currentRun, saleOfferId });
 
     const recovery = await harness.service.build({ correlationId: "corr-scoped" });
@@ -444,7 +447,11 @@ describe("DashboardProjectionService", () => {
     expect(recovery.scope).toEqual(expectedScope);
     expect(recovery.scopeId).toBe(dashboardProjectionScopeId(expectedScope));
     expect(recovery.revision).toBe(1);
-    expect(harness.inventory).toHaveBeenCalledWith(saleOfferId);
+    expect(harness.inventory).toHaveBeenCalledWith(saleOfferId, {
+      runId,
+      saleOfferId,
+      executionMode,
+    });
     expect(harness.business).toHaveBeenCalledWith(expectedScope);
     expect(harness.lag).toHaveBeenCalledWith(expectedScope, now);
     expect(harness.metrics).toHaveBeenCalledWith(runId);

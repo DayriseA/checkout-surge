@@ -20,11 +20,12 @@ describe("generated-run Redis cleanup", () => {
 
     expect(evalCommand).toHaveBeenCalledWith(
       expect.any(String),
-      2,
-      `inventory:${saleOfferId}:state`,
+      3,
+      `demo-run:${runId}:dashboard-projection-scope`,
       `demo-run:${runId}:dashboard-projection-revision`,
-      runId,
+      `inventory:${saleOfferId}:state`,
       saleOfferId,
+      runId,
     );
     expect(scan).toHaveBeenCalledWith("0", "MATCH", `inventory:${saleOfferId}:*`, "COUNT", 100);
     expect(unlink).toHaveBeenCalledOnce();
@@ -106,7 +107,11 @@ describe("generated-run Redis cleanup", () => {
 
     expect(evalCommand).not.toHaveBeenCalled();
     expect(scan).not.toHaveBeenCalled();
-    expect(unlink).toHaveBeenNthCalledWith(1, `demo-run:${runId}:dashboard-projection-revision`);
+    expect(unlink).toHaveBeenNthCalledWith(
+      1,
+      `demo-run:${runId}:dashboard-projection-scope`,
+      `demo-run:${runId}:dashboard-projection-revision`,
+    );
   });
 });
 

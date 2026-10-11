@@ -33,7 +33,8 @@ import {
   reconcileAcceptedResponses,
 } from "./accepted-response-accounting.js";
 import type { CompletedOrderJobRemoval } from "./demo-queue-maintenance.js";
-import { toDemoRunSnapshot, toRedisTerminalInventorySnapshot } from "./demo-run-projections.js";
+import { toDemoRunSnapshot, toTerminalInventorySnapshot } from "./demo-run-projections.js";
+import type { RunInventoryScope } from "./inventory-status-service.js";
 import type { OrderProcessQueueLimits } from "./order-process-queue-limits.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
@@ -52,11 +53,13 @@ import {
 import type { TrafficMetricIngestionService } from "./traffic-metric-ingestion-service.js";
 
 export interface TerminalInventoryReadOperation {
-  read(input: {
-    saleOfferId: string;
-    observedAt: Date;
-    signal: AbortSignal;
-  }): Promise<InventoryStatus>;
+  read(
+    input: RunInventoryScope & {
+      db: Pick<CheckoutSurgeDatabase, "execute" | "transaction">;
+      observedAt: Date;
+      signal: AbortSignal;
+    },
+  ): Promise<InventoryStatus>;
 }
 
 export interface DemoRunFinalizationController {
@@ -193,7 +196,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         });
         let latestInventory: InventoryStatus;
         try {
-          latestInventory = await this.readTerminalInventory(requireSaleOfferId(row.run), now);
+          latestInventory = await this.readTerminalInventory(row.run, now, lockedDb);
         } catch (error) {
           this.options.logger.warn(
             { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
@@ -293,7 +296,8 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           serverReservationTimingSummary: await this.readReservationTiming(runId),
           loadRunDiagnosticsSummary,
           businessOutcome: latestBusinessOutcome,
-          terminalInventorySnapshot: toRedisTerminalInventorySnapshot({
+          terminalInventorySnapshot: toTerminalInventorySnapshot({
+            source: row.run.executionMode === "without_redis" ? "postgres" : "redis",
             saleOfferId: requireSaleOfferId(row.run),
             inventory: latestInventory,
             businessOutcome: latestBusinessOutcome,
@@ -365,8 +369,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   }
 
   private async readTerminalInventory(
-    saleOfferId: string,
+    run: typeof demoRuns.$inferSelect,
     observedAt: Date,
+    db: Pick<CheckoutSurgeDatabase, "execute" | "transaction">,
   ): Promise<InventoryStatus> {
     const timeoutMs = this.options.terminalInventoryReadTimeoutMs;
     const controller = new AbortController();
@@ -376,14 +381,18 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     deadline.unref();
 
     try {
-      return await settleWithAbort(
-        this.options.terminalInventoryRead.read({
-          saleOfferId,
-          observedAt,
-          signal: controller.signal,
-        }),
-        controller.signal,
-      );
+      const read = this.options.terminalInventoryRead.read({
+        runId: run.id,
+        saleOfferId: requireSaleOfferId(run),
+        executionMode: run.executionMode,
+        db,
+        observedAt,
+        signal: controller.signal,
+      });
+      // PostgreSQL must finish savepoint recovery before the owner can commit.
+      return run.executionMode === "without_redis"
+        ? await read
+        : await settleWithAbort(read, controller.signal);
     } finally {
       clearTimeout(deadline);
     }

@@ -327,6 +327,11 @@ export class DashboardProjectionService {
       ? Object.freeze({ runId: scope.runId, saleOfferId: scope.saleOfferId })
       : null;
 
+    const inventoryScope =
+      saleScope && context.currentRun
+        ? { ...saleScope, executionMode: context.currentRun.executionMode }
+        : null;
+
     const [
       inventoryResult,
       queueResult,
@@ -337,9 +342,12 @@ export class DashboardProjectionService {
       transportObservationResult,
       runtimeProgressResult,
     ] = await Promise.all([
-      saleScope
+      inventoryScope
         ? readSafely("dashboard_inventory", signal, () =>
-            dependencies.inventoryStatusService.getStatus(saleScope.saleOfferId),
+            dependencies.inventoryStatusService.getStatus(
+              inventoryScope.saleOfferId,
+              inventoryScope,
+            ),
           )
         : Promise.resolve({ ok: true as const, value: null }),
       readSafely("dashboard_queue", signal, () => dependencies.queueStatusService.getStatus()),

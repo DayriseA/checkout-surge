@@ -9,7 +9,6 @@ import {
   deleteGeneratedRunDurable,
   deleteGeneratedRunRedisState,
   demoRuns,
-  getInventoryStatus,
   inspectGeneratedRunTeardown,
   markReservationPendingPersistence,
   promoteReservationIdempotencyToAccepted,
@@ -33,6 +32,7 @@ import { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 import { createReserveOrderService } from "./runtime/create-reserve-order-service.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
+import { createInventoryStatusReader } from "./runtime/inventory-status-reader.js";
 import { warnWhenListenBacklogIsCapped } from "./runtime/listen-backlog-ceiling.js";
 import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-persistence-operation-factory.js";
 import { createApiReadiness } from "./runtime/readiness.js";
@@ -147,9 +147,9 @@ export async function startApiServer(): Promise<void> {
     logger,
   });
   const queueStatusService = new QueueStatusService(orderProcessQueueInspector, logger);
-  const inventoryStatusService = new InventoryStatusService({
-    getStatus: (saleOfferId) => getInventoryStatus(redis, saleOfferId),
-  });
+  const inventoryStatusService = new InventoryStatusService(
+    createInventoryStatusReader(connection.db, redis),
+  );
   const orderStatusService = new OrderStatusService(connection.db);
   const dashboardSourceDirtyScheduler = new DashboardSourceDirtyScheduler({
     readQueue: () => queueStatusService.getStatus(),

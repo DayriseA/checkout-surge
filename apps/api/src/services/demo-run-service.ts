@@ -55,7 +55,7 @@ import type { ActiveDemoPresetReader } from "./demo-preset-service.js";
 import {
   emptyBusinessOutcomeSummary,
   toDemoRunSnapshot,
-  toRedisTerminalInventorySnapshot,
+  toTerminalInventorySnapshot,
 } from "./demo-run-projections.js";
 import {
   publishDemoRunProjectionDirty,
@@ -770,7 +770,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   ): Promise<TerminalInventorySnapshot | null> {
     try {
       const inventory = await getInventoryStatus(this.options.redis, saleOfferId, capturedAt);
-      return toRedisTerminalInventorySnapshot({
+      return toTerminalInventorySnapshot({
+        source: "redis",
         saleOfferId,
         inventory,
         businessOutcome,

@@ -8,8 +8,12 @@ import {
   type CheckoutSurgeRedis,
   createRedisClient,
   dashboardProjectionRevisionKey,
+  dashboardProjectionScopeKey,
   deleteGeneratedRunRedisState,
+  initializeDashboardProjectionScope,
   initializeInventory,
+  inventoryKeys,
+  retireDashboardProjectionScope,
 } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -101,6 +105,23 @@ describe("dashboard projection revision restart ordering", () => {
     } finally {
       redis.disconnect();
     }
+  });
+  it("allocates a PostgreSQL projection without Redis stock and rejects delayed publication after retirement", async () => {
+    await deleteGeneratedRunRedisState(cleanupRedis, scope);
+    await initializeDashboardProjectionScope(cleanupRedis, scope);
+    const allocator = new RedisDashboardProjectionRevisionAllocator(cleanupRedis);
+    expect(await cleanupRedis.exists(inventoryKeys(saleOfferId).state)).toBe(0);
+    expect(await allocator.allocate(scope)).toBe(1);
+    let release: (() => void) | undefined;
+    const delayed = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const publication = delayed.then(() => allocator.allocate(scope));
+    const rejected = expect(publication).rejects.toThrow(/scope.*retired/i);
+    await retireDashboardProjectionScope(cleanupRedis, scope);
+    release?.();
+    await rejected;
+    expect(await cleanupRedis.exists(dashboardProjectionScopeKey(runId), revisionKey)).toBe(0);
   });
 });
 

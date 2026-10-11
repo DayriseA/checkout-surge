@@ -49,6 +49,38 @@ export function dashboardProjectionRevisionKey(runId: string): string {
   return `demo-run:${uuidSchema.parse(runId)}:dashboard-projection-revision`;
 }
 
+export function dashboardProjectionScopeKey(runId: string): string {
+  return `demo-run:${uuidSchema.parse(runId)}:dashboard-projection-scope`;
+}
+
+/** Called only by explicit inventory initialization, never by publication callbacks. */
+export async function initializeDashboardProjectionScope(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<void> {
+  await redis.eval(
+    initializeDashboardProjectionScopeScript,
+    1,
+    dashboardProjectionScopeKey(input.runId),
+    uuidSchema.parse(input.saleOfferId),
+  );
+}
+
+export async function retireDashboardProjectionScope(
+  redis: CheckoutSurgeRedis,
+  input: { runId: string; saleOfferId: string },
+): Promise<number> {
+  return Number(
+    await redis.eval(
+      retireDashboardProjectionScopeScript,
+      2,
+      dashboardProjectionScopeKey(input.runId),
+      dashboardProjectionRevisionKey(input.runId),
+      uuidSchema.parse(input.saleOfferId),
+    ),
+  );
+}
+
 export async function incrementIdleDashboardProjectionRevision(
   redis: CheckoutSurgeRedis,
 ): Promise<number> {
@@ -66,9 +98,8 @@ export async function incrementDashboardProjectionRevision(
   const result = await redis.eval(
     incrementDashboardProjectionRevisionScript,
     2,
-    inventoryKeys(saleOfferId).state,
+    dashboardProjectionScopeKey(runId),
     dashboardProjectionRevisionKey(runId),
-    runId,
     saleOfferId,
   );
   if (result === "scope_retired") throw new DashboardProjectionScopeRetiredError(runId);
@@ -87,14 +118,15 @@ export async function deleteGeneratedRunRedisState(
     ? Number(
         await redis.eval(
           retireDashboardProjectionScopeScript,
-          2,
-          inventoryKeys(saleOfferId).state,
+          3,
+          dashboardProjectionScopeKey(runId),
           dashboardProjectionRevisionKey(runId),
-          runId,
+          inventoryKeys(saleOfferId).state,
           saleOfferId,
+          runId,
         ),
       ) + (await deleteInventoryNamespace(redis, inventoryKeys(saleOfferId).prefix))
-    : await redis.unlink(dashboardProjectionRevisionKey(runId));
+    : await redis.unlink(dashboardProjectionScopeKey(runId), dashboardProjectionRevisionKey(runId));
   deletedKeyCount += await redis.unlink(
     runSaleEligibilityKey(runId),
     `demo-run:${runId}:traffic-metrics`,
@@ -120,7 +152,7 @@ export async function deleteSettledRunInventory(
   const keys = inventoryKeys(saleOfferId);
   const result = await redis.eval(
     deleteSettledRunInventoryScript,
-    9,
+    10,
     keys.pendingPersistence,
     keys.state,
     dashboardProjectionRevisionKey(runId),
@@ -130,6 +162,7 @@ export async function deleteSettledRunInventory(
     keys.events,
     keys.soldOut,
     keys.reservationThroughput,
+    dashboardProjectionScopeKey(runId),
     runId,
     saleOfferId,
   );
@@ -280,6 +313,11 @@ export async function initializeInventory(
     runSaleEligibilityTtlSeconds,
   );
 
+  await initializeDashboardProjectionScope(redis, {
+    runId: run.runId,
+    saleOfferId: input.saleOfferId,
+  });
+
   await initialization
     .rpush(keys.events, JSON.stringify(event))
     .ltrim(keys.events, -inventoryEventHistoryLimit, -1)
@@ -410,41 +448,40 @@ end
 return "updated"
 `;
 
+const initializeDashboardProjectionScopeScript = `
+local owner = redis.call("GET", KEYS[1])
+if owner and owner ~= ARGV[1] then
+  return redis.error_reply("Sale offer ID must match dashboard projection scope")
+end
+redis.call("SET", KEYS[1], ARGV[1])
+return 1
+`;
+
 const incrementDashboardProjectionRevisionScript = `
-local stateType = redis.call("TYPE", KEYS[1]).ok
-if stateType == "none" then
-  return "scope_retired"
-end
-if stateType ~= "hash" then
-  return redis.error_reply("Inventory state key must be a hash")
-end
-if redis.call("HGET", KEYS[1], "inventoryScope") ~= "generated_run" then
-  return redis.error_reply("Dashboard projection revision requires generated-run inventory")
-end
-if redis.call("HGET", KEYS[1], "runId") ~= ARGV[1] then
-  return redis.error_reply("Inventory run ID must match dashboard projection scope")
-end
-if redis.call("HGET", KEYS[1], "saleOfferId") ~= ARGV[2] then
-  return redis.error_reply("Inventory sale offer ID must match dashboard projection scope")
+local owner = redis.call("GET", KEYS[1])
+if not owner then return "scope_retired" end
+if owner ~= ARGV[1] then
+  return redis.error_reply("Sale offer ID must match dashboard projection scope")
 end
 return redis.call("INCR", KEYS[2])
 `;
 
 const retireDashboardProjectionScopeScript = `
-local stateType = redis.call("TYPE", KEYS[1]).ok
-if stateType == "none" then
-  return redis.call("DEL", KEYS[2])
+if KEYS[3] then
+  local stateType = redis.call("TYPE", KEYS[3]).ok
+  if stateType ~= "none" then
+    if stateType ~= "hash" then return redis.error_reply("Inventory state key must be a hash") end
+    if redis.call("HGET", KEYS[3], "runId") ~= ARGV[2] or
+      redis.call("HGET", KEYS[3], "saleOfferId") ~= ARGV[1] then
+      return redis.error_reply("Inventory ownership must match retired dashboard projection scope")
+    end
+  end
 end
-if stateType ~= "hash" then
-  return redis.error_reply("Inventory state key must be a hash")
+local owner = redis.call("GET", KEYS[1])
+if owner and owner ~= ARGV[1] then
+  return redis.error_reply("Sale offer ID must match retired dashboard projection scope")
 end
-if redis.call("HGET", KEYS[1], "runId") ~= ARGV[1] then
-  return redis.error_reply("Inventory run ID must match retired dashboard projection scope")
-end
-if redis.call("HGET", KEYS[1], "saleOfferId") ~= ARGV[2] then
-  return redis.error_reply("Inventory sale offer ID must match retired dashboard projection scope")
-end
-return redis.call("DEL", KEYS[1], KEYS[2])
+return redis.call("DEL", unpack(KEYS))
 `;
 
 // KEYS[1] is the pending-persistence set and KEYS[2] the state hash; the dashboard revision
@@ -464,6 +501,10 @@ if stateType ~= "none" then
   if redis.call("HGET", KEYS[2], "saleOfferId") ~= ARGV[2] then
     return redis.error_reply("Inventory sale offer ID must match retired dashboard projection scope")
   end
+end
+local owner = redis.call("GET", KEYS[10])
+if owner and owner ~= ARGV[2] then
+  return redis.error_reply("Sale offer ID must match retired dashboard projection scope")
 end
 return redis.call("DEL", unpack(KEYS))
 `;

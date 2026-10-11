@@ -3,7 +3,6 @@ import {
   type CheckoutSurgeRedis,
   createAbortableDatabaseConnection,
   createRedisClient,
-  getInventoryStatus,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import {
@@ -36,6 +35,7 @@ import {
   failAfterResourceConstruction,
   type ResourceCleanup,
 } from "./api-resource-cleanup.js";
+import { createInventoryStatusReader } from "./inventory-status-reader.js";
 
 export interface DashboardRecoveryOperationConfig {
   databaseUrl: string;
@@ -121,9 +121,9 @@ export function createDashboardRecoveryOperationFactory(
         contextReader: new PostgresDashboardRecoveryContextReader(operationDatabase.db),
         businessOutcomeReader: new PostgresDashboardBusinessOutcomeReader(operationDatabase.db),
         consistencyLagReader: new PostgresDashboardConsistencyLagReader(operationDatabase.db),
-        inventoryStatusService: new InventoryStatusService({
-          getStatus: (saleOfferId) => getInventoryStatus(operationRedis, saleOfferId),
-        }),
+        inventoryStatusService: new InventoryStatusService(
+          createInventoryStatusReader(operationDatabase.db, operationRedis),
+        ),
         queueStatusService,
         runErpOutcomeService: new RunErpOutcomeService({
           attemptStatusReader: new PostgresErpAttemptStatusReader(operationDatabase.db),

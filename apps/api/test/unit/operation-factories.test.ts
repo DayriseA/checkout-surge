@@ -206,6 +206,7 @@ describe("terminal inventory read operation", () => {
     const infrastructure: TerminalInventoryReadInfrastructure = {
       createRedis: vi.fn(() => redisClient(disconnect)),
       readInventory: vi.fn(async () => await new Promise<never>(() => undefined)),
+      readPostgresInventory: vi.fn(),
     };
     const operation = createTerminalInventoryReadOperation(
       { redisUrl: "redis://operation.test", timeoutMs: 100 },
@@ -214,6 +215,9 @@ describe("terminal inventory read operation", () => {
     const controller = new AbortController();
     const reason = new OperationDeadlineExceededError(100);
     const read = operation.read({
+      runId: "22222222-2222-4222-8222-222222222222",
+      executionMode: "demo",
+      db: {} as CheckoutSurgeDatabase,
       saleOfferId: "11111111-1111-4111-8111-111111111111",
       observedAt: new Date("2026-07-23T00:00:00.000Z"),
       signal: controller.signal,
@@ -223,6 +227,63 @@ describe("terminal inventory read operation", () => {
 
     await expect(read).rejects.toBe(reason);
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+  it("uses the caller's PostgreSQL transaction and creates no owned resource", async () => {
+    const db = terminalTransaction();
+    const readPostgresInventory = vi.fn().mockResolvedValue({ remainingStock: 3 });
+    const infrastructure: TerminalInventoryReadInfrastructure = {
+      createRedis: vi.fn(),
+      readInventory: vi.fn(),
+      readPostgresInventory,
+    };
+    const operation = createTerminalInventoryReadOperation(
+      { redisUrl: "redis://operation.test", timeoutMs: 100 },
+      infrastructure,
+    );
+    const observedAt = new Date("2026-07-23T00:00:00.000Z");
+    await expect(
+      operation.read({
+        runId: "22222222-2222-4222-8222-222222222222",
+        saleOfferId: "11111111-1111-4111-8111-111111111111",
+        executionMode: "without_redis",
+        db,
+        observedAt,
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toEqual({ remainingStock: 3 });
+    expect(readPostgresInventory).toHaveBeenCalledWith(
+      db,
+      "11111111-1111-4111-8111-111111111111",
+      observedAt,
+    );
+    expect(infrastructure.createRedis).not.toHaveBeenCalled();
+    expect(infrastructure.readInventory).not.toHaveBeenCalled();
+  });
+
+  it("bounds a PostgreSQL read on abort without closing the caller's transaction", async () => {
+    const db = terminalTransaction();
+    const infrastructure: TerminalInventoryReadInfrastructure = {
+      createRedis: vi.fn(),
+      readInventory: vi.fn(),
+      readPostgresInventory: vi.fn(async () => await new Promise<never>(() => undefined)),
+    };
+    const operation = createTerminalInventoryReadOperation(
+      { redisUrl: "redis://operation.test", timeoutMs: 100 },
+      infrastructure,
+    );
+    const controller = new AbortController();
+    const reason = new OperationDeadlineExceededError(100);
+    const read = operation.read({
+      runId: "22222222-2222-4222-8222-222222222222",
+      saleOfferId: "11111111-1111-4111-8111-111111111111",
+      executionMode: "without_redis",
+      db,
+      observedAt: new Date(),
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+    await expect(read).rejects.toBe(reason);
+    expect(infrastructure.createRedis).not.toHaveBeenCalled();
   });
 });
 
@@ -289,4 +350,13 @@ function requireNext<T>(values: T[]): T {
   const value = values.shift();
   if (!value) throw new Error("Missing fake resource.");
   return value;
+}
+
+function terminalTransaction(): CheckoutSurgeDatabase {
+  const db = {
+    execute: vi.fn().mockResolvedValue([{ timeout: "0" }]),
+    transaction: vi.fn(),
+  };
+  db.transaction.mockImplementation(async (operation) => operation(db));
+  return db as unknown as CheckoutSurgeDatabase;
 }
