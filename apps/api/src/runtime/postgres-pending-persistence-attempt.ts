@@ -7,7 +7,7 @@ import type { PendingPersistenceAttemptScope } from "../services/pending-persist
 import { PostgresBuyPersistence } from "../services/postgres-buy-persistence.js";
 import { createSessionBoundBuyAcceptance } from "../services/session-bound-buy-acceptance.js";
 
-/** Unwired composition seam. The caller owns the operation connection and cancellation. */
+/** The operation factory owns this attempt's connection and cancellation. */
 export function createPostgresPendingPersistenceAttempt(input: {
   database: DatabaseConnection;
   signal: AbortSignal;

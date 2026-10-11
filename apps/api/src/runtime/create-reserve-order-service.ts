@@ -18,19 +18,19 @@ export function createReserveOrderService(
     reportPersistenceFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
-        "Redis secured a reservation but PostgreSQL persistence failed.",
+        "Stock secured a reservation but durable persistence failed.",
       );
     },
     reportPendingPersistenceEnsureFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
-        "Could not ensure the Redis pending-persistence marker.",
+        "Could not ensure the pending-persistence marker.",
       );
     },
     reportPromotionFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
-        "Durable reservation succeeded but Redis idempotency promotion failed.",
+        "Durable reservation succeeded but stock idempotency promotion failed.",
       );
     },
     reportOrderEnqueueFailure: (report) => {
@@ -42,7 +42,7 @@ export function createReserveOrderService(
     reportReservationReversalFailure: (report) => {
       logger.error(
         partialFailureLogContext(report),
-        "Could not reverse a definitively rejected Redis reservation hold.",
+        "Could not reverse a definitively rejected stock reservation hold.",
       );
     },
     publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),

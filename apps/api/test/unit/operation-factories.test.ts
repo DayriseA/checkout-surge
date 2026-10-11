@@ -200,6 +200,51 @@ describe("pending-persistence operation factory", () => {
   });
 });
 
+it.each([
+  "success",
+  "abort",
+])("owns only one PostgreSQL connection for a PG recovery attempt on %s", async (disposition) => {
+  const rootDisconnect = vi.fn();
+  const closeDatabase = vi.fn(async () => undefined);
+  const createRedis = vi.fn(() => redisClient(rootDisconnect));
+  const createPublisher = vi.fn(() => {
+    throw new Error("PG attempt must not construct a Redis ORDER publisher");
+  });
+  const createDatabase = vi.fn(
+    () =>
+      ({
+        db: {} as CheckoutSurgeDatabase,
+        sql: {},
+        abort: closeDatabase,
+        close: closeDatabase,
+      }) as unknown as AbortableDatabaseConnection,
+  );
+  const operations = createPendingPersistenceRecoveryOperations(pendingPersistenceConfig(), {
+    createRedis,
+    createPublisher,
+    createDatabase,
+  });
+  const controller = new AbortController();
+  const attempt = await operations.openAttemptScope({
+    executionMode: "without_redis",
+    signal: controller.signal,
+    timeoutMs: 100,
+  });
+  expect(createDatabase).toHaveBeenCalledWith(
+    expect.any(String),
+    controller.signal,
+    expect.objectContaining({ max: 1 }),
+  );
+  if (disposition === "abort") controller.abort(new Error("Attempt deadline"));
+  await attempt.close();
+  await attempt.close();
+  expect(closeDatabase).toHaveBeenCalledOnce();
+  expect(createRedis).toHaveBeenCalledOnce(); // Common discovery root only.
+  expect(createPublisher).not.toHaveBeenCalled();
+  await operations.close();
+  expect(rootDisconnect).toHaveBeenCalledOnce();
+});
+
 describe("terminal inventory read operation", () => {
   it("disconnects its Redis client when the bounded in-fence read is aborted", async () => {
     const disconnect = vi.fn();

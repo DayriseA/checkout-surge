@@ -271,7 +271,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
   ) {
     reconciliations.push({
       code: "pending_persistence",
-      leftPopulation: "Redis holds awaiting persistence",
+      leftPopulation: "Stock holds awaiting persistence",
       leftValue: input.heldReservationsAwaitingPersistence,
       rightPopulation: "PostgreSQL pending-persistence rows",
       rightValue: durable?.durablePendingPersistenceRecords ?? null,
@@ -288,7 +288,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
   ) {
     reconciliations.push({
       code: "pending_persistence_evidence_mismatch",
-      leftPopulation: "Redis holds awaiting persistence",
+      leftPopulation: "Stock holds awaiting persistence",
       leftValue: input.heldReservationsAwaitingPersistence,
       rightPopulation: "PostgreSQL pending-persistence rows",
       rightValue: durable.durablePendingPersistenceRecords,
@@ -432,7 +432,7 @@ export function deriveRunResult(input: RunResultEvidence): RunResult {
       code: "sold_out_with_stock_remaining",
       leftPopulation: "sold-out decisions recorded by system",
       leftValue: durable.soldOutDecisions,
-      rightPopulation: "remaining stock observed by Redis",
+      rightPopulation: "remaining stock observed by inventory",
       rightValue: input.remainingStock,
       classification: "warning",
     });

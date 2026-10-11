@@ -1,15 +1,18 @@
+import type { RunExecutionMode, SecuredReservationHold } from "@checkout-surge/contracts";
 import {
   type AbortableDatabaseConnection,
   type CheckoutSurgeRedis,
   createAbortableDatabaseConnection,
   createRedisClient,
   deferPendingPersistenceRecord,
+  demoRunSaleContexts,
   demoRuns,
+  PostgresPendingPersistence,
   promoteReservationIdempotencyToAccepted,
   readPendingPersistencePage,
   readPendingPersistenceRecord,
 } from "@checkout-surge/db";
-import { inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   type BullMqOrderProcessJobPublisher,
   createBullMqOrderProcessJobPublisher,
@@ -26,6 +29,7 @@ import {
   type ResourceCleanup,
   runWithResourceCleanup,
 } from "./api-resource-cleanup.js";
+import { createPostgresPendingPersistenceAttempt } from "./postgres-pending-persistence-attempt.js";
 
 export interface PendingPersistenceOperationConfig {
   databaseUrl: string;
@@ -36,13 +40,16 @@ export interface PendingPersistenceOperationConfig {
 export interface PendingPersistenceRunScope {
   runId: string;
   saleOfferId: string;
+  executionMode: RunExecutionMode;
 }
 
 export interface PendingPersistenceRecoveryOperations {
   storage: PendingPersistenceRecoveryStorage;
   openDiscoveryScope(signal: AbortSignal): Promise<PendingPersistenceDiscoveryScope>;
   listRunScopes(signal: AbortSignal): Promise<PendingPersistenceRunScope[]>;
+  resolveRunScope(reservation: SecuredReservationHold): Promise<PendingPersistenceRunScope | null>;
   openAttemptScope(input: {
+    executionMode?: RunExecutionMode;
     signal: AbortSignal;
     timeoutMs: number;
   }): Promise<PendingPersistenceAttemptScope>;
@@ -87,8 +94,85 @@ export function createPendingPersistenceRecoveryOperations(
   });
   let closePromise: Promise<void> | undefined;
 
+  const withPostgres = async <T>(
+    operation: (database: AbortableDatabaseConnection) => Promise<T>,
+    parentSignal?: AbortSignal,
+  ): Promise<T> => {
+    const signal = parentSignal
+      ? AbortSignal.any([parentSignal, AbortSignal.timeout(config.discoveryTimeoutMs)])
+      : AbortSignal.timeout(config.discoveryTimeoutMs);
+    const database = infrastructure.createDatabase(config.databaseUrl, signal, {
+      max: 1,
+      connect_timeout: Math.ceil(config.discoveryTimeoutMs / 1_000),
+    });
+    const close = createOperationResourceCleanup({
+      signal,
+      operations: [() => database.close()],
+      failureMessage: "Pending-persistence storage database cleanup failed.",
+    });
+    return runWithResourceCleanup(
+      () => operation(database),
+      close,
+      "Pending-persistence storage operation and cleanup failed.",
+    );
+  };
+  const modeStorage = (
+    client: CheckoutSurgeRedis,
+    signal?: AbortSignal,
+  ): PendingPersistenceRecoveryStorage => {
+    const demo = createRedisPendingPersistenceStorage(client);
+    return {
+      readPage: (input) =>
+        input.executionMode === "without_redis"
+          ? withPostgres(
+              (database) => new PostgresPendingPersistence(database.sql).readPage(input),
+              signal,
+            )
+          : demo.readPage(input),
+      readRecord: (input) =>
+        input.executionMode === "without_redis"
+          ? withPostgres(
+              (database) => new PostgresPendingPersistence(database.sql).readRecord(input),
+              signal,
+            )
+          : demo.readRecord(input),
+      defer: (input) =>
+        input.executionMode === "without_redis"
+          ? withPostgres(
+              (database) => new PostgresPendingPersistence(database.sql).defer(input),
+              signal,
+            )
+          : demo.defer(input),
+    };
+  };
+
   return {
-    storage: createRedisPendingPersistenceStorage(redis),
+    storage: modeStorage(redis),
+    resolveRunScope: (reservation) =>
+      withPostgres(async (database) => {
+        const [owner] = await database.db
+          .select({
+            runId: demoRuns.id,
+            saleOfferId: demoRunSaleContexts.saleOfferId,
+            executionMode: demoRuns.executionMode,
+          })
+          .from(demoRuns)
+          .innerJoin(
+            demoRunSaleContexts,
+            and(
+              eq(demoRunSaleContexts.runId, demoRuns.id),
+              eq(demoRunSaleContexts.saleOfferId, demoRuns.saleOfferId),
+            ),
+          )
+          .where(
+            and(
+              eq(demoRuns.id, reservation.runId),
+              eq(demoRunSaleContexts.saleOfferId, reservation.saleOfferId),
+            ),
+          )
+          .limit(1);
+        return owner ?? null;
+      }),
     openDiscoveryScope: async (signal) => {
       const operationRedis = infrastructure.createRedis(config.redisUrl, {
         lazyConnect: true,
@@ -96,7 +180,7 @@ export function createPendingPersistenceRecoveryOperations(
         commandTimeout: config.discoveryTimeoutMs,
       });
       return {
-        storage: createRedisPendingPersistenceStorage(operationRedis),
+        storage: modeStorage(operationRedis, signal),
         close: createOperationResourceCleanup({
           signal,
           operations: [() => operationRedis.disconnect()],
@@ -117,18 +201,30 @@ export function createPendingPersistenceRecoveryOperations(
       return await runWithResourceCleanup(
         async () => {
           const runRows = await database.db
-            .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+            .select({
+              runId: demoRuns.id,
+              saleOfferId: demoRuns.saleOfferId,
+              executionMode: demoRuns.executionMode,
+            })
             .from(demoRuns)
             .where(inArray(demoRuns.status, ["starting", "active", "draining"]));
           return runRows.flatMap((row) =>
-            row.saleOfferId ? [{ runId: row.runId, saleOfferId: row.saleOfferId }] : [],
+            row.saleOfferId
+              ? [
+                  {
+                    runId: row.runId,
+                    saleOfferId: row.saleOfferId,
+                    executionMode: row.executionMode,
+                  },
+                ]
+              : [],
           );
         },
         close,
         "Pending-persistence discovery query and cleanup failed.",
       );
     },
-    openAttemptScope: async ({ signal, timeoutMs }) => {
+    openAttemptScope: async ({ executionMode, signal, timeoutMs }) => {
       let database: AbortableDatabaseConnection | undefined;
       let operationRedis: CheckoutSurgeRedis | undefined;
       let publisher: BullMqOrderProcessJobPublisher | undefined;
@@ -140,6 +236,17 @@ export function createPendingPersistenceRecoveryOperations(
           connect_timeout: Math.ceil(timeoutMs / 1_000),
         });
         acquiredCleanup.push(() => database?.close());
+        if (executionMode === "without_redis") {
+          return createPostgresPendingPersistenceAttempt({
+            database,
+            signal,
+            close: createOperationResourceCleanup({
+              signal,
+              operations: acquiredCleanup,
+              failureMessage: "Pending-persistence attempt resource cleanup failed.",
+            }),
+          });
+        }
 
         operationRedis = infrastructure.createRedis(config.redisUrl, {
           lazyConnect: true,

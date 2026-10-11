@@ -197,6 +197,7 @@ export class ReserveOrderService {
   private readonly soldOutObservations: SoldOutObservationPort;
   private readonly reservationTimingObservations: ReservationTimingObservationPort;
   private readonly monotonicNow: () => number;
+  private readonly recordRedisReservationTiming: boolean;
 
   constructor(options: {
     persistence: BuyPersistence;
@@ -219,6 +220,7 @@ export class ReserveOrderService {
     soldOutObservations?: SoldOutObservationPort;
     reservationTimingObservations?: ReservationTimingObservationPort;
     monotonicNow?: () => number;
+    recordRedisReservationTiming?: boolean;
   }) {
     this.persistence = options.persistence;
     this.stockReservations = options.stockReservations;
@@ -253,6 +255,7 @@ export class ReserveOrderService {
       observe: () => undefined,
     };
     this.monotonicNow = options.monotonicNow ?? (() => performance.now());
+    this.recordRedisReservationTiming = options.recordRedisReservationTiming ?? true;
   }
 
   async reserve(input: {
@@ -264,7 +267,7 @@ export class ReserveOrderService {
     let redisAtomicReservationMs: number | undefined;
     try {
       return await this.performReservation(input, (durationMs) => {
-        redisAtomicReservationMs = durationMs;
+        if (this.recordRedisReservationTiming) redisAtomicReservationMs = durationMs;
       });
     } finally {
       try {
@@ -324,7 +327,9 @@ export class ReserveOrderService {
     }
 
     if (!decision.reservation) {
-      throw new Error("Redis returned an accepted decision without a reservation hold.");
+      throw new Error(
+        "Stock reservation returned an accepted decision without a reservation hold.",
+      );
     }
 
     if (decision.outcome === "reservation_secured") {

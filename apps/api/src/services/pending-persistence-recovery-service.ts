@@ -1,6 +1,7 @@
 import {
   idempotencyKeySchema,
   type OrderProcessJob,
+  type RunExecutionMode,
   type SecuredReservationHold,
 } from "@checkout-surge/contracts";
 import type { PendingPersistenceReadIssue, PendingPersistenceRecord } from "@checkout-surge/db";
@@ -44,10 +45,15 @@ export interface BusinessOutcomeDirtyMarker {
   markDirty(input: { saleOfferId: string; runId: string; correlationId?: string }): void;
 }
 
-interface RunScope {
+export interface PendingPersistenceRunScope {
   runId: string;
   saleOfferId: string;
+  executionMode?: RunExecutionMode;
 }
+
+type ScopedPendingPersistenceRecord = PendingPersistenceRecord & {
+  executionMode: RunExecutionMode;
+};
 
 export interface PendingPersistenceAttemptScope {
   persistence: BuyPersistence;
@@ -58,15 +64,26 @@ export interface PendingPersistenceAttemptScope {
 }
 
 export interface PendingPersistenceRecoveryStorage {
-  readPage(input: { runId: string; saleOfferId: string; limit: number; dueAt: Date }): Promise<{
+  readPage(input: {
+    executionMode?: RunExecutionMode;
+    runId: string;
+    saleOfferId: string;
+    limit: number;
+    dueAt: Date;
+  }): Promise<{
     records: PendingPersistenceRecord[];
     issues: PendingPersistenceReadIssue[];
   }>;
-  readRecord(input: { saleOfferId: string; reservationId: string }): Promise<{
+  readRecord(input: {
+    executionMode?: RunExecutionMode;
+    saleOfferId: string;
+    reservationId: string;
+  }): Promise<{
     record: PendingPersistenceRecord | null;
     issue?: PendingPersistenceReadIssue;
   }>;
   defer(input: {
+    executionMode?: RunExecutionMode;
     saleOfferId: string;
     reservationId: string;
     attemptCount: number;
@@ -120,9 +137,13 @@ export class PendingPersistenceRecoveryService {
       audit: PendingPersistenceRecoveryAudit;
       stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
       orderProcessJobPublisher: OrderProcessJobPublisher;
-      listRunScopes: (signal: AbortSignal) => Promise<RunScope[]>;
+      listRunScopes: (signal: AbortSignal) => Promise<PendingPersistenceRunScope[]>;
+      resolveRunScope?: (
+        reservation: SecuredReservationHold,
+      ) => Promise<PendingPersistenceRunScope | null>;
       openDiscoveryScope?: (signal: AbortSignal) => Promise<PendingPersistenceDiscoveryScope>;
       openAttemptScope?: (input: {
+        executionMode?: RunExecutionMode;
         signal: AbortSignal;
         timeoutMs: number;
       }) => Promise<PendingPersistenceAttemptScope>;
@@ -230,14 +251,25 @@ export class PendingPersistenceRecoveryService {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
   }): Promise<PersistedBuyAcceptance | null> {
+    // Direct peer input never chooses a backend. Runtime composition resolves durable ownership.
+    const owner = await this.options.resolveRunScope?.(input.reservation);
+    if (this.options.resolveRunScope && !owner) return null;
     const read = await this.options.storage.readRecord({
+      ...(owner?.executionMode ? { executionMode: owner.executionMode } : {}),
       saleOfferId: input.reservation.saleOfferId,
       reservationId: input.reservation.id,
     });
     if (read.issue) this.logReadIssue(read.issue, input.reservation.saleOfferId);
     if (this.closed) return null;
-    const record = read.record;
-    if (!record || record.recoveryStatus === "exhausted") return null;
+    const record = read.record
+      ? { ...read.record, executionMode: owner?.executionMode ?? "demo" }
+      : null;
+    if (
+      !record ||
+      record.recoveryStatus === "exhausted" ||
+      record.runId !== input.reservation.runId
+    )
+      return null;
     const now = this.now();
     if (Date.parse(record.nextRecoveryAt) > now.getTime()) return null;
     if (record.idempotencyKey !== input.idempotencyKey) return null;
@@ -248,7 +280,7 @@ export class PendingPersistenceRecoveryService {
     discoveryController: AbortController,
     discoveryTimer: ReturnType<typeof setTimeout>,
   ): Promise<PendingPersistenceRecoverySummary> {
-    let records: PendingPersistenceRecord[];
+    let records: ScopedPendingPersistenceRecord[];
     let discoveryScope: PendingPersistenceDiscoveryScope | undefined;
     try {
       discoveryScope = await this.options.openDiscoveryScope?.(discoveryController.signal);
@@ -293,13 +325,14 @@ export class PendingPersistenceRecoveryService {
   private async discover(
     signal: AbortSignal,
     storage: PendingPersistenceRecoveryStorage,
-  ): Promise<PendingPersistenceRecord[]> {
-    const records: PendingPersistenceRecord[] = [];
+  ): Promise<ScopedPendingPersistenceRecord[]> {
+    const records: ScopedPendingPersistenceRecord[] = [];
     const scopes = await this.options.listRunScopes(signal);
     for (const scope of scopes) {
       if (signal.aborted || this.closed) break;
       const pageNow = this.now();
       const page = await storage.readPage({
+        ...(scope.executionMode ? { executionMode: scope.executionMode } : {}),
         runId: scope.runId,
         saleOfferId: scope.saleOfferId,
         limit: this.policy().batchSize,
@@ -307,13 +340,18 @@ export class PendingPersistenceRecoveryService {
       });
       for (const issue of page.issues) this.logReadIssue(issue, scope.saleOfferId);
       const candidates = page.records.filter((record) => record.runId === scope.runId);
-      records.push(...candidates);
+      records.push(
+        ...candidates.map((record) => ({
+          ...record,
+          executionMode: scope.executionMode ?? "demo",
+        })),
+      );
     }
     return records;
   }
 
   private async attemptRecord(
-    record: PendingPersistenceRecord,
+    record: ScopedPendingPersistenceRecord,
     now: Date,
     admission: "scheduler" | "direct",
   ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null> {
@@ -340,7 +378,7 @@ export class PendingPersistenceRecoveryService {
   }
 
   private async attemptRecordExclusive(
-    record: PendingPersistenceRecord,
+    record: ScopedPendingPersistenceRecord,
     now: Date,
   ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null> {
     const reservation = toReservation(record);
@@ -368,7 +406,11 @@ export class PendingPersistenceRecoveryService {
     let scope: PendingPersistenceAttemptScope;
     try {
       scope = this.options.openAttemptScope
-        ? await this.options.openAttemptScope({ signal: controller.signal, timeoutMs })
+        ? await this.options.openAttemptScope({
+            executionMode: record.executionMode,
+            signal: controller.signal,
+            timeoutMs,
+          })
         : this.defaultAttemptScope();
     } catch (error) {
       clearTimeout(deadlineTimer);
@@ -440,6 +482,7 @@ export class PendingPersistenceRecoveryService {
         );
       } else {
         storageDisposition = await this.options.storage.defer({
+          executionMode: record.executionMode,
           saleOfferId: record.saleOfferId,
           reservationId: record.id,
           attemptCount,
@@ -497,13 +540,14 @@ export class PendingPersistenceRecoveryService {
   }
 
   private async tryExhaust(
-    record: PendingPersistenceRecord,
+    record: ScopedPendingPersistenceRecord,
     attemptCount: number,
     deadline: Date,
     error: string,
     exhaustedAt: Date,
   ): Promise<"deferred" | "exhausted" | "removed"> {
     const storageDisposition = await this.options.storage.defer({
+      executionMode: record.executionMode,
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
       attemptCount,
@@ -513,12 +557,15 @@ export class PendingPersistenceRecoveryService {
       lastError: error,
     });
     if (storageDisposition !== "exhausted") return storageDisposition;
-    const auditRecorded = await this.recordExhaustionAudit({
-      reservation: toReservation(record),
-      attemptCount,
-      exhaustedAt,
-      error,
-    });
+    const auditRecorded = await this.recordExhaustionAudit(
+      {
+        reservation: toReservation(record),
+        attemptCount,
+        exhaustedAt,
+        error,
+      },
+      record.executionMode,
+    );
     this.options.logger.error(
       {
         runId: record.runId,
@@ -537,6 +584,7 @@ export class PendingPersistenceRecoveryService {
 
   private async recordExhaustionAudit(
     input: Parameters<PendingPersistenceRecoveryAudit["markExhausted"]>[0],
+    executionMode: RunExecutionMode,
   ): Promise<boolean> {
     const controller = new AbortController();
     this.activeAttemptControllers.add(controller);
@@ -550,7 +598,11 @@ export class PendingPersistenceRecoveryService {
     let scope: PendingPersistenceAttemptScope | undefined;
     try {
       scope = this.options.openAttemptScope
-        ? await this.options.openAttemptScope({ signal: controller.signal, timeoutMs })
+        ? await this.options.openAttemptScope({
+            executionMode,
+            signal: controller.signal,
+            timeoutMs,
+          })
         : this.defaultAttemptScope();
       await scope.audit.markExhausted(input);
       return true;
@@ -618,8 +670,9 @@ export class PendingPersistenceRecoveryService {
     return ownerPersistence.withRunPendingPersistenceLock({ reservation, operation });
   }
 
-  private async readRecord(record: PendingPersistenceRecord) {
+  private async readRecord(record: ScopedPendingPersistenceRecord) {
     const read = await this.options.storage.readRecord({
+      executionMode: record.executionMode,
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
     });
@@ -635,7 +688,7 @@ export class PendingPersistenceRecoveryService {
     return Math.min(this.policy().initialBackoffMs * 2 ** exponent, this.policy().maxBackoffMs);
   }
 
-  private recoveryDeadline(record: PendingPersistenceRecord): Date {
+  private recoveryDeadline(record: ScopedPendingPersistenceRecord): Date {
     if (record.recoveryDeadlineAt) return new Date(record.recoveryDeadlineAt);
     return new Date(
       new Date(record.securedAt).getTime() + this.policy().recoveryWindowSeconds * 1_000,
@@ -643,7 +696,7 @@ export class PendingPersistenceRecoveryService {
   }
 
   private async deferAfterAuditFailure(
-    record: PendingPersistenceRecord,
+    record: ScopedPendingPersistenceRecord,
     deadline: Date,
     now: Date,
     error: unknown,
@@ -652,6 +705,7 @@ export class PendingPersistenceRecoveryService {
       Math.min(now.getTime() + this.policy().initialBackoffMs, deadline.getTime()),
     );
     const storageDisposition = await this.options.storage.defer({
+      executionMode: record.executionMode,
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
       attemptCount: record.recoveryAttemptCount,
@@ -677,7 +731,7 @@ export class PendingPersistenceRecoveryService {
   }
 
   private async handlePreAttemptFailure(
-    record: PendingPersistenceRecord,
+    record: ScopedPendingPersistenceRecord,
     deadline: Date,
     error: unknown,
   ): Promise<void> {
@@ -775,7 +829,7 @@ function emptySummary(): PendingPersistenceRecoverySummary {
   return { discovered: 0, attempted: 0, materialized: 0, resolved: 0, deferred: 0, exhausted: 0 };
 }
 
-function toReservation(record: PendingPersistenceRecord): SecuredReservationHold {
+function toReservation(record: ScopedPendingPersistenceRecord): SecuredReservationHold {
   return {
     id: record.id,
     saleOfferId: record.saleOfferId,

@@ -34,6 +34,7 @@ import type { ReserveOrderService } from "../services/reserve-order-service.js";
 import { buildApiHttpServer } from "./api-http-server.js";
 import { closeResources } from "./api-resource-cleanup.js";
 import type { ApiConfig } from "./config.js";
+import { createPostgresReserveOrderService } from "./create-postgres-reserve-order-service.js";
 import { createReserveOrderService } from "./create-reserve-order-service.js";
 import type { ApiFastifyInstance } from "./fastify.js";
 import { warnWhenListenBacklogIsCapped } from "./listen-backlog-ceiling.js";
@@ -126,7 +127,25 @@ export async function startBuyerApiServer(config: ApiConfig): Promise<void> {
   );
   const context = new ActiveBuyingRunContext({
     reader: new PostgresBuyingRunContextReader(connection.db),
-    services: { demo: service },
+    services: {
+      demo: service,
+      without_redis: createPostgresReserveOrderService(
+        connection,
+        {
+          pendingPersistenceRecovery: new HttpPendingPersistenceRecovery({
+            baseUrl: config.controlBaseUrl,
+            controlServiceToken: config.controlServiceToken,
+          }),
+          reservationHoldMinutes: config.reservationHoldMinutes,
+          idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+          pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+          dashboardSourceDirtyScheduler: sourceDirty,
+          reservationTimingObservations: timing,
+          publishBusinessOutcomeUpdate: async (input) => businessOutcomes.markDirty(input),
+        },
+        logger,
+      ),
+    },
   });
   const requests = new BuyerRequestDrain(context);
   const flush = async (runId: string) => {

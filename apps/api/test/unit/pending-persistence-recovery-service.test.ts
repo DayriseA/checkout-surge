@@ -1377,3 +1377,95 @@ describe("PendingPersistenceRecoveryService", () => {
     }
   });
 });
+
+it("keeps one direct budget and coalescing owner across durable demo and PostgreSQL scopes", async () => {
+  const demo = {
+    ...hold,
+    id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab",
+    runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccd",
+  };
+  const records = [hold, demo].map((reservation) => ({
+    ...reservation,
+    idempotencyKey: "recovery-key",
+    recoveryAttemptCount: 0,
+    recoveryStatus: "pending" as const,
+    nextRecoveryAt: hold.securedAt,
+  }));
+  let release!: () => void;
+  let entered!: () => void;
+  const block = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const enqueue = vi.fn(async () => undefined);
+  const base = {
+    persistence: {
+      ...passThroughRunLocks,
+      persistSecuredReservation: async (input: { reservation: SecuredReservationHold }) =>
+        persisted(input.reservation),
+      getPersistedBuyByReservationId: async () => null,
+    },
+    audit: audit(),
+    stockReservations: { promoteAccepted: async () => undefined },
+    orderProcessJobPublisher: { enqueue },
+  };
+  const openAttemptScope = vi.fn(async () => ({
+    ...base,
+    audit: {
+      ...base.audit,
+      recordAttempt: async () => {
+        entered();
+        await block;
+      },
+    },
+    close: async () => undefined,
+  }));
+  const service = new PendingPersistenceRecoveryService({
+    ...base,
+    storage: {
+      readPage: async () => ({ records: [], issues: [] }),
+      readRecord: async (input) => ({
+        record: records.find((record) => record.id === input.reservationId) ?? null,
+      }),
+      defer: async () => "deferred",
+    },
+    listRunScopes: async () => [],
+    resolveRunScope: async (reservation) => ({
+      runId: reservation.runId,
+      saleOfferId: reservation.saleOfferId,
+      executionMode: reservation.runId === hold.runId ? "without_redis" : "demo",
+    }),
+    openAttemptScope,
+    maxConcurrentDirectAttempts: 1,
+    idempotencyTtlSeconds: 60,
+    logger: createSilentLogger("api"),
+    now: () => new Date(hold.securedAt),
+  });
+  const pgInput = { reservation: hold, idempotencyKey: "recovery-key" };
+  try {
+    const first = service.recoverReservation(pgInput);
+    await started;
+    const duplicate = service.recoverReservation(pgInput);
+    expect(
+      await service.recoverReservation({ reservation: demo, idempotencyKey: "recovery-key" }),
+    ).toBeNull();
+    expect(openAttemptScope).toHaveBeenCalledOnce();
+    release();
+    expect(await duplicate).toEqual(await first);
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(openAttemptScope).toHaveBeenLastCalledWith(
+      expect.objectContaining({ executionMode: "without_redis" }),
+    );
+    expect(
+      await service.recoverReservation({ reservation: demo, idempotencyKey: "recovery-key" }),
+    ).not.toBeNull();
+    expect(openAttemptScope).toHaveBeenLastCalledWith(
+      expect.objectContaining({ executionMode: "demo" }),
+    );
+  } finally {
+    release();
+    await service.close();
+  }
+});

@@ -28,6 +28,7 @@ import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboar
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
 import { startBuyerApiServer } from "./runtime/buyer-api-runtime.js";
 import { type ApiConfig, loadApiConfig } from "./runtime/config.js";
+import { createPostgresReserveOrderService } from "./runtime/create-postgres-reserve-order-service.js";
 import { createReserveOrderService } from "./runtime/create-reserve-order-service.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -196,6 +197,7 @@ export async function startApiServer(): Promise<void> {
     orderProcessJobPublisher,
     openDiscoveryScope: (signal) => pendingPersistenceOperations.openDiscoveryScope(signal),
     listRunScopes: (signal) => pendingPersistenceOperations.listRunScopes(signal),
+    resolveRunScope: (reservation) => pendingPersistenceOperations.resolveRunScope(reservation),
     openAttemptScope: (input) => pendingPersistenceOperations.openAttemptScope(input),
     closeDiscovery: () => pendingPersistenceOperations.close(),
     idempotencyTtlSeconds: config.idempotencyTtlSeconds,
@@ -367,7 +369,23 @@ export async function startApiServer(): Promise<void> {
 
   const buyingContext = new ActiveBuyingRunContext({
     reader: new PostgresBuyingRunContextReader(connection.db),
-    services: { demo: reserveOrderService },
+    services: {
+      demo: reserveOrderService,
+      without_redis: createPostgresReserveOrderService(
+        connection,
+        {
+          reservationHoldMinutes: config.reservationHoldMinutes,
+          idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+          pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+          pendingPersistenceRecovery,
+          dashboardSourceDirtyScheduler,
+          reservationTimingObservations: reservationTiming,
+          publishBusinessOutcomeUpdate: async (input) =>
+            businessOutcomePublications.markDirty(input),
+        },
+        logger,
+      ),
+    },
   });
   const presetService = new DemoPresetService({ db: connection.db });
   const runtimePolicyService = new PublicRuntimePolicyService({
