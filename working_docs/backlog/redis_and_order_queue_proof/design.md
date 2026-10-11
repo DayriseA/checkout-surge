@@ -72,6 +72,7 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 - **Several API processes**, two or three, enough to reach the Redis script's ceiling. This replaces HD-51 and touches every single-process assumption (HD-11).
 - **A mode without the order queue**, to show that the buyer pays for the back office's slowness.
 - **One or two fixed presets only.** The comparative modes are offered only through presets tuned until they show the point. They are never available in custom runs, public or admin. Calibration is limited to those presets, and the admission estimator needs no model of the comparative modes.
+- **Simple public demonstration (clarified 2026-10-11).** Visitors must be able to run the fixed comparisons and see the value of Redis and the order queue. The agent handles infrastructure, sequencing and automatic reset, preserving the working demo and its protections. These implementation details do not require separate owner design decisions; production intervention still waits for the final review.
 - **A feasibility checkpoint.** Before building the feature, prototypes find a configuration that shows the point. The work then stops for the owner's go or no-go.
 - **Autonomous work** (section 6). An AI agent runs the project on the owner's laptop, on its own branches and in its own Fly.io environment. The owner joins near the end for the final review.
 
@@ -81,7 +82,7 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 
 The owner's GO enables a proof topology with three dedicated buyer API processes and one control authority on the core. PostgreSQL and Redis share a separate stores Machine in `cdg`; the core uses the native private-network distance to both stores, with actual RTT recorded for each hosted deployment. No simulated latency is selected. The proof runner uses the retained feasibility allocation, which is validated rather than a measured minimum. Configuration and subsequent validation evidence live in task 04.
 
-This selects the isolated proof environment only. Production topology, public versus admin exposure, and the composition of paired runs with the run slot and occupancy/reset limits remain owner-review choices.
+This selects the isolated proof environment. The comparisons are public with fixed settings. The agent prepares their sequencing, exclusive run access and reset within existing safety limits; the final production review includes the measured runtime arrangement and costs.
 
 | Mode | Stock decision and sold-out answers | Order queue | ERP call |
 |---|---|---|---|
@@ -127,8 +128,8 @@ This selects the isolated proof environment only. Production topology, public ve
 - **Production topology:** whether the production demo moves to several API processes and remote stores for every run, or only for comparative runs, and what that costs per month.
 - **Presets:**
   - what the presets show: response times, turned-away buyers answered per second, database load, or several of these;
-  - whether they are public or admin-only;
-  - how two chained runs fit the run slot, the 600 s occupancy ceiling and the automatic reset.
+  - the comparisons are public with fixed settings; their visitor flow stays simple;
+  - the agent handles chained runs, exclusive access, the 600 s occupancy ceiling and automatic reset as implementation work.
 - **Run history:** how runs that fail by design (the mode without the order queue) read, without polluting public aggregates or capacity calibration.
 - **Redis script:** whether to slim the stock Lua script to raise Redis's ceiling.
 - **Load generator:** the runner size needed beyond 2,500 requests per second (it peaked at 90 % CPU there).

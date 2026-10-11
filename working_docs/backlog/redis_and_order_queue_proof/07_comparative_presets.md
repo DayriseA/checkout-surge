@@ -18,8 +18,10 @@ One or two fixed presets show each comparison clearly and repeatably on the host
 
 ## Open Points
 
-- Public or admin-only (design section 7).
+- None about exposure: the owner confirmed a simple public demonstration with fixed settings. The measured tuning determines the smallest useful set of comparisons.
 
 ## Working Notes
 
-_None yet._
+### Owner clarification — 2026-10-11
+
+The owner confirmed that visitors must be able to run a simple fixed demonstration of Redis and order-queue benefits. Admin-only access would not fulfill that goal. Infrastructure choices, execution sequencing and reset are delegated to the agent, while the existing demo remains functional and production intervention waits for final review. Keep one simple visitor entry and no editable comparative-mode controls; use the smallest fixed set that retained measurements justify.

@@ -35,7 +35,8 @@ The project is meant to be run by an AI agent working alone on the owner's lapto
 Choices waiting for the owner, added by the agent with the task, the options and its recommendation.
 
 - **Task 02 checkpoint — GO received (2026-10-11).** The owner authorized autonomous continuation after the completed [feasibility report](02_feasibility_checkpoint.md#working-notes), including commits on the project's branches. Tasks 03–06 can proceed with the report's disclosed caveats. Production changes remain subject to the review boundary below.
-- **Production and preset choices remain open.** Before production rollout, the owner chooses topology for all runs versus comparative presets only, public versus admin exposure, and paired-run slot/occupancy/reset behavior. The report records the implications and recommendation without deciding these choices.
+- **Public demonstration clarified (2026-10-11).** The owner wants a simple public comparison with fixed settings that shows Redis and order-queue benefits on the existing demo. Infrastructure, sequencing and reset details are delegated to the agent; they must preserve correctness and existing safety limits without requiring visitors to configure modes.
+- **Final production review.** The agent prepares and validates the complete demonstration in the proof environment, then presents its behavior, measurements and costs. Production rollout remains subject to the owner's final review; infrastructure questions do not block autonomous implementation.
 
 ## Tasks
 
