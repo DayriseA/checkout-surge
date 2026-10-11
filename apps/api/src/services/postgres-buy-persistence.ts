@@ -163,7 +163,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
     return this.withRunAdmissionLockAndSession(input);
   }
 
-  /** Experimental PostgreSQL publication can share the already reserved admission session. */
+  /** PostgreSQL publication can share the already reserved admission session. */
   async withRunAdmissionLockAndSession<T>(input: {
     reservation: SecuredReservationHold;
     operation: (persistence: BuyPersistenceOperations, session: SqlClient) => Promise<T>;
@@ -220,6 +220,20 @@ export class PostgresBuyPersistence implements BuyPersistence {
       runDisposition: "admissible" | "terminal" | "invalid",
     ) => Promise<T>;
   }): Promise<T> {
+    return this.withRunPendingPersistenceLockAndSession({
+      reservation: input.reservation,
+      operation: (operations, disposition) => input.operation(operations, disposition),
+    });
+  }
+
+  async withRunPendingPersistenceLockAndSession<T>(input: {
+    reservation: SecuredReservationHold;
+    operation: (
+      persistence: BuyPersistenceOperations,
+      runDisposition: "admissible" | "terminal" | "invalid",
+      session: SqlClient,
+    ) => Promise<T>;
+  }): Promise<T> {
     const runId = input.reservation.runId;
 
     return this.withSharedRunLock(runId, async (reservedDb, reservedClient) => {
@@ -234,7 +248,11 @@ export class PostgresBuyPersistence implements BuyPersistence {
           : acceptingPersistenceRunStatuses.has(run.status)
             ? "admissible"
             : "terminal";
-      return input.operation(this.databaseOperations(reservedDb, reservedClient), runDisposition);
+      return input.operation(
+        this.databaseOperations(reservedDb, reservedClient),
+        runDisposition,
+        reservedClient,
+      );
     });
   }
 

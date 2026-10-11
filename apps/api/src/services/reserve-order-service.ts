@@ -555,17 +555,22 @@ export class ReserveOrderService {
       throw input.error;
     }
 
-    const durable = await this.persistence.getPersistedBuyByReservationId(input.reservation.id);
-    if (durable) {
-      if (!isPersistedBuyForReservation(durable, input.reservation)) {
-        throw new Error(
-          "Durable reservation/order attribution does not match the rejected Redis hold.",
-          { cause: input.error },
-        );
-      }
-      await this.enqueuePersistedBuy(durable, input.idempotencyKey, input.reservation);
-      return durable;
-    }
+    const durable = await this.persistence.withRunPendingPersistenceLock({
+      reservation: input.reservation,
+      operation: async (persistence) => {
+        const existing = await persistence.getPersistedBuyByReservationId(input.reservation.id);
+        if (!existing) return null;
+        if (!isPersistedBuyForReservation(existing, input.reservation)) {
+          throw new Error(
+            "Durable reservation/order attribution does not match the rejected Redis hold.",
+            { cause: input.error },
+          );
+        }
+        await this.enqueuePersistedBuy(existing, input.idempotencyKey, input.reservation);
+        return existing;
+      },
+    });
+    if (durable) return durable;
 
     if (this.stockReservations.reverse) {
       await this.compensateHold(input.idempotencyKey, input.reservation, input.error);

@@ -441,3 +441,40 @@ CREATE UNIQUE INDEX "orders_run_attribution_identity_unique" ON "orders" ("id", 
 ALTER TABLE "erp_dispatch_calls" ADD CONSTRAINT "erp_dispatch_calls_order_run_fk" FOREIGN KEY ("order_id","run_id") REFERENCES "orders"("id","run_id") ON DELETE cascade ON UPDATE no action;
 --> statement-breakpoint
 ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_order_run_fk" FOREIGN KEY ("order_id","run_id") REFERENCES "orders"("id","run_id") ON DELETE cascade ON UPDATE no action;
+
+--> statement-breakpoint
+CREATE TABLE "postgres_reservation_holds" (
+	"id" uuid PRIMARY KEY NOT NULL,
+	"run_id" uuid NOT NULL,
+	"sale_offer_id" uuid NOT NULL,
+	"hold" jsonb NOT NULL,
+	"pending_record" jsonb,
+	"reversed_at" timestamp with time zone
+);
+--> statement-breakpoint
+CREATE TABLE "postgres_reservation_idempotency" (
+	"run_id" uuid NOT NULL,
+	"idempotency_key" text NOT NULL,
+	"reservation_id" uuid NOT NULL,
+	"accepted" boolean DEFAULT false NOT NULL,
+	"expires_at" timestamp with time zone NOT NULL,
+	CONSTRAINT "postgres_reservation_idempotency_run_id_idempotency_key_pk" PRIMARY KEY("run_id","idempotency_key")
+);
+--> statement-breakpoint
+CREATE TABLE "postgres_run_inventory" (
+	"run_id" uuid PRIMARY KEY NOT NULL,
+	"sale_offer_id" uuid NOT NULL,
+	"allocated_stock" integer NOT NULL,
+	"remaining_stock" integer NOT NULL,
+	"reserved_stock" integer DEFAULT 0 NOT NULL,
+	"accepting" boolean DEFAULT true NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "postgres_run_inventory_sale_offer_id_unique" UNIQUE("sale_offer_id"),
+	CONSTRAINT "postgres_run_inventory_balanced" CHECK ("postgres_run_inventory"."remaining_stock" >= 0 and "postgres_run_inventory"."reserved_stock" >= 0 and "postgres_run_inventory"."remaining_stock" + "postgres_run_inventory"."reserved_stock" = "postgres_run_inventory"."allocated_stock")
+);
+--> statement-breakpoint
+ALTER TABLE "postgres_reservation_holds" ADD CONSTRAINT "pg_hold_run_sale_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "postgres_reservation_idempotency_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "pg_idempotency_hold_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."postgres_reservation_holds"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "postgres_run_inventory" ADD CONSTRAINT "pg_inventory_run_sale_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "postgres_reservation_holds_run_idx" ON "postgres_reservation_holds" USING btree ("run_id");

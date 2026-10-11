@@ -11,6 +11,7 @@ import type {
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
   RunSignalTimelineSummary,
+  SecuredReservationHold,
   ServerReservationTimingSummary,
   TerminalInventorySnapshot,
   TrafficConfig,
@@ -48,11 +49,14 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+
+import type { PendingPersistenceRecord } from "./redis-stock-reservation.js";
 
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
@@ -232,6 +236,72 @@ export const demoRunSaleContexts = pgTable(
       name: "demo_run_sale_contexts_run_sale_offer_demo_runs_fk",
       columns: [table.runId, table.saleOfferId],
       foreignColumns: [demoRuns.id, demoRuns.saleOfferId],
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Unwired PostgreSQL buying state; activation waits for delivery and lifecycle integration. */
+export const postgresRunInventory = pgTable(
+  "postgres_run_inventory",
+  {
+    runId: uuid("run_id").primaryKey(),
+    saleOfferId: uuid("sale_offer_id").notNull().unique(),
+    allocatedStock: integer("allocated_stock").notNull(),
+    remainingStock: integer("remaining_stock").notNull(),
+    reservedStock: integer("reserved_stock").default(0).notNull(),
+    accepting: boolean("accepting").default(true).notNull(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    foreignKey({
+      name: "pg_inventory_run_sale_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("cascade"),
+    check(
+      "postgres_run_inventory_balanced",
+      sql`${table.remainingStock} >= 0 and ${table.reservedStock} >= 0 and ${table.remainingStock} + ${table.reservedStock} = ${table.allocatedStock}`,
+    ),
+  ],
+);
+
+export const postgresReservationHolds = pgTable(
+  "postgres_reservation_holds",
+  {
+    id: uuid("id").primaryKey(),
+    runId: uuid("run_id").notNull(),
+    saleOfferId: uuid("sale_offer_id").notNull(),
+    hold: jsonb("hold").$type<SecuredReservationHold>().notNull(),
+    pendingRecord: jsonb("pending_record").$type<PendingPersistenceRecord>(),
+    reversedAt: timestamp("reversed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: "pg_hold_run_sale_fk",
+      columns: [table.runId, table.saleOfferId],
+      foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
+    }).onDelete("cascade"),
+    index("postgres_reservation_holds_run_idx").on(table.runId),
+  ],
+);
+
+export const postgresReservationIdempotency = pgTable(
+  "postgres_reservation_idempotency",
+  {
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => demoRuns.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    reservationId: uuid("reservation_id").notNull(),
+    accepted: boolean("accepted").default(false).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.runId, table.idempotencyKey] }),
+    foreignKey({
+      name: "pg_idempotency_hold_fk",
+      columns: [table.reservationId],
+      foreignColumns: [postgresReservationHolds.id],
     }).onDelete("cascade"),
   ],
 );
