@@ -30,6 +30,7 @@ import {
   orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
+  runExecutionModeValues,
   trafficCompletionEnrichmentStatusValues,
   trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
@@ -77,6 +78,8 @@ export const demoPresetVisibilityEnum = pgEnum(
 );
 
 export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", operatorModeValues);
+
+export const runExecutionModeEnum = pgEnum("run_execution_mode", runExecutionModeValues);
 
 export const demoRunStatusEnum = pgEnum("demo_run_status", demoRunStatusValues);
 
@@ -178,6 +181,7 @@ export const demoRuns = pgTable(
       .references(() => demoPresets.id, { onDelete: "restrict" }),
     presetName: text("preset_name").notNull(),
     operatorMode: demoRunOperatorModeEnum("operator_mode").notNull(),
+    executionMode: runExecutionModeEnum("execution_mode").default("demo").notNull(),
     status: demoRunStatusEnum("status").default("starting").notNull(),
     trafficStatus: demoRunTrafficStatusEnum("traffic_status").default("not_started").notNull(),
     configSnapshot: jsonObject<AcceptedRunConfigSnapshot>("config_snapshot"),

@@ -3527,6 +3527,7 @@ function runHistoryDetailFixture(): PublicRunHistoryDetailResponse {
       ...(sanitizedInventory ? { terminalInventorySnapshot: sanitizedInventory } : {}),
     },
     run: {
+      executionMode: "demo",
       runId: summary.runId,
       presetName: summary.presetName,
       operatorMode: "public",

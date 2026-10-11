@@ -35,14 +35,19 @@ export class BuyerReservationTimingBarrier implements ReservationTimingLifecycle
       lostEvidence: false,
     };
     this.currentRun = currentRun;
-    try {
-      currentRun.baseline = await this.flushPeers(runId);
-    } catch (error) {
+    const peers = await this.flushPeers(runId, true);
+    if (peers.every((peer) => peer.timingAvailable !== false)) {
+      currentRun.baseline = peers;
+    } else {
       this.options.logger.warn(
-        { err: error, runId },
+        { runId },
         "Buyer timing baseline unavailable; terminal timings will be unknown.",
       );
     }
+  }
+
+  async activate(runId: string): Promise<void> {
+    await this.flushPeers(runId, true);
   }
 
   async prepare(runId: string): Promise<void> {
@@ -83,7 +88,7 @@ export class BuyerReservationTimingBarrier implements ReservationTimingLifecycle
     await this.options.local.clearRun(runId);
   }
 
-  private flushPeers(runId: string) {
+  private flushPeers(runId: string, activate = false) {
     return Promise.all(
       this.options.buyerBaseUrls.map(async (baseUrl) => {
         const response = await fetch(new URL(buyerTimingFlushPath, baseUrl), {
@@ -92,11 +97,15 @@ export class BuyerReservationTimingBarrier implements ReservationTimingLifecycle
             "content-type": "application/json",
             [controlServiceTokenHeaderName]: this.options.controlServiceToken,
           },
-          body: JSON.stringify({ runId }),
+          body: JSON.stringify({ runId, ...(activate ? { activate: true } : {}) }),
           signal: AbortSignal.timeout(5_000),
         });
         if (!response.ok) throw new Error(`Buyer timing flush returned HTTP ${response.status}.`);
-        return buyerTimingFlushResponseSchema.parse(await response.json());
+        const result = buyerTimingFlushResponseSchema.parse(await response.json());
+        if (activate && result.activatedRunId !== runId) {
+          throw new Error("Buyer did not acknowledge run activation.");
+        }
+        return result;
       }),
     );
   }

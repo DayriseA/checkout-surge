@@ -673,6 +673,14 @@
           "primaryKey": false,
           "notNull": true
         },
+        "execution_mode": {
+          "name": "execution_mode",
+          "type": "run_execution_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'demo'"
+        },
         "status": {
           "name": "status",
           "type": "demo_run_status",
@@ -3360,6 +3368,11 @@
     }
   },
   "enums": {
+    "public.run_execution_mode": {
+      "name": "run_execution_mode",
+      "schema": "public",
+      "values": ["demo"]
+    },
     "public.demo_preset_visibility": {
       "name": "demo_preset_visibility",
       "schema": "public",

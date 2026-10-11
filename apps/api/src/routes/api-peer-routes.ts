@@ -31,13 +31,23 @@ export function registerBuyerTimingFlushRoute(
   app: ApiFastifyInstance,
   options: {
     controlServiceToken: string;
+    prepare?(runId: string): Promise<{
+      bootId: string;
+      mergeFailureGeneration: number;
+      activatedRunId: string;
+      timingAvailable: boolean;
+    }>;
     flush(runId: string): Promise<{ bootId: string; mergeFailureGeneration: number }>;
   },
 ): void {
   app.post(buyerTimingFlushPath, async (request, reply) => {
     const unauthorized = requireControlServiceToken(request, reply, options.controlServiceToken);
     if (unauthorized) return unauthorized;
-    const { runId } = buyerTimingFlushRequestSchema.parse(request.body);
+    const { runId, activate } = buyerTimingFlushRequestSchema.parse(request.body);
+    if (activate) {
+      if (!options.prepare) throw new Error("Buyer activation is unavailable.");
+      return buyerTimingFlushResponseSchema.parse(await options.prepare(runId));
+    }
     return buyerTimingFlushResponseSchema.parse(await options.flush(runId));
   });
 }

@@ -39,6 +39,7 @@ describe("DemoRunStartupReconciliationService", () => {
       startedAt: "2026-06-20T00:00:11.000Z",
       correlationId: request.correlationId,
     }));
+    const prepareBuyingRun = vi.fn(async () => undefined);
     const activateStartingRun = vi.fn(async () => true);
     const service = new DemoRunStartupReconciliationService({
       maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
@@ -56,9 +57,14 @@ describe("DemoRunStartupReconciliationService", () => {
         activateStartingRun,
       },
       trafficExecutionGateway: { start },
+      prepareBuyingRun,
     });
 
     await expect(service.reconcileStartingRuns()).resolves.toBe(1);
+    expect(prepareBuyingRun).toHaveBeenCalledWith("cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+    expect(prepareBuyingRun.mock.invocationCallOrder[0]).toBeLessThan(
+      start.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(start).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",

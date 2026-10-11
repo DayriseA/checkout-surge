@@ -23,7 +23,14 @@ export const pendingRecoveryResponseSchema = z
       .nullable(),
   })
   .strict();
-export const buyerTimingFlushRequestSchema = z.object({ runId: uuidSchema }).strict();
+export const buyerTimingFlushRequestSchema = z
+  .object({ runId: uuidSchema, activate: z.boolean().optional() })
+  .strict();
 export const buyerTimingFlushResponseSchema = z
-  .object({ bootId: uuidSchema, mergeFailureGeneration: z.number().int().nonnegative() })
+  .object({
+    bootId: uuidSchema,
+    mergeFailureGeneration: z.number().int().nonnegative(),
+    activatedRunId: uuidSchema.optional(),
+    timingAvailable: z.boolean().optional(),
+  })
   .strict();

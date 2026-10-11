@@ -16,7 +16,12 @@ import { createBullMqOrderProcessQueueInspector } from "../queue/bullmq-order-pr
 import { registerBuyerTimingFlushRoute } from "../routes/api-peer-routes.js";
 import { registerBuyRoutes } from "../routes/buy-routes.js";
 import { registerHealthRoutes } from "../routes/health-routes.js";
+import {
+  ActiveBuyingRunContext,
+  PostgresBuyingRunContextReader,
+} from "../services/active-buying-run-context.js";
 import { BuyerRequestDrain } from "../services/buyer-request-drain.js";
+import { prepareBuyerRun } from "../services/buyer-run-preparation.js";
 import { DashboardSourceDirtyScheduler } from "../services/dashboard-source-dirty-scheduler.js";
 import { HttpPendingPersistenceRecovery } from "../services/http-pending-persistence-recovery.js";
 import { PostgresBuyPersistence } from "../services/postgres-buy-persistence.js";
@@ -41,6 +46,12 @@ export async function buildBuyerApiServer(options: {
   readiness: ApiReadiness;
   reserveOrderService: Pick<ReserveOrderService, "reserve">;
   flush(runId: string): Promise<{ bootId: string; mergeFailureGeneration: number }>;
+  prepare?(runId: string): Promise<{
+    bootId: string;
+    mergeFailureGeneration: number;
+    activatedRunId: string;
+    timingAvailable: boolean;
+  }>;
 }): Promise<ApiFastifyInstance> {
   const server = await buildApiHttpServer(options);
   registerHealthRoutes(server, { readiness: options.readiness, startedAt: new Date() });
@@ -48,6 +59,7 @@ export async function buildBuyerApiServer(options: {
   registerBuyerTimingFlushRoute(server, {
     controlServiceToken: options.config.controlServiceToken,
     flush: options.flush,
+    ...(options.prepare ? { prepare: options.prepare } : {}),
   });
   return server;
 }
@@ -112,7 +124,15 @@ export async function startBuyerApiServer(config: ApiConfig): Promise<void> {
     },
     logger,
   );
-  const requests = new BuyerRequestDrain(service);
+  const context = new ActiveBuyingRunContext({
+    reader: new PostgresBuyingRunContextReader(connection.db),
+    services: { demo: service },
+  });
+  const requests = new BuyerRequestDrain(context);
+  const flush = async (runId: string) => {
+    await requests.drain(runId);
+    return { bootId, mergeFailureGeneration: await timing.flushAndReadFailureGeneration() };
+  };
   const readiness = createApiReadiness({
     databaseUrl: config.databaseUrl,
     redisUrl: config.redisUrl,
@@ -150,15 +170,14 @@ export async function startBuyerApiServer(config: ApiConfig): Promise<void> {
     return closePromise;
   };
   try {
+    await context.hydrate();
     server = await buildBuyerApiServer({
       config,
       logger,
       readiness,
       reserveOrderService: requests,
-      flush: async (runId) => {
-        await requests.drain(runId);
-        return { bootId, mergeFailureGeneration: await timing.flushAndReadFailureGeneration() };
-      },
+      flush,
+      prepare: (runId) => prepareBuyerRun({ context, runId, bootId, flush }),
     });
     const shutdown = () => {
       void close()

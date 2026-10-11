@@ -19,6 +19,7 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     presetId: run.presetId,
     presetName: run.presetName,
     operatorMode: run.operatorMode,
+    executionMode: run.executionMode,
     status: run.status,
     trafficStatus: run.trafficStatus,
     ...(run.saleOfferId ? { saleOfferId: run.saleOfferId } : {}),

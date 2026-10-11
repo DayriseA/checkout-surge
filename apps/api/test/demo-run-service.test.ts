@@ -349,6 +349,109 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
+  it("does not publish accepting stock until buyer activation completes", async () => {
+    if (!connection || !redis) throw new Error("Missing test infrastructure.");
+    const db = connection;
+    const stock = redis;
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let accepted!: (runId: string) => void;
+    const activated = new Promise<string>((resolve) => {
+      accepted = resolve;
+    });
+    const start = vi.fn(async (request: TrafficExecutionStartRequest) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const service = createStartService(db, stock, {
+      onRunAccepted: async (runId) => {
+        accepted(runId);
+        await pending;
+      },
+      trafficExecutionGateway: { start },
+    });
+    const starting = service.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "activation-order",
+    );
+    try {
+      const runId = await activated;
+      const [run] = await db.db.select().from(demoRuns).where(eq(demoRuns.id, runId));
+      if (!run?.saleOfferId) throw new Error("Accepted run is missing its sale offer.");
+      expect(run.executionMode).toBe("demo");
+      expect(
+        await reserveInventoryStock(stock, {
+          idempotencyKey: "manual-during-activation",
+          idempotencyTtlSeconds: 60,
+          reservation: {
+            id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            runId,
+            saleOfferId: run.saleOfferId,
+            quantity: 1,
+            reservationToken: "manual-before-stock",
+            correlationId: "manual-before-stock",
+            securedAt: "2026-06-20T00:00:00.000Z",
+            expiresAt: "2026-06-20T00:01:00.000Z",
+          },
+        }),
+      ).toMatchObject({ outcome: "inventory_not_initialized" });
+      expect(start).not.toHaveBeenCalled();
+    } finally {
+      release();
+    }
+    const response = await starting;
+    expect(response.run.executionMode).toBe("demo");
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("terminalizes failed buyer activation before stock and releases public budget", async () => {
+    if (!connection || !redis) throw new Error("Missing test infrastructure.");
+    const release = vi.fn(async () => undefined);
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: {
+        reservationId: "activation-budget",
+        globalKey: "g",
+        visitorKey: "v",
+        reservationKey: "r",
+      },
+    }));
+    const boot = vi.fn();
+    const start = vi.fn();
+    const service = createStartService(connection, redis, {
+      onRunAccepted: async () => {
+        throw new Error("Peer activation failed.");
+      },
+      publicRunBudgetStore: { reserve, release },
+      runnerOperations: { bootForRun: boot, releaseAfterRun: () => undefined },
+      trafficExecutionGateway: { start },
+    });
+    await expect(
+      service.startRun(
+        {
+          presetSlug: "preview-1k",
+          operatorMode: "public",
+          publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        },
+        "activation-failure",
+      ),
+    ).rejects.toThrow("Peer activation failed.");
+    const [run] = await connection.db.select().from(demoRuns);
+    expect(run).toMatchObject({
+      status: "failed",
+      failureReason: "inventory_initialization_failed",
+      executionMode: "demo",
+    });
+    expect(await redis.exists(inventoryKeys(run?.saleOfferId ?? "").state)).toBe(0);
+    expect(release).toHaveBeenCalledOnce();
+    expect(boot).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  });
+
   it.each([
     ["public", "preview-1k"],
     ["admin", "preview-1k"],
@@ -2427,6 +2530,7 @@ function createStartService(
   overrides: {
     maintenanceAuthority?: ProcessLocalDemoMaintenanceAuthority;
     queueLimits?: OrderProcessQueueLimits;
+    onRunAccepted?: (runId: string) => Promise<void>;
     presetReader?: ConstructorParameters<typeof DemoRunLifecycleService>[0]["presetReader"];
     trafficExecutionGateway?: ConstructorParameters<
       typeof DemoRunLifecycleService
@@ -2459,6 +2563,7 @@ function createStartService(
     maintenanceAuthority:
       overrides.maintenanceAuthority ?? new ProcessLocalDemoMaintenanceAuthority(),
     queueLimits: overrides.queueLimits ?? { synchronize: async () => {} },
+    ...(overrides.onRunAccepted ? { onRunAccepted: overrides.onRunAccepted } : {}),
     db: connection.db,
     presetReader: overrides.presetReader ?? new DemoPresetService({ db: connection.db }),
     runtimePolicyReader: new PublicRuntimePolicyService({

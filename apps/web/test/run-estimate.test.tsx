@@ -547,6 +547,7 @@ function preset(): AdminPresetListItem {
 }
 function accepted(mode: "public" | "admin") {
   const run: DemoRunSnapshot = {
+    executionMode: "demo" as const,
     runId: "55555555-5555-4555-8555-555555555555",
     presetId: preset().id,
     presetName: "Accepted server scenario",

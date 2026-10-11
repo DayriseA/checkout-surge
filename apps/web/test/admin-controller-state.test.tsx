@@ -3043,6 +3043,7 @@ function recoveryScope(currentRun: DashboardProjection["currentRun"]) {
 
 function runFixture(): DashboardProjection["currentRun"] {
   return {
+    executionMode: "demo",
     runId: "11111111-1111-4111-8111-111111111111",
     presetId: "22222222-2222-4222-8222-222222222222",
     presetName: "Custom",

@@ -1,6 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";--> statement-breakpoint
 CREATE TYPE "public"."demo_preset_visibility" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> statement-breakpoint
+CREATE TYPE "public"."run_execution_mode" AS ENUM('demo');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint
@@ -90,6 +91,7 @@ CREATE TABLE "demo_runs" (
 	"preset_id" uuid NOT NULL,
 	"preset_name" text NOT NULL,
 	"operator_mode" "demo_run_operator_mode" NOT NULL,
+	"execution_mode" "run_execution_mode" DEFAULT 'demo' NOT NULL,
 	"status" "demo_run_status" DEFAULT 'starting' NOT NULL,
 	"traffic_status" "demo_run_traffic_status" DEFAULT 'not_started' NOT NULL,
 	"config_snapshot" jsonb NOT NULL,

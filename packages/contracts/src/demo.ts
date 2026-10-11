@@ -137,7 +137,12 @@ export const previewDemoRunRequestSchema = startDemoRunRequestSchema;
 export const previewDemoRunResponseSchema = estimatePreviewSchema;
 export type PreviewDemoRunResponse = z.infer<typeof previewDemoRunResponseSchema>;
 
+export const runExecutionModeValues = ["demo"] as const;
+export const runExecutionModeSchema = z.enum(runExecutionModeValues);
+export type RunExecutionMode = z.infer<typeof runExecutionModeSchema>;
+
 const demoRunSnapshotBaseShape = {
+  executionMode: runExecutionModeSchema.default("demo"),
   runId: uuidSchema,
   presetId: uuidSchema,
   presetName: z.string().trim().min(1),
@@ -457,6 +462,7 @@ export type PublicRunHistorySummary = z.infer<typeof publicRunHistorySummarySche
 
 export const publicRunHistoryRunSchema = z
   .object({
+    executionMode: runExecutionModeSchema.default("demo"),
     runId: uuidSchema,
     presetName: z.string().trim().min(1),
     operatorMode: operatorModeSchema,

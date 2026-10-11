@@ -473,6 +473,7 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
     runId: row.id,
     presetName: row.presetName,
     operatorMode: row.operatorMode,
+    executionMode: row.executionMode,
     status: row.status,
     trafficStatus: row.trafficStatus,
     configSnapshot: parsePersistedAcceptedRunConfigSnapshot(row.configSnapshot, context),

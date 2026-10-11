@@ -1334,6 +1334,7 @@ function detailFixture(
       capturedAt: "2026-06-20T00:00:10.000Z",
     },
     run: {
+      executionMode: "demo",
       runId: "55555555-5555-4555-8555-555555555555",
       presetName: "Preview 1k",
       operatorMode: "public",
@@ -1394,6 +1395,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
       generatorWarnings: 1,
     },
     run: {
+      executionMode: "demo",
       runId: detail.run.runId,
       presetId: "33333333-3333-4333-8333-333333333333",
       presetName: detail.run.presetName,

@@ -48,7 +48,7 @@ export interface BuildApiServerOptions {
   inventoryStatusService: InventoryStatusService;
   orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
-  reserveOrderService: ReserveOrderService;
+  reserveOrderService: Pick<ReserveOrderService, "reserve">;
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;

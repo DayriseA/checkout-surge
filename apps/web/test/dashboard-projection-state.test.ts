@@ -593,6 +593,7 @@ function runProjection(overrides: Partial<DashboardProjection> = {}): DashboardP
 
 function activeRun(overrides: Partial<ActiveRun> = {}): ActiveRun {
   return {
+    executionMode: "demo",
     runId: "11111111-1111-4111-8111-111111111111",
     presetId: "77777777-7777-4777-8777-777777777777",
     presetName: "Preview 1k",

@@ -6,8 +6,8 @@ import {
 import { createSilentLogger } from "@checkout-surge/logger";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  registerBuyerTimingFlushRoute,
   registerPendingRecoveryRoute,
+  registerBuyerTimingFlushRoute as registerTimingRoute,
 } from "../../src/routes/api-peer-routes.js";
 import { buildApiHttpServer } from "../../src/runtime/api-http-server.js";
 import { buildBuyerApiServer } from "../../src/runtime/buyer-api-runtime.js";
@@ -16,8 +16,27 @@ import type { ApiFastifyInstance } from "../../src/runtime/fastify.js";
 import { buyerTimingFlushPath, pendingRecoveryPath } from "../../src/services/api-peer-protocol.js";
 import { BuyerRequestDrain } from "../../src/services/buyer-request-drain.js";
 import { BuyerReservationTimingBarrier } from "../../src/services/buyer-reservation-timing-barrier.js";
+import { prepareBuyerRun } from "../../src/services/buyer-run-preparation.js";
 import { HttpPendingPersistenceRecovery } from "../../src/services/http-pending-persistence-recovery.js";
 import { ReservationTimingObservationScheduler } from "../../src/services/reservation-timing-observation.js";
+
+function registerBuyerTimingFlushRoute(
+  server: Parameters<typeof registerTimingRoute>[0],
+  options: Parameters<typeof registerTimingRoute>[1],
+) {
+  registerTimingRoute(server, {
+    ...options,
+    prepare:
+      options.prepare ??
+      ((runId) =>
+        prepareBuyerRun({
+          context: { activate: async () => undefined },
+          runId,
+          bootId: randomUUID(),
+          flush: options.flush,
+        })),
+  });
+}
 
 const config = loadApiConfig({
   NODE_ENV: "test",
@@ -82,6 +101,38 @@ describe("API peer boundaries", () => {
       ).statusCode,
     ).toBe(200);
     expect(flush).toHaveBeenCalledWith(runId);
+  });
+
+  it("requires authentication for activation and never activates an ordinary terminal flush", async () => {
+    const server = await buildApiHttpServer({ config, logger });
+    servers.push(server);
+    const bootId = randomUUID();
+    const flush = vi.fn(async () => ({ bootId, mergeFailureGeneration: 0 }));
+    const prepare = vi.fn(async (id: string) => ({
+      bootId,
+      mergeFailureGeneration: 0,
+      activatedRunId: id,
+      timingAvailable: false,
+    }));
+    registerTimingRoute(server, {
+      controlServiceToken: config.controlServiceToken,
+      flush,
+      prepare,
+    });
+    const request = {
+      method: "POST" as const,
+      url: buyerTimingFlushPath,
+      payload: { runId, activate: true },
+    };
+    expect((await server.inject(request)).statusCode).toBe(401);
+    expect(prepare).not.toHaveBeenCalled();
+    const headers = { [controlServiceTokenHeaderName]: config.controlServiceToken };
+    const activated = await server.inject({ ...request, headers });
+    expect(activated.statusCode).toBe(200);
+    expect(activated.json()).toMatchObject({ activatedRunId: runId, timingAvailable: false });
+    await server.inject({ ...request, headers, payload: { runId } });
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(flush).toHaveBeenCalledOnce();
   });
 
   it("authenticates and validates direct recovery before calling the sole owner", async () => {
@@ -176,6 +227,7 @@ describe("API peer boundaries", () => {
     await barrier.prepare(runId);
     expect(await barrier.readAndFence(runId)).toEqual(summary);
     bootId = randomUUID();
+    await barrier.activate(runId);
     await barrier.prepare(runId);
     expect(await barrier.readAndFence(runId)).toEqual(emptyServerReservationTimingSummary);
     await barrier.captureBaseline(runId);

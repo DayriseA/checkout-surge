@@ -93,6 +93,7 @@ export class DemoRunStartupReconciliationService {
       trafficExecutionGateway: Pick<TrafficExecutionGateway, "start">;
       undispatchedRuns: Pick<DemoRunLifecycleService, "failUndispatchedRun">;
       apiBaseUrl: string;
+      prepareBuyingRun?: (runId: string) => Promise<void>;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
       closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
       now?: () => Date;
@@ -130,6 +131,7 @@ export class DemoRunStartupReconciliationService {
       // Accepted risk HD-15 (docs/decisions/hosted_deployment.md)
       // (the replay does not repeat the version handshake).
       try {
+        await this.options.prepareBuyingRun?.(run.id);
         const response = await this.options.trafficExecutionGateway.start({
           runId: run.id,
           saleOfferId: run.saleOfferId,

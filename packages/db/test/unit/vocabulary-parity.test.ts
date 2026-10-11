@@ -9,6 +9,11 @@ type ExportedPgEnumMetadata = {
 };
 
 const enumInventory = {
+  runExecutionModeEnum: [
+    schema.runExecutionModeEnum,
+    "run_execution_mode",
+    contracts.runExecutionModeValues,
+  ],
   demoPresetVisibilityEnum: [
     schema.demoPresetVisibilityEnum,
     "demo_preset_visibility",

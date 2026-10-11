@@ -192,10 +192,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         reservePublicBudget,
       );
       const saleOfferId = requireRunSaleOfferId(accepted.run);
-      await this.options.onRunAccepted?.(accepted.run.runId);
       await this.removePreviousRunInventories();
 
       try {
+        // Select the buying implementation on every peer before stock becomes accepting.
+        await this.options.onRunAccepted?.(accepted.run.runId);
         await this.options.queueLimits.synchronize();
         await initializeInventory(this.options.redis, {
           saleOfferId,

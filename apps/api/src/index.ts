@@ -38,6 +38,10 @@ import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-pe
 import { createApiReadiness } from "./runtime/readiness.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
+import {
+  ActiveBuyingRunContext,
+  PostgresBuyingRunContextReader,
+} from "./services/active-buying-run-context.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
 import { BuyerReservationTimingBarrier } from "./services/buyer-reservation-timing-barrier.js";
@@ -339,15 +343,37 @@ export async function startApiServer(): Promise<void> {
     liveMetricDrops: trafficMetricIngestion,
     completedOrderJobs: demoQueueMaintenance,
   });
+  const reserveOrderService = createReserveOrderService(
+    {
+      persistence,
+      orderProcessJobPublisher,
+      stockReservations: stockReservationGateway,
+      reservationHoldMinutes: config.reservationHoldMinutes,
+      idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+      pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+      pendingPersistenceRecovery,
+      dashboardSourceDirtyScheduler,
+      soldOutObservations: dashboardSourceDirtyScheduler,
+      reservationTimingObservations: reservationTiming,
+      publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
+    },
+    logger,
+  );
+
+  const buyingContext = new ActiveBuyingRunContext({
+    reader: new PostgresBuyingRunContextReader(connection.db),
+    services: { demo: reserveOrderService },
+  });
   const presetService = new DemoPresetService({ db: connection.db });
   const runtimePolicyService = new PublicRuntimePolicyService({
     db: connection.db,
     deploymentHardCaps: config.deploymentHardCaps,
   });
   const demoRunLifecycleService = new DemoRunLifecycleService({
-    ...(peerReservationTiming
-      ? { onRunAccepted: (runId: string) => peerReservationTiming.captureBaseline(runId) }
-      : {}),
+    onRunAccepted: async (runId) => {
+      await buyingContext.activate(runId);
+      await peerReservationTiming?.captureBaseline(runId);
+    },
     maintenanceAuthority,
     queueLimits,
     db: connection.db,
@@ -372,6 +398,10 @@ export async function startApiServer(): Promise<void> {
     startingRunStore: new PostgresStartingDemoRunReconciliationStore(connection.db),
     trafficExecutionGateway,
     undispatchedRuns: demoRunLifecycleService,
+    prepareBuyingRun: async (runId) => {
+      await buyingContext.activate(runId);
+      await peerReservationTiming?.activate(runId);
+    },
     apiBaseUrl: config.apiBaseUrl,
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
@@ -392,23 +422,6 @@ export async function startApiServer(): Promise<void> {
     finalizationService: demoRunFinalizationService,
     logger,
   });
-  const reserveOrderService = createReserveOrderService(
-    {
-      persistence,
-      orderProcessJobPublisher,
-      stockReservations: stockReservationGateway,
-      reservationHoldMinutes: config.reservationHoldMinutes,
-      idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-      pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-      pendingPersistenceRecovery,
-      dashboardSourceDirtyScheduler,
-      soldOutObservations: dashboardSourceDirtyScheduler,
-      reservationTimingObservations: reservationTiming,
-      publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
-    },
-    logger,
-  );
-
   const automaticRunReset = new AutomaticRunResetService({
     db: connection.db,
     resetWorkflow: adminDemoReset,
@@ -482,6 +495,7 @@ export async function startApiServer(): Promise<void> {
     }, 5_000);
     automaticResetPoller.unref();
     const startupReconciliation = await demoRunStartupReconciliationService.reconcile();
+    await buyingContext.hydrate();
     pendingPersistenceRecovery.start();
     if (startupReconciliation.discoveredRunCount > 0) {
       logger.info(startupReconciliation, "API startup demo-run reconciliation completed.");
@@ -513,7 +527,7 @@ export async function startApiServer(): Promise<void> {
       inventoryStatusService,
       orderStatusService,
       queueStatusService,
-      reserveOrderService,
+      reserveOrderService: buyingContext,
       pendingPersistenceRecovery,
       presetService,
       runtimePolicyService,
