@@ -16,7 +16,6 @@ import {
   purgeResetRunDurable,
   reserveInventoryStock,
   reverseReservation,
-  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { type FlyMachineConfig, FlyMachinesClient } from "@checkout-surge/fly-machines";
 import { createServiceLogger } from "@checkout-surge/logger";
@@ -36,6 +35,7 @@ import { createInventoryStatusReader } from "./runtime/inventory-status-reader.j
 import { warnWhenListenBacklogIsCapped } from "./runtime/listen-backlog-ceiling.js";
 import { createPendingPersistenceRecoveryOperations } from "./runtime/pending-persistence-operation-factory.js";
 import { createApiReadiness } from "./runtime/readiness.js";
+import { createRunInventoryLifecycle } from "./runtime/run-inventory-lifecycle.js";
 import { createTerminalInventoryReadOperation } from "./runtime/terminal-inventory-read-operation.js";
 import { buildApiServer } from "./server.js";
 import {
@@ -248,7 +248,9 @@ export async function startApiServer(): Promise<void> {
     logger,
   );
   const maintenanceAuthority = new ProcessLocalDemoMaintenanceAuthority();
+  const runInventory = createRunInventoryLifecycle(connection.db, redis);
   const generatedRunTeardown = new GeneratedRunTeardownService({
+    inventory: runInventory,
     db: connection.db,
     redis,
     deleteGeneratedRunRedisState,
@@ -264,6 +266,7 @@ export async function startApiServer(): Promise<void> {
     maintenanceAuthority,
   });
   const adminDemoReset = new AdminDemoResetService({
+    inventory: runInventory,
     queueLimits,
     db: connection.db,
     redis,
@@ -322,12 +325,14 @@ export async function startApiServer(): Promise<void> {
   );
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
   const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
+    inventory: runInventory,
     db: connection.db,
     redis,
     businessOutcomeReader,
     logger,
   });
   const demoRunFinalizationService = new DemoRunFinalizationService({
+    inventory: runInventory,
     queueLimits,
     db: connection.db,
     redis,
@@ -370,6 +375,7 @@ export async function startApiServer(): Promise<void> {
     deploymentHardCaps: config.deploymentHardCaps,
   });
   const demoRunLifecycleService = new DemoRunLifecycleService({
+    inventory: runInventory,
     onRunAccepted: async (runId) => {
       await buyingContext.activate(runId);
       await peerReservationTiming?.captureBaseline(runId);
@@ -405,8 +411,7 @@ export async function startApiServer(): Promise<void> {
     apiBaseUrl: config.apiBaseUrl,
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
-    closeRunSaleEligibility: ({ runId, saleOfferId }) =>
-      setRunSaleEligibility(redis, { runId, saleOfferId, status: "closed" }),
+    closeRunSaleEligibility: (scope) => runInventory.close(scope),
   });
   const runnerLossMonitor = new RunnerLossMonitor({
     runs: new PostgresMonitoredRunReader(connection.db),

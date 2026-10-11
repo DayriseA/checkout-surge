@@ -11,7 +11,8 @@ export interface ErpDeclaredDispatchGate {
 export function createErpDeclaredDispatchGate(
   options: { now?: () => number } = {},
 ): ErpDeclaredDispatchGate {
-  let window: { scope: string; until: number; used: number } | undefined;
+  // A forced-close consumer may still finish an older run after a successor starts.
+  const windows = new Map<string, { until: number; used: number }>();
   return {
     async tryAcquire(context) {
       const configuration = context.dispatch;
@@ -19,8 +20,13 @@ export function createErpDeclaredDispatchGate(
       if (!configuration || configuration.executionMode === "demo") return { admitted: true };
       const now = options.now?.() ?? Date.now();
       const limit = erpDispatchRateLimit(configuration.maxTps);
-      if (!window || window.scope !== context.scope || now >= window.until) {
-        window = { scope: context.scope, until: now + limit.duration, used: 0 };
+      for (const [scope, window] of windows) {
+        if (now >= window.until) windows.delete(scope);
+      }
+      let window = windows.get(context.scope);
+      if (!window) {
+        window = { until: now + limit.duration, used: 0 };
+        windows.set(context.scope, window);
       }
       if (window.used >= limit.max) return { admitted: false, nextEligibleAtMs: window.until };
       window.used += 1;

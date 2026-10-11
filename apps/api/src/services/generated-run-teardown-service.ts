@@ -9,6 +9,7 @@ import type {
   deleteGeneratedRunRedisState,
   inspectGeneratedRunTeardown,
 } from "@checkout-surge/db";
+import { InventoryNotInitializedError } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
@@ -16,6 +17,7 @@ import {
   DemoQueueMaintenanceConflict,
   type ExactRunQueueMaintenance,
 } from "./demo-queue-maintenance.js";
+import type { RunInventoryLifecycle } from "./run-inventory-lifecycle.js";
 
 export interface GeneratedRunTeardownInput {
   runId: string;
@@ -41,6 +43,7 @@ export class GeneratedRunTeardownService
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
+      inventory: Pick<RunInventoryLifecycle, "close">;
       redis: CheckoutSurgeRedis;
       queueMaintenance: ExactRunQueueMaintenance;
       logger: CheckoutSurgeLogger;
@@ -98,6 +101,9 @@ export class GeneratedRunTeardownService
     }
     if (inspected.outcome !== "ready") throw teardownConflict(inspected.outcome);
 
+    await this.options.inventory.close(inspected).catch((error: unknown) => {
+      if (!(error instanceof InventoryNotInitializedError)) throw error;
+    });
     const queueCleanup = await this.options.queueMaintenance.cleanRuns([input.runId]);
     let redisCleanup: Awaited<ReturnType<typeof deleteGeneratedRunRedisState>>;
     try {

@@ -4,6 +4,7 @@ import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { DemoRunLifecycleService } from "./demo-run-service.js";
+import type { RunInventoryScope } from "./inventory-status-service.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
 import type { TrafficCompletionEnrichmentController } from "./traffic-completion-enrichment-service.js";
 import type { TrafficExecutionGateway } from "./traffic-execution-gateway.js";
@@ -95,7 +96,7 @@ export class DemoRunStartupReconciliationService {
       apiBaseUrl: string;
       prepareBuyingRun?: (runId: string) => Promise<void>;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
-      closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
+      closeRunSaleEligibility: (input: RunInventoryScope) => Promise<boolean>;
       now?: () => Date;
     },
   ) {}
@@ -220,6 +221,7 @@ export class DemoRunStartupReconciliationService {
         await this.options.closeRunSaleEligibility({
           runId: run.id,
           saleOfferId: run.saleOfferId,
+          executionMode: run.executionMode,
         })
       ) {
         result.closedSaleOfferCount = 1;

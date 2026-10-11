@@ -18,6 +18,7 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecycle.js";
 import { ProcessLocalDemoMaintenanceAuthority } from "../src/services/demo-maintenance-authority.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import {
@@ -29,7 +30,8 @@ import { TrafficCompletionEnrichmentService } from "../src/services/traffic-comp
 const drainingRun = {
   id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   saleOfferId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-} as never;
+  executionMode: "demo",
+} as typeof demoRuns.$inferSelect;
 
 describe("DemoRunStartupReconciliationService", () => {
   it("replays a durable starting intent against its runner boot and activates it", async () => {
@@ -105,14 +107,17 @@ describe("DemoRunStartupReconciliationService", () => {
     expect(start).not.toHaveBeenCalled();
   });
 
-  it("repairs only startup-owned sale closure and completion enrichment", async () => {
+  it.each([
+    "demo",
+    "without_redis",
+  ] as const)("repairs startup-owned %s closure and enrichment", async (executionMode) => {
     const closeRunSaleEligibility = vi.fn(async () => true);
     const completePendingEnrichment = vi.fn(async () => "completed" as const);
     const service = new DemoRunStartupReconciliationService({
       maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       ...unusedStartingRunOptions(),
       logger: createSilentLogger("api"),
-      listDrainingRuns: async () => [drainingRun],
+      listDrainingRuns: async () => [{ ...drainingRun, executionMode }],
       closeRunSaleEligibility,
       completionEnrichmentService: { completePendingEnrichment },
     });
@@ -125,7 +130,11 @@ describe("DemoRunStartupReconciliationService", () => {
       completionEnrichedRunCount: 1,
       failures: [],
     });
-    expect(closeRunSaleEligibility).toHaveBeenCalledOnce();
+    expect(closeRunSaleEligibility).toHaveBeenCalledExactlyOnceWith({
+      runId: drainingRun.id,
+      saleOfferId: drainingRun.saleOfferId,
+      executionMode,
+    });
     expect(completePendingEnrichment).toHaveBeenCalledOnce();
   });
 
@@ -188,6 +197,7 @@ describe("DemoRunStartupReconciliationService restart recovery", () => {
     const activeConnection = requireConnection(connection);
     const redisClient = requireRedis(redis);
     const enrichmentService = new TrafficCompletionEnrichmentService({
+      inventory: createRunInventoryLifecycle(activeConnection.db, redisClient),
       db: activeConnection.db,
       redis: redisClient,
       businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },

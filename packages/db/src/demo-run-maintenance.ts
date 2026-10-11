@@ -1,6 +1,7 @@
 import { type DestructiveResetReason, uuidSchema } from "@checkout-surge/contracts";
-import { and, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
+import { terminalDemoRunTransitionLockKey } from "./demo-run-locks.js";
 import {
   demoRunFinalizations,
   demoRunSaleContexts,
@@ -14,6 +15,11 @@ import {
   orderEvents,
   orderRecoveryJobs,
   orders,
+  postgresOrderDeliveries,
+  postgresReservationHolds,
+  postgresReservationIdempotency,
+  postgresRunInventory,
+  postgresRunSoldOutCounts,
   reservationPendingPersistence,
   reservations,
   saleOffers,
@@ -34,6 +40,7 @@ export type InspectGeneratedRunTeardownResult =
       outcome: "ready";
       runId: string;
       saleOfferId: string;
+      executionMode: typeof demoRuns.$inferSelect.executionMode;
     };
 
 /** Reads the terminal generated-run identity used for exact external cleanup. */
@@ -64,6 +71,9 @@ export async function deleteGeneratedRunDurable(
     saleOfferId: uuidSchema.parse(requestedIdentity.saleOfferId),
   };
   return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(identity.runId)}))`,
+    );
     const inspected = await inspectLockedGeneratedRunTeardown(
       tx as CheckoutSurgeDatabase,
       identity.runId,
@@ -72,6 +82,10 @@ export async function deleteGeneratedRunDurable(
     if (inspected.saleOfferId !== identity.saleOfferId) {
       return { outcome: "ownership_mismatch" };
     }
+    await tx
+      .update(postgresRunInventory)
+      .set({ accepting: false })
+      .where(eq(postgresRunInventory.runId, identity.runId));
     await deleteGeneratedRunRows(tx as CheckoutSurgeDatabase, identity);
     return { outcome: "deleted" };
   });
@@ -84,6 +98,9 @@ export async function purgeResetRunDurable(
 ): Promise<void> {
   const runId = uuidSchema.parse(input.runId);
   await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`,
+    );
     const [run] = await tx
       .select({ status: demoRuns.status, failureReason: demoRuns.failureReason })
       .from(demoRuns)
@@ -93,6 +110,10 @@ export async function purgeResetRunDurable(
     if (run?.status !== "failed" || run.failureReason !== input.failureReason) {
       throw new Error(`Demo run ${runId} is not a ${input.failureReason} run.`);
     }
+    await tx
+      .update(postgresRunInventory)
+      .set({ accepting: false })
+      .where(eq(postgresRunInventory.runId, runId));
     await tx.select({ id: orders.id }).from(orders).where(eq(orders.runId, runId)).for("update");
     await deleteGeneratedRunInternalRows(tx as CheckoutSurgeDatabase, runId);
   });
@@ -107,6 +128,7 @@ async function inspectLockedGeneratedRunTeardown(
       runId: demoRuns.id,
       saleOfferId: demoRuns.saleOfferId,
       status: demoRuns.status,
+      executionMode: demoRuns.executionMode,
     })
     .from(demoRuns)
     .where(eq(demoRuns.id, runId))
@@ -134,6 +156,7 @@ async function inspectLockedGeneratedRunTeardown(
     outcome: "ready",
     runId,
     saleOfferId: run.saleOfferId,
+    executionMode: run.executionMode,
   };
 }
 
@@ -173,6 +196,8 @@ async function deleteGeneratedRunInternalRows(
   tx: CheckoutSurgeDatabase,
   runId: string,
 ): Promise<void> {
+  await deletePostgresInventoryRows(tx, runId);
+  await tx.delete(postgresOrderDeliveries).where(eq(postgresOrderDeliveries.runId, runId));
   await tx.delete(simulatedNotifications).where(eq(simulatedNotifications.runId, runId));
   await tx.delete(erpAttempts).where(eq(erpAttempts.runId, runId));
   await tx.delete(erpConfirmationLedger).where(eq(erpConfirmationLedger.runId, runId));
@@ -192,6 +217,23 @@ async function hasOutstandingGeneratedRunWork(
   db: CheckoutSurgeDatabase,
   runId: string,
 ): Promise<boolean> {
+  const [pendingHold] = await db
+    .select({ id: postgresReservationHolds.id })
+    .from(postgresReservationHolds)
+    .where(
+      and(
+        eq(postgresReservationHolds.runId, runId),
+        isNull(postgresReservationHolds.reversedAt),
+        isNotNull(postgresReservationHolds.pendingRecord),
+      ),
+    )
+    .limit(1);
+  const [unsettledDelivery] = await db
+    .select({ id: postgresOrderDeliveries.publicationId })
+    .from(postgresOrderDeliveries)
+    .where(and(eq(postgresOrderDeliveries.runId, runId), isNull(postgresOrderDeliveries.settledAt)))
+    .limit(1);
+  if (pendingHold || unsettledDelivery) return true;
   const [outstanding] = await db
     .select({ orderId: orders.id })
     .from(orders)
@@ -210,4 +252,58 @@ async function hasOutstandingGeneratedRunWork(
     )
     .limit(1);
   return outstanding !== undefined;
+}
+
+/** Terminal inventory is retained until a successor; pending persistence prevents retirement. */
+export async function retireSettledPostgresRunInventory(
+  db: CheckoutSurgeDatabase,
+  identity: GeneratedRunIdentity,
+): Promise<"deleted" | "pending_persistence"> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(identity.runId)}))`,
+    );
+    const [run] = await tx
+      .select({ id: demoRuns.id })
+      .from(demoRuns)
+      .where(
+        and(
+          eq(demoRuns.id, identity.runId),
+          eq(demoRuns.saleOfferId, identity.saleOfferId),
+          eq(demoRuns.executionMode, "without_redis"),
+          inArray(demoRuns.status, ["completed", "failed"]),
+        ),
+      );
+    if (!run) throw new Error("PostgreSQL inventory retirement requires its terminal run owner.");
+    await tx
+      .update(postgresRunInventory)
+      .set({ accepting: false })
+      .where(eq(postgresRunInventory.runId, identity.runId));
+    const [pending] = await tx
+      .select({ id: postgresReservationHolds.id })
+      .from(postgresReservationHolds)
+      .where(
+        and(
+          eq(postgresReservationHolds.runId, identity.runId),
+          isNull(postgresReservationHolds.reversedAt),
+          isNotNull(postgresReservationHolds.pendingRecord),
+        ),
+      )
+      .limit(1);
+    if (pending) return "pending_persistence";
+    await deletePostgresInventoryRows(tx as CheckoutSurgeDatabase, identity.runId);
+    return "deleted";
+  });
+}
+
+async function deletePostgresInventoryRows(
+  db: CheckoutSurgeDatabase,
+  runId: string,
+): Promise<void> {
+  await db
+    .delete(postgresReservationIdempotency)
+    .where(eq(postgresReservationIdempotency.runId, runId));
+  await db.delete(postgresReservationHolds).where(eq(postgresReservationHolds.runId, runId));
+  await db.delete(postgresRunSoldOutCounts).where(eq(postgresRunSoldOutCounts.runId, runId));
+  await db.delete(postgresRunInventory).where(eq(postgresRunInventory.runId, runId));
 }

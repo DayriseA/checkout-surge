@@ -1,17 +1,17 @@
+import type { InventoryStatus } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRunSoldOutCounts,
   demoRuns,
-  getInventoryStatus,
   InventoryNotInitializedError,
-  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import { toTerminalInventorySnapshot } from "./demo-run-projections.js";
+import type { RunInventoryLifecycle } from "./run-inventory-lifecycle.js";
 
 export type TrafficCompletionEnrichmentResult = "completed" | "already_completed" | "not_found";
 
@@ -20,14 +20,15 @@ export interface TrafficCompletionEnrichmentController {
 }
 
 /**
- * Concludes the cross-system traffic-completion observation without holding a
- * PostgreSQL transaction across Redis. Competing attempts may observe Redis,
+ * Concludes the traffic-completion observation before opening its evidence
+ * transaction. Competing attempts may observe the selected inventory backend,
  * but only the first compare-and-set can make its observation authoritative.
  */
 export class TrafficCompletionEnrichmentService implements TrafficCompletionEnrichmentController {
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
+      inventory: Pick<RunInventoryLifecycle, "close" | "read">;
       redis: CheckoutSurgeRedis;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
       logger: CheckoutSurgeLogger;
@@ -48,7 +49,7 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
     }
 
     // Re-drive fail-closed admission even when enrichment already completed.
-    await this.closeAdmission(row.run.id, row.run.saleOfferId);
+    await this.closeAdmission(row.run);
 
     if (
       row.run.status !== "draining" ||
@@ -58,14 +59,14 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
     }
 
     const capturedAt = this.now();
-    const inventory = await this.captureInventory(row.run.id, row.run.saleOfferId, capturedAt);
+    const inventory = await this.captureInventory(row.run, capturedAt);
     const businessOutcome = await this.options.businessOutcomeReader.read({
       saleOfferId: row.run.saleOfferId,
       runId: row.run.id,
     });
     const terminalInventorySnapshot = inventory
       ? toTerminalInventorySnapshot({
-          source: "redis",
+          source: row.run.executionMode === "without_redis" ? "postgres" : "redis",
           saleOfferId: row.run.saleOfferId,
           inventory,
           businessOutcome,
@@ -127,27 +128,31 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
   }
 
   private async captureInventory(
-    runId: string,
-    saleOfferId: string,
+    run: typeof demoRuns.$inferSelect,
     capturedAt: Date,
-  ): Promise<Awaited<ReturnType<typeof getInventoryStatus>> | null> {
+  ): Promise<InventoryStatus | null> {
     try {
-      return await getInventoryStatus(this.options.redis, saleOfferId, capturedAt);
+      if (!run.saleOfferId) return null;
+      return await this.options.inventory.read(
+        { runId: run.id, saleOfferId: run.saleOfferId, executionMode: run.executionMode },
+        capturedAt,
+      );
     } catch (error) {
       this.options.logger.warn(
-        { err: error, runId, saleOfferId },
+        { err: error, runId: run.id, saleOfferId: run.saleOfferId },
         "Traffic-completion inventory capture concluded without a snapshot.",
       );
       return null;
     }
   }
 
-  private async closeAdmission(runId: string, saleOfferId: string): Promise<void> {
+  private async closeAdmission(run: typeof demoRuns.$inferSelect): Promise<void> {
     try {
-      await setRunSaleEligibility(this.options.redis, {
-        runId,
-        saleOfferId,
-        status: "closed",
+      if (!run.saleOfferId) return;
+      await this.options.inventory.close({
+        runId: run.id,
+        saleOfferId: run.saleOfferId,
+        executionMode: run.executionMode,
       });
     } catch (error) {
       if (!(error instanceof InventoryNotInitializedError)) {
@@ -155,9 +160,9 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
       }
 
       // Missing inventory cannot admit a buy and is therefore already
-      // fail-closed. Other Redis failures cannot prove closure and must retry.
+      // fail-closed. Other storage failures cannot prove closure and must retry.
       this.options.logger.warn(
-        { err: error, runId, saleOfferId },
+        { err: error, runId: run.id, saleOfferId: run.saleOfferId },
         "Run inventory was already absent while re-driving traffic-completion sale closure.",
       );
     }

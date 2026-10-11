@@ -25,14 +25,11 @@ import { verifyPublicVisitorCredential } from "@checkout-surge/contracts/public-
 import {
   type CheckoutSurgeDatabase,
   type CheckoutSurgeRedis,
-  deleteSettledRunInventory,
   demoRunSaleContexts,
   demoRuns,
-  getInventoryStatus,
-  initializeInventory,
+  InventoryNotInitializedError,
   products,
   saleOffers,
-  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
@@ -70,6 +67,7 @@ import type {
   PublicRunBudgetStore,
 } from "./public-run-budget-store.js";
 import type { EffectivePublicRuntimePolicyReader } from "./public-runtime-policy-service.js";
+import type { RunInventoryLifecycle } from "./run-inventory-lifecycle.js";
 import { RunnerCapacityUnavailableError } from "./runner-host.js";
 import type { RunnerBoot, RunnerOperations } from "./runner-operations.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
@@ -123,6 +121,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     private readonly options: {
       maintenanceAuthority: DemoMaintenanceAuthority;
       db: CheckoutSurgeDatabase;
+      inventory: Pick<RunInventoryLifecycle, "initialize" | "close" | "read" | "retire">;
       redis: CheckoutSurgeRedis;
       trafficExecutionGateway: TrafficExecutionGateway;
       runnerOperations: Pick<RunnerOperations, "bootForRun" | "releaseAfterRun">;
@@ -198,13 +197,15 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         // Select the buying implementation on every peer before stock becomes accepting.
         await this.options.onRunAccepted?.(accepted.run.runId);
         await this.options.queueLimits.synchronize();
-        await initializeInventory(this.options.redis, {
-          saleOfferId,
-          allocatedStock: accepted.run.configSnapshot.inventoryConfig.startingStock,
-          source: "demo_run_start",
-          initializedAt: now,
-          run: { runId: accepted.run.runId, status: "accepting" },
-        });
+        await this.options.inventory.initialize(
+          {
+            runId: accepted.run.runId,
+            saleOfferId,
+            executionMode: accepted.run.executionMode,
+          },
+          accepted.run.configSnapshot.inventoryConfig.startingStock,
+          now,
+        );
       } catch (error) {
         await this.failRun(
           accepted.run.runId,
@@ -644,9 +645,21 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     const [run] = await this.options.db.select().from(demoRuns).where(eq(demoRuns.id, runId));
 
     if (run) {
+      if (run.saleOfferId) {
+        await this.options.inventory
+          .close({ runId: run.id, saleOfferId: run.saleOfferId, executionMode: run.executionMode })
+          .catch((error: unknown) => {
+            if (!(error instanceof InventoryNotInitializedError)) {
+              this.options.logger.warn(
+                { err: error, runId: run.id },
+                "Could not close inventory before failure capture; terminal admission is fenced by the writer.",
+              );
+            }
+          });
+      }
       const businessOutcome = await this.readBusinessOutcomeForRun(run);
       const terminalInventorySnapshot = run.saleOfferId
-        ? await this.captureTerminalInventorySnapshot(run.saleOfferId, businessOutcome, now)
+        ? await this.captureTerminalInventorySnapshot(run, businessOutcome, now)
         : null;
       const trafficSummary = syntheticFailedTrafficSummary(
         parsePersistedAcceptedRunConfigSnapshot(run.configSnapshot, `demo run ${run.id}`),
@@ -692,16 +705,18 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         (updatedRun.status === "completed" || updatedRun.status === "failed") &&
         updatedRun.saleOfferId
       ) {
-        await setRunSaleEligibility(this.options.redis, {
-          runId,
-          saleOfferId: updatedRun.saleOfferId,
-          status: "closed",
-        }).catch((error: unknown) => {
-          this.options.logger.warn(
-            { err: error, runId, saleOfferId: updatedRun.saleOfferId },
-            "Could not close run sale eligibility after run failure.",
-          );
-        });
+        await this.options.inventory
+          .close({
+            runId,
+            saleOfferId: updatedRun.saleOfferId,
+            executionMode: updatedRun.executionMode,
+          })
+          .catch((error: unknown) => {
+            this.options.logger.warn(
+              { err: error, runId, saleOfferId: updatedRun.saleOfferId },
+              "Could not close run sale eligibility after run failure.",
+            );
+          });
       }
       await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
         run: updatedRun,
@@ -733,7 +748,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   private async removePreviousRunInventories(): Promise<void> {
     try {
       const rows = await this.options.db
-        .select({ runId: demoRuns.id, saleOfferId: demoRuns.saleOfferId })
+        .select({
+          runId: demoRuns.id,
+          saleOfferId: demoRuns.saleOfferId,
+          executionMode: demoRuns.executionMode,
+        })
         .from(demoRuns)
         .where(
           and(
@@ -741,11 +760,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
             not(incompleteAdminResetPredicate() ?? sql`false`),
           ),
         );
-      const runs = rows.flatMap(({ runId, saleOfferId }) =>
-        saleOfferId ? [{ runId, saleOfferId }] : [],
+      const runs = rows.flatMap(({ runId, saleOfferId, executionMode }) =>
+        saleOfferId ? [{ runId, saleOfferId, executionMode }] : [],
       );
       const results = await Promise.allSettled(
-        runs.map((run) => deleteSettledRunInventory(this.options.redis, run)),
+        runs.map((run) => this.options.inventory.retire(run)),
       );
       for (const [index, result] of results.entries()) {
         if (result.status === "rejected") {
@@ -764,14 +783,19 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
   }
 
   private async captureTerminalInventorySnapshot(
-    saleOfferId: string,
+    run: typeof demoRuns.$inferSelect,
     businessOutcome: { acceptedReservations: number },
     capturedAt: Date,
   ): Promise<TerminalInventorySnapshot | null> {
     try {
-      const inventory = await getInventoryStatus(this.options.redis, saleOfferId, capturedAt);
+      if (!run.saleOfferId) return null;
+      const saleOfferId = run.saleOfferId;
+      const inventory = await this.options.inventory.read(
+        { runId: run.id, saleOfferId, executionMode: run.executionMode },
+        capturedAt,
+      );
       return toTerminalInventorySnapshot({
-        source: "redis",
+        source: run.executionMode === "without_redis" ? "postgres" : "redis",
         saleOfferId,
         inventory,
         businessOutcome,
@@ -779,7 +803,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       });
     } catch (error) {
       this.options.logger.warn(
-        { err: error, saleOfferId },
+        { err: error, saleOfferId: run.saleOfferId },
         "Could not capture terminal inventory snapshot at traffic completion.",
       );
       return null;

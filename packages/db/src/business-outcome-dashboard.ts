@@ -10,10 +10,12 @@ import { and, eq, inArray, type SQL, sql } from "drizzle-orm";
 import type { CheckoutSurgeDatabase } from "./client.js";
 import {
   demoRunSoldOutCounts,
+  demoRuns,
   erpAttempts,
   erpScopeResilienceState,
   orderRecoveryJobs,
   orders,
+  postgresRunSoldOutCounts,
   reservationPendingPersistence,
   reservations,
   simulatedNotifications,
@@ -322,10 +324,14 @@ async function countRetryingOrders(
 
 async function readSoldOutRejections(db: CheckoutSurgeDatabase, runId: string): Promise<number> {
   const [row] = await db
-    .select({ value: demoRunSoldOutCounts.count })
-    .from(demoRunSoldOutCounts)
-    .where(eq(demoRunSoldOutCounts.runId, runId))
-    .limit(1);
-
+    .select({
+      value: sql<number>`case when ${demoRuns.executionMode}='without_redis'
+    then coalesce(${postgresRunSoldOutCounts.count}, ${demoRunSoldOutCounts.count}, 0)
+    else coalesce(${demoRunSoldOutCounts.count}, 0) end`,
+    })
+    .from(demoRuns)
+    .leftJoin(postgresRunSoldOutCounts, eq(postgresRunSoldOutCounts.runId, demoRuns.id))
+    .leftJoin(demoRunSoldOutCounts, eq(demoRunSoldOutCounts.runId, demoRuns.id))
+    .where(eq(demoRuns.id, runId));
   return row?.value ?? 0;
 }

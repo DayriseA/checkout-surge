@@ -18,7 +18,6 @@ import {
   type CheckoutSurgeRedis,
   demoRunFinalizations,
   demoRuns,
-  getInventoryStatus,
   orderRecoveryJobs,
   orders,
   publishDashboardProjectionDirtySignal,
@@ -42,6 +41,7 @@ import {
   parsePersistedTerminalInventorySnapshot,
 } from "./persisted-demo-run-state.js";
 import type { TerminalReservationTimingReader } from "./reservation-timing-observation.js";
+import type { RunInventoryLifecycle } from "./run-inventory-lifecycle.js";
 import type { RunnerOperations } from "./runner-operations.js";
 import type { TerminalDemoRunWriter } from "./terminal-demo-run-writer.js";
 import {
@@ -74,6 +74,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
+      inventory: Pick<RunInventoryLifecycle, "read">;
       redis: CheckoutSurgeRedis;
       logger: CheckoutSurgeLogger;
       queueLimits: OrderProcessQueueLimits;
@@ -200,14 +201,14 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
         } catch (error) {
           this.options.logger.warn(
             { err: error, runId, saleOfferId: requireSaleOfferId(row.run) },
-            "Could not recheck pending Redis reservations inside the terminal run fence.",
+            "Could not recheck pending inventory reservations inside the terminal run fence.",
           );
           return null;
         }
         if (latestInventory.pendingPersistenceCount > 0) {
           this.options.logger.debug(
             { runId, pendingPersistenceCount: latestInventory.pendingPersistenceCount },
-            "Demo run remains draining until every pending Redis hold is classified.",
+            "Demo run remains draining until every pending inventory hold is classified.",
           );
           return null;
         }
@@ -217,10 +218,10 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
           this.options.logger.warn(
             {
               runId,
-              redisSoldOutRejections: latestInventory.soldOutPressure.rejectionCount,
+              inventorySoldOutRejections: latestInventory.soldOutPressure.rejectionCount,
               durableSoldOutRejections: latestBusinessOutcome.soldOutRejections,
             },
-            "Demo run remains draining because Redis and durable sold-out evidence disagree.",
+            "Demo run remains draining because Inventory and durable sold-out evidence disagree.",
           );
           return null;
         }
@@ -334,28 +335,35 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       saleOfferId: requireSaleOfferId(input.run),
       runId: input.run.id,
     });
-    let pendingRedisCount = 0;
+    let pendingPersistenceCount = 0;
     try {
-      pendingRedisCount = (
-        await getInventoryStatus(this.options.redis, requireSaleOfferId(input.run), input.now)
+      pendingPersistenceCount = (
+        await this.options.inventory.read(
+          {
+            runId: input.run.id,
+            saleOfferId: requireSaleOfferId(input.run),
+            executionMode: input.run.executionMode,
+          },
+          input.now,
+        )
       ).pendingPersistenceCount;
     } catch (error) {
       this.options.logger.warn(
         { err: error, runId: input.run.id, saleOfferId: requireSaleOfferId(input.run) },
-        "Could not read pending Redis reservations during finalization.",
+        "Could not read pending inventory reservations during finalization.",
       );
-      pendingRedisCount = Number.POSITIVE_INFINITY;
+      pendingPersistenceCount = Number.POSITIVE_INFINITY;
     }
     const recoveryObligations = await readRecoveryObligations(this.options.db, input.run.id);
     const businessBlockers = businessDrainBlockers(
       businessOutcome,
-      pendingRedisCount,
+      pendingPersistenceCount,
       recoveryObligations,
     );
     const evidence = parseFinalizationEvidence(input.run, input.finalization);
     const accounting = reconcileAcceptedResponses({
       ...evidence,
-      business: { ...businessOutcome, pendingPersistenceCount: pendingRedisCount },
+      business: { ...businessOutcome, pendingPersistenceCount: pendingPersistenceCount },
     });
     const blockers = [
       ...businessBlockers,
@@ -580,13 +588,13 @@ function validateTrafficCompletionInventoryEvidence(
 
 function businessDrainBlockers(
   outcome: BusinessOutcomeSummary,
-  pendingRedisCount = 0,
+  pendingPersistenceCount = 0,
   recovery: RecoveryObligations = emptyRecoveryObligations,
 ): string[] {
   const parsed = businessOutcomeSummarySchema.parse(outcome);
   const blockers: string[] = [];
 
-  if (pendingRedisCount > 0) {
+  if (pendingPersistenceCount > 0) {
     blockers.push("pending_persistence");
   }
   if (recovery.pendingCount > 0) {

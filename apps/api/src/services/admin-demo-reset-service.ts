@@ -1,3 +1,4 @@
+import type { InventoryStatus } from "@checkout-surge/contracts";
 import {
   type AdminDemoResetResponse,
   adminDemoResetResponseSchema,
@@ -24,12 +25,10 @@ import {
   demoRunSoldOutCounts,
   demoRunSummaries,
   demoRuns,
-  getInventoryStatus,
   InventoryNotInitializedError,
   publishDashboardProjectionDirtySignal,
   purgeResetRunDurable,
   readBusinessOutcomeSummary,
-  setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray, isNotNull, isNull, lte, or } from "drizzle-orm";
@@ -50,6 +49,7 @@ import {
 } from "./persisted-demo-run-state.js";
 import type { DemoResetWorkflowFence } from "./postgres-demo-reset-workflow-fence.js";
 import type { ReservationTimingLifecycle } from "./reservation-timing-observation.js";
+import type { RunInventoryLifecycle } from "./run-inventory-lifecycle.js";
 import type { RunnerOperations } from "./runner-operations.js";
 import type {
   TerminalDemoRunSummaryInput,
@@ -89,6 +89,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
   constructor(
     private readonly options: {
       db: CheckoutSurgeDatabase;
+      inventory: Pick<RunInventoryLifecycle, "close" | "read" | "settleProcessing">;
       redis: CheckoutSurgeRedis;
       queueMaintenance: ExactRunQueueMaintenance;
       queueLimits: OrderProcessQueueLimits;
@@ -290,10 +291,10 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         continue;
       }
       try {
-        await setRunSaleEligibility(this.options.redis, {
+        await this.options.inventory.close({
           runId: row.run.id,
           saleOfferId: row.run.saleOfferId,
-          status: "closed",
+          executionMode: row.run.executionMode,
         });
         closedSaleOfferCount += 1;
       } catch (error) {
@@ -342,6 +343,14 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       }
     }
 
+    const settlementDeadline = Math.min(elapsedNow() + 5_000, requestStartedAt + 25_000);
+    await this.options.inventory.settleProcessing(
+      fencedRuns
+        .filter(({ run }) => run.executionMode === "without_redis")
+        .map(({ run }) => run.id),
+      settlementDeadline,
+    );
+
     const queueCleanup =
       fencedRuns.length > 0
         ? await this.options.queueMaintenance
@@ -352,7 +361,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
                 // Fastify configure no shorter response deadline. Allow at most 5s
                 // settlement, stop by request elapsed 25s, reserving 5s for evidence,
                 // history and response. This bounds polling, not all dependency I/O.
-                deadline: Math.min(elapsedNow() + 5_000, requestStartedAt + 25_000),
+                deadline: settlementDeadline,
               },
             )
             .catch((error: unknown) => {
@@ -562,9 +571,12 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     }
 
     try {
-      const inventory = await getInventoryStatus(
-        this.options.redis,
-        input.run.saleOfferId,
+      const inventory = await this.options.inventory.read(
+        {
+          runId: input.run.id,
+          saleOfferId: input.run.saleOfferId,
+          executionMode: input.run.executionMode,
+        },
         input.capturedAt,
       );
       return {
@@ -573,10 +585,13 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
         remainingStock: inventory.remainingStock,
         reservedStock: inventory.reservedStock,
         acceptedReservations: input.businessOutcome.acceptedReservations,
-        soldOutRejections: await this.readSoldOutRejections(input.run.id, inventory),
+        soldOutRejections:
+          input.run.executionMode === "without_redis"
+            ? inventory.soldOutPressure.rejectionCount
+            : await this.readSoldOutRejections(input.run.id, inventory),
         pendingPersistenceCount: inventory.pendingPersistenceCount,
         capturedAt: input.capturedAt.toISOString(),
-        source: "redis",
+        source: input.run.executionMode === "without_redis" ? "postgres" : "redis",
       };
     } catch (error) {
       this.options.logger.warn(
@@ -587,10 +602,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     }
   }
 
-  private async readSoldOutRejections(
-    runId: string,
-    inventory: Awaited<ReturnType<typeof getInventoryStatus>>,
-  ): Promise<number> {
+  private async readSoldOutRejections(runId: string, inventory: InventoryStatus): Promise<number> {
     const [row] = await this.options.db
       .select({ count: demoRunSoldOutCounts.count })
       .from(demoRunSoldOutCounts)

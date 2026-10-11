@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -23,6 +24,7 @@ import {
   createDatabaseConnection,
   createRedisClient,
   dashboardProjectionRevisionKey,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunSaleContexts,
   demoRunSummaries,
@@ -31,6 +33,7 @@ import {
   InventoryNotInitializedError,
   inventoryKeys,
   isRunSaleEligible,
+  postgresRunInventory,
   products,
   publicRuntimePolicies,
   reserveInventoryStock,
@@ -44,6 +47,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
+import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecycle.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { localDeploymentCapacity } from "../src/services/capacity-admission.js";
 import { RedisDashboardTrafficMetricStore } from "../src/services/dashboard-traffic-metric-store.js";
@@ -100,6 +104,7 @@ describe("demo-run lifecycle validation", () => {
     });
     const reserve = vi.fn();
     const service = new DemoRunLifecycleService({
+      inventory: {} as never,
       maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
       queueLimits: { synchronize: async () => {} },
       db: { select } as never,
@@ -984,6 +989,7 @@ describe("demo-run lifecycle start gating", () => {
       await queue.setGlobalConcurrency(1);
       await queue.setGlobalRateLimit(9, 999);
       const reset = new AdminDemoResetService({
+        inventory: createRunInventoryLifecycle(db, requireRedis(redis)),
         runnerOperations: { releaseAfterRun: () => undefined },
         queueLimits: limits,
         db,
@@ -1039,6 +1045,7 @@ describe("demo-run lifecycle start gating", () => {
     let abortAttempt = 0;
     const queueCleanup = vi.fn(async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }));
     const resetService = new AdminDemoResetService({
+      inventory: createRunInventoryLifecycle(resetConnection.db, redisClient),
       runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
@@ -1152,6 +1159,7 @@ describe("demo-run lifecycle start gating", () => {
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
     await seedExistingRun(primary, { runId: existingRunId("active"), status: "active" });
     const resetService = new AdminDemoResetService({
+      inventory: createRunInventoryLifecycle(resetConnection.db, redisClient),
       runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
@@ -1197,6 +1205,82 @@ describe("demo-run lifecycle start gating", () => {
     }
   });
 
+  it("blocks successors after an actual PostgreSQL purge failure and retries without rewriting history", async () => {
+    const primary = requireConnection(connection);
+    const redisClient = requireRedis(redis);
+    const start = createStartService(primary, redisClient, { generateId: randomUUID });
+    const accepted = await start.startRun(
+      { presetSlug: "preview-1k", operatorMode: "admin" },
+      "before-pg-reset",
+    );
+    if (!accepted.run.saleOfferId) throw new Error("Accepted run has no sale offer.");
+    const scope = {
+      runId: accepted.run.runId,
+      saleOfferId: accepted.run.saleOfferId,
+      executionMode: "without_redis" as const,
+    };
+    await deleteGeneratedRunRedisState(redisClient, scope);
+    await primary.db
+      .update(demoRuns)
+      .set({ executionMode: "without_redis" })
+      .where(eq(demoRuns.id, scope.runId));
+    const inventory = createRunInventoryLifecycle(primary.db, redisClient);
+    await inventory.initialize(
+      scope,
+      accepted.run.configSnapshot.inventoryConfig.startingStock,
+      new Date(),
+    );
+    const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    const resetService = new AdminDemoResetService({
+      db: primary.db,
+      redis: redisClient,
+      inventory,
+      runnerOperations: { releaseAfterRun: () => {} },
+      queueLimits: { synchronize: async () => {} },
+      terminalRunWriter: new PostgresTerminalDemoRunSummaryWriter(primary.db, {
+        synchronize: async () => {},
+      }),
+      queueMaintenance: { cleanRuns: async () => ({ cleanedQueueCount: 0, cleanedJobCount: 0 }) },
+      trafficAborter: { abortCurrent: async () => ({ outcome: "no_current_run" }) },
+      dashboardLiveStateReset: new RedisDashboardTrafficMetricStore(redisClient),
+      resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetConnection.sql),
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      logger: createSilentLogger("api"),
+    });
+    try {
+      await primary.db.execute(
+        sql`create function fail_pg_inventory_purge() returns trigger language plpgsql as $$ begin raise exception 'injected PostgreSQL purge failure'; end $$`,
+      );
+      await primary.db.execute(
+        sql`create trigger fail_pg_inventory_purge before delete on postgres_run_inventory for each row execute function fail_pg_inventory_purge()`,
+      );
+      await expect(resetService.reset("pg-purge-failed", "admin_reset")).rejects.toThrow();
+      const [failed] = await primary.db.select().from(demoRuns).where(eq(demoRuns.id, scope.runId));
+      const history = await primary.db.select().from(demoRunSummaries);
+      expect(failed?.adminResetCompletedAt).toBeNull();
+      expect(history).toHaveLength(1);
+      expect(history[0]?.terminalInventorySnapshot?.source).toBe("postgres");
+      expect(
+        await primary.db
+          .select({ accepting: postgresRunInventory.accepting })
+          .from(postgresRunInventory),
+      ).toEqual([{ accepting: false }]);
+      await expect(
+        start.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "blocked-by-pg-purge"),
+      ).rejects.toMatchObject({ details: { conflictReason: "reset_incomplete" } });
+      await primary.db.execute(sql`drop trigger fail_pg_inventory_purge on postgres_run_inventory`);
+      await primary.db.execute(sql`drop function fail_pg_inventory_purge()`);
+      await resetService.reset("pg-purge-retry", "admin_reset");
+      expect(await primary.db.select().from(postgresRunInventory)).toEqual([]);
+      expect(await primary.db.select().from(demoRunSummaries)).toEqual(history);
+      await expect(
+        start.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "after-pg-purge"),
+      ).resolves.toMatchObject({ run: { status: "active" } });
+    } finally {
+      await resetConnection.close();
+    }
+  });
+
   it("repairs a marker-backed metrics failure without aborting an admitted successor or rewriting history", async () => {
     const primary = requireConnection(connection);
     const redisClient = requireRedis(redis);
@@ -1220,6 +1304,7 @@ describe("demo-run lifecycle start gating", () => {
     const cleanRuns = vi.fn(async () => ({ cleanedQueueCount: 2, cleanedJobCount: 0 }));
     const createResetService = () =>
       new AdminDemoResetService({
+        inventory: createRunInventoryLifecycle(resetConnection.db, redisClient),
         runnerOperations: { releaseAfterRun: () => undefined },
         queueLimits: { synchronize: async () => {} },
         db: resetConnection.db,
@@ -2324,6 +2409,7 @@ describe("demo-run lifecycle start gating", () => {
       "reset-active",
     );
     const resetService = new AdminDemoResetService({
+      inventory: createRunInventoryLifecycle(resetConnection.db, requireRedis(redis)),
       runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
@@ -2391,6 +2477,7 @@ describe("demo-run lifecycle start gating", () => {
       },
     });
     const resetService = new AdminDemoResetService({
+      inventory: createRunInventoryLifecycle(resetConnection.db, requireRedis(redis)),
       runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
@@ -2528,6 +2615,7 @@ function createStartService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
   overrides: {
+    generateId?: () => string;
     maintenanceAuthority?: ProcessLocalDemoMaintenanceAuthority;
     queueLimits?: OrderProcessQueueLimits;
     onRunAccepted?: (runId: string) => Promise<void>;
@@ -2560,6 +2648,7 @@ function createStartService(
   };
   const logger = overrides.logger ?? createSilentLogger("api");
   return new DemoRunLifecycleService({
+    inventory: createRunInventoryLifecycle(connection.db, redis),
     maintenanceAuthority:
       overrides.maintenanceAuthority ?? new ProcessLocalDemoMaintenanceAuthority(),
     queueLimits: overrides.queueLimits ?? { synchronize: async () => {} },
@@ -2605,13 +2694,15 @@ function createStartService(
     estimatorConstants: conservativeDurationEstimatorConstants,
     deploymentCapacity: localDeploymentCapacity,
     now: () => new Date("2026-06-20T00:00:10.000Z"),
-    generateId: () => {
-      const id = ids.shift();
-      if (!id) {
-        throw new Error("Start-service ID sequence exhausted.");
-      }
-      return id;
-    },
+    generateId:
+      overrides.generateId ??
+      (() => {
+        const id = ids.shift();
+        if (!id) {
+          throw new Error("Start-service ID sequence exhausted.");
+        }
+        return id;
+      }),
   });
 }
 

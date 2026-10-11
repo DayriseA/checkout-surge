@@ -7,13 +7,17 @@ import {
 import {
   createDatabaseConnection,
   createRedisClient,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
+  demoRunSaleContexts,
   demoRunSummaries,
   demoRuns,
   getInventoryStatus,
   initializeInventory,
+  inventoryKeys,
   isRunSaleEligible,
+  postgresRunInventory,
   products,
   saleOffers,
 } from "@checkout-surge/db";
@@ -21,6 +25,7 @@ import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/te
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecycle.js";
 import { DemoRunFinalizationService } from "../src/services/demo-run-finalization-service.js";
 import { emptyBusinessOutcomeSummary } from "../src/services/demo-run-projections.js";
 import { PostgresStartingDemoRunReconciliationStore } from "../src/services/demo-run-startup-reconciliation-service.js";
@@ -71,7 +76,21 @@ describe("TrafficCompletionService", () => {
     }
   });
 
-  it("accepts immutable traffic evidence, closes admission, and hands draining to finalization", async () => {
+  it.each([
+    "demo",
+    "without_redis",
+  ] as const)("accepts immutable traffic evidence and closes %s admission", async (executionMode) => {
+    if (executionMode === "without_redis") {
+      const db = requireConnection(connection).db;
+      await deleteGeneratedRunRedisState(requireRedis(redis), { runId, saleOfferId });
+      await db.update(demoRuns).set({ executionMode }).where(eq(demoRuns.id, runId));
+      await db.insert(demoRunSaleContexts).values({ runId, saleOfferId });
+      await createRunInventoryLifecycle(db, requireRedis(redis)).initialize(
+        { runId, saleOfferId, executionMode },
+        10,
+        acceptedAt,
+      );
+    }
     const finalizeRun = vi.fn(async () => null);
     const service = createCompletionService(requireConnection(connection), requireRedis(redis), {
       finalizeRun,
@@ -105,6 +124,17 @@ describe("TrafficCompletionService", () => {
       false,
     );
     expect(finalizeRun).toHaveBeenCalledWith(runId, "corr-completion");
+    expect(finalization?.trafficOutcomeSummary.terminalInventorySnapshot).toMatchObject({
+      source: executionMode === "without_redis" ? "postgres" : "redis",
+    });
+    if (executionMode === "without_redis") {
+      expect(
+        await requireConnection(connection)
+          .db.select({ accepting: postgresRunInventory.accepting })
+          .from(postgresRunInventory),
+      ).toEqual([{ accepting: false }]);
+      expect(await requireRedis(redis).exists(inventoryKeys(saleOfferId).state)).toBe(0);
+    }
   });
 
   it("accepts semantic redelivery and rejects conflicting evidence before side effects", async () => {
@@ -422,6 +452,7 @@ function createFinalizationService(
   redis: ReturnType<typeof createRedisClient>,
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    inventory: createRunInventoryLifecycle(connection.db, redis),
     runnerOperations: { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: connection.db,
@@ -444,6 +475,7 @@ function createEnrichmentService(
   redis: ReturnType<typeof createRedisClient>,
 ): TrafficCompletionEnrichmentService {
   return new TrafficCompletionEnrichmentService({
+    inventory: createRunInventoryLifecycle(connection.db, redis),
     db: connection.db,
     redis,
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },

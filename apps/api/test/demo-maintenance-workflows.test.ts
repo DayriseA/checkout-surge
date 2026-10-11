@@ -56,6 +56,7 @@ import { PostgresOrderTransitionPersistence } from "../../worker/src/persistence
 import { createBullMqDemoQueueMaintenance } from "../src/queue/bullmq-demo-queue-maintenance.js";
 import { createDashboardRecoveryOperationFactory } from "../src/runtime/dashboard-recovery-operation-factory.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
+import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecycle.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "../src/services/automatic-run-reset-service.js";
 import { DashboardProjectionPublicationScheduler } from "../src/services/dashboard-projection-publication-scheduler.js";
@@ -127,6 +128,7 @@ type ResetTestOptions = MaintenanceTestContext & {
 
 function createTeardownService(options: TeardownTestOptions): GeneratedRunTeardownService {
   return new GeneratedRunTeardownService({
+    inventory: createRunInventoryLifecycle(options.db, options.redis),
     db: options.db,
     redis: options.redis,
     deleteGeneratedRunRedisState,
@@ -160,6 +162,7 @@ function createIntegratedRetentionService(
 
 function createResetService(options: ResetTestOptions): AdminDemoResetService {
   return new AdminDemoResetService({
+    inventory: createRunInventoryLifecycle(options.db, options.redis),
     runnerOperations: options.runnerOperations ?? { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: options.db,
@@ -303,7 +306,7 @@ describe("focused demo maintenance workflows", () => {
         outcome: "deleted",
         runId: ids.completedRun,
         saleOfferId: ids.completedOffer,
-        cleanup: { redisKeysDeleted: 7, queueJobsDeleted: 2 },
+        cleanup: { redisKeysDeleted: 8, queueJobsDeleted: 2 },
         cleanedAt: "2026-07-13T00:00:00.000Z",
         correlationId: "corr-success",
       });

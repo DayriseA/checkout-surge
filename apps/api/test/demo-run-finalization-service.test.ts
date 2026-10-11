@@ -24,6 +24,7 @@ import {
   createRedisClient,
   dashboardProjectionDirtyRedisChannel,
   deferPendingPersistenceRecord,
+  deleteGeneratedRunRedisState,
   demoPresets,
   demoRunFinalizations,
   demoRunSaleContexts,
@@ -36,6 +37,8 @@ import {
   inventoryKeys,
   orderRecoveryJobs,
   orders,
+  PostgresPendingPersistence,
+  PostgresStockReservations,
   products,
   reservationPendingPersistence,
   reservations,
@@ -53,6 +56,8 @@ import { PostgresNotificationRecordPersistence } from "../../worker/src/persiste
 import { createNotificationRecordPublisher } from "../../worker/src/queue/bullmq-notification-record-publisher.js";
 import { createOrderProcessJobPublisher } from "../src/queue/bullmq-order-process-job-publisher.js";
 import { OperationDeadlineExceededError } from "../src/runtime/operation-lifecycle.js";
+import { createRunInventoryLifecycle } from "../src/runtime/run-inventory-lifecycle.js";
+import { createTerminalInventoryReadOperation } from "../src/runtime/terminal-inventory-read-operation.js";
 import { AdminDemoResetService } from "../src/services/admin-demo-reset-service.js";
 import {
   DashboardProjectionService,
@@ -123,6 +128,105 @@ describe("demo run finalization service", () => {
       await redis.flushdb();
       redis.disconnect();
     }
+  });
+
+  it("drains PostgreSQL pending and exhausted holds before an immutable terminal snapshot", async () => {
+    const primary = requireConnection(connection);
+    const db = primary.db;
+    const redisClient = requireRedis(redis);
+    await seedDrainingRun({ db, redis: redisClient, trafficDeliveryStatus: "complete" });
+    await deleteGeneratedRunRedisState(redisClient, { runId: ids.run, saleOfferId: ids.saleOffer });
+    await db
+      .update(demoRuns)
+      .set({ executionMode: "without_redis" })
+      .where(eq(demoRuns.id, ids.run));
+    const inventory = createRunInventoryLifecycle(db, redisClient);
+    const scope = {
+      runId: ids.run,
+      saleOfferId: ids.saleOffer,
+      executionMode: "without_redis" as const,
+    };
+    await inventory.initialize(scope, 10, new Date("2026-06-20T00:00:00.000Z"));
+    const stock = new PostgresStockReservations(primary.sql);
+    const hold = {
+      idempotencyKey: "pending-finalization",
+      idempotencyTtlSeconds: 60,
+      reservation: {
+        id: randomUUID(),
+        runId: ids.run,
+        saleOfferId: ids.saleOffer,
+        quantity: 1,
+        correlationId: "pending-finalization",
+        reservationToken: "pending-finalization",
+        securedAt: "2026-06-20T00:00:02.000Z",
+        expiresAt: "2026-06-20T00:01:02.000Z",
+      },
+    };
+    await stock.reserve(hold);
+    for (const id of [ids.reservation1, ids.reservation2, ids.reservation3]) {
+      const secured = {
+        idempotencyKey: id,
+        idempotencyTtlSeconds: 60,
+        reservation: {
+          id,
+          runId: ids.run,
+          saleOfferId: ids.saleOffer,
+          quantity: 1,
+          correlationId: "corr-finalize-test",
+          reservationToken: `token-${id}`,
+          securedAt: "2026-06-20T00:00:02.000Z",
+          expiresAt: "2026-06-20T00:15:02.000Z",
+        },
+      };
+      await stock.reserve(secured);
+      await stock.promoteAccepted(secured);
+    }
+    await inventory.close(scope);
+    await db
+      .insert(reservations)
+      .values([
+        reservationFixture(ids.reservation1),
+        reservationFixture(ids.reservation2),
+        reservationFixture(ids.reservation3),
+      ]);
+    await db
+      .insert(orders)
+      .values([
+        orderFixture(ids.order1, ids.reservation1, "failed"),
+        orderFixture(ids.order2, ids.reservation2, "failed"),
+        orderFixture(ids.order3, ids.reservation3, "failed"),
+      ]);
+    const service = createService(connection, redis, {
+      terminalInventoryRead: createTerminalInventoryReadOperation({
+        redisUrl: requireTestRedisUrl(),
+        timeoutMs: 2000,
+      }),
+    });
+    expect((await service.finalizeRun(ids.run))?.status).toBe("draining");
+    await new PostgresPendingPersistence(primary.sql).defer({
+      saleOfferId: ids.saleOffer,
+      reservationId: hold.reservation.id,
+      attemptCount: 1,
+      status: "exhausted",
+      nextRecoveryAt: new Date(),
+      recoveryDeadlineAt: new Date(),
+      lastError: "exhausted",
+    });
+    expect((await service.finalizeRun(ids.run))?.status).toBe("draining");
+    await stock.reverse(hold);
+    expect((await service.finalizeRun(ids.run))?.status).toBe("completed");
+    const summaries = await db.select().from(demoRunSummaries);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.terminalInventorySnapshot).toMatchObject({
+      source: "postgres",
+      pendingPersistenceCount: 0,
+    });
+    expect(await inventory.read(scope, new Date())).toMatchObject({
+      remainingStock: 7,
+      reservedStock: 3,
+    });
+    expect(await inventory.retire(scope)).toBe("deleted");
+    expect(await db.select().from(demoRunSummaries)).toEqual(summaries);
   });
 
   it("heals a failed terminal limit update on the next lifecycle poll without another run or restart", async () => {
@@ -926,6 +1030,7 @@ describe("demo run finalization service", () => {
     const lockConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetConnection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
     const resetService = new AdminDemoResetService({
+      inventory: createRunInventoryLifecycle(resetConnection.db, redisClient),
       runnerOperations: { releaseAfterRun: () => undefined },
       queueLimits: { synchronize: async () => {} },
       db: resetConnection.db,
@@ -1665,6 +1770,7 @@ function createService(
   } = {},
 ): DemoRunFinalizationService {
   return new DemoRunFinalizationService({
+    inventory: createRunInventoryLifecycle(requireConnection(connection).db, requireRedis(redis)),
     runnerOperations: { releaseAfterRun: () => undefined },
     queueLimits: { synchronize: async () => {} },
     db: requireConnection(connection).db,

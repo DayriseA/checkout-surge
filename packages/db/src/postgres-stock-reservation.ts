@@ -44,11 +44,12 @@ export class PostgresStockReservations {
     });
   }
 
-  async close(input: { runId: string; saleOfferId: string }): Promise<void> {
-    await this.sql.begin(async (tx) => {
+  async close(input: { runId: string; saleOfferId: string }): Promise<boolean> {
+    return this.sql.begin(async (tx) => {
       await tx`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(input.runId)}))`;
-      await tx`update postgres_run_inventory set accepting=false
-        where run_id=${input.runId} and sale_offer_id=${input.saleOfferId}`;
+      const rows = await tx`update postgres_run_inventory set accepting=false
+        where run_id=${input.runId} and sale_offer_id=${input.saleOfferId} returning run_id`;
+      return rows.length > 0;
     });
   }
 
