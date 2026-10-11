@@ -4,7 +4,7 @@ Working design for the project that adds live comparative runs to Checkout-Surge
 
 ## 1. Purpose
 
-Show visitors, on one or two fixed presets, what two architectural choices of the demo buy, measured live on the same hardware:
+Show visitors, through one immutable public preset/start button, what two architectural choices of the demo buy, measured live on the same hardware:
 
 - **The order queue.** An accepted order is handed to a queue, and the worker sends it to the ERP at the ERP's pace. Without it, the buyer waits for the back office before hearing "you got it".
 - **The Redis layer.** Redis decides the stock and answers turned-away buyers without touching PostgreSQL, and it holds the order queue. Without it, PostgreSQL does both.
@@ -71,8 +71,8 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 - **Connection limits** are tightened only if needed. If they are, the narrative says so openly, as a simulation of the real-world scale that the demo stands for.
 - **Several API processes**, two or three, enough to reach the Redis script's ceiling. This replaces HD-51 and touches every single-process assumption (HD-11).
 - **A mode without the order queue**, to show that the buyer pays for the back office's slowness.
-- **One or two fixed presets only.** The comparative modes are offered only through presets tuned until they show the point. They are never available in custom runs, public or admin. Calibration is limited to those presets, and the admission estimator needs no model of the comparative modes.
-- **Simple public demonstration (clarified 2026-10-11).** Visitors must be able to run the fixed comparisons and see the value of Redis and the order queue. The agent handles infrastructure, sequencing and automatic reset, preserving the working demo and its protections. These implementation details do not require separate owner design decisions; production intervention still waits for the final review.
+- **One fixed public preset only (clarified 2026-10-11).** One immutable start button runs two fixed matched workloads internally, four normal child runs in total: Redis versus PostgreSQL and queued versus inline ERP. They are never available in custom runs, public or admin. Calibration is limited to these two matched workloads, and the admission estimator needs no model of the comparative modes.
+- **Simple public demonstration (clarified 2026-10-11).** Visitors see one immutable preset/start button and no editable stages or modes. The agent handles the two matched pairs, infrastructure and automatic reset under one public-budget and exclusive reservation. Total estimated occupancy stays within 600 seconds; the existing 900-second hard cleanup grace is anchored to demonstration acceptance. All four child summaries remain in history. Production intervention still waits for final review.
 - **A feasibility checkpoint.** Before building the feature, prototypes find a configuration that shows the point. The work then stops for the owner's go or no-go.
 - **Autonomous work** (section 6). An AI agent runs the project on the owner's laptop, on its own branches and in its own Fly.io environment. The owner joins near the end for the final review.
 
@@ -128,8 +128,8 @@ This selects the isolated proof environment. The comparisons are public with fix
 - **Production topology:** whether the production demo moves to several API processes and remote stores for every run, or only for comparative runs, and what that costs per month.
 - **Presets:**
   - what the presets show: response times, turned-away buyers answered per second, database load, or several of these;
-  - the comparisons are public with fixed settings; their visitor flow stays simple;
-  - the agent handles chained runs, exclusive access, the 600 s occupancy ceiling and automatic reset as implementation work.
+  - one immutable public preset/start button runs two fixed matched pairs internally, with no editable stages or modes;
+  - the agent owns one budget/exclusive reservation, the total 600 s estimated occupancy ceiling, the existing 900 s hard cleanup grace anchored to demonstration acceptance, and retention of all four child summaries.
 - **Run history:** how runs that fail by design (the mode without the order queue) read, without polluting public aggregates or capacity calibration.
 - **Redis script:** whether to slim the stock Lua script to raise Redis's ceiling.
 - **Load generator:** the runner size needed beyond 2,500 requests per second (it peaked at 90 % CPU there).

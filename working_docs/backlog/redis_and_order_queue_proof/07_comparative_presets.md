@@ -4,7 +4,7 @@
 
 ## Goal
 
-One or two fixed presets show each comparison clearly and repeatably on the hosted hardware.
+One immutable public preset/start button shows both comparisons clearly and repeatably on the hosted hardware.
 
 ## Scope
 
@@ -18,10 +18,10 @@ One or two fixed presets show each comparison clearly and repeatably on the host
 
 ## Open Points
 
-- None about exposure: the owner confirmed a simple public demonstration with fixed settings. The measured tuning determines the smallest useful set of comparisons.
+- None about exposure: the owner confirmed a simple public demonstration with fixed settings. The measured tuning sets the two internal matched workloads without exposing visitor configuration.
 
 ## Working Notes
 
 ### Owner clarification — 2026-10-11
 
-The owner confirmed that visitors must be able to run a simple fixed demonstration of Redis and order-queue benefits. Admin-only access would not fulfill that goal. Infrastructure choices, execution sequencing and reset are delegated to the agent, while the existing demo remains functional and production intervention waits for final review. Keep one simple visitor entry and no editable comparative-mode controls; use the smallest fixed set that retained measurements justify.
+The owner requires one visible immutable public preset/start button and no editable stages or modes. Internally it executes two fixed matched workloads (Redis versus PostgreSQL and queued versus inline ERP), four normal child runs in total. Sequencing/reset are delegated: one public-budget and exclusive reservation, total estimated occupancy within 600 seconds, and the existing 900-second hard cleanup grace anchored to demonstration acceptance. Retain all four child summaries. The existing demo remains functional; production intervention waits for final review.
