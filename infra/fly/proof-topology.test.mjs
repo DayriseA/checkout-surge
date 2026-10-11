@@ -51,6 +51,14 @@ test("proof moves stores out and installs one authority with three buyers and pr
     runner.env.PROOF_K6_CAPTURE_DIR,
     `${runner.env.LOAD_ORCHESTRATOR_STATE_DIR}/proof-capture`,
   );
+  assert.deepEqual(runner.files, [
+    { guest_path: "/app/proof-observer.mjs", local_path: "infra/fly/runner/proof-observer.mjs" },
+  ]);
+  assert.ok(runner.cmd[2].includes("mktemp -d /tmp/proof-observer.XXXXXX"));
+  assert.ok(runner.cmd[2].includes("timeout 10 sh -c"));
+  assert.ok(runner.cmd[2].endsWith("exec node dist/index.js"));
+  const original = template("runner");
+  assert.deepEqual(configureMachine(structuredClone(original), loadEnvironment()), original);
 });
 
 test("store setup retries authentication/connectivity and fails at its finite deadline", async () => {

@@ -84,6 +84,29 @@ export function configureProofTopology(config, environment) {
   } else if (role === "runner") {
     config.guest = { cpu_kind: "performance", cpus: 16, memory_mb: 32768 };
     config.env.PROOF_K6_CAPTURE_DIR = "/var/lib/checkout-surge/load-orchestrator/proof-capture";
+    config.files = [
+      ...(config.files ?? []),
+      {
+        guest_path: "/app/proof-observer.mjs",
+        local_path: "infra/fly/runner/proof-observer.mjs",
+      },
+    ];
+    config.cmd = [
+      "sh",
+      "-c",
+      [
+        "set -eu",
+        "ready_dir=$(mktemp -d /tmp/proof-observer.XXXXXX)",
+        'ready="$ready_dir/ready.json"',
+        'node /app/proof-observer.mjs "$ready" & observer=$!',
+        "trap 'kill -TERM \"$observer\" 2>/dev/null || true' EXIT",
+        "trap 'exit 1' INT TERM",
+        'timeout 10 sh -c \'alive() { kill -0 "$1" && grep -Eq "^State:[[:space:]]+[RSD][[:space:]]" "/proc/$1/status"; }; while [ ! -s "$1" ]; do alive "$2" || exit 1; sleep 0.1; done; alive "$2"\' sh "$ready" "$observer"',
+        'kill -0 "$observer"',
+        'grep -Eq "^State:[[:space:]]+[RSD][[:space:]]" "/proc/$observer/status"',
+        "exec node dist/index.js",
+      ].join("; "),
+    ];
   } else if (role === "gate" || role === "guard") {
     config.env.STORES_FLY_APP = environment.apps.stores;
     config.env.EXPECTED_FLY_ORGANIZATION = environment.organization;
