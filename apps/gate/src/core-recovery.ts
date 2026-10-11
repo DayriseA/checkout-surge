@@ -9,17 +9,20 @@ import {
   type FlyVolume,
 } from "@checkout-surge/fly-machines";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { setupFailed } from "./core-machine.js";
+import { hostDown, setupFailed } from "./core-machine.js";
 import { corePort, type ProbeResult } from "./core-status.js";
 
 type RecoveryMachines = Pick<
   FlyMachinesClient,
   | "getMachine"
+  | "listMachines"
   | "createMachine"
   | "destroyMachine"
   | "createVolume"
   | "deleteVolume"
   | "refreshLease"
+  | "stopMachine"
+  | "waitForState"
 >;
 
 /** `no_capacity`: Fly refused the new volume or Machine for capacity; the old core is kept. */
@@ -50,6 +53,7 @@ export async function readDeployedCoreConfig(path: string): Promise<FlyMachineCo
  * Replaces the core with a fresh, empty one: a new volume and a new Machine from the deployed
  * config, which migrates and seeds on its first boot (core data is disposable). The old core is
  * destroyed only once the new one is healthy; otherwise the new one is removed and the old one kept.
+ * The stateless proof variant first stops the old authority, because both cores share stores.
  */
 export class CoreRecovery {
   constructor(
@@ -57,6 +61,9 @@ export class CoreRecovery {
       machines: RecoveryMachines;
       probe: (target: string) => Promise<ProbeResult>;
       logger: Pick<CheckoutSurgeLogger, "info" | "warn" | "error">;
+      region?: string;
+      leaseSeconds?: number;
+      stateless?: boolean;
       sleep?: (ms: number) => Promise<void>;
       now?: () => number;
     },
@@ -73,16 +80,48 @@ export class CoreRecovery {
     nonce: string | undefined,
   ): Promise<RecoveryOutcome> {
     const { machines, logger } = this.options;
-    if (old && nonce) await machines.refreshLease(old.id, nonce, recoveryLeaseTtlSeconds);
+    if (old && nonce)
+      await machines.refreshLease(
+        old.id,
+        nonce,
+        this.options.leaseSeconds ?? recoveryLeaseTtlSeconds,
+      );
     const [mount] = config.mounts ?? [];
-    if (!mount?.name || !mount.size_gb) throw new Error("The core config mounts no volume.");
+    if (!mount) {
+      if (!this.options.stateless) throw new Error("The core config mounts no volume.");
+      await this.stopStatelessAuthority(old, nonce);
+      const { recreate: _request, recreate_reason: _reason, ...metadata } = config.metadata ?? {};
+      let created: FlyMachine;
+      try {
+        created = await machines.createMachine(
+          { ...config, metadata },
+          this.options.region ?? coreRegions,
+        );
+      } catch (error) {
+        return this.capacityOrThrow(error);
+      }
+      try {
+        await this.waitUntilHealthy(created.id);
+      } catch (error) {
+        await machines.destroyMachine(created.id).catch((cleanupError: unknown) => {
+          logger.error(
+            { err: cleanupError, machineId: created.id },
+            "Could not remove an unhealthy stateless core.",
+          );
+        });
+        throw error;
+      }
+      if (old) await this.retire(old, nonce);
+      return "recreated";
+    }
+    if (!mount.name || !mount.size_gb) throw new Error("The core config mounts no volume.");
     logger.warn({ machineId: old?.id }, "Recreating the core Machine.");
 
     let volume: FlyVolume;
     try {
       volume = await machines.createVolume({
         name: mount.name,
-        region: coreRegions,
+        region: this.options.region ?? coreRegions,
         size_gb: mount.size_gb,
         compute: config.guest,
       });
@@ -118,6 +157,34 @@ export class CoreRecovery {
       "Recreated the core Machine.",
     );
     return "recreated";
+  }
+
+  private async stopStatelessAuthority(old: FlyMachine | undefined, nonce: string | undefined) {
+    if (!old) {
+      // A down host can lose role metadata without losing its running processes.
+      if ((await this.options.machines.listMachines()).length > 0) {
+        throw new Error("Cannot establish that the proof core app has no existing authority.");
+      }
+      return;
+    }
+    if (!nonce) throw new Error("Cannot replace a shared-store core without its usable lease.");
+    const { machines } = this.options;
+    const current = await machines.getMachine(old.id);
+    if (hostDown(current) || current.host_status !== "ok") {
+      throw new Error("Cannot establish that the old proof core host can be stopped.");
+    }
+    // HD-34's create-first ordering isolates fresh volumes. Shared stores instead require
+    // confirmed shutdown: a recovering old host must not resume a second control/worker/ERP.
+    if (current.state !== "stopped") {
+      await machines.stopMachine(old.id, nonce);
+      if (!(await machines.waitForState(old.id, "stopped", { timeoutSeconds: 60 }))) {
+        throw new Error("The old proof core did not reach stopped before replacement.");
+      }
+    }
+    const stopped = await machines.getMachine(old.id);
+    if (stopped.state !== "stopped" || stopped.host_status !== "ok") {
+      throw new Error("The old proof core shutdown remains uncertain; refusing replacement.");
+    }
   }
 
   /** The new core is healthy once its setup succeeded and its Caddy answers over 6PN. */
@@ -159,7 +226,8 @@ export class CoreRecovery {
     // A partial config, on a host that is down, may not name the volume.
     const volumeId = old.config.mounts?.[0]?.volume;
     if (volumeId) void this.deleteVolume(volumeId);
-    else this.options.logger.warn({ machineId: old.id }, "The replaced core's volume is unknown.");
+    else if (!this.options.stateless || old.config.mounts?.length)
+      this.options.logger.warn({ machineId: old.id }, "The replaced core's volume is unknown.");
   }
 
   private async deleteVolume(volumeId: string): Promise<void> {

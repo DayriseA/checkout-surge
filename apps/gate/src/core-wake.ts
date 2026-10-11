@@ -66,6 +66,8 @@ export class CoreWake {
       /** Called once a start is sent or a recovery ends, so the next page reads the core again. */
       onStarted: () => void;
       logger: Pick<CheckoutSurgeLogger, "info" | "warn" | "error">;
+      withDependencies?: <T>(operation: () => Promise<T>) => Promise<T>;
+      leaseSeconds?: number;
       sleep?: (ms: number) => Promise<void>;
     },
   ) {}
@@ -97,7 +99,8 @@ export class CoreWake {
       // Fly grants no usable lease on a host that is down (flyctl skips it too).
       if (hostDown(machine)) return await this.recover(machine, undefined);
       const state = coreMachineState(machine);
-      if (state === "stopped") return await this.startUnderLease(machine);
+      if (state === "stopped" || (state === "started" && this.options.withDependencies))
+        return await this.startUnderLease(machine);
       if (state === "updating" || state === "unavailable") return state;
       return "starting";
     } catch (error) {
@@ -110,7 +113,11 @@ export class CoreWake {
     const { machines } = this.options;
     let nonce: string;
     try {
-      nonce = await machines.acquireLease(machine.id, leaseTtlSeconds, "gate wake");
+      nonce = await machines.acquireLease(
+        machine.id,
+        this.options.leaseSeconds ?? leaseTtlSeconds,
+        "gate wake",
+      );
     } catch (error) {
       if (classifyFlyError(error) !== "conflict") throw error;
       this.options.logger.info({ err: error }, "The core Machine lease is held; not starting it.");
@@ -122,13 +129,17 @@ export class CoreWake {
       const current = await machines.getMachine(machine.id);
       // A recreation mark, or a host that went down, skips the start.
       if (!recreationRequested(current) && !hostDown(current)) {
-        if (current.state === "started" || current.state === "starting") return "starting";
-        if (current.state === "stopping") {
-          await machines.waitForState(machine.id, "stopped", {
-            timeoutSeconds: stoppingWaitSeconds,
-          });
-        }
-        const failure = await this.startInPlace(machine.id, nonce);
+        const start = async () => {
+          if (current.state === "started" || current.state === "starting") return null;
+          if (current.state === "stopping")
+            await machines.waitForState(machine.id, "stopped", {
+              timeoutSeconds: stoppingWaitSeconds,
+            });
+          return this.startInPlace(machine.id, nonce);
+        };
+        const failure = await (this.options.withDependencies
+          ? this.options.withDependencies(start)
+          : start());
         if (failure === null) {
           this.options.onStarted();
           return "starting";
@@ -212,8 +223,8 @@ export class CoreWake {
       return "unavailable";
     }
     this.recoveryPage = page;
-    void this.options.recovery
-      .recreate(old, config, nonce)
+    const recreate = () => this.options.recovery.recreate(old, config, nonce);
+    void (this.options.withDependencies ? this.options.withDependencies(recreate) : recreate())
       .then(
         (outcome) => {
           this.recoveryPage = outcome === "no_capacity" ? "no_capacity" : undefined;

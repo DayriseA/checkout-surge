@@ -1,6 +1,8 @@
 import { defaultGuardThresholds, type GuardThresholds } from "./guard.js";
 
 export interface GateConfig {
+  stores?: { appName: string; token: string; organization: string; lifecycleToken: string };
+  recoveryRegion?: string;
   host: string;
   port: number;
   /** The Fly app that holds the core Machine. */
@@ -13,6 +15,15 @@ export interface GateConfig {
 
 export function loadGateConfig(env: Record<string, string | undefined>): GateConfig {
   return {
+    ...(env.STORES_FLY_APP
+      ? {
+          stores: {
+            ...loadStoresConfig(env),
+            lifecycleToken: required(env, "GATE_LIFECYCLE_TOKEN"),
+          },
+          recoveryRegion: "cdg",
+        }
+      : {}),
     host: env.HOST?.trim() || "::",
     port: Number(env.PORT?.trim() || "8080"),
     coreAppName: required(env, "CORE_FLY_APP"),
@@ -28,6 +39,7 @@ function required(env: Record<string, string | undefined>, name: string): string
 }
 
 export interface GuardConfig {
+  stores?: { appName: string; token: string; organization: string };
   coreAppName: string;
   /** A deploy token for the core app, shared with the gate. */
   coreFlyApiToken: string;
@@ -48,6 +60,7 @@ export function loadGuardConfig(env: Record<string, string | undefined>): GuardC
     return parsed;
   };
   return {
+    ...(env.STORES_FLY_APP ? { stores: loadStoresConfig(env) } : {}),
     coreAppName: required(env, "CORE_FLY_APP"),
     coreFlyApiToken: required(env, "CORE_FLY_API_TOKEN"),
     runnerAppName: required(env, "RUNNER_FLY_APP"),
@@ -71,5 +84,19 @@ export function loadGuardConfig(env: Record<string, string | undefined>): GuardC
         defaultGuardThresholds.leftoverGraceSeconds,
       ),
     },
+  };
+}
+
+function loadStoresConfig(env: Record<string, string | undefined>) {
+  const organization = required(env, "EXPECTED_FLY_ORGANIZATION");
+  if (organization !== "playground-416")
+    throw new Error("Remote stores are restricted to the proof organization.");
+  const names = [env.CORE_FLY_APP, env.RUNNER_FLY_APP, env.STORES_FLY_APP].filter(Boolean);
+  if (names.some((name) => name?.startsWith("checkout-surge-")))
+    throw new Error("Production apps cannot use proof stores lifecycle.");
+  return {
+    appName: required(env, "STORES_FLY_APP"),
+    token: required(env, "STORES_FLY_API_TOKEN"),
+    organization,
   };
 }

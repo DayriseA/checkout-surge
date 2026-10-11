@@ -12,6 +12,25 @@ const baseEnv = {
 };
 
 describe("API runtime configuration", () => {
+  it("selects authenticated gate idle shutdown only when configured", () => {
+    const env = {
+      ...baseEnv,
+      CONTROL_SERVICE_TOKEN: "deployment-token",
+      CORE_IDLE_STOP_ENABLED: "true",
+      FLY_APP_NAME: "proof-core",
+      FLY_MACHINE_ID: "core-1",
+      CORE_FLY_API_TOKEN: "core-token",
+      CORE_IDLE_STOP_URL: "https://proof.fly.dev/__gate/idle-stop",
+    };
+    expect(() => loadApiConfig(env)).toThrow("GATE_LIFECYCLE_TOKEN");
+    expect(
+      loadApiConfig({ ...env, GATE_LIFECYCLE_TOKEN: "proof-lifecycle" }).coreIdleStop,
+    ).toMatchObject({
+      shutdownUrl: env.CORE_IDLE_STOP_URL,
+      lifecycleToken: "proof-lifecycle",
+      machineId: "core-1",
+    });
+  });
   it("defaults to combined ownership and requires explicit distinct peers for split roles", () => {
     const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" };
     expect(loadApiConfig(env).role).toBe("combined");

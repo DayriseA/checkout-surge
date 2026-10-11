@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { configureProofTopology } from "./proof-topology.mjs";
 
 export const production = {
   name: "production",
@@ -17,7 +18,8 @@ export function loadEnvironment(path) {
   if (environment.name !== "proof" || environment.organization !== "playground-416") {
     throw new Error("A proof config must name proof and organization playground-416.");
   }
-  const names = Object.keys(production.apps).map((role) => environment.apps?.[role]);
+  const roles = [...Object.keys(production.apps), ...(environment.apps?.stores ? ["stores"] : [])];
+  const names = roles.map((role) => environment.apps?.[role]);
   if (
     Object.values(environment.apps ?? {}).some((name) =>
       Object.values(production.apps).includes(name),
@@ -30,7 +32,7 @@ export function loadEnvironment(path) {
     Object.keys(environment.apps ?? {}).length !== names.length ||
     new Set(names).size !== names.length
   ) {
-    throw new Error("Configure three distinct Fly app names.");
+    throw new Error("Configure distinct core, runner, gate and optional stores Fly app names.");
   }
   const origin = new URL(environment.publicOrigin);
   if (
@@ -74,7 +76,7 @@ export function configureMachine(config, environment) {
     }
     if ("WEB_ORIGIN" in holder.env) holder.env.WEB_ORIGIN = environment.publicOrigin;
   }
-  return config;
+  return configureProofTopology(config, environment);
 }
 
 export function createAppRequest(run, flyctl, fetchRequest = fetch) {

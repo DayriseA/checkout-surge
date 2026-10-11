@@ -93,10 +93,13 @@ test("create, deploy, destroy and recreate use only proof apps and fresh secrets
   const first = readFileSync(join(f.directory, proof.apps.gate, "core.env"), "utf8");
   assert.ok(first.includes("ADMIN_DASHBOARD_PASSPHRASE="));
   const imports = f.mutations.filter((call) => call.args[0] === "secrets");
-  assert.equal(imports.length, 3);
+  assert.equal(imports.length, Object.keys(proof.apps).length);
   const control = imports[0].input.match(/CONTROL_SERVICE_TOKEN=(.+)/)[1];
   assert.ok(imports[1].input.includes(`CONTROL_SERVICE_TOKEN=${control}`));
   assert.ok(imports[2].input.includes("CORE_FLY_API_TOKEN=proof-token-"));
+  assert.ok(imports[0].input.includes(`@${proof.apps.stores}.internal:5432`));
+  assert.ok(imports[2].input.includes("STORES_FLY_API_TOKEN=proof-token-"));
+  assert.ok(imports[3].input.includes("POSTGRES_PASSWORD="));
   assert.ok(f.reads.every((app) => Object.values(proof.apps).includes(app)));
   await operateProof("deploy", f.configPath, f.dependencies);
   assert.equal(f.mutations.at(-1), "deploy");

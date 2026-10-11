@@ -73,6 +73,9 @@ export async function operateProof(action, configPath, { run, request, deploy, s
     const redis = secret();
     const coreToken = await token("core", "proof-core");
     const runnerToken = await token("runner", "proof-runner");
+    const storesToken = environment.apps.stores ? await token("stores", "proof-stores") : undefined;
+    const lifecycle = secret();
+    const storeHost = environment.apps.stores ? `${environment.apps.stores}.internal` : "127.0.0.1";
     const values = {
       core: {
         CONTROL_SERVICE_TOKEN: control,
@@ -80,14 +83,22 @@ export async function operateProof(action, configPath, { run, request, deploy, s
         ADMIN_SESSION_SECRET: secret(),
         PUBLIC_CLIENT_COOKIE_SECRET: secret(),
         POSTGRES_PASSWORD: pg,
-        DATABASE_URL: `postgresql://postgres:${pg}@127.0.0.1:5432/checkout_surge`,
+        DATABASE_URL: `postgresql://postgres:${pg}@${storeHost}:5432/checkout_surge`,
         REDIS_PASSWORD: redis,
-        REDIS_URL: `redis://:${redis}@127.0.0.1:6379`,
+        REDIS_URL: `redis://:${redis}@${storeHost}:6379`,
+        ...(storesToken ? { GATE_LIFECYCLE_TOKEN: lifecycle } : {}),
         CORE_FLY_API_TOKEN: coreToken,
         RUNNER_FLY_API_TOKEN: runnerToken,
       },
       runner: { CONTROL_SERVICE_TOKEN: control },
-      gate: { CORE_FLY_API_TOKEN: coreToken, RUNNER_FLY_API_TOKEN: runnerToken },
+      gate: {
+        CORE_FLY_API_TOKEN: coreToken,
+        RUNNER_FLY_API_TOKEN: runnerToken,
+        ...(storesToken
+          ? { STORES_FLY_API_TOKEN: storesToken, GATE_LIFECYCLE_TOKEN: lifecycle }
+          : {}),
+      },
+      ...(storesToken ? { stores: { POSTGRES_PASSWORD: pg, REDIS_PASSWORD: redis } } : {}),
     };
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     for (const [role, secrets] of Object.entries(values)) {

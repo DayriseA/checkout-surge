@@ -3,6 +3,7 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
 import type { ProbeResult } from "../src/core-status.js";
 import { defaultGuardThresholds, Guard } from "../src/guard.js";
+import type { StoresLifecycle } from "../src/stores-lifecycle.js";
 import { coreMachine } from "./core-machine-fixture.js";
 
 const minute = 60_000;
@@ -82,6 +83,7 @@ function setup(options: {
   runner?: ReturnType<typeof fakeApp>;
   probes?: ProbeResult[];
   dryRun?: boolean;
+  stores?: Pick<StoresLifecycle, "stopStores">;
 }) {
   let clock = now;
   const probes = [...(options.probes ?? [])];
@@ -89,6 +91,7 @@ function setup(options: {
   const coreApp = options.core ?? fakeApp([core()]);
   const runnerApp = options.runner ?? fakeApp([runner()]);
   const guard = new Guard({
+    ...(options.stores ? { stores: options.stores } : {}),
     core: coreApp,
     runner: runnerApp,
     probe,
@@ -104,6 +107,44 @@ function setup(options: {
 }
 
 describe("Guard", () => {
+  it("finishes orphan store shutdown under the stopped core lease and rereads before stopping", async () => {
+    const app = fakeApp([core()]);
+    const stores = {
+      stopStores: vi.fn(async (safe?: () => Promise<boolean>) => {
+        expect(await safe?.()).toBe(true);
+      }),
+    };
+    const { guard } = setup({ core: app, stores });
+    expect(await guard.run()).toBe(true);
+    expect(stores.stopStores).toHaveBeenCalledOnce();
+    expect(app.acquireLease).toHaveBeenCalledWith("core-1", 900, "guard stores");
+  });
+
+  it.each([
+    "started",
+    "starting",
+    "stopping",
+    "created",
+  ])("preserves stores for a %s core", async (state) => {
+    const stores = { stopStores: vi.fn(async () => undefined) };
+    const { guard } = setup({
+      core: fakeApp([core({ state, events: [{ type: "start", timestamp: now }] })]),
+      stores,
+    });
+    expect(await guard.run()).toBe(true);
+    expect(stores.stopStores).not.toHaveBeenCalled();
+  });
+
+  it("skips store shutdown when the core lifecycle lease is held", async () => {
+    const app = fakeApp([core()]);
+    app.acquireLease.mockRejectedValueOnce(
+      new FlyMachinesApiError("POST", "lease", 409, "lease held"),
+    );
+    const stores = { stopStores: vi.fn(async () => undefined) };
+    const { guard } = setup({ core: app, stores });
+    expect(await guard.run()).toBe(true);
+    expect(stores.stopStores).not.toHaveBeenCalled();
+  });
   it("leaves a stopped core and runner, and an awake core within its limits, alone", async () => {
     const {
       guard,

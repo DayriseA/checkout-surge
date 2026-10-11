@@ -71,6 +71,7 @@ export type RunnerHostConfig =
       kind: "fly";
       appName: string;
       machinesApiToken: string;
+      expectedOrganization?: string;
       /** The core's current region (`FLY_REGION`, set by Fly), where a recreated runner goes. */
       coreRegion: string;
       /** Where the deploy script writes the runner's deployed config, used to recreate the runner. */
@@ -89,6 +90,8 @@ export type CoreIdleStopConfig =
       appName: string;
       machineId: string;
       machinesApiToken: string;
+      shutdownUrl?: string;
+      lifecycleToken?: string;
     };
 
 const unsafeControlServiceTokens = new Set([
@@ -509,6 +512,9 @@ function parseRunnerHost(env: NodeJS.ProcessEnv): RunnerHostConfig {
   if (!appName) return { kind: "local" };
   return {
     kind: "fly",
+    ...(env.EXPECTED_FLY_ORGANIZATION
+      ? { expectedOrganization: requireEnv(env, "EXPECTED_FLY_ORGANIZATION") }
+      : {}),
     appName,
     machinesApiToken: requireEnv(env, "RUNNER_FLY_API_TOKEN"),
     coreRegion: requireEnv(env, "FLY_REGION"),
@@ -525,6 +531,12 @@ function parseCoreIdleStop(env: NodeJS.ProcessEnv): CoreIdleStopConfig {
   if (enabled !== "true") throw new Error("CORE_IDLE_STOP_ENABLED must be true or false.");
   return {
     kind: "fly",
+    ...(env.CORE_IDLE_STOP_URL
+      ? {
+          shutdownUrl: parseUrl(env.CORE_IDLE_STOP_URL, "CORE_IDLE_STOP_URL", ""),
+          lifecycleToken: requireEnv(env, "GATE_LIFECYCLE_TOKEN"),
+        }
+      : {}),
     appName: requireEnv(env, "FLY_APP_NAME"),
     machineId: requireEnv(env, "FLY_MACHINE_ID"),
     machinesApiToken: requireEnv(env, "CORE_FLY_API_TOKEN"),

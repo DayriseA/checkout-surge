@@ -4,7 +4,8 @@
   "apps": {
     "core": "cs-proof-redis-queue-core",
     "runner": "cs-proof-redis-queue-runner",
-    "gate": "cs-proof-redis-queue-gate"
+    "gate": "cs-proof-redis-queue-gate",
+    "stores": "cs-proof-redis-queue-stores"
   },
   "publicOrigin": "https://cs-proof-redis-queue-gate.fly.dev"
 }

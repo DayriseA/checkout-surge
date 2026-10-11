@@ -73,7 +73,7 @@ const unknownImageRetryMs = 10_000;
 const targets = {
   core: {
     app: environment.apps.core,
-    volume: { name: "core_data", sizeGb: 3 },
+    volume: environment.apps.stores ? undefined : { name: "core_data", sizeGb: 3 },
     images: {
       api: { dockerfile: "docker/Dockerfile.node-service", target: "runtime-fly", service: "api" },
       worker: {
@@ -107,7 +107,21 @@ const targets = {
   },
 };
 
-const roles = process.argv[2] === "all" ? ["runner", "core", "gate"] : [process.argv[2]];
+if (environment.apps.stores)
+  targets.stores = {
+    app: environment.apps.stores,
+    volume: { name: "stores_data", sizeGb: 6 },
+    images: {},
+  };
+
+const roles =
+  process.argv[2] === "all"
+    ? [...(environment.apps.stores ? ["stores"] : []), "runner", "core", "gate"]
+    : [process.argv[2]];
+if (freshCore && environment.apps.stores)
+  throw new Error(
+    "Proof stores require explicit destroy/recreate for a fresh database; --fresh-core is not a store reset.",
+  );
 if (!targets[roles[0]] || (freshCore && !roles.includes("core"))) {
   console.error(
     "Usage: node infra/fly/deploy.mjs <all|core|runner|gate> [--force] [--fresh-core] [--no-depot | --local-build]\n" +
@@ -207,7 +221,9 @@ async function buildAndPushImages(role, version) {
 }
 
 function machineConfig(role, imageRefs, file = "machine.json") {
-  const config = configureMachine(readRepoJson(`infra/fly/${role}/${file}`), environment);
+  const template = readRepoJson(`infra/fly/${role === "stores" ? "core" : role}/${file}`);
+  if (role === "stores") template.metadata.role = "stores";
+  const config = configureMachine(template, environment);
   // A multi-container Machine (core) sets images per container; a single-image one (runner) at the top.
   for (const holder of [config, ...(config.containers ?? [])]) {
     if (holder.image in imageRefs) holder.image = imageRefs[holder.image];
@@ -478,7 +494,7 @@ async function deployCore(imageRefs, version, beforeUpdate) {
       const { recreate, recreate_reason: reason } = machine.config.metadata ?? {};
       if (freshCore || recreate === "requested") config.metadata.recreate = "requested";
       if (recreate === "requested" && reason) config.metadata.recreate_reason = reason;
-      config.mounts[0].volume = machine.config.mounts[0].volume;
+      if (config.mounts?.length) config.mounts[0].volume = machine.config.mounts[0].volume;
       if (!(await updateInPlace(machinesApi, machine.id, config, nonce))) {
         await markCoreForRecreation(machinesApi, machine.id, nonce);
         Object.assign(config.metadata, capacityRecreationMark);
@@ -535,7 +551,9 @@ async function writeCoreConfigToGate(coreConfig) {
   const { volume } = targets.core;
   const recoveryConfig = {
     ...coreConfig,
-    mounts: [{ ...coreConfig.mounts[0], name: volume.name, size_gb: volume.sizeGb }],
+    ...(volume
+      ? { mounts: [{ ...coreConfig.mounts[0], name: volume.name, size_gb: volume.sizeGb }] }
+      : {}),
   };
   await updateMachine(
     gateApi,
@@ -665,6 +683,19 @@ async function deploy() {
     roles.includes("core") &&
     !(await findMachine(createMachinesApi(targets.gate.app), "gate"));
   if (bootstrapGate) await deployGate(imageRefs.gate, version);
+  if (roles.includes("stores")) {
+    const machinesApi = createMachinesApi(targets.stores.app);
+    const existing = await findMachine(machinesApi, "stores");
+    const config = machineConfig("stores", {});
+    if (!existing) await createMachine(machinesApi, "stores", config);
+    else
+      await withLease(machinesApi, existing.id, coreLeaseTtlSeconds, async (machine, nonce) => {
+        if (includesConfig(machine.config, { ...config, mounts: machine.config.mounts })) return;
+        await requireStopped(machinesApi, machine, nonce);
+        config.mounts[0].volume = machine.config.mounts[0].volume;
+        await updateMachine(machinesApi, machine.id, config, nonce);
+      });
+  }
   if (roles.includes("core")) {
     await deployCore(imageRefs.core, version, async () => {
       if (roles.includes("runner")) await deployRunner(imageRefs.runner, version);

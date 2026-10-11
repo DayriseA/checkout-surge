@@ -571,6 +571,9 @@ function createRunnerHost(
     machines: new FlyMachinesClient({
       appName: config.runnerHost.appName,
       token: config.runnerHost.machinesApiToken,
+      ...(config.runnerHost.expectedOrganization
+        ? { expectedOrganization: config.runnerHost.expectedOrganization }
+        : {}),
     }),
     control,
     size: {
@@ -580,6 +583,7 @@ function createRunnerHost(
     },
     apiBaseUrl: config.apiBaseUrl,
     coreRegion: config.runnerHost.coreRegion,
+    ...(config.runnerHost.expectedOrganization ? { leaseSeconds: 900 } : {}),
     readDeployedConfig: async () =>
       JSON.parse(await readFile(deployedConfigFile, "utf8")) as FlyMachineConfig,
     logger,
@@ -599,7 +603,18 @@ function createCoreIdleShutdown(
   });
   return new CoreIdleStop({
     runs: new PostgresNonterminalRunReader(db),
-    stopCore: () => machines.stopMachine(idleStop.machineId),
+    stopCore: async () => {
+      if (!idleStop.shutdownUrl) return machines.stopMachine(idleStop.machineId);
+      const response = await fetch(idleStop.shutdownUrl, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${idleStop.lifecycleToken}`,
+          "x-core-machine-id": idleStop.machineId,
+        },
+        signal: AbortSignal.timeout(120_000),
+      });
+      if (!response.ok) throw new Error(`Gate idle shutdown failed with ${response.status}.`);
+    },
     logger,
   });
 }

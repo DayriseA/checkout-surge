@@ -1,0 +1,37 @@
+{
+	auto_https off
+	servers {
+		trusted_proxies static fdaa::/16
+	}
+}
+
+# Private API ingress for runner traffic and web API calls. Peer calls use loopback directly.
+:4004 {
+	@buy path /buy
+	handle @buy {
+		reverse_proxy 127.0.0.1:4001 127.0.0.1:4002 127.0.0.1:4003 {
+			lb_policy round_robin
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:4000 {
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
+}
+
+:8080 {
+	@dashboard_events path /dashboard/events
+	handle @dashboard_events {
+		reverse_proxy 127.0.0.1:4000 {
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
+	handle {
+		encode gzip
+		reverse_proxy 127.0.0.1:3000 {
+			header_up X-Forwarded-For {client_ip}
+		}
+	}
+}

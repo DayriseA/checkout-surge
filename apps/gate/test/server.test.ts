@@ -55,6 +55,15 @@ async function setup(
 }
 
 describe("gate server", () => {
+  it("does not enable idle shutdown without explicit configuration", async () => {
+    const { gate } = await setup({ state: "stopped" });
+    const response = await gate.inject({
+      method: "POST",
+      url: "/__gate/idle-stop",
+      headers: { authorization: "Bearer arbitrary" },
+    });
+    expect(response.statusCode).toBe(503);
+  });
   it("answers any URL with its own page while the core sleeps, and a GET never wakes it", async () => {
     const { gate, wake } = await setup({ state: "stopped" });
 

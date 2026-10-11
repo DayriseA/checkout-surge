@@ -92,6 +92,7 @@ export class FlyRunnerHost implements RunnerHost {
       logger: Pick<CheckoutSurgeLogger, "info" | "warn" | "error">;
       sleep?: (ms: number) => Promise<void>;
       now?: () => number;
+      leaseSeconds?: number;
     },
   ) {}
 
@@ -434,7 +435,7 @@ export class FlyRunnerHost implements RunnerHost {
     }
     const nonce = await this.options.machines.acquireLease(
       machine.id,
-      leaseTtlSeconds,
+      this.options.leaseSeconds ?? leaseTtlSeconds,
       description,
     );
     try {

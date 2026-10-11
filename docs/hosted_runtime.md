@@ -4,6 +4,16 @@ This document describes how the hosted demo behaves on Fly.io. The reasons behin
 
 The hosted runtime is the product's real runtime. It runs the same production images and contracts as the local topology, plus Fly-specific configuration under `infra/fly/`. The demo runs a few hours per month at most, so every Machine sleeps when unused and wakes on demand.
 
+### Isolated proof variant
+
+The optional stores role in `infra/fly/proof.json` activates `infra/fly/proof-topology.mjs` in `playground-416` only. It transforms the existing templates without changing the production topology described below: a stateless six-CPU core runs one control API and three dedicated buyer APIs; PostgreSQL and Redis share a separate two-CPU stores Machine with a 6 GiB volume in `cdg`; the proof runner uses sixteen CPUs. Core recovery stays in `cdg` and reconnects to preserved stores rather than resetting them. Unavailable stores are never automatically recreated; explicit full proof destruction/recreation resets their disposable data.
+
+Buyer ports `4001`–`4003` and control port `4000` listen on loopback. Private Caddy ingress `4004` routes exact `/buy` requests to the buyers and all other API paths to control. Web API requests use that ingress on loopback; the runner uses the current core Machine's private IPv6 address, avoiding app-DNS ambiguity during core replacement. Direct peer calls and dashboard SSE retain their specific control/buyer ports. Each boot waits for authenticated PostgreSQL and Redis readiness before setup, then starts buyers before control and the browser ingress.
+
+The gate starts stores before core work under leases and can repair stopped stores even when the core is already started. Proof idle shutdown calls an authenticated gate endpoint through its public HTTPS origin, which wakes a sleeping gate. The gate validates the current core ID, stops core, observes it stopped, then stops stores. An uncertain core stop leaves stores running. If the gate sleeps or exits before finishing, the hourly guard completes orphan-store shutdown only after rereading a stopped, unleased core; active, transitional and uncertain topology is preserved. The gate remains configured to sleep. Proof runtime clients recheck app organization before every Fly mutation, and their lease budgets include those reads and dependency preparation.
+
+Shared-store recovery first stops the old core under its lease and requires a fresh healthy-host/stopped observation before booting a replacement. The old lease stays held through replacement readiness; the stores lease is renewed after dependency preparation. An unreachable old host, failed/timed-out shutdown, or an unrecognized Machine still listed in the core app blocks replacement. This favors one control/worker/ERP authority over availability: an outage can last until the old authority's shutdown is confirmed. The production fresh-volume recovery below retains its create-first ordering because its old and new stores are isolated.
+
 ---
 
 ## Topology

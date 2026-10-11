@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import replyFrom from "@fastify/reply-from";
 import { type FastifyReply, fastify } from "fastify";
@@ -10,6 +11,7 @@ export interface BuildGateServerOptions {
   status: { current(): Promise<CoreStatus>; invalidate(): void };
   wake: { wake(): Promise<WakeOutcome>; recoveryState(): RecoveryPage | undefined };
   logger: CheckoutSurgeLogger;
+  idleShutdown?: { token: string; stop(coreId: string): Promise<void> };
 }
 
 // A dead core host must not hold visitors for undici's default 10 s before they see a page.
@@ -48,6 +50,22 @@ export async function buildGateServer(options: BuildGateServerOptions) {
     if (outcome === "starting" || outcome === "relocating") return reply.redirect(returnPath, 303);
     return sendPage(reply, outcome, returnPath);
   });
+
+  if (options.idleShutdown) {
+    const idle = options.idleShutdown;
+    app.post("/__gate/idle-stop", async (request, reply) => {
+      const supplied = Buffer.from(request.headers.authorization ?? "");
+      const expected = Buffer.from(`Bearer ${idle.token}`);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        return reply.code(401).send();
+      const coreId = request.headers["x-core-machine-id"];
+      if (typeof coreId !== "string" || !coreId) return reply.code(400).send();
+      // Continue owned work if core shutdown closes the caller's socket.
+      await idle.stop(coreId);
+      options.status.invalidate();
+      return reply.code(204).send();
+    });
+  }
 
   app.all("/*", async (request, reply) => {
     const recovery = options.wake.recoveryState();

@@ -37,10 +37,13 @@ function newCore(overrides: Partial<FlyMachine> = {}): FlyMachine {
   });
 }
 
-function setup(options: { probes?: ProbeResult[] } = {}) {
+function setup(options: { probes?: ProbeResult[]; stateless?: boolean } = {}) {
   let clock = 0;
   const probes = [...(options.probes ?? ["no_answer", "ready"])];
   const machines = {
+    listMachines: vi.fn(async (): Promise<FlyMachine[]> => []),
+    stopMachine: vi.fn(async () => undefined),
+    waitForState: vi.fn(async () => true),
     refreshLease: vi.fn(async () => undefined),
     createVolume: vi.fn(async () => ({
       id: "vol_new",
@@ -57,6 +60,7 @@ function setup(options: { probes?: ProbeResult[] } = {}) {
   };
   const probe = vi.fn(async () => probes.shift() ?? "no_answer");
   const recovery = new CoreRecovery({
+    ...(options.stateless ? { stateless: true, region: "cdg", leaseSeconds: 900 } : {}),
     machines,
     probe,
     logger: createSilentLogger("gate"),
@@ -72,6 +76,82 @@ const capacity = (path: string, status: number, body: object) =>
   new FlyMachinesApiError("POST", path, status, JSON.stringify(body));
 
 describe("CoreRecovery", () => {
+  it("stops a marked started shared-store authority before creating its replacement", async () => {
+    const { recovery, machines } = setup({ stateless: true, probes: ["ready"] });
+    const marked = coreMachine({
+      state: "started",
+      config: { guest, metadata: { role: "core", recreate: "requested" } },
+    });
+    const stopped = { ...marked, state: "stopped" };
+    machines.getMachine.mockResolvedValueOnce(marked).mockResolvedValueOnce(stopped);
+    await expect(recovery.recreate(marked, marked.config, "nonce-1")).resolves.toBe("recreated");
+    expect(machines.stopMachine).toHaveBeenCalledWith(marked.id, "nonce-1");
+    expect(machines.waitForState).toHaveBeenCalledWith(marked.id, "stopped", {
+      timeoutSeconds: 60,
+    });
+    expect(machines.waitForState.mock.invocationCallOrder[0]).toBeLessThan(
+      machines.createMachine.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(machines.getMachine.mock.invocationCallOrder[1]).toBeLessThan(
+      machines.createMachine.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(machines.destroyMachine).toHaveBeenCalledWith(marked.id, "nonce-1");
+  });
+
+  it.each([
+    "stop_failure",
+    "wait_timeout",
+    "uncertain_after_wait",
+  ])("never boots a shared-store replacement after %s", async (failure) => {
+    const { recovery, machines } = setup({ stateless: true });
+    const old = coreMachine({ state: "started", config: { guest, metadata: { role: "core" } } });
+    machines.getMachine.mockResolvedValue(old);
+    if (failure === "stop_failure")
+      machines.stopMachine.mockRejectedValueOnce(new Error("stop failed"));
+    if (failure === "wait_timeout") machines.waitForState.mockResolvedValueOnce(false);
+    await expect(recovery.recreate(old, old.config, "nonce-1")).rejects.toThrow();
+    expect(machines.createMachine).not.toHaveBeenCalled();
+    expect(machines.destroyMachine).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an unreachable shared-store authority without a usable lease", async () => {
+    const { recovery, machines } = setup({ stateless: true });
+    const old = coreMachine({
+      state: "started",
+      host_status: "unreachable",
+      config: { guest, metadata: { role: "core" } },
+    });
+    await expect(recovery.recreate(old, old.config, undefined)).rejects.toThrow("usable lease");
+    expect(machines.createMachine).not.toHaveBeenCalled();
+    expect(machines.destroyMachine).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake lost role metadata on a down host for an absent authority", async () => {
+    const { recovery, machines } = setup({ stateless: true });
+    machines.listMachines.mockResolvedValueOnce([
+      coreMachine({ host_status: "unreachable", config: { guest } }),
+    ]);
+    await expect(recovery.recreate(undefined, { guest }, undefined)).rejects.toThrow(
+      "no existing authority",
+    );
+    expect(machines.createMachine).not.toHaveBeenCalled();
+  });
+  it("recreates an explicitly stateless proof core in cdg without touching volumes", async () => {
+    const { recovery, machines } = setup({ stateless: true, probes: ["ready"] });
+    await expect(
+      recovery.recreate(
+        undefined,
+        { guest, image: "proof:new", metadata: { role: "core", recreate: "requested" } },
+        undefined,
+      ),
+    ).resolves.toBe("recreated");
+    expect(machines.createMachine).toHaveBeenCalledWith(
+      { guest, image: "proof:new", metadata: { role: "core" } },
+      "cdg",
+    );
+    expect(machines.createVolume).not.toHaveBeenCalled();
+    expect(machines.deleteVolume).not.toHaveBeenCalled();
+  });
   it("creates a fresh core from the deployed config, then retires the old one once it is healthy", async () => {
     const { recovery, machines, probe } = setup();
 

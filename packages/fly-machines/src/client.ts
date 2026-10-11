@@ -108,6 +108,8 @@ export class FlyMachinesClient {
       token: string;
       baseUrl?: string;
       requestTimeoutMs?: number;
+      /** Rechecked before every mutation; proof clients fail closed on changed ownership. */
+      expectedOrganization?: string;
       fetch?: typeof fetch;
     },
   ) {}
@@ -220,6 +222,14 @@ export class FlyMachinesClient {
     path: string,
     options: { body?: unknown; nonce?: string; timeoutMs?: number } = {},
   ): Promise<T> {
+    if (method !== "GET" && this.options.expectedOrganization) {
+      const app = await this.request<{ organization?: { slug?: string } }>("GET", "");
+      if (app.organization?.slug !== this.options.expectedOrganization) {
+        throw new Error(
+          `App ${this.options.appName} is outside ${this.options.expectedOrganization}; refusing mutation.`,
+        );
+      }
+    }
     const response = await (this.options.fetch ?? fetch)(
       `${this.options.baseUrl ?? defaultBaseUrl}/v1/apps/${this.options.appName}${path}`,
       {

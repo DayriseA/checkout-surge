@@ -29,6 +29,35 @@ function requestAt(fetch: ReturnType<typeof createClient>["fetch"], index: numbe
 }
 
 describe("FlyMachinesClient", () => {
+  it("checks proof app ownership freshly before every mutation and refuses a changed owner", async () => {
+    const responses = [
+      { organization: { slug: "playground-416" } },
+      {},
+      { organization: { slug: "personal" } },
+    ];
+    const fetch = vi.fn(
+      async () => new Response(JSON.stringify(responses.shift()), { status: 200 }),
+    );
+    const client = new FlyMachinesClient({
+      appName: "proof-core",
+      token: "test",
+      expectedOrganization: "playground-416",
+      fetch,
+    });
+    await client.stopMachine("m1");
+    await expect(client.stopMachine("m1")).rejects.toThrow("refusing mutation");
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenNthCalledWith(
+      1,
+      "https://api.machines.dev/v1/apps/proof-core",
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "https://api.machines.dev/v1/apps/proof-core/machines/m1/stop",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
   it("acquires a lease, then sends its nonce with lease-guarded calls", async () => {
     const { client, fetch } = createClient([
       { status: 201, body: { status: "success", data: { nonce: "nonce-1" } } },

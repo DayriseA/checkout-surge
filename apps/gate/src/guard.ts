@@ -8,6 +8,7 @@ import {
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { coreCanServe, hostDown, selectCore, setupFailed } from "./core-machine.js";
 import { corePort, type ProbeResult } from "./core-status.js";
+import { proofLifecycleLeaseSeconds, type StoresLifecycle } from "./stores-lifecycle.js";
 
 export type GuardMachines = Pick<
   FlyMachinesClient,
@@ -66,6 +67,7 @@ export class Guard {
     private readonly options: {
       core: GuardMachines;
       runner: GuardMachines;
+      stores?: Pick<StoresLifecycle, "stopStores">;
       probe: (target: string) => Promise<ProbeResult>;
       thresholds: GuardThresholds;
       /** Logs the actions without taking them. */
@@ -80,7 +82,45 @@ export class Guard {
   async run(): Promise<boolean> {
     const core = await this.guardApp("core", () => this.planCore());
     const runner = await this.guardApp("runner", () => this.planRunner());
-    return core && runner;
+    const stores = await this.guardStores();
+    return core && runner && stores;
+  }
+
+  private async guardStores(): Promise<boolean> {
+    if (!this.options.stores) return true;
+    const safe = async () => {
+      const cores = await this.options.core.listMachines();
+      return cores.every(
+        (machine) => isRole(machine, "core") && !hostDown(machine) && machine.state === "stopped",
+      );
+    };
+    let nonce: string | undefined;
+    let coreId: string | undefined;
+    try {
+      const cores = await this.options.core.listMachines();
+      if (cores.length > 1 || !(await safe())) return true;
+      if (this.options.dryRun) {
+        this.options.logger.info("The guard would check orphan awake proof stores (dry run).");
+        return true;
+      }
+      if (cores[0]) {
+        coreId = cores[0].id;
+        nonce = await this.options.core.acquireLease(
+          coreId,
+          proofLifecycleLeaseSeconds,
+          "guard stores",
+        );
+      }
+      await this.options.stores.stopStores(safe);
+      return true;
+    } catch (error) {
+      if (classifyFlyError(error) === "conflict") return true;
+      this.options.logger.error({ err: error }, "The guard could not stop orphan proof stores.");
+      return false;
+    } finally {
+      if (coreId && nonce)
+        await this.options.core.releaseLease(coreId, nonce).catch(() => undefined);
+    }
   }
 
   private async guardApp(app: App, plan: () => Promise<GuardAction[]>): Promise<boolean> {
@@ -282,7 +322,11 @@ export class Guard {
   ): Promise<boolean> {
     let nonce: string;
     try {
-      nonce = await machines.acquireLease(machineId, leaseTtlSeconds, "guard");
+      nonce = await machines.acquireLease(
+        machineId,
+        this.options.stores ? proofLifecycleLeaseSeconds : leaseTtlSeconds,
+        "guard",
+      );
     } catch (error) {
       if (classifyFlyError(error) === "conflict") return false;
       throw error;

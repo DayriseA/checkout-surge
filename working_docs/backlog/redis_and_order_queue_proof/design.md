@@ -77,6 +77,12 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 
 ## 4. Modes
 
+### Proof topology selected after the feasibility checkpoint
+
+The owner's GO enables a proof topology with three dedicated buyer API processes and one control authority on the core. PostgreSQL and Redis share a separate stores Machine in `cdg`; the core uses the native private-network distance to both stores, with actual RTT recorded for each hosted deployment. No simulated latency is selected. The proof runner uses the retained feasibility allocation, which is validated rather than a measured minimum. Configuration and subsequent validation evidence live in task 04.
+
+This selects the isolated proof environment only. Production topology, public versus admin exposure, and the composition of paired runs with the run slot and occupancy/reset limits remain owner-review choices.
+
 | Mode | Stock decision and sold-out answers | Order queue | ERP call |
 |---|---|---|---|
 | Demo (today) | Redis | Redis (BullMQ) | Worker, after the answer |
@@ -116,8 +122,8 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 ## 7. Open Points
 
 - **Distance:**
-  - separate machines for PostgreSQL and Redis, or a simulated latency on the core;
-  - which round-trip time stands for "production" (same data center, or across zones).
+  - The proof uses PostgreSQL and Redis on a common remote stores Machine in `cdg`, with native RTT measured per deployment; the earlier separate-versus-simulated proof choice is settled.
+  - What distance the eventual production demonstration should represent remains tied to the production topology decision.
 - **Production topology:** whether the production demo moves to several API processes and remote stores for every run, or only for comparative runs, and what that costs per month.
 - **Presets:**
   - what the presets show: response times, turned-away buyers answered per second, database load, or several of these;
