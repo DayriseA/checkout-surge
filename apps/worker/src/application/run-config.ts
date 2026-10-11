@@ -1,10 +1,14 @@
 import type {
   AcceptedRunConfigSnapshot,
+  RunExecutionMode,
   TechnicalOrderFailureCode,
 } from "@checkout-surge/contracts";
 
 export interface RunConfigReader {
   read(runId: string): Promise<AcceptedRunConfigSnapshot | null>;
+  readAcceptedRun?(
+    runId: string,
+  ): Promise<{ snapshot: AcceptedRunConfigSnapshot; executionMode: RunExecutionMode } | null>;
 }
 
 export class MissingAcceptedRunSnapshotError extends Error {

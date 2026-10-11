@@ -1,10 +1,13 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderProcessJob, RunExecutionMode } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, orders } from "@checkout-surge/db";
 import { and, asc, eq, lte, sql } from "drizzle-orm";
 import type { OrderDispatchPersistence } from "../application/order-dispatch-scanner.js";
 
 export class PostgresOrderDispatchPersistence implements OrderDispatchPersistence {
-  constructor(private readonly db: CheckoutSurgeDatabase) {}
+  constructor(
+    private readonly db: CheckoutSurgeDatabase,
+    private readonly executionMode: RunExecutionMode = "demo",
+  ) {}
 
   async findQueuedOrdersForDispatch(input: {
     queuedBefore: Date;
@@ -30,6 +33,7 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
             exists (
               select 1 from demo_runs eligible_run
               where eligible_run.id = ${orders.runId}
+                and eligible_run.execution_mode = ${this.executionMode}
                 and eligible_run.status in ('starting', 'active', 'draining')
             )
           )`,

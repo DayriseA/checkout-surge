@@ -2,6 +2,7 @@ import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { describe, expect, it, vi } from "vitest";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
+import { createOrderDeliveryPause } from "../../src/runtime/order-delivery-pause.js";
 
 const data: OrderProcessJob = {
   runId: "44444444-4444-4444-8444-444444444444",
@@ -16,6 +17,36 @@ const data: OrderProcessJob = {
 };
 
 describe("adaptive ERP runtime admission", () => {
+  it.each([
+    "demo",
+    "without_redis",
+  ] as const)("routes %s capacity feedback to its actual delivery control", async (executionMode) => {
+    const pauseBullMqDelivery = vi.fn().mockResolvedValue(undefined);
+    const readAcceptedRun = vi
+      .fn()
+      .mockResolvedValue({ executionMode, snapshot: previewRunConfigSnapshotFixture() });
+    const admission = AdaptiveErpRuntimeAdmission.create({
+      pauseDelivery: createOrderDeliveryPause(pauseBullMqDelivery),
+      persistence: noSafetyPersistence(),
+      runConfigReader: {
+        read: vi.fn().mockRejectedValue(new Error("Additional configuration read")),
+        readAcceptedRun,
+      },
+      reconciliationConcurrency: 2,
+      now: () => 0,
+    });
+    const context = await admission.context(data);
+    const acquired = await admission.tryAcquire(context, "confirmation");
+    if (!acquired.admitted) throw new Error("Expected confirmation permit");
+    await admission.feedback(acquired.operation, confirmationOutcome("capacity_rejected"));
+    expect(readAcceptedRun).toHaveBeenCalledExactlyOnceWith(data.runId);
+    expect(pauseBullMqDelivery).toHaveBeenCalledTimes(executionMode === "demo" ? 1 : 0);
+    if (executionMode === "demo") expect(pauseBullMqDelivery).toHaveBeenCalledWith(60_000);
+    await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
+      admitted: false,
+      decision: { reason: "capacity_cooldown", nextEligibleAtMs: 60_000 },
+    });
+  });
   it("restores durable safety, isolates scopes, and exposes bounded live counters", async () => {
     let now = 1_000;
     const runId = "55555555-5555-4555-8555-555555555555";
@@ -109,7 +140,7 @@ describe("adaptive ERP runtime admission", () => {
       retryAfterMs: 1_000,
     });
     expect(events).toEqual(["persist", "pause"]);
-    expect(pauseDelivery).toHaveBeenCalledExactlyOnceWith(1_000);
+    expect(pauseDelivery).toHaveBeenCalledExactlyOnceWith(1_000, context);
     await expect(admission.tryAcquire(context, "confirmation")).resolves.toMatchObject({
       admitted: false,
       decision: { reason: "capacity_cooldown", nextEligibleAtMs: 1_000 },

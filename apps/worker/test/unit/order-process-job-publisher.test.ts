@@ -33,7 +33,7 @@ describe("worker order-processing job publisher", () => {
       },
       {
         publish: async ({ operation }) => {
-          return await operation();
+          return await operation(undefined as never);
         },
       },
     );
@@ -58,7 +58,7 @@ describe("worker order-processing job publisher", () => {
       },
       {
         publish: async ({ operation }) => {
-          return await operation();
+          return await operation(undefined as never);
         },
       },
     );
@@ -107,7 +107,7 @@ describe("worker order-processing job publisher", () => {
       },
       {
         publish: async ({ operation }) => {
-          return await operation();
+          return await operation(undefined as never);
         },
       },
     );
@@ -126,7 +126,7 @@ describe("worker order-processing job publisher", () => {
     const publisher = createOrderProcessJobPublisher(
       { rateLimit: async () => {}, add, close: vi.fn() },
       {
-        publish: vi.fn(async ({ operation }) => operation()),
+        publish: vi.fn(async ({ operation }) => operation(undefined as never)),
       },
     );
     await publisher.enqueue(runJob);

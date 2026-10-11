@@ -1,8 +1,10 @@
+import type { SqlClient } from "@checkout-surge/db";
+
 export interface GeneratedRunPublicationFence {
   publish<T>(input: {
     runId: string;
     saleOfferId: string;
-    operation: () => Promise<T>;
+    operation: (session: SqlClient) => Promise<T>;
   }): Promise<T>;
 }
 

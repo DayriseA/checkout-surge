@@ -17,7 +17,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
   async publish<T>(input: {
     runId: string;
     saleOfferId: string;
-    operation: () => Promise<T>;
+    operation: (session: SqlClient) => Promise<T>;
   }): Promise<T> {
     const client = (this.db as DatabaseWithClient).$client;
     const reservedClient = await client.reserve();
@@ -53,7 +53,7 @@ export class PostgresGeneratedRunPublicationFence implements GeneratedRunPublica
         throw new GeneratedRunPublicationRejectedError(input.runId, input.saleOfferId);
       }
 
-      return await input.operation();
+      return await input.operation(reservedClient as unknown as SqlClient);
     } finally {
       try {
         if (locked) {

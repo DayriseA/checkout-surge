@@ -1,4 +1,8 @@
-import type { OrderProcessJob, OrderWaitingReason } from "@checkout-surge/contracts";
+import type {
+  OrderProcessJob,
+  OrderWaitingReason,
+  RunExecutionMode,
+} from "@checkout-surge/contracts";
 import { destructiveResetReasonValues } from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
@@ -22,6 +26,7 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
   constructor(
     private readonly db: CheckoutSurgeDatabase,
     private readonly now: () => Date = () => new Date(),
+    private readonly executionMode: RunExecutionMode = "demo",
   ) {}
 
   async isTerminalResetRun(runId: string): Promise<boolean> {
@@ -116,6 +121,7 @@ export class PostgresOrderRecoveryPersistence implements OrderRecoveryPersistenc
             exists (
               select 1 from demo_runs eligible_run
               where eligible_run.id = ${orders.runId}
+                and eligible_run.execution_mode = ${this.executionMode}
                 and eligible_run.status in ('starting', 'active', 'draining')
             )
           )`,

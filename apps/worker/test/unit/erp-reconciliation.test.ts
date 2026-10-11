@@ -5,11 +5,13 @@ import type {
   ErpConfirmationOutcome,
   ErpLookupOutcome,
 } from "../../src/application/erp-confirmation-client.js";
+import { createErpDeclaredDispatchGate } from "../../src/application/erp-declared-dispatch-gate.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
 } from "../../src/application/erp-reconciliation.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
+import type { RunConfigReader } from "../../src/application/run-config.js";
 
 const job = {
   runId: "44444444-4444-4444-8444-444444444444",
@@ -40,6 +42,76 @@ const context = {
 };
 
 describe("adaptive ERP reconciliation", () => {
+  it("shares the declared POST quota between initial confirmation and unknown-call replay", async () => {
+    let now = 0;
+    const declaredDispatchGate = createErpDeclaredDispatchGate({
+      now: () => now,
+    });
+    const client = {
+      ...clientPort(lookupUnknown()),
+      findUnresolvedCall: vi.fn().mockResolvedValue(call),
+    };
+    client.dispatch.mockResolvedValue(dispatchedSuccess(false));
+    const snapshot = previewRunConfigSnapshotFixture();
+    snapshot.erpConfig.maxTps = 1;
+    const readAcceptedRun = vi.fn().mockResolvedValue({ snapshot, executionMode: "without_redis" });
+    const read = vi.fn().mockRejectedValue(new Error("Additional configuration read"));
+    const admission = runtimeAdmission(() => now, false, { read, readAcceptedRun });
+    const reconciler = new ErpUnresolvedCallReconciler({
+      client,
+      admission,
+      declaredDispatchGate,
+      callResolution: { resolveDispatchedCall: vi.fn() },
+    });
+    const defer = vi.fn().mockResolvedValue(true);
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      admission,
+      declaredDispatchGate,
+      reconciler,
+      control: { defer },
+    });
+    await expect(scheduled.confirm(job, delivery)).resolves.toEqual({ disposition: "succeeded" });
+    // A successful replay consumes the shared quota before fresh work in the same run.
+    const freshJob = { ...job, orderId: "55555555-5555-4555-8555-555555555555" };
+    client.findUnresolvedCall.mockResolvedValue(null);
+    await expect(scheduled.confirm(freshJob, delivery)).resolves.toMatchObject({
+      disposition: "deferred",
+      reason: "declared_dispatch_rate",
+      nextEligibleAt: new Date(1053),
+    });
+    expect(defer).toHaveBeenLastCalledWith({
+      orderId: freshJob.orderId,
+      processingGeneration: 3,
+      waitingReason: "local_admission",
+      nextEligibleAt: new Date(1053),
+    });
+    expect(client.dispatch).toHaveBeenCalledTimes(1);
+    expect(admission.state()).toMatchObject({ available: true, counters: { released: 1 } });
+    now = 1053;
+    await expect(scheduled.confirm(freshJob, delivery)).resolves.toEqual({
+      disposition: "succeeded",
+    });
+    expect(client.dispatch).toHaveBeenCalledTimes(2);
+    expect(readAcceptedRun).toHaveBeenCalledTimes(3);
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("leaves demo POST pacing to BullMQ", async () => {
+    const gate = createErpDeclaredDispatchGate({
+      now: () => 0,
+    });
+    const readAcceptedRun = vi
+      .fn()
+      .mockResolvedValue({ snapshot: previewRunConfigSnapshotFixture(), executionMode: "demo" });
+    const read = vi.fn().mockRejectedValue(new Error("Additional configuration read"));
+    const admission = runtimeAdmission(() => 0, false, { read, readAcceptedRun });
+    const admittedContext = await admission.context(job);
+    await expect(gate.tryAcquire(admittedContext)).resolves.toEqual({ admitted: true });
+    await expect(gate.tryAcquire(admittedContext)).resolves.toEqual({ admitted: true });
+    expect(readAcceptedRun).toHaveBeenCalledOnce();
+    expect(read).not.toHaveBeenCalled();
+  });
   it("adopts lookup success without a confirmation permit or POST", async () => {
     const client = clientPort(lookupSucceeded());
     const resolution = { resolveDispatchedCall: vi.fn().mockResolvedValue(true) };
@@ -101,14 +173,19 @@ describe("adaptive ERP reconciliation", () => {
     };
     const resolution = { resolveDispatchedCall: vi.fn() };
     const admission = runtimeAdmission();
+    const declaredDispatchGate = {
+      tryAcquire: vi.fn().mockRejectedValue(new Error("Lookup-only called POST gate")),
+    };
     const scheduled = new ScheduledErpOrderConfirmation({
       client,
       reconciler: new ErpUnresolvedCallReconciler({
         client,
         callResolution: resolution,
         admission,
+        declaredDispatchGate,
       }),
       admission,
+      declaredDispatchGate,
       control: { defer: vi.fn().mockResolvedValue(true) },
       allowDispatch: false,
     });
@@ -119,6 +196,7 @@ describe("adaptive ERP reconciliation", () => {
     expect(client.dispatch).not.toHaveBeenCalled();
     expect(client.lookup).toHaveBeenCalledTimes(unresolved ? 1 : 0);
     expect(resolution.resolveDispatchedCall).not.toHaveBeenCalled();
+    expect(declaredDispatchGate.tryAcquire).not.toHaveBeenCalled();
   });
 
   it("defers duplicate reconciliation without spending a second permit", async () => {
@@ -324,6 +402,7 @@ describe("adaptive ERP reconciliation", () => {
 function runtimeAdmission(
   now: () => number = () => 0,
   missingSnapshot = false,
+  runConfigReader?: RunConfigReader,
 ): AdaptiveErpRuntimeAdmission {
   return AdaptiveErpRuntimeAdmission.create({
     pauseDelivery: async () => {},
@@ -334,7 +413,7 @@ function runtimeAdmission(
       readReconciliationGate: async () => ({ pending: false, nextEligibleAtMs: 0 }),
       save: async () => undefined,
     },
-    runConfigReader: {
+    runConfigReader: runConfigReader ?? {
       read: async () => (missingSnapshot ? null : previewRunConfigSnapshotFixture()),
     },
     reconciliationConcurrency: 2,

@@ -12,6 +12,7 @@ import type {
   ErpLookupOutcome,
   HttpErpOrderConfirmation,
 } from "./erp-confirmation-client.js";
+import type { ErpDeclaredDispatchGate } from "./erp-declared-dispatch-gate.js";
 import type { ErpAdmissionScope } from "./erp-resilience-policy.js";
 import type {
   AdaptiveErpRuntimeAdmission,
@@ -59,6 +60,7 @@ export class ScheduledErpOrderConfirmation {
       >;
       reconciler: ErpUnresolvedCallReconciler;
       admission: AdaptiveErpRuntimeAdmission;
+      declaredDispatchGate?: ErpDeclaredDispatchGate;
       control: Pick<OrderRecoveryPersistence, "defer">;
       /** False allows local evidence and lookups only; no initial or replayed ERP POST. */
       allowDispatch?: boolean;
@@ -142,8 +144,12 @@ export class ScheduledErpOrderConfirmation {
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
     operation: AdmittedErpOperation,
-  ): Promise<ScheduledReconciliationResult> {
+  ): Promise<ErpReconciliationResult> {
     try {
+      const declared = await this.options.declaredDispatchGate?.tryAcquire(operation.context);
+      if (declared && !declared.admitted) {
+        return nonCallDeferral("declared_dispatch_rate", declared.nextEligibleAtMs);
+      }
       const outcome = await this.options.client.dispatch(
         job,
         delivery,
@@ -186,11 +192,13 @@ export class ScheduledErpOrderConfirmation {
         ? result.reason
         : (("errorCode" in result ? result.errorCode : undefined) ?? result.disposition);
     const waitingReason =
-      result.disposition === "capacity_rejected"
-        ? "erp_capacity"
-        : result.disposition === "uncertain_result"
-          ? "uncertain_result"
-          : "erp_unavailable";
+      result.operation === "non_call_deferral" && result.reason === "declared_dispatch_rate"
+        ? "local_admission"
+        : result.disposition === "capacity_rejected"
+          ? "erp_capacity"
+          : result.disposition === "uncertain_result"
+            ? "uncertain_result"
+            : "erp_unavailable";
     return this.deferAt(
       job,
       generation,
@@ -242,6 +250,7 @@ export class ErpUnresolvedCallReconciler {
         resolveDispatchedCall(input: { orderId: string; erpCallId: string }): Promise<boolean>;
       };
       admission: AdaptiveErpRuntimeAdmission;
+      declaredDispatchGate?: ErpDeclaredDispatchGate;
     },
   ) {}
 
@@ -360,6 +369,10 @@ export class ErpUnresolvedCallReconciler {
     const operation = admission.operation;
     const delivery = { ...input.delivery, supersedesErpCallId: input.call.erpCallId };
     try {
+      const declared = await this.options.declaredDispatchGate?.tryAcquire(input.context);
+      if (declared && !declared.admitted) {
+        return nonCallDeferral("declared_dispatch_rate", declared.nextEligibleAtMs);
+      }
       const outcome = await this.options.client.dispatch(
         input.job,
         delivery,

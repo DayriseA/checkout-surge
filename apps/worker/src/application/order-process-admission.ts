@@ -1,4 +1,4 @@
-import type { OrderProcessJob } from "@checkout-surge/contracts";
+import type { OrderProcessJob, RunExecutionMode } from "@checkout-surge/contracts";
 import type { ErpConfirmationOutcome, ErpLookupOutcome } from "./erp-confirmation-client.js";
 import {
   AdaptiveErpAdmissionController,
@@ -38,6 +38,7 @@ export interface AdaptiveErpSafetyPersistence {
 export interface ErpAdmissionContext {
   scope: ErpAdmissionScope;
   configuredConcurrency: number;
+  dispatch?: { executionMode: RunExecutionMode; maxTps: number };
 }
 
 export interface AdmittedErpOperation {
@@ -97,7 +98,7 @@ export class AdaptiveErpRuntimeAdmission {
     private readonly options: {
       controller: AdaptiveErpAdmissionController;
       deadlines: AdaptiveErpRequestDeadlineController;
-      pauseDelivery: (durationMs: number) => Promise<void>;
+      pauseDelivery: (durationMs: number, context: ErpAdmissionContext) => Promise<void>;
       persistence: AdaptiveErpSafetyPersistence;
       runConfigReader: RunConfigReader;
       reconciliationConcurrency: number;
@@ -106,7 +107,7 @@ export class AdaptiveErpRuntimeAdmission {
   ) {}
 
   static async restore(options: {
-    pauseDelivery: (durationMs: number) => Promise<void>;
+    pauseDelivery: (durationMs: number, context: ErpAdmissionContext) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
     reconciliationConcurrency: number;
@@ -139,7 +140,7 @@ export class AdaptiveErpRuntimeAdmission {
   }
 
   static create(options: {
-    pauseDelivery: (durationMs: number) => Promise<void>;
+    pauseDelivery: (durationMs: number, context: ErpAdmissionContext) => Promise<void>;
     persistence: AdaptiveErpSafetyPersistence;
     runConfigReader: RunConfigReader;
     reconciliationConcurrency: number;
@@ -168,11 +169,18 @@ export class AdaptiveErpRuntimeAdmission {
   }
 
   async context(job: OrderProcessJob): Promise<ErpAdmissionContext> {
-    const snapshot = await this.options.runConfigReader.read(job.runId);
+    const accepted = await this.options.runConfigReader.readAcceptedRun?.(job.runId);
+    const snapshot = this.options.runConfigReader.readAcceptedRun
+      ? accepted?.snapshot
+      : await this.options.runConfigReader.read(job.runId);
     if (!snapshot) throw new MissingAcceptedRunSnapshotError(job.runId);
     return {
       scope: `run:${job.runId}`,
       configuredConcurrency: snapshot.backpressureConfig.orderProcessConcurrency,
+      dispatch: {
+        executionMode: accepted?.executionMode ?? "demo",
+        maxTps: snapshot.erpConfig.maxTps,
+      },
     };
   }
 
@@ -265,7 +273,7 @@ export class AdaptiveErpRuntimeAdmission {
         ...this.options.controller.safetyState().scopes.map((scope) => scope.cooldownUntilMs),
       );
       const pauseMs = cooldownUntil - this.options.now();
-      if (pauseMs > 0) await this.options.pauseDelivery(pauseMs);
+      if (pauseMs > 0) await this.options.pauseDelivery(pauseMs, operation.context);
     }
     return { snapshot, nextEligibleAtMs: this.nextEligibleAt(snapshot) };
   }

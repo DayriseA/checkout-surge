@@ -141,9 +141,16 @@ describe("worker health server", () => {
 
 describe("worker readiness", () => {
   it("checks Redis and the consumer through injected boundaries", async () => {
+    const postgresOrderProcessConsumer = {
+      start: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+      isRunning: () => true,
+      checkConnectivity: vi.fn().mockResolvedValue(undefined),
+    };
     const readiness = createWorkerReadiness({
       postgres: { unsafe: vi.fn().mockResolvedValue([{ one: 1 }]) } as never,
       redis: { ping: vi.fn().mockResolvedValue("PONG") } as never,
+      postgresOrderProcessConsumer,
       orderProcessConsumer: {
         start: vi.fn(),
         close: vi.fn(),
@@ -163,9 +170,12 @@ describe("worker readiness", () => {
       { name: "redis_reachable", status: "ok" },
       { name: "order_process_worker_running", status: "ok" },
       { name: "order_process_queue_reachable", status: "ok" },
+      { name: "postgres_order_process_worker_running", status: "ok" },
+      { name: "postgres_order_process_queue_reachable", status: "ok" },
       { name: "notification_record_worker_running", status: "ok" },
       { name: "notification_record_queue_reachable", status: "ok" },
     ]);
+    expect(postgresOrderProcessConsumer.checkConnectivity).toHaveBeenCalledOnce();
   });
 
   it("reports Redis and consumer failures directly", async () => {
@@ -227,6 +237,37 @@ describe("worker runtime lifecycle", () => {
       } as never,
       healthHost: "127.0.0.1",
       healthPort: 0,
+      postgresOrderProcessConsumer: {
+        start: vi.fn(() => order.push("pg-consumer")),
+        close: vi.fn(async () => {
+          order.push("pg-consumer-closed");
+        }),
+        isRunning: () => true,
+        checkConnectivity: vi.fn().mockResolvedValue(undefined),
+      },
+      postgresOrderRecoveryScanner: {
+        scanOnce: vi.fn(async () => {
+          order.push("pg-startup-reconciliation");
+          return {
+            candidates: 0,
+            enqueued: 0,
+            failed: 0,
+            oldestAgeMs: null,
+            maxObservedAttempts: 0,
+          };
+        }),
+        start: vi.fn(() => order.push("pg-recovery-scanner")),
+        close: vi.fn(async () => {
+          order.push("pg-recovery-closed");
+        }),
+      },
+      postgresOrderDispatchScanner: {
+        scanOnce: vi.fn().mockResolvedValue({ candidates: 0, published: 0, failed: 0 }),
+        start: vi.fn(() => order.push("pg-dispatch-scanner")),
+        close: vi.fn(async () => {
+          order.push("pg-dispatch-closed");
+        }),
+      },
       orderProcessConsumer: {
         start: vi.fn(() => order.push("consumer")),
         close: vi.fn().mockResolvedValue(undefined),
@@ -261,12 +302,21 @@ describe("worker runtime lifecycle", () => {
     await runtime.start();
     expect(order).toEqual([
       "startup-reconciliation",
+      "pg-startup-reconciliation",
       "consumer",
+      "pg-consumer",
       "notifications",
       "recovery-scanner",
+      "pg-dispatch-scanner",
+      "pg-recovery-scanner",
       "health",
     ]);
     await runtime.close();
+    expect(order.slice(-3)).toEqual([
+      "pg-consumer-closed",
+      "pg-dispatch-closed",
+      "pg-recovery-closed",
+    ]);
   });
 
   it("closes serving and consuming boundaries before PostgreSQL and Redis", async () => {

@@ -159,7 +159,7 @@ describe("BullMQ order-processing boundary", () => {
     expect(handled).not.toHaveBeenCalled();
 
     const publisher = createOrderProcessJobPublisher(queue, {
-      publish: async ({ operation }) => operation(),
+      publish: async ({ operation }) => operation(undefined as never),
     });
     const recordDeadLetter = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderRecoveryScanner({
@@ -238,7 +238,7 @@ describe("BullMQ order-processing boundary", () => {
         recordDeadLetter: vi.fn(),
       },
       publisher: createOrderProcessJobPublisher(queue, {
-        publish: async ({ operation }) => operation(),
+        publish: async ({ operation }) => operation(undefined as never),
       }),
       deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
@@ -337,7 +337,7 @@ describe("BullMQ order-processing boundary", () => {
       persistence: recoveryPersistence,
       handler: { handle: vi.fn() },
       publisher: createOrderProcessJobPublisher(queue, {
-        publish: async ({ operation }) => operation(),
+        publish: async ({ operation }) => operation(undefined as never),
       }),
       deliveryStateReader: { isDeliveryPending: async () => false },
       logger: createSilentLogger("worker"),
@@ -427,7 +427,7 @@ describe("BullMQ notification-recording boundary", () => {
     const publisher = createBullMqNotificationRecordPublisher({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },
       attempts: 1,
-      publicationFence: { publish: async ({ operation }) => operation() },
+      publicationFence: { publish: async ({ operation }) => operation(undefined as never) },
     });
     consumer = createBullMqNotificationRecordConsumer({
       connection: { url: testRedisUrl(), maxRetriesPerRequest: null },

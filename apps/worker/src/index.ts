@@ -1,11 +1,13 @@
 import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
+  PostgresOrderDelivery,
   publishDashboardProjectionDirtySignal,
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { Redis } from "ioredis";
 import { HttpErpOrderConfirmation } from "./application/erp-confirmation-client.js";
+import { createErpDeclaredDispatchGate } from "./application/erp-declared-dispatch-gate.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
@@ -34,7 +36,10 @@ import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notificat
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+import { createPostgresOrderProcessConsumer } from "./queue/postgres-order-process-consumer.js";
+import { createPostgresOrderProcessJobPublisher } from "./queue/postgres-order-process-job-publisher.js";
 import { loadWorkerConfig } from "./runtime/config.js";
+import { createOrderDeliveryPause } from "./runtime/order-delivery-pause.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "./server.js";
@@ -88,6 +93,7 @@ export async function startWorker(): Promise<void> {
       );
     },
   });
+  // Both modes retain the same real notification transport; only stock and ORDER delivery differ.
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
       url: config.redisUrl,
@@ -103,6 +109,17 @@ export async function startWorker(): Promise<void> {
     publicationFence,
   );
   const orderRecoveryPersistence = new PostgresOrderRecoveryPersistence(database.db);
+  const postgresOrderRecoveryPersistence = new PostgresOrderRecoveryPersistence(
+    database.db,
+    undefined,
+    "without_redis",
+  );
+  const postgresOrderDelivery = new PostgresOrderDelivery(database.sql);
+  const postgresOrderPublisher = createPostgresOrderProcessJobPublisher({
+    sql: database.sql,
+    delivery: postgresOrderDelivery,
+    publicationFence,
+  });
   const orderTransitionPersistence = new PostgresOrderTransitionPersistence(
     database.db,
     undefined,
@@ -124,8 +141,18 @@ export async function startWorker(): Promise<void> {
     batchSize: config.orderDispatchBatchSize,
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
   });
+  const postgresOrderDispatchScanner = createOrderDispatchScanner({
+    persistence: new PostgresOrderDispatchPersistence(database.db, "without_redis"),
+    publisher: postgresOrderPublisher,
+    logger,
+    scanIntervalMs: config.orderDispatchScanIntervalMs,
+    batchSize: config.orderDispatchBatchSize,
+    minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
+  });
   const orderProcessAdmission = await AdaptiveErpRuntimeAdmission.restore({
-    pauseDelivery: (durationMs) => orderProcessJobPublisher.pauseDelivery(durationMs),
+    pauseDelivery: createOrderDeliveryPause((durationMs) =>
+      orderProcessJobPublisher.pauseDelivery(durationMs),
+    ),
     persistence: erpScopeState,
     runConfigReader,
     reconciliationConcurrency: config.orderProcessConcurrency,
@@ -141,15 +168,18 @@ export async function startWorker(): Promise<void> {
     logger,
     runConfigReader,
   });
+  const declaredDispatchGate = createErpDeclaredDispatchGate();
   const reconciler = new ErpUnresolvedCallReconciler({
     client: erpClient,
     callResolution: orderRecoveryPersistence,
     admission: orderProcessAdmission,
+    declaredDispatchGate,
   });
   const scheduledConfirmation = new ScheduledErpOrderConfirmation({
     client: erpClient,
     reconciler,
     admission: orderProcessAdmission,
+    declaredDispatchGate,
     control: orderRecoveryPersistence,
   });
   const orderProcessHandler = createOrderProcessJobHandler({
@@ -188,6 +218,27 @@ export async function startWorker(): Promise<void> {
     recovery: orderRecoveryPersistence,
     closeDeadlineMs: orderProcessCloseDeadlineMs,
   });
+  const postgresOrderRecoveryScanner = createOrderRecoveryScanner({
+    persistence: postgresOrderRecoveryPersistence,
+    handler: orderProcessHandler,
+    publisher: postgresOrderPublisher,
+    deliveryStateReader: postgresOrderPublisher,
+    logger,
+    scanIntervalMs: config.orderRecoveryScanIntervalMs,
+    batchSize: config.orderRecoveryBatchSize,
+    recoveryLeaseMs: config.orderRecoveryLeaseMs,
+  });
+  const postgresOrderProcessConsumer = createPostgresOrderProcessConsumer({
+    delivery: postgresOrderDelivery,
+    sql: database.sql,
+    handler: orderProcessHandler,
+    recovery: postgresOrderRecoveryPersistence,
+    logger,
+    concurrency: config.orderProcessConcurrency,
+    scanIntervalMs: config.orderDispatchScanIntervalMs,
+    leaseSeconds: Math.ceil(config.orderRecoveryLeaseMs / 1000),
+    closeDeadlineMs: orderProcessCloseDeadlineMs,
+  });
   const notificationRecordConsumer = createBullMqNotificationRecordConsumer({
     connection: {
       url: config.redisUrl,
@@ -213,6 +264,7 @@ export async function startWorker(): Promise<void> {
       postgres: database.sql,
       redis,
       orderProcessConsumer,
+      postgresOrderProcessConsumer,
       notificationRecordConsumer,
     }),
     startedAt: new Date(),
@@ -222,10 +274,13 @@ export async function startWorker(): Promise<void> {
     healthHost: config.healthHost,
     healthPort: config.healthPort,
     orderProcessConsumer,
+    postgresOrderProcessConsumer,
     notificationRecordConsumer,
     notificationRecoveryScanner,
     orderDispatchScanner,
     orderRecoveryScanner,
+    postgresOrderDispatchScanner,
+    postgresOrderRecoveryScanner,
     closeOrderProcessJobPublisher: orderProcessJobPublisher.close,
     closeNotificationRecordPublisher: notificationRecordPublisher.close,
     closeBusinessOutcomePublicationScheduler: () => businessOutcomePublications.close(),

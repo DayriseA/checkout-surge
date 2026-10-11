@@ -163,7 +163,7 @@ export function createOrderRecoveryScanner(dependencies: {
   scanIntervalMs: number;
   batchSize: number;
   recoveryLeaseMs?: number;
-  failedJobReader: FailedOrderJobReader;
+  failedJobReader?: FailedOrderJobReader;
   now?: () => Date;
 }): OrderRecoveryScanner {
   let timer: NodeJS.Timeout | null = null;
@@ -177,9 +177,8 @@ export function createOrderRecoveryScanner(dependencies: {
   const scanOnce = async () => {
     const now = dependencies.now?.() ?? new Date();
     await dependencies.persistence.reconcileTerminal();
-    const failedJobs = await dependencies.failedJobReader.findFailedOrderJobs(
-      dependencies.batchSize,
-    );
+    const failedJobs =
+      (await dependencies.failedJobReader?.findFailedOrderJobs(dependencies.batchSize)) ?? [];
     for (const failed of failedJobs) {
       if (failed.disposition === "dead_letter") {
         await dependencies.persistence.recordDeadLetter({

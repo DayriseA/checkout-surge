@@ -13,6 +13,7 @@ export function createWorkerReadiness(dependencies: {
   postgres: SqlClient;
   redis: Redis;
   orderProcessConsumer: OrderProcessConsumer;
+  postgresOrderProcessConsumer?: OrderProcessConsumer;
   notificationRecordConsumer: NotificationRecordConsumer;
 }): WorkerReadiness {
   return {
@@ -70,6 +71,29 @@ export function createWorkerReadiness(dependencies: {
       }
 
       const isNotificationConsumerRunning = dependencies.notificationRecordConsumer.isRunning();
+      if (dependencies.postgresOrderProcessConsumer) {
+        checks.push(
+          createReadinessCheck({
+            name: "postgres_order_process_worker_running",
+            status: dependencies.postgresOrderProcessConsumer.isRunning() ? "ok" : "unavailable",
+          }),
+        );
+        try {
+          await dependencies.postgresOrderProcessConsumer.checkConnectivity();
+          checks.push(
+            createReadinessCheck({ name: "postgres_order_process_queue_reachable", status: "ok" }),
+          );
+        } catch (error) {
+          checks.push(
+            createReadinessCheck({
+              name: "postgres_order_process_queue_reachable",
+              status: "unavailable",
+              message:
+                error instanceof Error ? error.message : "PostgreSQL order delivery check failed.",
+            }),
+          );
+        }
+      }
       checks.push(
         createReadinessCheck({
           name: "notification_record_worker_running",

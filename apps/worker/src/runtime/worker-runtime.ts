@@ -11,10 +11,13 @@ export function createWorkerRuntime(options: {
   healthHost: string;
   healthPort: number;
   orderProcessConsumer: OrderProcessConsumer;
+  postgresOrderProcessConsumer?: OrderProcessConsumer;
   notificationRecordConsumer: NotificationRecordConsumer;
   notificationRecoveryScanner?: NotificationRecoveryScanner;
   orderDispatchScanner?: OrderDispatchScanner;
   orderRecoveryScanner?: OrderRecoveryScanner;
+  postgresOrderDispatchScanner?: OrderDispatchScanner;
+  postgresOrderRecoveryScanner?: OrderRecoveryScanner;
   closeOrderProcessJobPublisher?: () => Promise<void>;
   closeNotificationRecordPublisher?: () => Promise<void>;
   closeBusinessOutcomePublicationScheduler?: () => Promise<void>;
@@ -37,11 +40,15 @@ export function createWorkerRuntime(options: {
 
       try {
         await options.orderRecoveryScanner?.scanOnce();
+        await options.postgresOrderRecoveryScanner?.scanOnce();
         options.orderProcessConsumer.start();
+        options.postgresOrderProcessConsumer?.start();
         options.notificationRecordConsumer.start();
         options.notificationRecoveryScanner?.start();
         options.orderDispatchScanner?.start();
         options.orderRecoveryScanner?.start();
+        options.postgresOrderDispatchScanner?.start();
+        options.postgresOrderRecoveryScanner?.start();
         await options.healthServer.listen({
           host: options.healthHost,
           port: options.healthPort,
@@ -91,6 +98,8 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
 
   await close(() => options.healthServer.close());
   await close(() => options.orderProcessConsumer.close());
+  const postgresOrderProcessConsumer = options.postgresOrderProcessConsumer;
+  if (postgresOrderProcessConsumer) await close(() => postgresOrderProcessConsumer.close());
   await close(() => options.notificationRecordConsumer.close());
   const notificationRecoveryScanner = options.notificationRecoveryScanner;
   if (notificationRecoveryScanner) {
@@ -104,6 +113,10 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
   if (orderRecoveryScanner) {
     await close(() => orderRecoveryScanner.close());
   }
+  const postgresOrderDispatchScanner = options.postgresOrderDispatchScanner;
+  if (postgresOrderDispatchScanner) await close(() => postgresOrderDispatchScanner.close());
+  const postgresOrderRecoveryScanner = options.postgresOrderRecoveryScanner;
+  if (postgresOrderRecoveryScanner) await close(() => postgresOrderRecoveryScanner.close());
   if (options.closeOrderProcessJobPublisher) {
     await close(options.closeOrderProcessJobPublisher);
   }

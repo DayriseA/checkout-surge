@@ -10,8 +10,12 @@ export class PostgresRunConfigReader implements RunConfigReader {
   constructor(private readonly db: CheckoutSurgeDatabase) {}
 
   async read(runId: string): Promise<AcceptedRunConfigSnapshot | null> {
+    return (await this.readAcceptedRun(runId))?.snapshot ?? null;
+  }
+
+  async readAcceptedRun(runId: string) {
     const [row] = await this.db
-      .select({ configSnapshot: demoRuns.configSnapshot })
+      .select({ configSnapshot: demoRuns.configSnapshot, executionMode: demoRuns.executionMode })
       .from(demoRuns)
       .where(eq(demoRuns.id, runId))
       .limit(1);
@@ -20,7 +24,10 @@ export class PostgresRunConfigReader implements RunConfigReader {
       return null;
     }
 
-    return parsePersistedRunConfig(runId, row.configSnapshot);
+    return {
+      snapshot: parsePersistedRunConfig(runId, row.configSnapshot),
+      executionMode: row.executionMode,
+    };
   }
 }
 
