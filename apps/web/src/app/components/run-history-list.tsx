@@ -13,6 +13,7 @@ import {
 } from "../lib/presentation/public-vocabulary";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import type { PresentationTone } from "../lib/presentation/run-presentation-state";
+import { ComparisonReportLink } from "./comparison-report-link";
 import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-styles";
 import { RelativeTime } from "./relative-time";
 import { RunHistoryDeleteAllButton } from "./run-history-delete-all-button";
@@ -111,7 +112,10 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
               {formatInstantUtc(summary.occurredAt) ?? summary.occurredAt}
             </span>
           </Link>
-          <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
+          <ComparisonReportLink comparisonId={summary.comparisonId} />
+          {!summary.comparisonId ? (
+            <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
+          ) : null}
         </div>
       </div>
       {!summary.dataDiscarded ? (

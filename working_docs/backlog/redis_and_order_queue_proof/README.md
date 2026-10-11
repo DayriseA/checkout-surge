@@ -49,6 +49,6 @@ Choices waiting for the owner, added by the agent with the task, the options and
 | 05 | [Mode without Redis](05_mode_without_redis.md) | 02, owner's go | in progress |
 | 06 | [Mode without the order queue](06_mode_without_order_queue.md) | 02, owner's go | in progress |
 | 07 | [Comparative presets and load generator](07_comparative_presets.md) | 03–06 | in progress |
-| 08 | [Comparative runs](08_comparative_runs.md) | 07 | todo |
+| 08 | [Comparative runs](08_comparative_runs.md) | 07 | in progress |
 | 09 | [Narrative and decisions](09_narrative.md) | 08 | todo |
 | 10 | [Production rollout](10_production_rollout.md) | 09 | todo |

@@ -51,6 +51,64 @@ function publicReport(detail: PublicRunHistoryDetailResponse) {
 }
 
 describe("run history", () => {
+  it("links comparison children and keeps select-all limited to ordinary runs", async () => {
+    const history = listFixture();
+    const ordinary = history.summaries[0];
+    if (!ordinary) throw new Error("Expected ordinary fixture");
+    const childId = "88888888-8888-4888-8888-888888888888";
+    const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    history.summaries = [ordinary, { ...ordinary, runId: childId, comparisonId: parentId }];
+    history.totalCount = 2;
+    getRunHistoryPage.mockResolvedValue({ status: "available", data: history });
+    hasValidAdminPageSession.mockResolvedValue(true);
+    render(await RunHistoryPage({}));
+    expect(screen.getByRole("link", { name: "View full comparison" }).getAttribute("href")).toBe(
+      `/comparisons/${parentId}`,
+    );
+    expect(screen.queryByRole("checkbox", { name: `Select run ${childId}` })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: `Delete run ${ordinary.presetName} (${childId})` }),
+    ).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all visible runs" }));
+    expect(screen.getByRole("button", { name: "Delete selected (1)" })).toBeTruthy();
+    expect(
+      (screen.getByRole("checkbox", { name: `Select run ${ordinary.runId}` }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    cleanup();
+  });
+
+  it.each([
+    false,
+    true,
+  ])("retains the parent link on public and admin comparison reports, discarded=%s", async (discarded) => {
+    const parentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const publicDetail = detailFixture(discarded ? "failed" : "completed");
+    const adminDetail = adminDetailFixture();
+    publicDetail.run.comparisonId = parentId;
+    adminDetail.run.comparisonId = parentId;
+    if (discarded) {
+      publicDetail.summary.dataDiscarded = true;
+      publicDetail.summary.failureCategory = "automatic_reset";
+      adminDetail.summary.dataDiscarded = true;
+      adminDetail.summary.status = "failed";
+      adminDetail.summary.failureCategory = "automatic_reset";
+    }
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: publicDetail });
+    getAdminRunHistoryDetail.mockResolvedValue({ status: "available", data: adminDetail });
+    for (const isAdmin of [false, true]) {
+      hasValidAdminPageSession.mockResolvedValue(isAdmin);
+      render(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: publicDetail.run.runId }) }),
+      );
+      expect(screen.getByRole("link", { name: "View full comparison" }).getAttribute("href")).toBe(
+        `/comparisons/${parentId}`,
+      );
+      expect(screen.queryByRole("button", { name: /^Delete run / })).toBeNull();
+      cleanup();
+    }
+  });
+
   it("puts the failure explanation before metrics and exposes raw evidence only to admins", () => {
     const publicDetail = detailFixture("failed");
     publicDetail.failureDiagnostic = { cause: "virtual_user_limit", maxVus: 4000 };

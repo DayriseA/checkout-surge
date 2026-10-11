@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { textLinkClassName } from "../components/control-styles";
+import { PublicComparisonEntry } from "../components/public-comparison-entry";
 import { PublicDemoEntry } from "../components/public-demo-entry";
 import { getPublicDemoSurface } from "../lib/api";
 
@@ -19,6 +20,7 @@ export default async function DemoDashboardPage() {
           Choose a simulation, start it, and watch the system handle a release of buyers.
         </p>
       </header>
+      <PublicComparisonEntry />
       <PublicDemoEntry surface={surface} />
       <section
         aria-labelledby="demo-mental-model"

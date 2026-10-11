@@ -31,6 +31,7 @@ import {
   hasUnknownTrafficCounts,
   trafficEvidenceUnavailableText,
 } from "../lib/presentation/traffic-evidence";
+import { ComparisonReportLink } from "./comparison-report-link";
 import { ConfigGroup, FieldRow } from "./config-presentation";
 import { neutralLinkButtonClassName } from "./control-styles";
 import { GoldSignals, PublicSignalChart } from "./gold-signals";
@@ -58,7 +59,12 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
     return (
       <DiscardedRunDetail
         actions={actions}
-        navigation={navigation}
+        navigation={
+          <>
+            {navigation}
+            <ComparisonReportLink comparisonId={run.comparisonId} />
+          </>
+        }
         presetName={summary.presetName}
         trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}
         automatic={summary.failureCategory === "automatic_reset"}
@@ -78,6 +84,7 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   return (
     <div className="grid grid-cols-1 gap-4">
       {navigation}
+      <ComparisonReportLink comparisonId={run.comparisonId} />
       <header className="rounded-2xl border border-border bg-surface px-5 py-3.5 max-[560px]:px-4 min-[900px]:sticky min-[900px]:top-14 min-[900px]:z-[5] min-[900px]:shadow-[0_8px_24px_-18px_rgb(13_27_42/0.5)]">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -450,9 +457,12 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
     return (
       <DiscardedRunDetail
         navigation={
-          <Link className={neutralLinkButtonClassName} href="/run-history">
-            Back to run history
-          </Link>
+          <>
+            <Link className={neutralLinkButtonClassName} href="/run-history">
+              Back to run history
+            </Link>
+            <ComparisonReportLink comparisonId={run.comparisonId} />
+          </>
         }
         presetName={summary.presetName}
         trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}

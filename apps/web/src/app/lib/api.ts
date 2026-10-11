@@ -2,6 +2,9 @@ import {
   type AdminRunHistoryDetailResponse,
   adminRunHistoryDetailPath,
   adminRunHistoryDetailResponseSchema,
+  type ComparisonDetailResponse,
+  comparisonDetailPath,
+  comparisonDetailResponseSchema,
   controlServiceTokenHeaderName,
   type DashboardProjection,
   type HealthResponse,
@@ -15,17 +18,21 @@ import {
   publicRunHistoryDetailResponseSchema,
   publicRuntimePolicyPath,
   publicRuntimePolicyResponseSchema,
+  publicVisitorIdHeaderName,
   type RunHistoryListResponse,
   runHistoryDetailPath,
   runHistoryListResponseSchema,
   runHistoryPath,
 } from "@checkout-surge/contracts";
+import { publicVisitorCookieName } from "@checkout-surge/contracts/public-visitor-credential";
+import { cookies } from "next/headers";
 import {
   type BackendRead,
   type CompletedBackendRead,
   type ContractSchema,
   readBackendResponse,
 } from "./backend-read";
+import { comparisonReportMissing } from "./presentation/comparison";
 import { webServerConfig } from "./server/config";
 
 export type { BackendRead, CompletedBackendRead } from "./backend-read";
@@ -136,6 +143,21 @@ export async function getRunHistoryDetail(
     `${apiBaseUrl()}${runHistoryDetailPath(runId)}`,
     publicRunHistoryDetailResponseSchema,
   );
+}
+
+export async function getComparisonDetail(
+  comparisonId: string,
+): Promise<CompletedBackendRead<ComparisonDetailResponse>> {
+  const visitorCredential = (await cookies()).get(publicVisitorCookieName)?.value;
+  const read = await readJson(
+    `${apiBaseUrl()}${comparisonDetailPath(comparisonId)}`,
+    comparisonDetailResponseSchema.refine((detail) => detail.comparisonId === comparisonId),
+    visitorCredential ? { [publicVisitorIdHeaderName]: visitorCredential } : {},
+  );
+  // Preserve only the canonical absence status needed to stop client report checks.
+  return comparisonReportMissing(read)
+    ? { status: "unavailable", httpStatus: 404, errorCode: "resource_not_found" }
+    : publicRead(read);
 }
 
 export async function getAdminRunHistoryDetail(

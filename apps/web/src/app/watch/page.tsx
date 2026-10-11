@@ -1,8 +1,15 @@
-import { type RunHistoryListItem, runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
+import {
+  comparisonDetailParamsSchema,
+  type RunHistoryListItem,
+  runHistoryDetailParamsSchema,
+} from "@checkout-surge/contracts";
 import type { Metadata } from "next";
+import Link from "next/link";
+import { ComparisonWatch } from "../components/comparison-watch";
 import { OperatorDashboard } from "../components/operator-dashboard";
 import {
   type BackendRead,
+  getComparisonDetail,
   getRunHistoryDetail,
   getRunHistoryPage,
   pendingDashboardRecovery,
@@ -18,12 +25,25 @@ export const dynamic = "force-dynamic";
 export default async function WatchPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ acceptedRunId?: string | string[] }>;
+  searchParams?: Promise<{ acceptedRunId?: string | string[]; comparisonId?: string | string[] }>;
 } = {}) {
-  const acceptedRunId = (await searchParams)?.acceptedRunId;
+  const query = await searchParams;
+  const acceptedRunId = query?.acceptedRunId;
+  const comparisonId = query?.comparisonId;
+  if (comparisonId !== undefined) {
+    const parsed = comparisonDetailParamsSchema.safeParse({ comparisonId });
+    if (!parsed.success || acceptedRunId !== undefined) return <InvalidWatchLink />;
+    return (
+      <ComparisonWatch
+        comparisonId={parsed.data.comparisonId}
+        initialRead={await getComparisonDetail(parsed.data.comparisonId)}
+      />
+    );
+  }
   const hasAcceptedContext = acceptedRunId !== undefined;
   const parsedAcceptedRun = runHistoryDetailParamsSchema.safeParse({ runId: acceptedRunId });
   const invalidAcceptedRunContext = hasAcceptedContext && !parsedAcceptedRun.success;
+  if (invalidAcceptedRunContext) return <InvalidWatchLink />;
   let acceptedResult: AcceptedRunResult | undefined;
   let latestCompletedRun: BackendRead<RunHistoryListItem | null> = {
     status: "available",
@@ -61,5 +81,18 @@ export default async function WatchPage({
         latestCompletedRun={latestCompletedRun}
       />
     </>
+  );
+}
+
+function InvalidWatchLink() {
+  return (
+    <section className="rounded-2xl border border-warning-line bg-warning-soft p-5">
+      <h1 className="type-title m-0 text-xl">This Watch link is invalid</h1>
+      <p>This link does not identify a saved run or comparison. No result has been selected.</p>
+      <div className="flex gap-4">
+        <Link href="/run-history">Open run history</Link>
+        <Link href="/demo">Choose a simulation</Link>
+      </div>
+    </section>
   );
 }

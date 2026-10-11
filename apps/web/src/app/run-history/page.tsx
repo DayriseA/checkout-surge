@@ -81,7 +81,11 @@ function HistorySurface({
   }
 
   return (
-    <RunHistoryAdminControls visibleRunIds={history.summaries.map((summary) => summary.runId)}>
+    <RunHistoryAdminControls
+      visibleRunIds={history.summaries
+        .filter((summary) => !summary.comparisonId)
+        .map((summary) => summary.runId)}
+    >
       {list}
     </RunHistoryAdminControls>
   );

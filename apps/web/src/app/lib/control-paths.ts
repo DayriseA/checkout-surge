@@ -5,6 +5,10 @@ export const coreActivityProxyPath = "/api/core/activity" as const;
 export const demoRunEstimateProxyPath = "/api/demo/runs/estimate" as const;
 export const adminDemoRunEstimateProxyPath = "/api/admin/demo/runs/estimate" as const;
 export const demoRunStartProxyPath = "/api/demo/runs/start" as const;
+export const comparisonStartProxyPath = "/api/demo/comparisons/start" as const;
+export function comparisonDetailProxyPath(comparisonId: string): string {
+  return `/api/demo/comparisons/${encodeURIComponent(comparisonId)}`;
+}
 export function publicRunHistoryDetailProxyPath(runId: string): string {
   return `/api/demo/runs/history/${encodeURIComponent(runId)}`;
 }

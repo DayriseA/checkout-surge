@@ -2,6 +2,7 @@ import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ComparisonReportLink } from "../../components/comparison-report-link";
 import { neutralLinkButtonClassName, textLinkClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
@@ -57,6 +58,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
           <Link className={neutralLinkButtonClassName} href="/run-history">
             Back to run history
           </Link>
+          <ComparisonReportLink comparisonId={publicDetail.data.run.comparisonId} />
           <h1 className="type-display m-0 mt-4 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
             {summary.presetName}
           </h1>
@@ -94,15 +96,17 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
       <RunHistoryAdminControls
         showBulkControls={false}
         showSelectionToolbar={false}
-        visibleRunIds={[adminDetail.data.summary.runId]}
+        visibleRunIds={adminDetail.data.run.comparisonId ? [] : [adminDetail.data.summary.runId]}
       >
         <AdminRunHistoryDetail
           actions={
-            <RunHistoryRowControls
-              presetName={adminDetail.data.summary.presetName}
-              runId={adminDetail.data.summary.runId}
-              showSelection={false}
-            />
+            !adminDetail.data.run.comparisonId ? (
+              <RunHistoryRowControls
+                presetName={adminDetail.data.summary.presetName}
+                runId={adminDetail.data.summary.runId}
+                showSelection={false}
+              />
+            ) : null
           }
           detail={adminDetail.data}
           navigation={
