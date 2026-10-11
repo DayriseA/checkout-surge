@@ -33,6 +33,11 @@ describe("API runtime configuration", () => {
   });
   it("defaults to combined ownership and requires explicit distinct peers for split roles", () => {
     const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" };
+    expect(loadApiConfig(env).workerBaseUrl).toBe("http://localhost:4300");
+    expect(loadApiConfig({ ...env, WORKER_BASE_URL: "http://worker:4300" }).workerBaseUrl).toBe(
+      "http://worker:4300",
+    );
+    expect(() => loadApiConfig({ ...env, WORKER_BASE_URL: "invalid" })).toThrow("WORKER_BASE_URL");
     expect(loadApiConfig(env).role).toBe("combined");
     expect(
       loadApiConfig({ ...env, API_ROLE: "buyer", API_CONTROL_BASE_URL: "http://control:4000" })

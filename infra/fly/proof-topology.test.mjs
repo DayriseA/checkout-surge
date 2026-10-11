@@ -21,6 +21,8 @@ test("proof moves stores out and installs one authority with three buyers and pr
     ["4001", "4002", "4003"],
   );
   assert.ok(buyers.every((c) => c.env.API_CONTROL_BASE_URL === "http://127.0.0.1:4000"));
+  assert.equal(control.env.WORKER_BASE_URL, "http://127.0.0.1:4300");
+  assert.ok(buyers.every((c) => c.env.WORKER_BASE_URL === control.env.WORKER_BASE_URL));
   assert.ok(buyers.every((c) => !c.env.CORE_IDLE_STOP_ENABLED && !c.env.RUNNER_FLY_APP));
   assert.ok(control.cmd[2].includes("[$FLY_PRIVATE_IP]:4004"));
   assert.equal(

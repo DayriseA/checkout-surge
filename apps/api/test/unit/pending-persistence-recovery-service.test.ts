@@ -8,6 +8,7 @@ import {
   PendingPersistenceRecoveryService,
   type PendingPersistenceRecoveryStorage,
 } from "../../src/services/pending-persistence-recovery-service.js";
+import type { BuyPersistence } from "../../src/services/reserve-order-service.js";
 import { passThroughRunLocks } from "../pass-through-run-locks.js";
 
 const hold: SecuredReservationHold & { runId: string } = {
@@ -212,6 +213,106 @@ function audit() {
 }
 
 describe("PendingPersistenceRecoveryService", () => {
+  it.each([
+    false,
+    true,
+  ])("skips inline ORDER publication on materialization/adoption=%s and hands off only after session close", async (adopt) => {
+    const pending = pendingRedis();
+    const durable = persisted();
+    const enqueue = vi.fn();
+    let locked = false;
+    let closed = false;
+    const recoverInlineOrder = vi.fn(async () => {
+      expect(locked).toBe(false);
+      expect(closed).toBe(true);
+      throw new Error("Injected lost handoff");
+    });
+    const persistence: BuyPersistence = {
+      ...passThroughRunLocks,
+      getPersistedBuyByReservationId: async () => (adopt ? durable : null),
+      persistSecuredReservation: vi.fn(async () => durable),
+      withRunPendingPersistenceLock: async (input) => {
+        locked = true;
+        try {
+          return await input.operation(persistence, "admissible");
+        } finally {
+          locked = false;
+        }
+      },
+    };
+    const recoveryAudit = audit();
+    const service = new PendingPersistenceRecoveryService({
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
+      persistence,
+      audit: recoveryAudit,
+      stockReservations: { promoteAccepted: async () => {} },
+      orderProcessJobPublisher: { enqueue },
+      listRunScopes: async () => [
+        { runId: hold.runId, saleOfferId: hold.saleOfferId, executionMode: "without_order_queue" },
+      ],
+      openAttemptScope: async () => ({
+        persistence,
+        audit: recoveryAudit,
+        stockReservations: { promoteAccepted: async () => {} },
+        close: async () => {
+          closed = true;
+        },
+      }),
+      recoverInlineOrder,
+      idempotencyTtlSeconds: 1800,
+      logger: createSilentLogger("api"),
+      now: () => new Date(hold.securedAt),
+    });
+    await expect(service.runOnce()).resolves.toMatchObject({
+      resolved: 1,
+      materialized: adopt ? 0 : 1,
+    });
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(recoverInlineOrder).toHaveBeenCalledOnce();
+    expect(recoveryAudit.recordAttempt).toHaveBeenCalledOnce();
+  });
+
+  it("returns direct inline recovery after scope close without waiting on the scheduled worker handoff", async () => {
+    const pending = pendingRedis();
+    const durable = persisted();
+    const enqueue = vi.fn();
+    const recoverInlineOrder = vi.fn();
+    const scopeClose = vi.fn(async () => {});
+    const persistence = {
+      ...passThroughRunLocks,
+      getPersistedBuyByReservationId: async () => durable,
+      persistSecuredReservation: async () => durable,
+    };
+    const service = new PendingPersistenceRecoveryService({
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
+      persistence,
+      audit: audit(),
+      stockReservations: { promoteAccepted: async () => {} },
+      orderProcessJobPublisher: { enqueue },
+      listRunScopes: async () => [],
+      resolveRunScope: async () => ({
+        runId: hold.runId,
+        saleOfferId: hold.saleOfferId,
+        executionMode: "without_order_queue",
+      }),
+      openAttemptScope: async () => ({
+        persistence,
+        audit: audit(),
+        stockReservations: { promoteAccepted: async () => {} },
+        close: scopeClose,
+      }),
+      recoverInlineOrder,
+      idempotencyTtlSeconds: 1800,
+      logger: createSilentLogger("api"),
+      now: () => new Date(hold.securedAt),
+    });
+    await expect(
+      service.recoverReservation({ reservation: hold, idempotencyKey: "recovery-key" }),
+    ).resolves.toEqual(durable);
+    expect(scopeClose).toHaveBeenCalledOnce();
+    expect(enqueue).not.toHaveBeenCalled();
+    expect(recoverInlineOrder).not.toHaveBeenCalled();
+  });
   it("is the run-scoped owner that materializes, deterministically enqueues, and promotes", async () => {
     const pending = pendingRedis();
     const durable = persisted();

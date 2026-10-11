@@ -19,6 +19,7 @@ export const composeApiHealthcheckTimeoutMs = 3_000;
 export interface ApiConfig {
   role?: "combined" | "control" | "buyer";
   controlBaseUrl?: string;
+  workerBaseUrl: string;
   buyerBaseUrls?: string[];
   host: string;
   port: number;
@@ -103,6 +104,7 @@ const unsafePublicClientCookieSecrets = new Set(["change-me-public-client-cookie
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   const config: ApiConfig = {
     ...loadApiRole(env),
+    workerBaseUrl: parseUrl(env.WORKER_BASE_URL, "WORKER_BASE_URL", "http://localhost:4300"),
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4000),
     listenBacklog: parsePositiveInteger(env.API_LISTEN_BACKLOG, "API_LISTEN_BACKLOG", 8192),

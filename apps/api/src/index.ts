@@ -71,6 +71,7 @@ import {
 import { FlyRunnerHost } from "./services/fly-runner-host.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
+import { HttpInlineOrderConfirmation } from "./services/http-inline-order-confirmation.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
 import { DemoRunQueueLimits } from "./services/order-process-queue-limits.js";
 import { OrderStatusService } from "./services/order-status-service.js";
@@ -185,6 +186,10 @@ export async function startApiServer(): Promise<void> {
     redisUrl: config.redisUrl,
     discoveryTimeoutMs: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
   });
+  const inlineConfirmation = new HttpInlineOrderConfirmation({
+    baseUrl: config.workerBaseUrl,
+    controlServiceToken: config.controlServiceToken,
+  });
   const pendingPersistenceRecovery = new PendingPersistenceRecoveryService({
     storage: pendingPersistenceOperations.storage,
     persistence,
@@ -195,6 +200,14 @@ export async function startApiServer(): Promise<void> {
     },
     stockReservations: stockReservationGateway,
     orderProcessJobPublisher,
+    recoverInlineOrder: (persisted) =>
+      inlineConfirmation.recover({
+        orderId: persisted.order.id,
+        reservationId: persisted.reservation.id,
+        saleOfferId: persisted.order.saleOfferId,
+        runId: persisted.order.runId,
+        correlationId: persisted.order.correlationId,
+      }),
     openDiscoveryScope: (signal) => pendingPersistenceOperations.openDiscoveryScope(signal),
     listRunScopes: (signal) => pendingPersistenceOperations.listRunScopes(signal),
     resolveRunScope: (reservation) => pendingPersistenceOperations.resolveRunScope(reservation),
@@ -268,6 +281,7 @@ export async function startApiServer(): Promise<void> {
     maintenanceAuthority,
   });
   const adminDemoReset = new AdminDemoResetService({
+    inlineConfirmation,
     inventory: runInventory,
     queueLimits,
     db: connection.db,
@@ -350,20 +364,23 @@ export async function startApiServer(): Promise<void> {
     liveMetricDrops: trafficMetricIngestion,
     completedOrderJobs: demoQueueMaintenance,
   });
+  const reserveOrderOptions: Omit<
+    Parameters<typeof createReserveOrderService>[0],
+    "orderProcessJobPublisher" | "inlineConfirmation"
+  > = {
+    persistence,
+    stockReservations: stockReservationGateway,
+    reservationHoldMinutes: config.reservationHoldMinutes,
+    idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+    pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+    pendingPersistenceRecovery,
+    dashboardSourceDirtyScheduler,
+    soldOutObservations: dashboardSourceDirtyScheduler,
+    reservationTimingObservations: reservationTiming,
+    publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
+  };
   const reserveOrderService = createReserveOrderService(
-    {
-      persistence,
-      orderProcessJobPublisher,
-      stockReservations: stockReservationGateway,
-      reservationHoldMinutes: config.reservationHoldMinutes,
-      idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-      pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-      pendingPersistenceRecovery,
-      dashboardSourceDirtyScheduler,
-      soldOutObservations: dashboardSourceDirtyScheduler,
-      reservationTimingObservations: reservationTiming,
-      publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
-    },
+    { ...reserveOrderOptions, orderProcessJobPublisher },
     logger,
   );
 
@@ -371,6 +388,10 @@ export async function startApiServer(): Promise<void> {
     reader: new PostgresBuyingRunContextReader(connection.db),
     services: {
       demo: reserveOrderService,
+      without_order_queue: createReserveOrderService(
+        { ...reserveOrderOptions, inlineConfirmation },
+        logger,
+      ),
       without_redis: createPostgresReserveOrderService(
         connection,
         {

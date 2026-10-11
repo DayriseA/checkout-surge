@@ -56,6 +56,7 @@ export function configureProofTopology(config, environment) {
         HOST: "127.0.0.1",
         PORT: String(port),
         API_ROLE: "buyer",
+        WORKER_BASE_URL: "http://127.0.0.1:4300",
         API_CONTROL_BASE_URL: "http://127.0.0.1:4000",
         API_LISTEN_BACKLOG: "8192",
         API_POSTGRES_POOL_MAX: "10",

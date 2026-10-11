@@ -245,6 +245,35 @@ it.each([
   expect(rootDisconnect).toHaveBeenCalledOnce();
 });
 
+it("omits the physical ORDER publisher from a Redis inline recovery attempt", async () => {
+  const closeDatabase = vi.fn(async () => undefined);
+  const disconnect = vi.fn();
+  const createPublisher = vi.fn(() => {
+    throw new Error("Inline must not construct ORDER publisher");
+  });
+  const operations = createPendingPersistenceRecoveryOperations(pendingPersistenceConfig(), {
+    createRedis: () => redisClient(disconnect),
+    createPublisher,
+    createDatabase: () =>
+      ({
+        db: {} as CheckoutSurgeDatabase,
+        sql: {},
+        close: closeDatabase,
+        abort: closeDatabase,
+      }) as unknown as AbortableDatabaseConnection,
+  });
+  const scope = await operations.openAttemptScope({
+    executionMode: "without_order_queue",
+    signal: new AbortController().signal,
+    timeoutMs: 100,
+  });
+  expect(scope.orderProcessJobPublisher).toBeUndefined();
+  expect(createPublisher).not.toHaveBeenCalled();
+  await scope.close();
+  await operations.close();
+  expect(closeDatabase).toHaveBeenCalledOnce();
+});
+
 describe("terminal inventory read operation", () => {
   it("disconnects its Redis client when the bounded in-fence read is aborted", async () => {
     const disconnect = vi.fn();

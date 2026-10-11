@@ -104,6 +104,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
       reservationTiming?: ReservationTimingLifecycle;
       resetWorkflowFence: DemoResetWorkflowFence;
       maintenanceAuthority: DemoMaintenanceAuthority;
+      inlineConfirmation?: { cancelRun(runId: string, correlationId: string): Promise<void> };
       deleteGeneratedRunRedisState?: typeof deleteGeneratedRunRedisState;
       purgeResetRunDurable?: typeof purgeResetRunDurable;
       now?: () => Date;
@@ -275,6 +276,11 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
     }
 
     for (const row of fencedRuns) {
+      if (row.run.executionMode === "without_order_queue") {
+        if (!this.options.inlineConfirmation)
+          throw new Error("Inline run reset requires worker cancellation.");
+        await this.options.inlineConfirmation.cancelRun(row.run.id, correlationId);
+      }
       if (row.reason === "auto_reset") {
         this.options.logger.info(
           { runId: row.run.id, correlationId },

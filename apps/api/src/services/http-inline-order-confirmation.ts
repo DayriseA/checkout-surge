@@ -1,8 +1,11 @@
 import {
   controlServiceTokenHeaderName,
+  type InlineConfirmationRequest,
   type InlineConfirmationResult,
+  inlineConfirmationCancelRunPath,
   inlineConfirmationPath,
   inlineConfirmationProcessingWindowMs,
+  inlineConfirmationRecoveryPath,
   inlineConfirmationRequestSchema,
   inlineConfirmationResultSchema,
   inlineConfirmationStatusPath,
@@ -20,6 +23,34 @@ export class HttpInlineOrderConfirmation implements InlineOrderConfirmation {
       now?: () => number;
     },
   ) {}
+
+  async recover(request: InlineConfirmationRequest): Promise<void> {
+    await this.controlPost(inlineConfirmationRecoveryPath, request, 3_000);
+  }
+
+  async cancelRun(runId: string, correlationId: string): Promise<void> {
+    await this.controlPost(inlineConfirmationCancelRunPath, { runId }, 1_000, correlationId);
+  }
+
+  private async controlPost(
+    path: string,
+    body: object,
+    timeoutMs: number,
+    correlationId?: string,
+  ): Promise<void> {
+    const response = await fetch(new URL(path, this.options.baseUrl), {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [controlServiceTokenHeaderName]: this.options.controlServiceToken,
+        ...(correlationId ? { "x-correlation-id": correlationId } : {}),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!response.ok) throw new Error(`Worker control returned HTTP ${response.status}.`);
+    await response.arrayBuffer();
+  }
 
   async confirm(
     input: Parameters<InlineOrderConfirmation["confirm"]>[0],

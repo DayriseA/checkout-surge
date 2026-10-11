@@ -255,12 +255,14 @@ export function createPendingPersistenceRecoveryOperations(
         });
         acquiredCleanup.push(() => operationRedis?.disconnect());
 
-        publisher = infrastructure.createPublisher({
-          url: config.redisUrl,
-          maxRetriesPerRequest: 0,
-          commandTimeout: timeoutMs,
-        });
-        acquiredCleanup.push(() => publisher?.abort());
+        if (executionMode !== "without_order_queue") {
+          publisher = infrastructure.createPublisher({
+            url: config.redisUrl,
+            maxRetriesPerRequest: 0,
+            commandTimeout: timeoutMs,
+          });
+          acquiredCleanup.push(() => publisher?.abort());
+        }
       } catch (constructionError) {
         await failAfterResourceConstruction(
           constructionError,
@@ -271,7 +273,6 @@ export function createPendingPersistenceRecoveryOperations(
 
       const operationDatabase = requireResource(database, "pending-persistence database");
       const attemptRedis = requireResource(operationRedis, "pending-persistence Redis client");
-      const attemptPublisher = requireResource(publisher, "pending-persistence publisher");
       const persistence = new PostgresBuyPersistence(operationDatabase.db, signal);
       return {
         persistence,
@@ -284,7 +285,7 @@ export function createPendingPersistenceRecoveryOperations(
           promoteAccepted: (input) =>
             promoteReservationIdempotencyToAccepted(attemptRedis, input).then(() => undefined),
         },
-        orderProcessJobPublisher: attemptPublisher,
+        ...(publisher ? { orderProcessJobPublisher: publisher } : {}),
         close: createOperationResourceCleanup({
           signal,
           operations: acquiredCleanup,

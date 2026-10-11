@@ -55,11 +55,17 @@ type ScopedPendingPersistenceRecord = PendingPersistenceRecord & {
   executionMode: RunExecutionMode;
 };
 
+type PendingPersistenceAttemptResult = {
+  persisted: PersistedBuyAcceptance;
+  materialized: boolean;
+  inlineRecoveryEligible: boolean;
+};
+
 export interface PendingPersistenceAttemptScope {
   persistence: BuyPersistence;
   audit: PendingPersistenceRecoveryAudit;
   stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
-  orderProcessJobPublisher: OrderProcessJobPublisher;
+  orderProcessJobPublisher?: OrderProcessJobPublisher;
   close(): Promise<void>;
 }
 
@@ -124,7 +130,7 @@ export class PendingPersistenceRecoveryService {
   private readonly directRecoveries = new Set<Promise<PersistedBuyAcceptance | null>>();
   private readonly attemptsByReservation = new Map<
     string,
-    Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null>
+    Promise<PendingPersistenceAttemptResult | null>
   >();
   private closed = false;
   private activeDirectAttemptCount = 0;
@@ -137,6 +143,7 @@ export class PendingPersistenceRecoveryService {
       audit: PendingPersistenceRecoveryAudit;
       stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
       orderProcessJobPublisher: OrderProcessJobPublisher;
+      recoverInlineOrder?: (persisted: PersistedBuyAcceptance) => Promise<void>;
       listRunScopes: (signal: AbortSignal) => Promise<PendingPersistenceRunScope[]>;
       resolveRunScope?: (
         reservation: SecuredReservationHold,
@@ -309,6 +316,18 @@ export class PendingPersistenceRecoveryService {
       if (result) {
         summary.resolved += 1;
         if (result.materialized) summary.materialized += 1;
+        // attemptRecord has settled and its attempt scope/session has closed.
+        // This best-effort lookup handoff never consumes the direct buyer RPC.
+        if (result.inlineRecoveryEligible && !this.closed) {
+          try {
+            await this.options.recoverInlineOrder?.(result.persisted);
+          } catch (error) {
+            this.options.logger.warn(
+              { err: error, runId: record.runId, reservationId: record.id },
+              "Inline recovery handoff failed; durable discovery remains authoritative.",
+            );
+          }
+        }
       } else {
         if (this.closed) break;
         const refreshed = await this.readRecord(record);
@@ -354,7 +373,7 @@ export class PendingPersistenceRecoveryService {
     record: ScopedPendingPersistenceRecord,
     now: Date,
     admission: "scheduler" | "direct",
-  ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null> {
+  ): Promise<PendingPersistenceAttemptResult | null> {
     if (this.closed) return null;
     const attemptKey = `${record.saleOfferId}:${record.id}`;
     const activeAttempt = this.attemptsByReservation.get(attemptKey);
@@ -380,7 +399,7 @@ export class PendingPersistenceRecoveryService {
   private async attemptRecordExclusive(
     record: ScopedPendingPersistenceRecord,
     now: Date,
-  ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean } | null> {
+  ): Promise<PendingPersistenceAttemptResult | null> {
     const reservation = toReservation(record);
     const idempotencyKey = idempotencyKeySchema.parse(record.idempotencyKey);
     const deadline = this.recoveryDeadline(record);
@@ -438,7 +457,7 @@ export class PendingPersistenceRecoveryService {
       return null;
     }
     let auditResolved = false;
-    let recoveryResult: { persisted: PersistedBuyAcceptance; materialized: boolean } | undefined;
+    let recoveryResult: PendingPersistenceAttemptResult | undefined;
     try {
       recoveryResult = await this.withPendingPersistenceLock(
         reservation,
@@ -449,6 +468,7 @@ export class PendingPersistenceRecoveryService {
             persistence,
             runDisposition,
             scope.orderProcessJobPublisher,
+            record.executionMode,
           ),
       );
       this.scheduleQueueSnapshot(reservation);
@@ -629,8 +649,9 @@ export class PendingPersistenceRecoveryService {
     reservation: SecuredReservationHold,
     persistence: BuyPersistenceOperations,
     runDisposition: "admissible" | "terminal" | "invalid",
-    orderProcessJobPublisher: OrderProcessJobPublisher,
-  ): Promise<{ persisted: PersistedBuyAcceptance; materialized: boolean }> {
+    orderProcessJobPublisher: OrderProcessJobPublisher | undefined,
+    executionMode: RunExecutionMode,
+  ): Promise<PendingPersistenceAttemptResult> {
     let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
     let materialized = false;
     if (persisted && !isPersistedBuyForReservation(persisted, reservation)) {
@@ -654,9 +675,17 @@ export class PendingPersistenceRecoveryService {
     if (runDisposition === "invalid") {
       throw new Error("Durable buy exists, but its run/sale ownership is invalid.");
     }
-    const job = toOrderProcessJob(persisted);
-    await orderProcessJobPublisher.enqueue(job);
-    return { persisted, materialized };
+    if (executionMode !== "without_order_queue") {
+      if (!orderProcessJobPublisher)
+        throw new Error("Queued pending recovery requires its publisher.");
+      await orderProcessJobPublisher.enqueue(toOrderProcessJob(persisted));
+    }
+    return {
+      persisted,
+      materialized,
+      inlineRecoveryEligible:
+        executionMode === "without_order_queue" && runDisposition === "admissible",
+    };
   }
 
   private async withPendingPersistenceLock<T>(

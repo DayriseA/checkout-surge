@@ -23,6 +23,7 @@ import {
 import { BuyerRequestDrain } from "../services/buyer-request-drain.js";
 import { prepareBuyerRun } from "../services/buyer-run-preparation.js";
 import { DashboardSourceDirtyScheduler } from "../services/dashboard-source-dirty-scheduler.js";
+import { HttpInlineOrderConfirmation } from "../services/http-inline-order-confirmation.js";
 import { HttpPendingPersistenceRecovery } from "../services/http-pending-persistence-recovery.js";
 import { PostgresBuyPersistence } from "../services/postgres-buy-persistence.js";
 import { QueueStatusService } from "../services/queue-status-service.js";
@@ -100,35 +101,48 @@ export async function startBuyerApiServer(config: ApiConfig): Promise<void> {
     new RedisReservationTimingStore(redis),
     logger,
   );
-  const service = createReserveOrderService(
-    {
-      persistence: new PostgresBuyPersistence(connection.db),
-      stockReservations: {
-        reserve: (input) => reserveInventoryStock(redis, input),
-        markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
-        promoteAccepted: (input) =>
-          promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
-        reverse: (input) => reverseReservation(redis, input),
-      },
-      orderProcessJobPublisher: publisher,
-      pendingPersistenceRecovery: new HttpPendingPersistenceRecovery({
-        baseUrl: config.controlBaseUrl,
-        controlServiceToken: config.controlServiceToken,
-      }),
-      reservationHoldMinutes: config.reservationHoldMinutes,
-      idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-      pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-      dashboardSourceDirtyScheduler: sourceDirty,
-      soldOutObservations: sourceDirty,
-      reservationTimingObservations: timing,
-      publishBusinessOutcomeUpdate: async (input) => businessOutcomes.markDirty(input),
+  const reserveOrderOptions: Omit<
+    Parameters<typeof createReserveOrderService>[0],
+    "orderProcessJobPublisher" | "inlineConfirmation"
+  > = {
+    persistence: new PostgresBuyPersistence(connection.db),
+    stockReservations: {
+      reserve: (input) => reserveInventoryStock(redis, input),
+      markPendingPersistence: (input) => markReservationPendingPersistence(redis, input),
+      promoteAccepted: (input) =>
+        promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
+      reverse: (input) => reverseReservation(redis, input),
     },
+    pendingPersistenceRecovery: new HttpPendingPersistenceRecovery({
+      baseUrl: config.controlBaseUrl,
+      controlServiceToken: config.controlServiceToken,
+    }),
+    reservationHoldMinutes: config.reservationHoldMinutes,
+    idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+    pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+    dashboardSourceDirtyScheduler: sourceDirty,
+    soldOutObservations: sourceDirty,
+    reservationTimingObservations: timing,
+    publishBusinessOutcomeUpdate: async (input) => businessOutcomes.markDirty(input),
+  };
+  const service = createReserveOrderService(
+    { ...reserveOrderOptions, orderProcessJobPublisher: publisher },
     logger,
   );
   const context = new ActiveBuyingRunContext({
     reader: new PostgresBuyingRunContextReader(connection.db),
     services: {
       demo: service,
+      without_order_queue: createReserveOrderService(
+        {
+          ...reserveOrderOptions,
+          inlineConfirmation: new HttpInlineOrderConfirmation({
+            baseUrl: config.workerBaseUrl,
+            controlServiceToken: config.controlServiceToken,
+          }),
+        },
+        logger,
+      ),
       without_redis: createPostgresReserveOrderService(
         connection,
         {
