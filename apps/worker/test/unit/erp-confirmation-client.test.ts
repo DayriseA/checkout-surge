@@ -6,12 +6,14 @@ import {
   ErpAcceptedConfirmationPersistenceError,
   type ErpAttemptPersistence,
   ErpConfirmationInvalidResponseError,
+  ErpRequestStoppedBeforeFetchError,
   HttpErpOrderConfirmation,
 } from "../../src/application/erp-confirmation-client.js";
 import { erpResiliencePolicy } from "../../src/application/erp-resilience-policy.js";
 import type { OrderProcessDeliveryMetadata } from "../../src/application/order-process-job-handler.js";
+import type { RunConfigReader } from "../../src/application/run-config.js";
 
-// Confirmation calls always run on the adaptive policy's chosen deadline.
+// Confirmation calls use the adaptive policy's deadline unless a processing budget is shorter.
 const deadlineMs = erpResiliencePolicy.initialRequestDeadlineMs;
 
 const job = {
@@ -400,6 +402,187 @@ describe("HTTP ERP confirmation outcomes", () => {
   });
 });
 
+describe("ERP processing budget", () => {
+  it.each([
+    ["before configuration", "cancelled"],
+    ["before configuration", "deadline_expired"],
+    ["during configuration", "cancelled"],
+    ["during configuration", "deadline_expired"],
+    ["during intent", "cancelled"],
+    ["during intent", "deadline_expired"],
+  ] as const)("stops %s when %s without POST or fabricated outcome", async (stage, reason) => {
+    let nowMs = 0;
+    const controller = new AbortController();
+    const config = deferred<Awaited<ReturnType<RunConfigReader["read"]>>>();
+    const intent = deferred<ErpCallReference>();
+    const read = vi.fn(() => config.promise);
+    const persistence = attemptPersistence();
+    persistence.recordDispatchIntent = vi.fn(() => intent.promise);
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const client = createClient({
+      persistence,
+      fetch,
+      runConfigReader: { read },
+      now: () => new Date(nowMs),
+    });
+    const stop = () => {
+      if (reason === "cancelled") controller.abort(new Error("run closed"));
+      else nowMs = 100;
+    };
+    if (stage === "before configuration") stop();
+    const result = client.dispatch(job, delivery, deadlineMs, {
+      deadlineAt: new Date(100),
+      signal: controller.signal,
+    });
+    const error = result.catch((caught: unknown) => caught);
+    if (stage === "during configuration") stop();
+    config.resolve(previewRunConfigSnapshotFixture());
+    if (stage === "during intent") {
+      await config.promise;
+      expect(persistence.recordDispatchIntent).toHaveBeenCalledOnce();
+      stop();
+    }
+    intent.resolve(call);
+
+    expect(await error).toBeInstanceOf(ErpRequestStoppedBeforeFetchError);
+    expect(await error).toMatchObject({
+      reason,
+      call: stage === "during intent" ? call : undefined,
+    });
+    expect(read).toHaveBeenCalledTimes(stage === "before configuration" ? 0 : 1);
+    expect(persistence.recordDispatchIntent).toHaveBeenCalledTimes(
+      stage === "during intent" ? 1 : 0,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(persistence.recordAttempt).not.toHaveBeenCalled();
+  });
+
+  it("caps POST wait by time remaining after durable intent", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    try {
+      const persistence = attemptPersistence();
+      persistence.recordDispatchIntent = vi.fn(async () => {
+        vi.setSystemTime(80);
+        return call;
+      });
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, "removeEventListener");
+      const client = createClient({ persistence, fetch: abortableFetch(), now: () => new Date() });
+      const result = client.dispatch(job, delivery, deadlineMs, {
+        deadlineAt: new Date(100),
+        signal: controller.signal,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(19);
+      expect(persistence.recordAttempt).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(result).resolves.toMatchObject({
+        disposition: "uncertain_result",
+        requestDeadlineMs: 20,
+        errorCode: "erp_request_timeout",
+      });
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    "dispatch",
+    "lookup",
+  ] as const)("cancels in-flight %s and cleans its resources", async (operation) => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, "removeEventListener");
+      const persistence = attemptPersistence();
+      const client = createClient({ persistence, fetch: abortableFetch(), now: () => new Date(0) });
+      const budget = { deadlineAt: new Date(100), signal: controller.signal };
+      const result =
+        operation === "dispatch"
+          ? client.dispatch(job, delivery, deadlineMs, budget)
+          : client.lookup(call.idempotencyKey, job.correlationId, budget);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort(new Error("run closed"));
+      await expect(result).resolves.toMatchObject({
+        disposition: operation === "dispatch" ? "uncertain_result" : "temporarily_unavailable",
+      });
+      if (operation === "dispatch") {
+        expect(persistence.recordDispatchIntent).toHaveBeenCalledOnce();
+        expect(persistence.recordAttempt).toHaveBeenCalledWith(
+          expect.objectContaining({
+            call,
+            terminal: false,
+            disposition: "uncertain_result",
+          }),
+        );
+      } else expect(persistence.recordAttempt).not.toHaveBeenCalled();
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    false,
+    true,
+  ])("adopts late canonical success, including persistence failure=%s", async (failsPersistence) => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, "removeEventListener");
+      const persistence = attemptPersistence();
+      if (failsPersistence) {
+        persistence.recordAttempt = vi.fn().mockRejectedValue(new Error("database unavailable"));
+      }
+      const response = deferred<Response>();
+      const client = createClient({
+        persistence,
+        now: () => new Date(0),
+        fetch: vi.fn<typeof fetch>(() => response.promise),
+      });
+      const result = client.dispatch(job, delivery, deadlineMs, {
+        deadlineAt: new Date(100),
+        signal: controller.signal,
+      });
+      const caught = result.catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(0);
+      controller.abort();
+      response.resolve(jsonResponse(successResponse(), 200));
+      if (failsPersistence) {
+        expect(await caught).toBeInstanceOf(ErpAcceptedConfirmationPersistenceError);
+        expect(await caught).toMatchObject({
+          record: { status: "succeeded", response: successResponse() },
+        });
+      } else await expect(result).resolves.toMatchObject({ disposition: "succeeded" });
+      expect(remove).toHaveBeenCalledWith("abort", expect.any(Function));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+function abortableFetch(): typeof fetch {
+  return vi.fn<typeof fetch>(
+    (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+      }),
+  );
+}
+
+function deferred<Value>() {
+  let resolve!: (value: Value) => void;
+  const promise = new Promise<Value>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
 function createClient(
   options: {
     persistence?: ErpAttemptPersistence;
@@ -407,10 +590,13 @@ function createClient(
     logger?: Pick<CheckoutSurgeLogger, "warn"> & Partial<Pick<CheckoutSurgeLogger, "info">>;
     lookupTimeoutMs?: number;
     now?: () => Date;
+    runConfigReader?: RunConfigReader;
   } = {},
 ): HttpErpOrderConfirmation {
   return new HttpErpOrderConfirmation({
-    runConfigReader: { read: async () => previewRunConfigSnapshotFixture() },
+    runConfigReader: options.runConfigReader ?? {
+      read: async () => previewRunConfigSnapshotFixture(),
+    },
     baseUrl: "http://mock-erp:4100",
     lookupTimeoutMs: options.lookupTimeoutMs ?? 1_000,
     retryAfterPolicy: { fallbackDelayMs: 750, maximumDelayMs: 5_000 },

@@ -24,6 +24,22 @@ import {
 
 export type ErpOperationKind = "dispatched_confirmation" | "status_lookup" | "non_call_deferral";
 
+export interface ErpProcessingBudget {
+  deadlineAt: Date;
+  signal: AbortSignal;
+}
+
+/** Local cancellation is not an observed ERP request or latency sample. */
+export class ErpRequestStoppedBeforeFetchError extends Error {
+  override readonly name = "ErpRequestStoppedBeforeFetchError";
+  constructor(
+    readonly reason: "cancelled" | "deadline_expired",
+    readonly call?: ErpCallReference,
+  ) {
+    super(`The ERP request stopped before fetch: ${reason}.`);
+  }
+}
+
 export interface ErpAttemptRecord {
   job: OrderProcessJob;
   delivery: OrderProcessDeliveryMetadata;
@@ -204,13 +220,15 @@ export class HttpErpOrderConfirmation {
     job: OrderProcessJob,
     delivery: OrderProcessDeliveryMetadata,
     requestDeadlineMs: number,
+    budget?: ErpProcessingBudget,
   ): Promise<ErpConfirmationOutcome> {
+    this.remainingProcessingMs(budget);
     if (!Number.isFinite(requestDeadlineMs) || requestDeadlineMs <= 0) {
       throw new Error("ERP request deadline must be a positive finite number.");
     }
     const runConfig = await this.options.runConfigReader.read(job.runId);
+    this.remainingProcessingMs(budget);
     if (!runConfig) throw new MissingAcceptedRunSnapshotError(job.runId);
-    const timeoutMs = requestDeadlineMs;
     const startedAt = this.now();
     const call = await this.recordDispatchIntent({
       job,
@@ -221,7 +239,11 @@ export class HttpErpOrderConfirmation {
         ? { supersedesErpCallId: delivery.supersedesErpCallId }
         : {}),
     });
+    // A cancelled intent stays unresolved: no HTTP outcome exists to resolve it.
+    const timeoutMs = Math.min(requestDeadlineMs, this.remainingProcessingMs(budget, call));
     const controller = new AbortController();
+    const onAbort = () => controller.abort();
+    budget?.signal.addEventListener("abort", onAbort, { once: true });
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetch(this.confirmationUrl, {
@@ -257,7 +279,7 @@ export class HttpErpOrderConfirmation {
     } catch (error) {
       if (isKnownClientError(error)) throw error;
       const finishedAt = this.now();
-      const timedOut = isAbortError(error);
+      const timedOut = controller.signal.aborted || isAbortError(error);
       const outcome: ErpConfirmationOutcome = {
         disposition: timedOut ? "uncertain_result" : "temporarily_unavailable",
         operation: "dispatched_confirmation",
@@ -280,13 +302,21 @@ export class HttpErpOrderConfirmation {
       return outcome;
     } finally {
       clearTimeout(timeout);
+      budget?.signal.removeEventListener("abort", onAbort);
     }
   }
 
-  async lookup(idempotencyKey: string, correlationId: string): Promise<ErpLookupOutcome> {
+  async lookup(
+    idempotencyKey: string,
+    correlationId: string,
+    budget?: ErpProcessingBudget,
+  ): Promise<ErpLookupOutcome> {
+    const timeoutMs = Math.min(this.options.lookupTimeoutMs, this.remainingProcessingMs(budget));
     const startedAt = this.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.options.lookupTimeoutMs);
+    const onAbort = () => controller.abort();
+    budget?.signal.addEventListener("abort", onAbort, { once: true });
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const url = new URL(this.lookupUrl);
       url.pathname = erpConfirmationLookupPath.replace(
@@ -337,13 +367,25 @@ export class HttpErpOrderConfirmation {
         startedAt,
         finishedAt,
         latencyMs: elapsedMs(startedAt, finishedAt),
-        errorCode: isAbortError(error) ? "erp_lookup_timeout" : "erp_lookup_failed",
+        errorCode:
+          controller.signal.aborted || isAbortError(error)
+            ? "erp_lookup_timeout"
+            : "erp_lookup_failed",
         errorMessage: error instanceof Error ? error.message : "The ERP lookup failed.",
         cause: error,
       };
     } finally {
       clearTimeout(timeout);
+      budget?.signal.removeEventListener("abort", onAbort);
     }
+  }
+
+  private remainingProcessingMs(budget?: ErpProcessingBudget, call?: ErpCallReference): number {
+    if (!budget) return Number.POSITIVE_INFINITY;
+    if (budget.signal.aborted) throw new ErpRequestStoppedBeforeFetchError("cancelled", call);
+    const remainingMs = budget.deadlineAt.getTime() - this.now().getTime();
+    if (remainingMs <= 0) throw new ErpRequestStoppedBeforeFetchError("deadline_expired", call);
+    return remainingMs;
   }
 
   findSuccessfulAttempt(job: OrderProcessJob): Promise<ReusableErpConfirmationAttempt | null> {
