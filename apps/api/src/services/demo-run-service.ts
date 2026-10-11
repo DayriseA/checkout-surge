@@ -139,6 +139,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       deploymentCapacity: DeploymentCapacity;
       now?: () => Date;
       generateId?: () => string;
+      onRunAccepted?: (runId: string) => Promise<void>;
     },
   ) {}
 
@@ -191,6 +192,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         reservePublicBudget,
       );
       const saleOfferId = requireRunSaleOfferId(accepted.run);
+      await this.options.onRunAccepted?.(accepted.run.runId);
       await this.removePreviousRunInventories();
 
       try {

@@ -39,6 +39,7 @@ export interface ReservationTimingStore {
 }
 
 export interface TerminalReservationTimingReader {
+  prepare?(runId: string): Promise<void>;
   readAndFence(runId: string): Promise<ServerReservationTimingSummary>;
 }
 
@@ -50,6 +51,7 @@ export class ReservationTimingObservationScheduler implements ReservationTimingO
   private readonly pending = new Map<string, ReservationTimingAggregate>();
   private scheduledDrain: NodeJS.Immediate | null = null;
   private drainInFlight: Promise<void> | null = null;
+  private mergeFailureGeneration = 0;
 
   constructor(
     private readonly store: ReservationTimingStore,
@@ -84,6 +86,11 @@ export class ReservationTimingObservationScheduler implements ReservationTimingO
     this.pending.delete(runId);
     await this.flush();
     await this.store.clearRun(runId);
+  }
+
+  async flushAndReadFailureGeneration(): Promise<number> {
+    await this.flush();
+    return this.mergeFailureGeneration;
   }
 
   async close(): Promise<void> {
@@ -121,6 +128,7 @@ export class ReservationTimingObservationScheduler implements ReservationTimingO
             );
           }
         } catch (error) {
+          this.mergeFailureGeneration += 1;
           this.logger.warn(
             { err: error, runId },
             "Could not persist advisory reservation timing observations.",

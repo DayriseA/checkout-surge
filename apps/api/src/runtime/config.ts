@@ -17,6 +17,9 @@ import { pendingPersistenceRecoveryDefaults } from "./pending-persistence-recove
 export const composeApiHealthcheckTimeoutMs = 3_000;
 
 export interface ApiConfig {
+  role?: "combined" | "control" | "buyer";
+  controlBaseUrl?: string;
+  buyerBaseUrls?: string[];
   host: string;
   port: number;
   listenBacklog: number;
@@ -96,6 +99,7 @@ const unsafePublicClientCookieSecrets = new Set(["change-me-public-client-cookie
 
 export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
   const config: ApiConfig = {
+    ...loadApiRole(env),
     host: env.HOST?.trim() || "0.0.0.0",
     port: parsePositiveInteger(env.PORT, "PORT", 4000),
     listenBacklog: parsePositiveInteger(env.API_LISTEN_BACKLOG, "API_LISTEN_BACKLOG", 8192),
@@ -350,6 +354,52 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     );
   }
   return config;
+}
+
+function loadApiRole(
+  env: NodeJS.ProcessEnv,
+): Pick<ApiConfig, "role" | "controlBaseUrl" | "buyerBaseUrls"> {
+  const role = env.API_ROLE?.trim() || "combined";
+  if (role !== "combined" && role !== "control" && role !== "buyer") {
+    throw new Error("API_ROLE must be combined, control, or buyer.");
+  }
+  const controlBaseUrl = env.API_CONTROL_BASE_URL?.trim();
+  const buyerBaseUrls = (env.API_BUYER_BASE_URLS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const value of [controlBaseUrl, ...buyerBaseUrls].filter((value): value is string =>
+    Boolean(value),
+  )) {
+    const url = new URL(value);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      url.pathname !== "/"
+    ) {
+      throw new Error("API peer URLs must be HTTP origins without credentials.");
+    }
+  }
+  if (role === "buyer" && (!controlBaseUrl || buyerBaseUrls.length > 0)) {
+    throw new Error(
+      "Buyer API requires API_CONTROL_BASE_URL and cannot configure API_BUYER_BASE_URLS.",
+    );
+  }
+  if (role === "control" && (!buyerBaseUrls.length || controlBaseUrl)) {
+    throw new Error(
+      "Control API requires API_BUYER_BASE_URLS and cannot configure API_CONTROL_BASE_URL.",
+    );
+  }
+  if (role === "combined" && (controlBaseUrl || buyerBaseUrls.length)) {
+    throw new Error("Combined API cannot configure API peer URLs.");
+  }
+  if (new Set(buyerBaseUrls.map((value) => new URL(value).origin)).size !== buyerBaseUrls.length) {
+    throw new Error("API_BUYER_BASE_URLS must contain distinct origins.");
+  }
+  return { role, ...(controlBaseUrl ? { controlBaseUrl } : {}), buyerBaseUrls };
 }
 
 function requireStrongSecret(env: NodeJS.ProcessEnv, name: string): string {

@@ -12,6 +12,33 @@ const baseEnv = {
 };
 
 describe("API runtime configuration", () => {
+  it("defaults to combined ownership and requires explicit distinct peers for split roles", () => {
+    const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token" };
+    expect(loadApiConfig(env).role).toBe("combined");
+    expect(
+      loadApiConfig({ ...env, API_ROLE: "buyer", API_CONTROL_BASE_URL: "http://control:4000" })
+        .role,
+    ).toBe("buyer");
+    expect(
+      loadApiConfig({
+        ...env,
+        API_ROLE: "control",
+        API_BUYER_BASE_URLS: "http://buyer1:4001,http://buyer2:4002",
+      }).buyerBaseUrls,
+    ).toHaveLength(2);
+    expect(() => loadApiConfig({ ...env, API_ROLE: "buyer" })).toThrow(/API_CONTROL_BASE_URL/);
+    expect(() => loadApiConfig({ ...env, API_ROLE: "control" })).toThrow(/API_BUYER_BASE_URLS/);
+    expect(() => loadApiConfig({ ...env, API_BUYER_BASE_URLS: "http://buyer:4001" })).toThrow(
+      /Combined/,
+    );
+    expect(() =>
+      loadApiConfig({
+        ...env,
+        API_ROLE: "control",
+        API_BUYER_BASE_URLS: "http://buyer:4001,http://buyer:4001/",
+      }),
+    ).toThrow(/distinct/);
+  });
   it("requires Redis configuration for production composition", () => {
     expect(() =>
       loadApiConfig({ NODE_ENV: "test", DATABASE_URL: "postgresql://localhost/test" }),

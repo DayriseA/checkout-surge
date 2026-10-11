@@ -28,7 +28,9 @@ import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-pro
 import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboard-dirty-signal-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
+import { startBuyerApiServer } from "./runtime/buyer-api-runtime.js";
 import { type ApiConfig, loadApiConfig } from "./runtime/config.js";
+import { createReserveOrderService } from "./runtime/create-reserve-order-service.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import { warnWhenListenBacklogIsCapped } from "./runtime/listen-backlog-ceiling.js";
@@ -38,6 +40,7 @@ import { createTerminalInventoryReadOperation } from "./runtime/terminal-invento
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
+import { BuyerReservationTimingBarrier } from "./services/buyer-reservation-timing-barrier.js";
 import {
   type CoreIdleShutdown,
   CoreIdleStop,
@@ -76,12 +79,6 @@ import {
   RedisReservationTimingStore,
   ReservationTimingObservationScheduler,
 } from "./services/reservation-timing-observation.js";
-import {
-  type BusinessOutcomeUpdateFailureReport,
-  type OrderEnqueueFailureReport,
-  type ReservationPartialFailureReport,
-  ReserveOrderService,
-} from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
 import { alwaysOnRunnerHost, type RunnerHost } from "./services/runner-host.js";
 import { PostgresMonitoredRunReader, RunnerLossMonitor } from "./services/runner-loss-monitor.js";
@@ -96,6 +93,7 @@ const terminalInventoryReadTimeoutMs = 2_000;
 
 export async function startApiServer(): Promise<void> {
   const config = loadApiConfig(process.env);
+  if (config.role === "buyer") return startBuyerApiServer(config);
   const logger = createServiceLogger({ service: "api" });
   const connection = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
   const resetWorkflowSql = createSqlClient(config.databaseUrl, { max: 1 });
@@ -213,6 +211,15 @@ export async function startApiServer(): Promise<void> {
     new RedisReservationTimingStore(redis),
     logger,
   );
+  const peerReservationTiming =
+    config.role === "control"
+      ? new BuyerReservationTimingBarrier({
+          buyerBaseUrls: config.buyerBaseUrls ?? [],
+          controlServiceToken: config.controlServiceToken,
+          local: reservationTiming,
+          logger,
+        })
+      : undefined;
   const trafficMetricIngestion = new TrafficMetricIngestionService({
     db: connection.db,
     store: trafficMetricStore,
@@ -269,7 +276,7 @@ export async function startApiServer(): Promise<void> {
         await trafficMetricStore.clearRun(runId);
       },
     },
-    reservationTiming,
+    reservationTiming: peerReservationTiming ?? reservationTiming,
     resetWorkflowFence: new PostgresDemoResetWorkflowFence(resetWorkflowSql),
     maintenanceAuthority,
     deleteGeneratedRunRedisState,
@@ -328,7 +335,7 @@ export async function startApiServer(): Promise<void> {
       timeoutMs: terminalInventoryReadTimeoutMs,
     }),
     terminalInventoryReadTimeoutMs,
-    reservationTiming,
+    reservationTiming: peerReservationTiming ?? reservationTiming,
     liveMetricDrops: trafficMetricIngestion,
     completedOrderJobs: demoQueueMaintenance,
   });
@@ -338,6 +345,9 @@ export async function startApiServer(): Promise<void> {
     deploymentHardCaps: config.deploymentHardCaps,
   });
   const demoRunLifecycleService = new DemoRunLifecycleService({
+    ...(peerReservationTiming
+      ? { onRunAccepted: (runId: string) => peerReservationTiming.captureBaseline(runId) }
+      : {}),
     maintenanceAuthority,
     queueLimits,
     db: connection.db,
@@ -382,56 +392,22 @@ export async function startApiServer(): Promise<void> {
     finalizationService: demoRunFinalizationService,
     logger,
   });
-  const reserveOrderService = new ReserveOrderService({
-    persistence,
-    orderProcessJobPublisher,
-    stockReservations: stockReservationGateway,
-    reservationHoldMinutes: config.reservationHoldMinutes,
-    idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-    pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-    pendingPersistenceRecovery,
-    dashboardSourceDirtyScheduler,
-    soldOutObservations: dashboardSourceDirtyScheduler,
-    reservationTimingObservations: reservationTiming,
-    reportPersistenceFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Redis secured a reservation but PostgreSQL persistence failed.",
-      );
+  const reserveOrderService = createReserveOrderService(
+    {
+      persistence,
+      orderProcessJobPublisher,
+      stockReservations: stockReservationGateway,
+      reservationHoldMinutes: config.reservationHoldMinutes,
+      idempotencyTtlSeconds: config.idempotencyTtlSeconds,
+      pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
+      pendingPersistenceRecovery,
+      dashboardSourceDirtyScheduler,
+      soldOutObservations: dashboardSourceDirtyScheduler,
+      reservationTimingObservations: reservationTiming,
+      publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
     },
-    reportPendingPersistenceEnsureFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Could not ensure the Redis pending-persistence marker.",
-      );
-    },
-    reportPromotionFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Durable reservation succeeded but Redis idempotency promotion failed.",
-      );
-    },
-    reportOrderEnqueueFailure: (report) => {
-      logger.error(
-        orderEnqueueFailureLogContext(report),
-        "Durable reservation succeeded but order-processing enqueue failed.",
-      );
-    },
-    reportReservationReversalFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Could not reverse a definitively rejected Redis reservation hold.",
-      );
-    },
-    publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
-    scheduleBusinessOutcomeUpdate: (task) => task(),
-    reportBusinessOutcomeUpdateFailure: (report) => {
-      logger.error(
-        businessOutcomeUpdateFailureLogContext(report),
-        "Durable reservation succeeded but dashboard business outcome publication failed.",
-      );
-    },
-  });
+    logger,
+  );
 
   const automaticRunReset = new AutomaticRunResetService({
     db: connection.db,
@@ -538,6 +514,7 @@ export async function startApiServer(): Promise<void> {
       orderStatusService,
       queueStatusService,
       reserveOrderService,
+      pendingPersistenceRecovery,
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,
@@ -625,33 +602,6 @@ function createCoreIdleShutdown(
     stopCore: () => machines.stopMachine(idleStop.machineId),
     logger,
   });
-}
-
-function orderEnqueueFailureLogContext(report: OrderEnqueueFailureReport) {
-  return {
-    ...partialFailureLogContext(report),
-    orderId: report.orderId,
-  };
-}
-
-function partialFailureLogContext(report: ReservationPartialFailureReport) {
-  return {
-    err: report.error,
-    reservationId: report.reservationId,
-    saleOfferId: report.saleOfferId,
-    runId: report.runId,
-    correlationId: report.correlationId,
-    idempotencyKey: report.idempotencyKey,
-  };
-}
-
-function businessOutcomeUpdateFailureLogContext(report: BusinessOutcomeUpdateFailureReport) {
-  return {
-    err: report.error,
-    saleOfferId: report.saleOfferId,
-    runId: report.runId,
-    correlationId: report.correlationId,
-  };
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

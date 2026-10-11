@@ -368,6 +368,7 @@ export class AdminDemoResetService implements AdminDemoResetWorkflow {
 
     const summaryInputs: TerminalDemoRunSummaryInput[] = [];
     for (const fencedRun of fencedRuns) {
+      await this.options.reservationTiming?.prepare?.(fencedRun.run.id);
       const latest = await this.readResetRun(fencedRun.run.id);
       if (!latest) {
         continue;

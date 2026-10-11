@@ -12,7 +12,7 @@ import type { ApiFastifyInstance } from "../runtime/fastify.js";
 import type { ReserveOrderService } from "../services/reserve-order-service.js";
 
 export interface BuyRouteOptions {
-  reserveOrderService: ReserveOrderService;
+  reserveOrderService: Pick<ReserveOrderService, "reserve">;
 }
 
 export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOptions): void {

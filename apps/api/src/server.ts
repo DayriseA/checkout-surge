@@ -1,11 +1,7 @@
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { normalizeCorrelationId } from "@checkout-surge/logger";
-import { installFastifyCorrelation } from "@checkout-surge/logger/fastify";
-import cors from "@fastify/cors";
-import { type FastifyReply, type FastifyRequest, fastify } from "fastify";
-import { ZodError } from "zod";
 import type { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { registerAdminMaintenanceRoutes } from "./routes/admin-maintenance-routes.js";
+import { registerPendingRecoveryRoute } from "./routes/api-peer-routes.js";
 import { registerBuyRoutes } from "./routes/buy-routes.js";
 import { registerCoreIdleRoutes } from "./routes/core-idle-routes.js";
 import { registerDashboardRoutes } from "./routes/dashboard-routes.js";
@@ -15,9 +11,9 @@ import { registerInventoryRoutes } from "./routes/inventory-routes.js";
 import { registerOrderStatusRoutes } from "./routes/order-status-routes.js";
 import { registerQueueRoutes } from "./routes/queue-routes.js";
 import { registerRunHistoryRoutes } from "./routes/run-history-routes.js";
+import { buildApiHttpServer } from "./runtime/api-http-server.js";
 import type { ApiConfig } from "./runtime/config.js";
 import { createDashboardSourceResolver } from "./runtime/dashboard-source-identity.js";
-import { ApiHttpError, createErrorPayload } from "./runtime/errors.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
 import type { ApiReadiness } from "./runtime/readiness.js";
 import type { AdminDemoResetWorkflow } from "./services/admin-demo-reset-service.js";
@@ -27,14 +23,16 @@ import type { DashboardProjectionService } from "./services/dashboard-recovery-s
 import { DashboardRecoveryWorkflow } from "./services/dashboard-recovery-workflow.js";
 import type { DemoPresetController } from "./services/demo-preset-service.js";
 import type { DemoRunLifecycleController } from "./services/demo-run-service.js";
-import { DemoRunValidationError } from "./services/demo-run-validation-error.js";
 import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-retention-service.js";
 import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { OrderStatusController } from "./services/order-status-service.js";
 import type { PublicRuntimePolicyController } from "./services/public-runtime-policy-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
-import type { ReserveOrderService } from "./services/reserve-order-service.js";
+import type {
+  PendingPersistenceRecovery,
+  ReserveOrderService,
+} from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
 import type { RunnerOperations } from "./services/runner-operations.js";
 import type { TrafficCompletionController } from "./services/traffic-completion-service.js";
@@ -62,83 +60,27 @@ export interface BuildApiServerOptions {
   runnerRecreation: Pick<RunnerOperations, "recreate">;
   runHistoryService: RunHistoryController;
   coreIdleShutdown: CoreIdleShutdown;
+  pendingPersistenceRecovery?: PendingPersistenceRecovery;
   startedAt?: Date;
 }
 
 export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
-  const app = fastify({
-    loggerInstance: options.logger,
-    // Fastify's two lines per request flood the log under load; failures are logged below.
-    disableRequestLogging: true,
-    trustProxy: options.config.trustedProxyCidrs,
-  }) as ApiFastifyInstance;
-
-  installFastifyCorrelation(app);
-  app.addHook("onResponse", logFailedResponse);
-
-  await app.register(cors, {
-    origin: options.config.webOrigins.length > 0 ? options.config.webOrigins : true,
-  });
-
-  app.setErrorHandler((error, request, reply) => {
-    const correlationId = request.correlationId ?? normalizeCorrelationId(undefined);
-
-    if (error instanceof ApiHttpError) {
-      return sendError(reply, error.statusCode, {
-        code: error.code,
-        message: error.message,
-        correlationId,
-        ...(error.details ? { details: error.details } : {}),
-      });
-    }
-
-    if (error instanceof DemoRunValidationError) {
-      const retryAfterSeconds = publicRunBudgetRetryAfterSeconds(error);
-      return sendError(
-        reply,
-        demoRunValidationStatus(error.code),
-        {
-          code: error.code,
-          message: error.message,
-          correlationId,
-          ...(error.details ? { details: error.details } : {}),
-        },
-        retryAfterSeconds === undefined ? undefined : { "retry-after": String(retryAfterSeconds) },
-      );
-    }
-
-    if (error instanceof ZodError) {
-      return sendError(reply, 400, {
-        code: "invalid_request",
-        message: "Request validation failed.",
-        correlationId,
-        details: { issues: error.issues },
-      });
-    }
-
-    if (isBadRequestError(error)) {
-      return sendError(reply, 400, {
-        code: "invalid_request",
-        message: error.message || "Request validation failed.",
-        correlationId,
-      });
-    }
-
-    request.log.error({ err: error }, "Unhandled API error.");
-
-    return sendError(reply, 500, {
-      code: "internal_error",
-      message: "The API could not complete the request.",
-      correlationId,
-    });
-  });
+  const app = await buildApiHttpServer(options);
 
   registerHealthRoutes(app, {
     readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
   registerCoreIdleRoutes(app, { coreIdleShutdown: options.coreIdleShutdown });
-  registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
+  if (options.config.role !== "control") {
+    registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
+  }
+  if (options.config.role === "control" && options.pendingPersistenceRecovery) {
+    registerPendingRecoveryRoute(app, {
+      controlServiceToken: options.config.controlServiceToken,
+      recovery: options.pendingPersistenceRecovery,
+    });
+  }
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });
@@ -174,58 +116,4 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   });
 
   return app;
-}
-
-/**
- * Logs one line per failed response. A 409 is a business answer (sold out, or a run or
- * preset conflict) that a load run can receive at request rate, so it is not logged.
- */
-async function logFailedResponse(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const { statusCode } = reply;
-  if (statusCode < 400 || statusCode === 409) return;
-  const details = {
-    method: request.method,
-    url: request.url,
-    statusCode,
-    responseTimeMs: reply.elapsedTime,
-  };
-  if (statusCode >= 500) {
-    request.log.error(details, "Request failed.");
-  } else {
-    request.log.warn(details, "Request rejected.");
-  }
-}
-
-function demoRunValidationStatus(code: DemoRunValidationError["code"]): number {
-  if (code === "public_visitor_forbidden") return 403;
-  if (code === "public_run_budget_exceeded") return 429;
-  if (code === "resource_not_found") return 404;
-  if (["run_conflict", "preset_conflict", "traffic_report_rejected"].includes(code)) return 409;
-  return 400;
-}
-
-function isBadRequestError(error: unknown): error is Error & { statusCode: 400 } {
-  return (
-    error instanceof Error &&
-    "statusCode" in error &&
-    (error as { statusCode?: unknown }).statusCode === 400
-  );
-}
-
-function sendError(
-  reply: FastifyReply,
-  statusCode: number,
-  options: Parameters<typeof createErrorPayload>[0],
-  headers?: Record<string, string>,
-) {
-  if (headers) {
-    for (const [name, value] of Object.entries(headers)) reply.header(name, value);
-  }
-  const payload = createErrorPayload(options);
-  return reply.status(statusCode).send(payload);
-}
-
-function publicRunBudgetRetryAfterSeconds(error: DemoRunValidationError): number | undefined {
-  if (error.code !== "public_run_budget_exceeded") return undefined;
-  return error.retryAfterSeconds;
 }

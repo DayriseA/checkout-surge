@@ -178,6 +178,9 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       );
       return toDemoRunSnapshot(row.run);
     }
+    // Peer HTTP flushes must finish before the writer takes the exclusive run lock:
+    // buyer requests being drained may still need their shared admission lock.
+    await this.options.reservationTiming?.prepare?.(runId);
     const wroteSummary = await this.options.terminalRunWriter.writePrepared(
       runId,
       async (lockedDb) => {
