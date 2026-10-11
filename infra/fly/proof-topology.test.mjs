@@ -45,6 +45,18 @@ test("proof moves stores out and installs one authority with three buyers and pr
   assert.deepEqual(stores.guest, { cpu_kind: "performance", cpus: 2, memory_mb: 4096 });
   assert.ok(stores.containers[0].cmd[2].includes("listen_addresses='*'"));
   assert.ok(stores.containers[1].cmd[2].includes("--bind 0.0.0.0 ::"));
+  assert.equal(
+    stores.containers.find((c) => c.name === "postgres").image,
+    "postgres:17-alpine@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3",
+  );
+  assert.equal(
+    stores.containers.find((c) => c.name === "redis").image,
+    "redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2",
+  );
+  assert.equal(
+    core.containers.find((c) => c.name === "caddy").image,
+    "caddy:2-alpine@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229",
+  );
   assert.equal(stores.services, undefined);
   const runner = configureMachine(template("runner"), proof);
   assert.equal(runner.guest.cpus, 16);
@@ -63,6 +75,15 @@ test("proof moves stores out and installs one authority with three buyers and pr
   assert.ok(runner.init.exec[3].endsWith("exec node dist/index.js"));
   const original = template("runner");
   assert.deepEqual(configureMachine(structuredClone(original), loadEnvironment()), original);
+  const originalCore = template("core");
+  const productionCore = configureMachine(structuredClone(originalCore), loadEnvironment());
+  assert.deepEqual(productionCore, originalCore);
+  assert.deepEqual(
+    ["postgres", "redis", "caddy"].map(
+      (name) => productionCore.containers.find((c) => c.name === name).image,
+    ),
+    ["postgres:17-alpine", "redis:7-alpine", "caddy:2-alpine"],
+  );
 });
 
 test("store setup retries authentication/connectivity and fails at its finite deadline", async () => {

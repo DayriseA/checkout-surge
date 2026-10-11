@@ -5,6 +5,11 @@ export function configureProofTopology(config, environment) {
   if (role === "stores") {
     config.guest = { cpu_kind: "performance", cpus: 2, memory_mb: 4096 };
     config.containers = config.containers.filter((c) => ["postgres", "redis"].includes(c.name));
+    // Pin proof dependencies so role evidence identifies immutable images.
+    config.containers.find((c) => c.name === "postgres").image =
+      "postgres:17-alpine@sha256:aa90e97ee862e558111d34cfb8b2c4bec768c2b039fb791341686928560263b3";
+    config.containers.find((c) => c.name === "redis").image =
+      "redis:7-alpine@sha256:ca0acbb137c1dc3339c8b147a58fd6f42775d4599327b50e7b116c23de501af2";
     config.containers[0].cmd[2] = config.containers[0].cmd[2].replace(
       "listen_addresses=127.0.0.1",
       "listen_addresses='*'",
@@ -75,6 +80,8 @@ export function configureProofTopology(config, environment) {
     }
     config.containers.find((c) => c.name === "web").env.API_BASE_URL = "http://127.0.0.1:4004";
     const caddy = config.containers.find((c) => c.name === "caddy");
+    caddy.image =
+      "caddy:2-alpine@sha256:173b26306d711395accaeba8b67afcaad2a085ccb1e6bf26010bfe8c095a5229";
     caddy.files[0].local_path = "infra/caddy/Caddyfile.proof";
     // The proof's k6 ingress now crosses this process as well as the buyer API.
     caddy.cmd = [
