@@ -34,14 +34,15 @@ The project is meant to be run by an AI agent working alone on the owner's lapto
 
 Choices waiting for the owner, added by the agent with the task, the options and its recommendation.
 
-- None yet.
+- **Task 02 checkpoint — GO or NO-GO (pending owner decision).** The completed [feasibility report](02_feasibility_checkpoint.md#working-notes) recommends GO to tasks 03–06 for two fixed comparative presets with its disclosed caveats. GO authorizes the next implementation phase; NO-GO stops the comparative feature. Work is stopped before task 03 until the owner chooses.
+- **Production and preset choices remain open.** Before production rollout, the owner chooses topology for all runs versus comparative presets only, public versus admin exposure, and paired-run slot/occupancy/reset behavior. The report records the implications and recommendation without deciding these choices.
 
 ## Tasks
 
 | # | Task | Depends on | Status |
 | :-- | :-- | :-- | :-- |
 | 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | done |
-| 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | in progress |
+| 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | done |
 | 03 | [Multi-process API](03_multi_process_api.md) | 02, owner's go | todo |
 | 04 | [Store distance](04_store_distance.md) | 02, owner's go | todo |
 | 05 | [Mode without Redis](05_mode_without_redis.md) | 02, owner's go | todo |

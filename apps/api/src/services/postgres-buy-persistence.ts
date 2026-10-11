@@ -160,6 +160,14 @@ export class PostgresBuyPersistence implements BuyPersistence {
     reservation: SecuredReservationHold;
     operation: (persistence: BuyPersistenceOperations) => Promise<T>;
   }): Promise<T> {
+    return this.withRunAdmissionLockAndSession(input);
+  }
+
+  /** Experimental PostgreSQL publication can share the already reserved admission session. */
+  async withRunAdmissionLockAndSession<T>(input: {
+    reservation: SecuredReservationHold;
+    operation: (persistence: BuyPersistenceOperations, session: SqlClient) => Promise<T>;
+  }): Promise<T> {
     const runId = input.reservation.runId;
 
     const client = (this.db as DatabaseWithClient).$client;
@@ -190,7 +198,10 @@ export class PostgresBuyPersistence implements BuyPersistence {
       // Each persistence operation commits on the reserved session while this
       // shared session-level advisory lock remains held through BullMQ enqueue.
       // The callback must not check out another connection from the base pool.
-      return await input.operation(this.databaseOperations(reservedDb, operationClient));
+      return await input.operation(
+        this.databaseOperations(reservedDb, operationClient),
+        operationClient,
+      );
     } finally {
       try {
         if (locked) {

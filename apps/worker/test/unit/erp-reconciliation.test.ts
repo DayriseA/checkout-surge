@@ -91,6 +91,36 @@ describe("adaptive ERP reconciliation", () => {
     });
   });
 
+  it.each([
+    call,
+    null,
+  ])("lookup-only scheduling never dispatches when ERP evidence is %s", async (unresolved) => {
+    const client = {
+      ...clientPort(lookupUnknown()),
+      findUnresolvedCall: vi.fn().mockResolvedValue(unresolved),
+    };
+    const resolution = { resolveDispatchedCall: vi.fn() };
+    const admission = runtimeAdmission();
+    const scheduled = new ScheduledErpOrderConfirmation({
+      client,
+      reconciler: new ErpUnresolvedCallReconciler({
+        client,
+        callResolution: resolution,
+        admission,
+      }),
+      admission,
+      control: { defer: vi.fn().mockResolvedValue(true) },
+      allowDispatch: false,
+    });
+    await expect(scheduled.confirm(job, delivery)).resolves.toMatchObject({
+      disposition: "deferred",
+      reason: "erp_result_unknown_lookup_only",
+    });
+    expect(client.dispatch).not.toHaveBeenCalled();
+    expect(client.lookup).toHaveBeenCalledTimes(unresolved ? 1 : 0);
+    expect(resolution.resolveDispatchedCall).not.toHaveBeenCalled();
+  });
+
   it("defers duplicate reconciliation without spending a second permit", async () => {
     let finishLookup!: (outcome: ErpLookupOutcome) => void;
     const pending = new Promise<ErpLookupOutcome>((resolve) => (finishLookup = resolve));

@@ -60,6 +60,8 @@ export class ScheduledErpOrderConfirmation {
       reconciler: ErpUnresolvedCallReconciler;
       admission: AdaptiveErpRuntimeAdmission;
       control: Pick<OrderRecoveryPersistence, "defer">;
+      /** False allows local evidence and lookups only; no initial or replayed ERP POST. */
+      allowDispatch?: boolean;
       now?: () => Date;
     },
   ) {}
@@ -95,7 +97,7 @@ export class ScheduledErpOrderConfirmation {
           const reconciliationContext = this.options.admission.reconciliationContext(job);
           const result = await this.options.reconciler.reconcile(
             { job, delivery, call: unresolved, context: reconciliationContext },
-            { unknownFailure: failure },
+            { unknownFailure: failure, replayUnknown: this.options.allowDispatch !== false },
           );
           return this.scheduleResult(job, generation, reconciliationContext.scope, result);
         }
@@ -105,13 +107,21 @@ export class ScheduledErpOrderConfirmation {
     }
 
     if (unresolved) {
-      const result = await this.options.reconciler.reconcile({
-        job,
-        delivery,
-        call: unresolved,
-        context,
-      });
+      const result = await this.options.reconciler.reconcile(
+        { job, delivery, call: unresolved, context },
+        { replayUnknown: this.options.allowDispatch !== false },
+      );
       return this.scheduleResult(job, generation, context.scope, result);
+    }
+
+    if (this.options.allowDispatch === false) {
+      return this.deferAt(
+        job,
+        generation,
+        "erp_result_unknown_lookup_only",
+        "uncertain_result",
+        this.options.admission.nextRecheckAt(),
+      );
     }
 
     const admission = await this.options.admission.tryAcquire(context, "confirmation");
@@ -242,7 +252,10 @@ export class ErpUnresolvedCallReconciler {
       call: ErpCallReference;
       context: ErpAdmissionContext;
     },
-    options: { unknownFailure?: { errorCode: string; errorMessage: string } } = {},
+    options: {
+      unknownFailure?: { errorCode: string; errorMessage: string };
+      replayUnknown?: boolean;
+    } = {},
   ): Promise<ErpReconciliationResult> {
     if (this.activeOrders.has(input.job.orderId)) {
       return nonCallDeferral(
@@ -280,6 +293,12 @@ export class ErpUnresolvedCallReconciler {
       }
 
       if (lookup.lookup.lookup.status === "unknown") {
+        if (options.replayUnknown === false) {
+          return nonCallDeferral(
+            "erp_result_unknown_lookup_only",
+            this.options.admission.nextRecheckAt(),
+          );
+        }
         if (options.unknownFailure) {
           return { ...lookup, ...options.unknownFailure, disposition: "technical_failure" };
         }

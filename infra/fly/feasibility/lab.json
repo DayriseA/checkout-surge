@@ -1,0 +1,13 @@
+{
+  "name": "feasibility",
+  "organization": "playground-416",
+  "region": "cdg",
+  "apps": {
+    "core": "cs-feasibility-redis-queue-core",
+    "stores": "cs-feasibility-redis-queue-stores",
+    "runner": "cs-feasibility-redis-queue-runner"
+  },
+  "apiCount": 3,
+  "poolMax": 10,
+  "storeDelayMs": 0
+}
