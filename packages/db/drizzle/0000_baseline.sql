@@ -480,6 +480,15 @@ ALTER TABLE "postgres_run_inventory" ADD CONSTRAINT "pg_inventory_run_sale_fk" F
 CREATE INDEX "postgres_reservation_holds_run_idx" ON "postgres_reservation_holds" USING btree ("run_id");--> statement-breakpoint
 CREATE INDEX "postgres_reservation_holds_pending_due_idx" ON "postgres_reservation_holds" USING btree ("run_id","sale_offer_id",("pending_record"->>'nextRecoveryAt'),"id") WHERE "postgres_reservation_holds"."reversed_at" is null and "postgres_reservation_holds"."pending_record" is not null and "postgres_reservation_holds"."pending_record"->>'recoveryStatus'='pending';
 --> statement-breakpoint
+CREATE TABLE "postgres_run_sold_out_counts" (
+	"run_id" uuid PRIMARY KEY NOT NULL,
+	"count" integer DEFAULT 0 NOT NULL,
+	"latest_observed_at" timestamp with time zone,
+	CONSTRAINT "postgres_run_sold_out_counts_nonnegative" CHECK ("postgres_run_sold_out_counts"."count" >= 0)
+);
+--> statement-breakpoint
+ALTER TABLE "postgres_run_sold_out_counts" ADD CONSTRAINT "pg_sold_out_inventory_fk" FOREIGN KEY ("run_id") REFERENCES "public"."postgres_run_inventory"("run_id") ON DELETE cascade ON UPDATE no action;
+--> statement-breakpoint
 CREATE TABLE "postgres_order_deliveries" (
 	"publication_id" text PRIMARY KEY NOT NULL,
 	"run_id" uuid NOT NULL,

@@ -11,12 +11,16 @@ import {
   reservationPendingPersistenceStatusValues,
   runExecutionModeValues,
   technicalOrderFailureCodeValues,
+  terminalInventorySnapshotSchema,
   trafficCompletionEnrichmentStatusValues,
   trafficDeliveryStatusValues,
   trafficExecutionStatusValues,
 } from "../src/index.js";
 
 describe("shared PostgreSQL vocabulary", () => {
+  it("identifies both actual terminal inventory sources", () => {
+    expect(terminalInventorySnapshotSchema.shape.source.options).toEqual(["redis", "postgres"]);
+  });
   it("preserves every behavior-bearing ordered tuple", () => {
     expect(runExecutionModeValues).toEqual(["demo", "without_redis"]);
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);

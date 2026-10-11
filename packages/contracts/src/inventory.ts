@@ -52,12 +52,12 @@ export const terminalInventorySnapshotSchema = z
     startingStock: nonnegativeIntegerSchema,
     remainingStock: nonnegativeIntegerSchema,
     reservedStock: nonnegativeIntegerSchema,
-    /** Durable PostgreSQL reservation-row count carried on this Redis-sourced snapshot. */
+    /** Durable PostgreSQL reservation-row count carried on this inventory snapshot. */
     acceptedReservations: nonnegativeIntegerSchema,
     soldOutRejections: nonnegativeIntegerSchema,
     pendingPersistenceCount: nonnegativeIntegerSchema,
     capturedAt: isoTimestampSchema,
-    source: z.literal("redis"),
+    source: z.enum(["redis", "postgres"]),
   })
   .strict();
 export type TerminalInventorySnapshot = z.infer<typeof terminalInventorySnapshotSchema>;

@@ -2725,6 +2725,48 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
+    "public.postgres_run_sold_out_counts": {
+      "name": "postgres_run_sold_out_counts",
+      "schema": "",
+      "columns": {
+        "run_id": { "name": "run_id", "type": "uuid", "primaryKey": true, "notNull": true },
+        "count": {
+          "name": "count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "latest_observed_at": {
+          "name": "latest_observed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "pg_sold_out_inventory_fk": {
+          "name": "pg_sold_out_inventory_fk",
+          "tableFrom": "postgres_run_sold_out_counts",
+          "tableTo": "postgres_run_inventory",
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["run_id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "postgres_run_sold_out_counts_nonnegative": {
+          "name": "postgres_run_sold_out_counts_nonnegative",
+          "value": "\"postgres_run_sold_out_counts\".\"count\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.postgres_run_inventory": {
       "name": "postgres_run_inventory",
       "schema": "",

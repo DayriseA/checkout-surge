@@ -266,6 +266,23 @@ export const postgresRunInventory = pgTable(
   ],
 );
 
+export const postgresRunSoldOutCounts = pgTable(
+  "postgres_run_sold_out_counts",
+  {
+    runId: uuid("run_id").primaryKey(),
+    count: integer("count").default(0).notNull(),
+    latestObservedAt: timestamp("latest_observed_at", { withTimezone: true }),
+  },
+  (table) => [
+    foreignKey({
+      name: "pg_sold_out_inventory_fk",
+      columns: [table.runId],
+      foreignColumns: [postgresRunInventory.runId],
+    }).onDelete("cascade"),
+    check("postgres_run_sold_out_counts_nonnegative", sql`${table.count} >= 0`),
+  ],
+);
+
 export const postgresReservationHolds = pgTable(
   "postgres_reservation_holds",
   {

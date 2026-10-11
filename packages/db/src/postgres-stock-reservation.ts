@@ -21,7 +21,7 @@ interface StockRead {
   accepted: boolean | null;
 }
 
-/** PostgreSQL stock/holds adapter only. Counters, delivery and runtime activation remain unwired. */
+/** PostgreSQL stock, holds and exact rejection accounting; runtime activation remains unwired. */
 export class PostgresStockReservations {
   constructor(private readonly sql: SqlClient) {}
 
@@ -40,6 +40,7 @@ export class PostgresStockReservations {
           and status in ('starting','active','draining') returning run_id`;
       if (inserted.length !== 1)
         throw new Error("PostgreSQL inventory requires an accepting generated run.");
+      await tx`insert into postgres_run_sold_out_counts (run_id) values (${input.runId})`;
     });
   }
 
@@ -53,14 +54,6 @@ export class PostgresStockReservations {
 
   async reserve(input: ReserveInput): Promise<StockReservationDecision> {
     validate(input);
-    const observed = await readStock(this.sql, input);
-    const rejection = rejectStock(observed, input);
-    if (rejection) return rejection;
-    // Obvious sold-out requests stay read-only. A live idempotency record must still
-    // take the key lock and re-read after any preceding promotion/compensation commits.
-    if (observed && !observed.hold && observed.remaining_stock < input.reservation.quantity) {
-      return { outcome: "sold_out", reservation: null };
-    }
     return this.withKeyLock(input, async (tx) => {
       const state = await readStock(tx, input);
       const rejected = rejectStock(state, input);
@@ -70,6 +63,11 @@ export class PostgresStockReservations {
           outcome: state.accepted ? "idempotent_replay" : "reservation_pending_persistence",
           reservation: state.hold,
         };
+      // A fresh shortage observation linearizes the rejection without locking stock.
+      // Accounting still commits under the shared terminal fence before returning.
+      if (state && state.remaining_stock < input.reservation.quantity) {
+        return recordSoldOut(tx, input);
+      }
       const hold = input.reservation;
       const pending: PendingPersistenceRecord = {
         ...hold,
@@ -81,7 +79,7 @@ export class PostgresStockReservations {
       };
       const rows = await tx`with stock as (
           update postgres_run_inventory set remaining_stock=remaining_stock-${hold.quantity},
-            reserved_stock=reserved_stock+${hold.quantity},updated_at=${hold.securedAt}::timestamptz
+            reserved_stock=reserved_stock+${hold.quantity},updated_at=greatest(updated_at,${hold.securedAt}::timestamptz)
           where run_id=${hold.runId} and sale_offer_id=${hold.saleOfferId} and accepting
             and remaining_stock>=${hold.quantity} returning run_id
         ), held as (
@@ -94,7 +92,7 @@ export class PostgresStockReservations {
             accepted=false,expires_at=excluded.expires_at returning reservation_id`;
       return rows.length
         ? { outcome: "reservation_secured", reservation: hold }
-        : { outcome: "sold_out", reservation: null };
+        : recordSoldOut(tx, input);
     });
   }
 
@@ -156,7 +154,7 @@ export class PostgresStockReservations {
       }
       const updated = await tx`update postgres_run_inventory
         set remaining_stock=remaining_stock+${input.reservation.quantity},
-          reserved_stock=reserved_stock-${input.reservation.quantity},updated_at=${(input.occurredAt ?? new Date()).toISOString()}::timestamptz
+          reserved_stock=reserved_stock-${input.reservation.quantity},updated_at=greatest(updated_at,${(input.occurredAt ?? new Date()).toISOString()}::timestamptz)
         where run_id=${input.reservation.runId} and sale_offer_id=${input.reservation.saleOfferId} returning run_id`;
       if (updated.length !== 1) throw new Error("PostgreSQL inventory is missing during reversal.");
       await tx`update postgres_reservation_holds set pending_record=null,reversed_at=${(input.occurredAt ?? new Date()).toISOString()}::timestamptz
@@ -180,6 +178,18 @@ export class PostgresStockReservations {
     });
     return result.value;
   }
+}
+
+async function recordSoldOut(
+  tx: postgres.TransactionSql,
+  input: ReservationInput,
+): Promise<StockReservationDecision> {
+  const observedAt = new Date(input.reservation.securedAt).toISOString();
+  const updated = await tx`update postgres_run_sold_out_counts
+    set count=count+1,latest_observed_at=greatest(latest_observed_at,${observedAt}::timestamptz)
+    where run_id=${input.reservation.runId} returning run_id`;
+  if (updated.length !== 1) throw new Error("PostgreSQL sold-out counter is missing.");
+  return { outcome: "sold_out", reservation: null };
 }
 
 export function postgresReservationKeyLock(runId: string, key: string): string {

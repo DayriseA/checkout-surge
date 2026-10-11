@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
+import { sql } from "drizzle-orm";
 import type postgres from "postgres";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { terminalDemoRunTransitionLockKey } from "../../src/demo-run-locks.js";
 import {
   createDatabaseConnection,
+  getPostgresInventoryStatus,
+  InventoryNotInitializedError,
   PostgresPendingPersistence,
   PostgresStockReservations,
   products,
@@ -86,6 +90,9 @@ describe("unwired PostgreSQL stock adapter", () => {
     const [row] = await connection.sql`select remaining_stock,reserved_stock,
       (select count(*)::int from postgres_reservation_holds) as holds from postgres_run_inventory`;
     expect(row).toEqual({ remaining_stock: 0, reserved_stock: 3, holds: 3 });
+    expect(
+      (await getPostgresInventoryStatus(connection.db, saleOfferId)).soldOutPressure.rejectionCount,
+    ).toBe(9);
   });
 
   it.each([
@@ -122,35 +129,90 @@ describe("unwired PostgreSQL stock adapter", () => {
     const [count] =
       await connection.sql`select count(*)::int as count from postgres_reservation_holds`;
     expect(count?.count).toBe(1);
+    expect(
+      (await getPostgresInventoryStatus(connection.db, saleOfferId)).soldOutPressure.rejectionCount,
+    ).toBe(0);
   });
 
-  it("uses one read-only statement for obvious sold-out inventory", async () => {
-    await stock.reserve(attempt("winner", 3));
-    const queries: string[] = [];
-    const instrumented = createDatabaseConnection(requireTestDatabaseUrl(), {
-      max: 1,
-      debug: (_connection, query) => {
-        queries.push(query);
-      },
+  it("counts obvious shortages without locking stock or counting replay/conflict", async () => {
+    const winner = attempt("winner", 3);
+    await stock.reserve(winner);
+    const adapter = new PostgresStockReservations(open().sql);
+    const latest = attempt("latest");
+    const earlier = attempt("earlier");
+    earlier.reservation.securedAt = new Date(
+      Date.parse(latest.reservation.securedAt) - 1000,
+    ).toISOString();
+    await connection.sql.begin(async (tx) => {
+      await tx`select run_id from postgres_run_inventory where run_id=${runId} for update`;
+      expect(await adapter.reserve(latest)).toEqual({ outcome: "sold_out", reservation: null });
+      expect(await adapter.reserve(earlier)).toEqual({ outcome: "sold_out", reservation: null });
     });
-    connections.push(instrumented);
-    await instrumented.sql`select 1`;
-    queries.length = 0;
-    const adapter = new PostgresStockReservations(instrumented.sql);
-    expect(await adapter.reserve(attempt("turned-away"))).toEqual({
-      outcome: "sold_out",
-      reservation: null,
-    });
-    expect(queries).toHaveLength(1);
-    expect(queries[0]?.trimStart()).toMatch(/^select /i);
     expect(await adapter.reserve(attempt("winner", 3))).toMatchObject({
       outcome: "reservation_pending_persistence",
+    });
+    expect(await adapter.reserve(attempt("winner", 2))).toEqual({
+      outcome: "idempotency_conflict",
+      reservation: null,
+    });
+    await stock.promoteAccepted(winner);
+    expect(await adapter.reserve(attempt("winner", 3))).toMatchObject({
+      outcome: "idempotent_replay",
     });
     await adapter.close({ runId, saleOfferId });
     expect(await adapter.reserve(attempt("winner", 3))).toEqual({
       outcome: "run_not_accepting_traffic",
       reservation: null,
     });
+    expect((await getPostgresInventoryStatus(connection.db, saleOfferId)).soldOutPressure).toEqual({
+      rejectionCount: 2,
+      latestObservedAt: latest.reservation.securedAt,
+    });
+  });
+
+  it("counts the conditional stock race once", async () => {
+    const first = open();
+    const second = open();
+    const [firstIdentity] = await first.sql`select pg_backend_pid() as pid`;
+    const [secondIdentity] = await second.sql`select pg_backend_pid() as pid`;
+    let winner!: ReturnType<PostgresStockReservations["reserve"]>;
+    let loser!: ReturnType<PostgresStockReservations["reserve"]>;
+    await connection.sql.begin(async (tx) => {
+      await tx`select run_id from postgres_run_inventory where run_id=${runId} for update`;
+      winner = new PostgresStockReservations(first.sql).reserve(attempt("first", 3));
+      await waitForLock(firstIdentity?.pid);
+      loser = new PostgresStockReservations(second.sql).reserve(attempt("second", 3));
+      await waitForLock(secondIdentity?.pid);
+    });
+    expect(await winner).toMatchObject({ outcome: "reservation_secured" });
+    expect(await loser).toEqual({ outcome: "sold_out", reservation: null });
+    expect(
+      (await getPostgresInventoryStatus(connection.db, saleOfferId)).soldOutPressure.rejectionCount,
+    ).toBe(1);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("rechecks terminal closure before accounting (purged=%s)", async (purged) => {
+    await stock.reserve(attempt("winner", 3));
+    const other = open();
+    const [identity] = await other.sql`select pg_backend_pid() as pid`;
+    let rejection!: ReturnType<PostgresStockReservations["reserve"]>;
+    await connection.sql.begin(async (tx) => {
+      await tx`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
+      await tx`update postgres_run_inventory set accepting=false where run_id=${runId}`;
+      if (purged) await tx`delete from postgres_run_inventory where run_id=${runId}`;
+      rejection = new PostgresStockReservations(other.sql).reserve(attempt("late"));
+      await waitForLock(identity?.pid);
+    });
+    expect(await rejection).toEqual({
+      outcome: purged ? "inventory_not_initialized" : "run_not_accepting_traffic",
+      reservation: null,
+    });
+    const rows =
+      await connection.sql`select count from postgres_run_sold_out_counts where run_id=${runId}`;
+    expect(rows).toEqual(purged ? [] : [{ count: 0 }]);
   });
 
   it("retains full pending holds, promotes replay, and never reverses accepted stock", async () => {
@@ -212,6 +274,139 @@ describe("unwired PostgreSQL stock adapter", () => {
     const [row] =
       await connection.sql`select remaining_stock,reserved_stock from postgres_run_inventory`;
     expect(row).toEqual({ remaining_stock: 2, reserved_stock: 1 });
+  });
+});
+
+describe("unwired PostgreSQL inventory projection", () => {
+  it("retains the newest stock observation when older requests and compensation commit later", async () => {
+    const older = attempt("delayed-older");
+    const newer = attempt("newer");
+    const latest = newer.reservation.securedAt;
+    older.reservation.securedAt = new Date(Date.parse(latest) - 1000).toISOString();
+    await stock.reserve(newer);
+    expect((await getPostgresInventoryStatus(connection.db, saleOfferId)).lastUpdatedAt).toBe(
+      latest,
+    );
+    await stock.reserve(older);
+    expect((await getPostgresInventoryStatus(connection.db, saleOfferId)).lastUpdatedAt).toBe(
+      latest,
+    );
+    await stock.reverse({ ...older, occurredAt: new Date(older.reservation.securedAt) });
+    const inventory = await getPostgresInventoryStatus(connection.db, saleOfferId);
+    expect(inventory.lastUpdatedAt).toBe(latest);
+    expect(inventory.soldOutPressure.rejectionCount).toBe(0);
+    expect(inventory).toMatchObject({ remainingStock: 2, reservedStock: 1 });
+  });
+  it("uses the caller's Drizzle transaction with a pool of one", async () => {
+    const reserved = open();
+    await reserved.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`update postgres_run_sold_out_counts set count=1,latest_observed_at=now() where run_id=${runId}`,
+      );
+      expect(
+        (await getPostgresInventoryStatus(tx, saleOfferId)).soldOutPressure.rejectionCount,
+      ).toBe(1);
+    });
+  });
+  it("reads initialized zeros and rejects absent inventory in one read", async () => {
+    const queries: string[] = [];
+    const instrumented = createDatabaseConnection(requireTestDatabaseUrl(), {
+      max: 1,
+      debug: (_connection, query) => {
+        queries.push(query);
+      },
+    });
+    connections.push(instrumented);
+    await instrumented.sql`select 1`;
+    queries.length = 0;
+    const now = new Date();
+    expect(await getPostgresInventoryStatus(instrumented.db, saleOfferId, now)).toMatchObject({
+      allocatedStock: 3,
+      remainingStock: 3,
+      reservedStock: 0,
+      pendingPersistenceCount: 0,
+      oldestPendingPersistenceAgeSeconds: 0,
+      expiredReservationCount: 0,
+      reservationThroughput: {
+        successfulReservationCount: 0,
+        peakRatePerSecond: 0,
+        measuredAt: now.toISOString(),
+      },
+      soldOutPressure: { rejectionCount: 0, latestObservedAt: null },
+      observedAt: now.toISOString(),
+    });
+    expect(queries).toHaveLength(1);
+    await expect(getPostgresInventoryStatus(connection.db, randomUUID())).rejects.toBeInstanceOf(
+      InventoryNotInitializedError,
+    );
+  });
+
+  it("projects retained pending and expired holds with exact secured throughput", async () => {
+    await connection.sql`update demo_runs set execution_mode='without_redis' where id=${runId}`;
+    const now = new Date(Math.floor(Date.now() / 1000) * 1000 + 1500);
+    const at = (key: string, offset: number, expiresAt: Date) => {
+      const input = attempt(key);
+      input.reservation.securedAt = new Date(now.getTime() + offset).toISOString();
+      input.reservation.expiresAt = expiresAt.toISOString();
+      return input;
+    };
+    const outside = at("outside", -60_500, now);
+    const reversed = at("reversed", -59_500, now);
+    const accepted = at("accepted", -59_000, new Date(now.getTime() + 1000));
+    for (const input of [outside, reversed, accepted]) await stock.reserve(input);
+    await new PostgresPendingPersistence(connection.sql).defer({
+      saleOfferId,
+      reservationId: outside.reservation.id,
+      attemptCount: 2,
+      status: "exhausted",
+      nextRecoveryAt: new Date(now.getTime() + 30_000),
+      recoveryDeadlineAt: new Date(now.getTime() + 60_000),
+      lastError: "exhausted",
+    });
+    await stock.promoteAccepted(accepted);
+    await stock.reverse({ ...reversed, occurredAt: now });
+    const current = at("current", 0, new Date(now.getTime() + 1000));
+    await stock.reserve(current);
+    expect(await stock.reserve(at("accepted", 0, new Date(now.getTime() + 1000)))).toMatchObject({
+      outcome: "idempotent_replay",
+    });
+    await stock.reserve(at("rejected", 0, new Date(now.getTime() + 1000)));
+    const inventory = await getPostgresInventoryStatus(connection.db, saleOfferId, now);
+    expect(inventory).toEqual({
+      saleOfferId,
+      allocatedStock: 3,
+      remainingStock: 0,
+      reservedStock: 3,
+      pendingPersistenceCount: 2,
+      oldestPendingPersistenceAgeSeconds: 60.5,
+      expiredReservationCount: 1,
+      reservationThroughput: {
+        windowSeconds: 60,
+        successfulReservationCount: 3,
+        peakRatePerSecond: 2,
+        peakWindowSeconds: 1,
+        unit: "reservations_per_second",
+        measuredAt: now.toISOString(),
+      },
+      soldOutPressure: { rejectionCount: 1, latestObservedAt: now.toISOString() },
+      observedAt: now.toISOString(),
+      lastUpdatedAt: now.toISOString(),
+    });
+    const beforeExpiry = await getPostgresInventoryStatus(
+      connection.db,
+      saleOfferId,
+      new Date(now.getTime() - 1),
+    );
+    expect(beforeExpiry.expiredReservationCount).toBe(0);
+    expect(beforeExpiry.reservationThroughput.successfulReservationCount).toBe(3);
+    const afterWindow = await getPostgresInventoryStatus(
+      connection.db,
+      saleOfferId,
+      new Date(now.getTime() + 1000),
+    );
+    expect(afterWindow.reservationThroughput.successfulReservationCount).toBe(1);
+    expect(afterWindow.expiredReservationCount).toBe(3);
+    expect(afterWindow.remainingStock).toBe(0);
   });
 });
 
