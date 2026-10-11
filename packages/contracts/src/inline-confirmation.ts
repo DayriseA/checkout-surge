@@ -8,6 +8,9 @@ import { correlationIdSchema, uuidSchema } from "./primitives.js";
 
 export const inlineConfirmationPath = "/internal/orders/confirm" as const;
 export const inlineConfirmationStatusPath = "/internal/orders/confirmation-status" as const;
+export const inlineConfirmationRecoveryPath = "/internal/orders/recover-confirmation" as const;
+export const inlineConfirmationCancelRunPath = "/internal/orders/cancel-run" as const;
+export const inlineConfirmationCancelRunSchema = z.object({ runId: uuidSchema }).strict();
 export const inlineConfirmationProcessingWindowMs = 55_000;
 
 // The worker loads securedAt from the durable reservation. Callers cannot choose a deadline.

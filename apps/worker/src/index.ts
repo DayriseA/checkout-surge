@@ -14,6 +14,8 @@ import {
 } from "./application/erp-reconciliation.js";
 import { erpResiliencePolicy } from "./application/erp-resilience-policy.js";
 import { withPublicationDeadline } from "./application/generated-run-publication-fence.js";
+import { InlineOrderConfirmation } from "./application/inline-order-confirmation.js";
+import { createInlineOrderRecoveryScanner } from "./application/inline-order-recovery-scanner.js";
 import { createNotificationRecordJobHandler } from "./application/notification-record-job-handler.js";
 import { createNotificationRecoveryScanner } from "./application/notification-recovery-scanner.js";
 import { createOrderDispatchScanner } from "./application/order-dispatch-scanner.js";
@@ -26,6 +28,7 @@ import {
 import { PostgresErpAttemptPersistence } from "./persistence/postgres-erp-attempt-persistence.js";
 import { PostgresErpScopeResiliencePersistence } from "./persistence/postgres-erp-scope-resilience-persistence.js";
 import { PostgresGeneratedRunPublicationFence } from "./persistence/postgres-generated-run-publication-fence.js";
+import { PostgresInlineOrderConfirmationReader } from "./persistence/postgres-inline-order-confirmation-reader.js";
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 import { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
@@ -93,7 +96,7 @@ export async function startWorker(): Promise<void> {
       );
     },
   });
-  // Both modes retain the same real notification transport; only stock and ORDER delivery differ.
+  // Every mode retains the same real notification transport; only stock and ORDER delivery differ.
   const notificationRecordPublisher = createBullMqNotificationRecordPublisher({
     connection: {
       url: config.redisUrl,
@@ -196,6 +199,25 @@ export async function startWorker(): Promise<void> {
       });
     },
   });
+  const inlineRecoveryPersistence = new PostgresOrderRecoveryPersistence(
+    database.db,
+    undefined,
+    "without_order_queue",
+  );
+  const inlineConfirmation = new InlineOrderConfirmation({
+    reader: new PostgresInlineOrderConfirmationReader(database.db),
+    handler: orderProcessHandler,
+    control: inlineRecoveryPersistence,
+  });
+  const inlineRecoveryScanner = createInlineOrderRecoveryScanner({
+    service: inlineConfirmation,
+    recovery: inlineRecoveryPersistence,
+    dispatch: new PostgresOrderDispatchPersistence(database.db, "without_order_queue"),
+    logger,
+    scanIntervalMs: config.orderRecoveryScanIntervalMs,
+    batchSize: config.orderRecoveryBatchSize,
+    minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
+  });
   const orderRecoveryScanner = createOrderRecoveryScanner({
     persistence: orderRecoveryPersistence,
     handler: orderProcessHandler,
@@ -260,6 +282,10 @@ export async function startWorker(): Promise<void> {
   });
   const healthServer = buildWorkerHealthServer({
     logger,
+    inlineConfirmation: {
+      service: inlineConfirmation,
+      controlServiceToken: config.controlServiceToken,
+    },
     readiness: createWorkerReadiness({
       postgres: database.sql,
       redis,
@@ -270,6 +296,8 @@ export async function startWorker(): Promise<void> {
     startedAt: new Date(),
   });
   const runtime = createWorkerRuntime({
+    inlineConfirmation,
+    inlineRecoveryScanner,
     healthServer,
     healthHost: config.healthHost,
     healthPort: config.healthPort,

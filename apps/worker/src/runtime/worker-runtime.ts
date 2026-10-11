@@ -1,4 +1,6 @@
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
+import type { InlineOrderConfirmation } from "../application/inline-order-confirmation.js";
+import type { createInlineOrderRecoveryScanner } from "../application/inline-order-recovery-scanner.js";
 import type { NotificationRecoveryScanner } from "../application/notification-recovery-scanner.js";
 import type { OrderDispatchScanner } from "../application/order-dispatch-scanner.js";
 import type { OrderRecoveryScanner } from "../application/order-recovery-scanner.js";
@@ -18,6 +20,8 @@ export function createWorkerRuntime(options: {
   orderRecoveryScanner?: OrderRecoveryScanner;
   postgresOrderDispatchScanner?: OrderDispatchScanner;
   postgresOrderRecoveryScanner?: OrderRecoveryScanner;
+  inlineConfirmation?: Pick<InlineOrderConfirmation, "close">;
+  inlineRecoveryScanner?: ReturnType<typeof createInlineOrderRecoveryScanner>;
   closeOrderProcessJobPublisher?: () => Promise<void>;
   closeNotificationRecordPublisher?: () => Promise<void>;
   closeBusinessOutcomePublicationScheduler?: () => Promise<void>;
@@ -49,6 +53,7 @@ export function createWorkerRuntime(options: {
         options.orderRecoveryScanner?.start();
         options.postgresOrderDispatchScanner?.start();
         options.postgresOrderRecoveryScanner?.start();
+        options.inlineRecoveryScanner?.start();
         await options.healthServer.listen({
           host: options.healthHost,
           port: options.healthPort,
@@ -96,6 +101,11 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
     }
   };
 
+  // Abort registered requests before Fastify waits for their HTTP replies. This
+  // must never await handlers that can be waiting behind a reset's terminal fence.
+  options.inlineConfirmation?.close();
+  const inlineRecoveryScanner = options.inlineRecoveryScanner;
+  if (inlineRecoveryScanner) await close(() => inlineRecoveryScanner.close());
   await close(() => options.healthServer.close());
   await close(() => options.orderProcessConsumer.close());
   const postgresOrderProcessConsumer = options.postgresOrderProcessConsumer;

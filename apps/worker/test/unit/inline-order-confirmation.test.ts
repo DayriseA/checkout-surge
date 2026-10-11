@@ -328,6 +328,8 @@ it("authenticates both routes, parses the shared protocol and calls status witho
   const service = {
     confirm: vi.fn().mockResolvedValue(result),
     status: vi.fn().mockResolvedValue(result),
+    recover: vi.fn().mockResolvedValue(result),
+    cancelRun: vi.fn(),
   };
   const app = buildWorkerHealthServer({
     logger: createSilentLogger("worker"),
@@ -359,6 +361,27 @@ it("authenticates both routes, parses the shared protocol and calls status witho
     expect(response.headers["x-correlation-id"]).toBe(request.correlationId);
     expect(service.status).toHaveBeenCalledWith(request);
     expect(service.confirm).not.toHaveBeenCalled();
+    for (const path of ["recover-confirmation", "cancel-run"]) {
+      expect(
+        (await app.inject({ method: "POST", url: `/internal/orders/${path}` })).statusCode,
+      ).toBe(401);
+    }
+    const recovery = await app.inject({
+      method: "POST",
+      url: "/internal/orders/recover-confirmation",
+      headers: { "x-control-service-token": "test-secret" },
+      payload: request,
+    });
+    expect(recovery.statusCode).toBe(200);
+    expect(service.recover).toHaveBeenCalledWith(request);
+    const cancelled = await app.inject({
+      method: "POST",
+      url: "/internal/orders/cancel-run",
+      headers: { "x-control-service-token": "test-secret" },
+      payload: { runId: request.runId },
+    });
+    expect(cancelled.statusCode).toBe(204);
+    expect(service.cancelRun).toHaveBeenCalledWith(request.runId);
     expect(
       (
         await app.inject({
@@ -375,3 +398,139 @@ it("authenticates both routes, parses the shared protocol and calls status witho
 });
 
 import * as timersPromises from "node:timers/promises";
+
+it("resumes an explicit buyer after an overlapping background lookup remains unresolved", async () => {
+  const f = fixture();
+  let release = () => {};
+  f.handler.handle.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const recovery = f.service.recover(request);
+  await vi.waitFor(() => expect(f.handler.handle).toHaveBeenCalledOnce());
+  const buyer = f.service.confirm(request);
+  release();
+  await expect(recovery).resolves.toMatchObject({ outcome: "order_confirmation_pending" });
+  await expect(buyer).resolves.toMatchObject({ outcome: "order_confirmed" });
+  expect(f.handler.handle).toHaveBeenCalledTimes(2);
+  expect(f.handler.handle.mock.calls[1]?.[2]?.budget?.deadlineAt).toEqual(new Date(55_000));
+  expect(f.handler.handle.mock.calls[1]?.[2]?.allowDispatch).toBeUndefined();
+});
+
+it.each([
+  "deadline",
+  "caller cancellation",
+  "close",
+] as const)("bounds a near-expiry foreground/background handoff on %s without a final database read", async (stop) => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let release = () => {};
+  f.handler.handle.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  f.setNow(54_900);
+  const recovery = f.service.recover(request);
+  await vi.advanceTimersByTimeAsync(0);
+  const backgroundSignal = f.handler.handle.mock.calls[0]?.[2]?.budget?.signal;
+  f.setNow(54_950);
+  await vi.advanceTimersByTimeAsync(50);
+  const cancellation = new AbortController();
+  const buyer = f.service.confirm(request, cancellation.signal);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.reader.read).toHaveBeenCalledTimes(2);
+  if (stop === "deadline") {
+    f.setNow(55_000);
+    await vi.advanceTimersByTimeAsync(50);
+  } else if (stop === "caller cancellation") cancellation.abort();
+  else f.service.close();
+  await expect(buyer).resolves.toMatchObject({
+    outcome: stop === "deadline" ? "order_confirmation_timed_out" : "order_confirmation_pending",
+  });
+  expect(f.reader.read).toHaveBeenCalledTimes(2);
+  expect(f.handler.handle).toHaveBeenCalledOnce();
+  expect(backgroundSignal?.aborted).toBe(stop !== "deadline");
+  release();
+  await recovery;
+  await vi.advanceTimersByTimeAsync(0);
+});
+
+it("recovers expired processing with a fresh lookup-only budget and matching claim generation", async () => {
+  const f = fixture();
+  f.setNow(60_000);
+  f.control.readControlRecord.mockResolvedValue({ recoveryKey: `order:${request.orderId}` });
+  f.control.claimForPublication.mockResolvedValue({
+    attempt: 3,
+    processingGeneration: 7,
+    jobId: "recovery-7",
+  });
+  await expect(f.service.recover(request)).resolves.toMatchObject({ outcome: "order_confirmed" });
+  expect(f.handler.handle).toHaveBeenCalledWith(
+    { ...f.snapshot.job, processingGeneration: 7 },
+    { attemptNumber: 3, attemptsMade: 2, deliveryId: "recovery-7", processingGeneration: 7 },
+    {
+      budget: { deadlineAt: new Date(62_000), signal: expect.any(AbortSignal) },
+      replayUnknown: false,
+      allowDispatch: false,
+    },
+  );
+});
+
+it("skips foreground ownership and returns immediately when a recovery claim is not due", async () => {
+  const f = fixture();
+  let release = () => {};
+  f.handler.handle.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const foreground = f.service.confirm(request);
+  await vi.waitFor(() => expect(f.handler.handle).toHaveBeenCalledOnce());
+  await expect(f.service.recover(request)).resolves.toMatchObject({
+    outcome: "order_confirmation_pending",
+  });
+  expect(f.handler.handle).toHaveBeenCalledOnce();
+  f.service.cancelRun(request.runId);
+  await foreground;
+  release();
+  const other = fixture();
+  other.control.readControlRecord.mockResolvedValue({ recoveryKey: "order:held" });
+  await expect(other.service.recover(request)).resolves.toMatchObject({
+    outcome: "order_confirmation_pending",
+  });
+  expect(other.handler.handle).not.toHaveBeenCalled();
+});
+
+it.each([
+  "cancel",
+  "close",
+  "deadline",
+] as const)("bounds lookup recovery promptly on %s", async (stop) => {
+  vi.useFakeTimers();
+  const f = fixture();
+  let release = () => {};
+  f.handler.handle.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const recovering = f.service.recover(request);
+  await vi.advanceTimersByTimeAsync(0);
+  const signal = f.handler.handle.mock.calls[0]?.[2]?.budget?.signal;
+  if (stop === "cancel") f.service.cancelRun(request.runId);
+  else if (stop === "close") f.service.close();
+  else {
+    f.setNow(2_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+  }
+  await expect(recovering).resolves.toMatchObject({ outcome: "order_confirmation_pending" });
+  expect(signal?.aborted).toBe(true);
+  release();
+  await vi.advanceTimersByTimeAsync(0);
+});

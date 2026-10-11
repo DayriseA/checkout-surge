@@ -10,7 +10,11 @@ import { createWorkerRuntime } from "../../src/runtime/worker-runtime.js";
 import { buildWorkerHealthServer } from "../../src/server.js";
 
 const loadWorkerConfig = (environment: Record<string, string | undefined>) =>
-  loadProductionWorkerConfig({ ...environment, NODE_ENV: "test" });
+  loadProductionWorkerConfig({
+    CONTROL_SERVICE_TOKEN: "test-control-token",
+    ...environment,
+    NODE_ENV: "test",
+  });
 
 describe("worker configuration", () => {
   it("loads bounded worker defaults", () => {
@@ -24,6 +28,7 @@ describe("worker configuration", () => {
       healthHost: "0.0.0.0",
       healthPort: 4300,
       redisUrl: "redis://localhost:6379",
+      controlServiceToken: "test-control-token",
       orderProcessConcurrency: 10,
       notificationRecordConcurrency: 5,
       notificationRecoveryScanIntervalMs: 1000,
@@ -52,6 +57,13 @@ describe("worker configuration", () => {
   });
 
   it("rejects missing infrastructure and invalid worker values", () => {
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: "postgresql://localhost/test",
+        REDIS_URL: "redis://localhost",
+        CONTROL_SERVICE_TOKEN: " ",
+      }),
+    ).toThrow("CONTROL_SERVICE_TOKEN is required");
     expect(() => loadWorkerConfig({})).toThrow("DATABASE_URL is required");
     expect(() =>
       loadWorkerConfig({
@@ -333,6 +345,18 @@ describe("worker runtime lifecycle", () => {
     } as never;
     const runtime = createWorkerRuntime({
       healthServer,
+      inlineConfirmation: {
+        close: () => {
+          closeOrder.push("inline-abort");
+        },
+      },
+      inlineRecoveryScanner: {
+        start: vi.fn(),
+        scanOnce: vi.fn().mockResolvedValue(undefined),
+        close: async () => {
+          closeOrder.push("inline-scanner");
+        },
+      },
       healthHost: "127.0.0.1",
       healthPort: 0,
       orderProcessConsumer: {
@@ -388,6 +412,8 @@ describe("worker runtime lifecycle", () => {
     expect(notificationRecoveryStart).toHaveBeenCalledOnce();
     expect(orderDispatchStart).toHaveBeenCalledOnce();
     expect(closeOrder).toEqual([
+      "inline-abort",
+      "inline-scanner",
       "health",
       "consumer",
       "notifications",

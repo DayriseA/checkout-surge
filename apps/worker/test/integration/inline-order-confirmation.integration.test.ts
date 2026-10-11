@@ -3,6 +3,7 @@ import {
   erpConfirmationLookupPath,
   erpConfirmationPath,
   notificationRecordBullMqQueueName,
+  orderProcessBullMqQueueName,
 } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
@@ -22,13 +23,18 @@ import { Queue } from "bullmq";
 import { eq } from "drizzle-orm";
 import { fastify } from "fastify";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
+import {
+  HttpErpOrderConfirmation,
+  toConfirmationIdempotencyKey,
+} from "../../src/application/erp-confirmation-client.js";
 import { createErpDeclaredDispatchGate } from "../../src/application/erp-declared-dispatch-gate.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
 } from "../../src/application/erp-reconciliation.js";
 import { InlineOrderConfirmation } from "../../src/application/inline-order-confirmation.js";
+import { createInlineOrderRecoveryScanner } from "../../src/application/inline-order-recovery-scanner.js";
+import { createNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
 import { createOrderRecoveryHandoff } from "../../src/application/order-recovery-scanner.js";
@@ -36,10 +42,14 @@ import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-er
 import { PostgresErpScopeResiliencePersistence } from "../../src/persistence/postgres-erp-scope-resilience-persistence.js";
 import { PostgresGeneratedRunPublicationFence } from "../../src/persistence/postgres-generated-run-publication-fence.js";
 import { PostgresInlineOrderConfirmationReader } from "../../src/persistence/postgres-inline-order-confirmation-reader.js";
+import { PostgresNotificationRecordPersistence } from "../../src/persistence/postgres-notification-record-persistence.js";
+import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "../../src/persistence/postgres-run-config-reader.js";
+import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
+import { buildWorkerHealthServer } from "../../src/server.js";
 
 let db: ReturnType<typeof createDatabaseConnection>;
 const lookupTimeoutMs = 1000;
@@ -101,7 +111,9 @@ async function seed(securedAt = new Date()) {
   return request;
 }
 
-async function runtime(options: { holdPost?: boolean; holdConfirmation?: boolean } = {}) {
+async function runtime(
+  options: { holdPost?: boolean; holdConfirmation?: boolean; knownLookup?: boolean } = {},
+) {
   const erp = fastify();
   let posts = 0,
     lookups = 0,
@@ -126,6 +138,32 @@ async function runtime(options: { holdPost?: boolean; holdConfirmation?: boolean
   erp.get(erpConfirmationLookupPath, async (request) => {
     lookups++;
     const query = request.params as { idempotencyKey: string };
+    if (options.knownLookup) {
+      const [order] = await db.db.select().from(orders).limit(1);
+      if (!order) throw new Error("Expected durable order");
+      return {
+        lookup: {
+          status: "succeeded",
+          identity: {
+            orderId: order.id,
+            publicOrderId: order.publicOrderId,
+            reservationId: order.reservationId,
+            saleOfferId: order.saleOfferId,
+            runId: order.runId,
+            quantity: order.quantity,
+            idempotencyKey: query.idempotencyKey,
+          },
+          result: {
+            status: "succeeded",
+            confirmationId: "erp-recovered",
+            httpStatus: 200,
+            latencyMs: 1,
+            timestamp: new Date().toISOString(),
+          },
+        },
+        timestamp: new Date().toISOString(),
+      };
+    }
     return {
       lookup: { status: "unknown", idempotencyKey: query.idempotencyKey },
       timestamp: new Date().toISOString(),
@@ -163,7 +201,9 @@ async function runtime(options: { holdPost?: boolean; holdConfirmation?: boolean
     publicationFence: new PostgresGeneratedRunPublicationFence(db.db),
   });
   const notificationQueue = new Queue(notificationRecordBullMqQueueName, { connection });
+  const orderQueue = new Queue(orderProcessBullMqQueueName, { connection });
   cleanups.push(
+    () => orderQueue.close(),
     () => notifications.close(),
     () => notificationQueue.close(),
   );
@@ -209,7 +249,10 @@ async function runtime(options: { holdPost?: boolean; holdConfirmation?: boolean
     admission,
     attempts,
     control,
+    persistence,
     notificationQueue,
+    orderQueue,
+    connection,
     release,
     posts: () => posts,
     lookups: () => lookups,
@@ -258,6 +301,126 @@ it("retries due capacity using durable generations, shared quota, real HTTP and 
   });
   expect(await db.sql`select * from postgres_order_deliveries`).toHaveLength(0);
 }, 10_000);
+
+function scanner(service: InlineOrderConfirmation) {
+  const recovery = createInlineOrderRecoveryScanner({
+    service,
+    recovery: new PostgresOrderRecoveryPersistence(db.db, undefined, "without_order_queue"),
+    dispatch: new PostgresOrderDispatchPersistence(db.db, "without_order_queue"),
+    scanIntervalMs: 1000,
+    batchSize: 10,
+    minimumQueuedAgeMs: 0,
+    logger: createSilentLogger("worker"),
+  });
+  cleanups.push(() => recovery.close());
+  return recovery;
+}
+
+it("restarts scanner recovery after the buyer window using only real HTTP lookup and common notifications", async () => {
+  const request = await seed(new Date(Date.now() - 60_000));
+  const r = await runtime({ knownLookup: true });
+  const snapshot = await r.reader.read(request);
+  if (!snapshot) throw new Error("Expected order");
+  const delivery = {
+    attemptNumber: 1,
+    attemptsMade: 0,
+    deliveryId: "crashed",
+    processingGeneration: 0,
+  };
+  await r.persistence.transitionToProcessing(snapshot.job, delivery);
+  await r.attempts.recordDispatchIntent({
+    job: snapshot.job,
+    idempotencyKey: toConfirmationIdempotencyKey(snapshot.job),
+    dispatchedAt: new Date(Date.now() - 60_000),
+    expectedProcessingGeneration: 0,
+  });
+  await db.sql`update order_recovery_jobs set lease_expires_at=null, next_attempt_at=null where order_id=${request.orderId}`;
+  r.service.close();
+  await scanner(r.createService()).scanOnce();
+  expect(r.lookups()).toBe(1);
+  expect(r.posts()).toBe(0);
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmed");
+  const control = await r.control.readControlRecord({ orderId: request.orderId });
+  expect(control).toMatchObject({ status: "resolved", processingGeneration: 1 });
+  expect((await r.notificationQueue.getJob(`${request.orderId}-email`))?.data).toMatchObject({
+    orderId: request.orderId,
+  });
+  expect(await db.sql`select * from postgres_order_deliveries`).toHaveLength(0);
+  expect(await db.sql`select * from erp_dispatch_calls`).toHaveLength(1);
+  expect(await r.orderQueue.getJob(request.orderId)).toBeUndefined();
+  const consumer = createBullMqNotificationRecordConsumer({
+    connection: r.connection,
+    concurrency: 1,
+    handler: createNotificationRecordJobHandler({
+      persistence: new PostgresNotificationRecordPersistence(db.db),
+      logger: createSilentLogger("worker"),
+      publishBusinessOutcomeUpdate: async () => {},
+    }),
+    logger: createSilentLogger("worker"),
+  });
+  cleanups.push(() => consumer.close());
+  consumer.start();
+  await vi.waitFor(async () =>
+    expect(
+      await db.sql`select * from simulated_notifications where order_id=${request.orderId}`,
+    ).toHaveLength(1),
+  );
+});
+
+it("retains crash-left queued orders without dispatch or fabricated confirmation", async () => {
+  const request = await seed(new Date(Date.now() - 60_000));
+  const r = await runtime();
+  const recovery = scanner(r.service);
+  await recovery.scanOnce();
+  expect(r.posts()).toBe(0);
+  expect(r.lookups()).toBe(0);
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
+  expect(await r.control.readControlRecord({ orderId: request.orderId })).toMatchObject({
+    waitingReason: "uncertain_result",
+    leaseExpiresAt: null,
+  });
+  expect(await db.sql`select * from erp_dispatch_calls`).toHaveLength(0);
+  expect(await db.sql`select * from postgres_order_deliveries`).toHaveLength(0);
+  expect(await r.orderQueue.getJob(request.orderId)).toBeUndefined();
+});
+
+it("acknowledges authenticated HTTP cancellation while the registered handler is still unsettled", async () => {
+  const request = await seed();
+  const r = await runtime({ holdConfirmation: true });
+  const app = buildWorkerHealthServer({
+    logger: createSilentLogger("worker"),
+    readiness: { checks: async () => [] },
+    inlineConfirmation: { service: r.service, controlServiceToken: "private-test-token" },
+  });
+  const address = await app.listen({ host: "127.0.0.1", port: 0 });
+  cleanups.push(async () => {
+    r.release();
+    await app.close();
+  });
+  const headers = {
+    "content-type": "application/json",
+    "x-control-service-token": "private-test-token",
+  };
+  const buyer = fetch(`${address}/internal/orders/confirm`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(request),
+  });
+  await vi.waitFor(() => expect(r.confirmations()).toBe(1));
+  const cancel = await fetch(`${address}/internal/orders/cancel-run`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ runId: request.runId }),
+    signal: AbortSignal.timeout(1000),
+  });
+  expect(cancel.status).toBe(204);
+  expect(await (await buyer).json()).toMatchObject({ outcome: "order_confirmation_pending" });
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
+  r.release();
+  await vi.waitFor(async () =>
+    expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmed"),
+  );
+});
 
 it("adopts a disconnected handler's late durable confirmation before the original deadline without waiting for its lease", async () => {
   const securedAt = new Date(Date.now() - 26_000);

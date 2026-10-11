@@ -2,7 +2,10 @@ import {
   controlServiceTokenHeaderName,
   type ErrorPayloadCode,
   errorPayloadSchema,
+  inlineConfirmationCancelRunPath,
+  inlineConfirmationCancelRunSchema,
   inlineConfirmationPath,
+  inlineConfirmationRecoveryPath,
   inlineConfirmationRequestSchema,
   inlineConfirmationResultSchema,
   inlineConfirmationStatusPath,
@@ -27,7 +30,7 @@ export function registerInlineOrderConfirmationRoutes(
     CheckoutSurgeLogger
   >,
   options: {
-    service: Pick<InlineOrderConfirmation, "confirm" | "status">;
+    service: Pick<InlineOrderConfirmation, "confirm" | "status" | "recover" | "cancelRun">;
     controlServiceToken: string;
   },
 ) {
@@ -83,6 +86,22 @@ export function registerInlineOrderConfirmationRoutes(
       );
     replaceFastifyCorrelation(request, reply, parsed.data.correlationId);
     return inlineConfirmationResultSchema.parse(await options.service.status(parsed.data));
+  });
+  app.post(inlineConfirmationRecoveryPath, async (request, reply) => {
+    if (!authorize(request, reply)) return;
+    const parsed = inlineConfirmationRequestSchema.safeParse(request.body);
+    if (!parsed.success)
+      return sendError(request, reply, 400, "invalid_request", "Invalid inline recovery request.");
+    replaceFastifyCorrelation(request, reply, parsed.data.correlationId);
+    return inlineConfirmationResultSchema.parse(await options.service.recover(parsed.data));
+  });
+  app.post(inlineConfirmationCancelRunPath, async (request, reply) => {
+    if (!authorize(request, reply)) return;
+    const parsed = inlineConfirmationCancelRunSchema.safeParse(request.body);
+    if (!parsed.success)
+      return sendError(request, reply, 400, "invalid_request", "Invalid run cancellation request.");
+    options.service.cancelRun(parsed.data.runId);
+    return reply.status(204).send();
   });
 }
 

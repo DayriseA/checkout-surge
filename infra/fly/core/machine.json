@@ -172,6 +172,7 @@
       "name": "api",
       "image": "api",
       "env": {
+        "WORKER_BASE_URL": "http://127.0.0.1:4300",
         "HOST": "::",
         "PORT": "4000",
         "API_LISTEN_BACKLOG": "8192",
@@ -255,6 +256,9 @@
         "MOCK_ERP_BASE_URL": "http://127.0.0.1:4100"
       },
       "secrets": [
+        {
+          "env_var": "CONTROL_SERVICE_TOKEN"
+        },
         {
           "env_var": "DATABASE_URL"
         },

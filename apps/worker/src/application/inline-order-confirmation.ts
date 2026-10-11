@@ -28,6 +28,7 @@ export class InlineOrderConfirmation {
       runId: string;
       controller: AbortController;
       result: Promise<InlineConfirmationResult>;
+      background: boolean;
     }
   >();
   private readonly cancelledRuns = new Set<string>();
@@ -44,6 +45,39 @@ export class InlineOrderConfirmation {
 
   async status(request: InlineConfirmationRequest): Promise<InlineConfirmationResult> {
     return (await this.options.reader.read(request))?.result ?? pending();
+  }
+
+  /** Background recovery consumes durable evidence only, never an ERP dispatch opportunity. */
+  async recover(request: InlineConfirmationRequest): Promise<InlineConfirmationResult> {
+    if (this.active.has(request.orderId)) return pending();
+    const snapshot = await this.options.reader.read(request);
+    if (!snapshot) return pending();
+    if (
+      terminal(snapshot.result) ||
+      !snapshot.runActive ||
+      this.closed ||
+      this.cancelledRuns.has(request.runId) ||
+      this.active.has(request.orderId)
+    )
+      return snapshot.result;
+    const controller = new AbortController();
+    const result = this.process(
+      request,
+      snapshot,
+      {
+        deadlineAt: new Date(this.now().getTime() + 2_000),
+        signal: controller.signal,
+      },
+      controller,
+      true,
+    );
+    const entry = { runId: request.runId, controller, result, background: true };
+    this.active.set(request.orderId, entry);
+    try {
+      return await result;
+    } finally {
+      if (this.active.get(request.orderId) === entry) this.active.delete(request.orderId);
+    }
   }
 
   async confirm(
@@ -74,7 +108,7 @@ export class InlineOrderConfirmation {
         { deadlineAt, signal: controller.signal },
         controller,
       );
-      entry = { runId: request.runId, controller, result };
+      entry = { runId: request.runId, controller, result, background: false };
       this.active.set(request.orderId, entry);
       const owned = entry;
       void result.finally(() => {
@@ -85,9 +119,29 @@ export class InlineOrderConfirmation {
     // buyer retry can resume only through the same durable claim and original window.
     const abort = () => entry.controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
+    let handoffTimer: NodeJS.Timeout | undefined;
     try {
-      return await entry.result;
+      const result = entry.background
+        ? await Promise.race([
+            entry.result,
+            new Promise<InlineConfirmationResult>((resolve) => {
+              handoffTimer = setTimeout(
+                () => resolve(timedOut(snapshot.result)),
+                Math.max(0, deadlineAt.getTime() - this.now().getTime()),
+              );
+            }),
+          ])
+        : await entry.result;
+      // A short lookup must not consume the explicit buyer's remaining processing
+      // opportunity. Resume from durable state under the same original deadline.
+      if (entry.background && !terminal(result) && !signal?.aborted) {
+        if (this.now() >= deadlineAt) return timedOut(result);
+        if (this.closed || this.cancelledRuns.has(request.runId)) return result;
+        return this.confirm(request, signal);
+      }
+      return result;
     } finally {
+      clearTimeout(handoffTimer);
       signal?.removeEventListener("abort", abort);
     }
   }
@@ -109,9 +163,10 @@ export class InlineOrderConfirmation {
     initial: InlineOrderSnapshot,
     budget: ErpProcessingBudget,
     controller: AbortController,
+    lookupOnly = false,
   ): Promise<InlineConfirmationResult> {
     let snapshot = initial;
-    const timeoutResult = timedOut(initial.result);
+    const timeoutResult = lookupOnly ? initial.result : timedOut(initial.result);
     const controllerSignal = budget.signal;
     let timer: NodeJS.Timeout | undefined;
     let finish: () => void = () => {};
@@ -145,6 +200,7 @@ export class InlineOrderConfirmation {
               leaseMs: 30_000,
             });
             if (!claim) {
+              if (lookupOnly) return snapshot.result;
               const nowMs = this.now().getTime();
               // An owner can settle or defer before its lease expires. Observe that
               // release promptly; a deferral without a live lease can sleep until due.
@@ -172,10 +228,15 @@ export class InlineOrderConfirmation {
             };
           }
           if (controllerSignal.aborted || this.now() >= budget.deadlineAt) break;
-          await this.options.handler.handle(job, delivery, { budget, replayUnknown: false });
+          await this.options.handler.handle(job, delivery, {
+            budget,
+            replayUnknown: false,
+            ...(lookupOnly ? { allowDispatch: false } : {}),
+          });
           // Fulfilled void includes deferral and owner loss; only durable terminal
           // state can establish confirmation or failure.
           snapshot = (await this.options.reader.read(request)) ?? snapshot;
+          if (lookupOnly) return snapshot.result;
           if (!terminal(snapshot.result)) await delay(1, undefined, { signal: controllerSignal });
         }
       } catch {

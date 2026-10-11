@@ -10,6 +10,7 @@ export function loadWorkerConfig(env: NodeJS.ProcessEnv) {
     healthHost: env.HEALTH_HOST?.trim() || env.HOST?.trim() || "0.0.0.0",
     healthPort: parsePositiveInteger(env.HEALTH_PORT, "HEALTH_PORT", 4300),
     redisUrl: requireEnv(env, "REDIS_URL"),
+    controlServiceToken: requireEnv(env, "CONTROL_SERVICE_TOKEN"),
     orderProcessConcurrency: parsePositiveInteger(
       env.ORDER_PROCESS_CONCURRENCY,
       "ORDER_PROCESS_CONCURRENCY",
