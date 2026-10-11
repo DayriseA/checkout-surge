@@ -3,14 +3,7 @@ import {
   type OrderProcessJob,
   type SecuredReservationHold,
 } from "@checkout-surge/contracts";
-import {
-  type CheckoutSurgeRedis,
-  deferPendingPersistenceRecord,
-  type PendingPersistenceReadIssue,
-  type PendingPersistenceRecord,
-  readPendingPersistencePage,
-  readPendingPersistenceRecord,
-} from "@checkout-surge/db";
+import type { PendingPersistenceReadIssue, PendingPersistenceRecord } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { pendingPersistenceRecoveryDefaults } from "../runtime/pending-persistence-recovery-policy.js";
 import type { DashboardSourceDirtySchedulerPort } from "./dashboard-source-dirty-scheduler.js";
@@ -64,8 +57,28 @@ export interface PendingPersistenceAttemptScope {
   close(): Promise<void>;
 }
 
+export interface PendingPersistenceRecoveryStorage {
+  readPage(input: { runId: string; saleOfferId: string; limit: number; dueAt: Date }): Promise<{
+    records: PendingPersistenceRecord[];
+    issues: PendingPersistenceReadIssue[];
+  }>;
+  readRecord(input: { saleOfferId: string; reservationId: string }): Promise<{
+    record: PendingPersistenceRecord | null;
+    issue?: PendingPersistenceReadIssue;
+  }>;
+  defer(input: {
+    saleOfferId: string;
+    reservationId: string;
+    attemptCount: number;
+    status: "pending" | "exhausted";
+    nextRecoveryAt: Date;
+    recoveryDeadlineAt: Date;
+    lastError: string;
+  }): Promise<"deferred" | "exhausted" | "removed">;
+}
+
 export interface PendingPersistenceDiscoveryScope {
-  redis: CheckoutSurgeRedis;
+  storage: PendingPersistenceRecoveryStorage;
   close(): Promise<void>;
 }
 
@@ -85,7 +98,7 @@ export class PendingPersistenceDiscoveryDeadlineError extends Error {
 
 /**
  * Sole owner of discovery, retry scheduling, and resolution for interrupted
- * Redis-to-PostgreSQL reservation persistence.
+ * reservation persistence.
  */
 export class PendingPersistenceRecoveryService {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -102,7 +115,7 @@ export class PendingPersistenceRecoveryService {
 
   constructor(
     private readonly options: {
-      redis: CheckoutSurgeRedis;
+      storage: PendingPersistenceRecoveryStorage;
       persistence: BuyPersistence;
       audit: PendingPersistenceRecoveryAudit;
       stockReservations: Pick<StockReservationGateway, "promoteAccepted">;
@@ -217,7 +230,7 @@ export class PendingPersistenceRecoveryService {
     reservation: SecuredReservationHold;
     idempotencyKey: string;
   }): Promise<PersistedBuyAcceptance | null> {
-    const read = await readPendingPersistenceRecord(this.options.redis, {
+    const read = await this.options.storage.readRecord({
       saleOfferId: input.reservation.saleOfferId,
       reservationId: input.reservation.id,
     });
@@ -241,7 +254,7 @@ export class PendingPersistenceRecoveryService {
       discoveryScope = await this.options.openDiscoveryScope?.(discoveryController.signal);
       records = await this.discover(
         discoveryController.signal,
-        discoveryScope?.redis ?? this.options.redis,
+        discoveryScope?.storage ?? this.options.storage,
       );
     } finally {
       clearTimeout(discoveryTimer);
@@ -279,14 +292,15 @@ export class PendingPersistenceRecoveryService {
 
   private async discover(
     signal: AbortSignal,
-    redis: CheckoutSurgeRedis,
+    storage: PendingPersistenceRecoveryStorage,
   ): Promise<PendingPersistenceRecord[]> {
     const records: PendingPersistenceRecord[] = [];
     const scopes = await this.options.listRunScopes(signal);
     for (const scope of scopes) {
       if (signal.aborted || this.closed) break;
       const pageNow = this.now();
-      const page = await readPendingPersistencePage(redis, {
+      const page = await storage.readPage({
+        runId: scope.runId,
         saleOfferId: scope.saleOfferId,
         limit: this.policy().batchSize,
         dueAt: pageNow,
@@ -411,13 +425,13 @@ export class PendingPersistenceRecoveryService {
       const decisionNow = this.now();
       const backoffMs = this.backoffMs(attemptCount);
       const nextRecoveryAt = new Date(decisionNow.getTime() + backoffMs);
-      let redisDisposition: "deferred" | "exhausted" | "removed";
+      let storageDisposition: "deferred" | "exhausted" | "removed";
       if (
         attemptCount >= this.policy().maxAttempts ||
         decisionNow.getTime() >= deadline.getTime() ||
         nextRecoveryAt.getTime() >= deadline.getTime()
       ) {
-        redisDisposition = await this.tryExhaust(
+        storageDisposition = await this.tryExhaust(
           record,
           attemptCount,
           deadline,
@@ -425,7 +439,7 @@ export class PendingPersistenceRecoveryService {
           decisionNow,
         );
       } else {
-        redisDisposition = await deferPendingPersistenceRecord(this.options.redis, {
+        storageDisposition = await this.options.storage.defer({
           saleOfferId: record.saleOfferId,
           reservationId: record.id,
           attemptCount,
@@ -434,7 +448,7 @@ export class PendingPersistenceRecoveryService {
           recoveryDeadlineAt: deadline,
           lastError: message,
         });
-        if (redisDisposition === "deferred") {
+        if (storageDisposition === "deferred") {
           this.options.logger.warn(
             {
               err: error,
@@ -448,7 +462,7 @@ export class PendingPersistenceRecoveryService {
           );
         }
       }
-      if (auditResolved && redisDisposition === "removed" && recoveryResult) {
+      if (auditResolved && storageDisposition === "removed" && recoveryResult) {
         this.options.logger.info(
           {
             runId: record.runId,
@@ -456,11 +470,11 @@ export class PendingPersistenceRecoveryService {
             reservationId: record.id,
             attemptCount,
           },
-          "Pending-persistence Redis cursor was already resolved after promotion response loss.",
+          "Pending-persistence cursor was already resolved after promotion response loss.",
         );
         return recoveryResult;
       }
-      if (auditResolved && redisDisposition === "deferred") {
+      if (auditResolved && storageDisposition === "deferred") {
         try {
           await scope.audit.recordAttempt({
             reservation,
@@ -488,8 +502,8 @@ export class PendingPersistenceRecoveryService {
     deadline: Date,
     error: string,
     exhaustedAt: Date,
-  ): Promise<"exhausted" | "removed"> {
-    const redisDisposition = await deferPendingPersistenceRecord(this.options.redis, {
+  ): Promise<"deferred" | "exhausted" | "removed"> {
+    const storageDisposition = await this.options.storage.defer({
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
       attemptCount,
@@ -498,7 +512,7 @@ export class PendingPersistenceRecoveryService {
       recoveryDeadlineAt: deadline,
       lastError: error,
     });
-    if (redisDisposition === "removed") return "removed";
+    if (storageDisposition !== "exhausted") return storageDisposition;
     const auditRecorded = await this.recordExhaustionAudit({
       reservation: toReservation(record),
       attemptCount,
@@ -516,7 +530,7 @@ export class PendingPersistenceRecoveryService {
         error,
         auditRecorded,
       },
-      "Pending-persistence recovery exhausted; the Redis hold remains unresolved.",
+      "Pending-persistence recovery exhausted; the retained hold remains unresolved.",
     );
     return "exhausted";
   }
@@ -549,7 +563,7 @@ export class PendingPersistenceRecoveryService {
           reservationId: input.reservation.id,
           attemptCount: input.attemptCount,
         },
-        "Could not persist pending-persistence exhaustion audit; Redis will retain authoritative exhausted state.",
+        "Could not persist pending-persistence exhaustion audit; storage will retain authoritative exhausted state.",
       );
       return false;
     } finally {
@@ -568,7 +582,7 @@ export class PendingPersistenceRecoveryService {
     let persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
     let materialized = false;
     if (persisted && !isPersistedBuyForReservation(persisted, reservation)) {
-      throw new Error("Durable reservation/order attribution does not match the Redis hold.");
+      throw new Error("Durable reservation/order attribution does not match the retained hold.");
     }
     if (!persisted) {
       if (runDisposition !== "admissible") {
@@ -581,7 +595,7 @@ export class PendingPersistenceRecoveryService {
         persisted = await persistence.getPersistedBuyByReservationId(reservation.id);
         if (!persisted) throw error;
         if (!isPersistedBuyForReservation(persisted, reservation)) {
-          throw new Error("Concurrent durable buy does not match the Redis hold.");
+          throw new Error("Concurrent durable buy does not match the retained hold.");
         }
       }
     }
@@ -605,7 +619,7 @@ export class PendingPersistenceRecoveryService {
   }
 
   private async readRecord(record: PendingPersistenceRecord) {
-    const read = await readPendingPersistenceRecord(this.options.redis, {
+    const read = await this.options.storage.readRecord({
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
     });
@@ -633,11 +647,11 @@ export class PendingPersistenceRecoveryService {
     deadline: Date,
     now: Date,
     error: unknown,
-  ): Promise<"deferred" | "removed"> {
+  ): Promise<"deferred" | "exhausted" | "removed"> {
     const nextRecoveryAt = new Date(
       Math.min(now.getTime() + this.policy().initialBackoffMs, deadline.getTime()),
     );
-    const redisDisposition = await deferPendingPersistenceRecord(this.options.redis, {
+    const storageDisposition = await this.options.storage.defer({
       saleOfferId: record.saleOfferId,
       reservationId: record.id,
       attemptCount: record.recoveryAttemptCount,
@@ -646,10 +660,7 @@ export class PendingPersistenceRecoveryService {
       recoveryDeadlineAt: deadline,
       lastError: errorMessage(error),
     });
-    if (redisDisposition === "exhausted") {
-      throw new Error("Pending recovery deferral returned an exhausted disposition.");
-    }
-    if (redisDisposition === "deferred") {
+    if (storageDisposition === "deferred") {
       this.options.logger.error(
         {
           err: error,
@@ -659,10 +670,10 @@ export class PendingPersistenceRecoveryService {
           attemptCount: record.recoveryAttemptCount,
           nextRecoveryAt: nextRecoveryAt.toISOString(),
         },
-        "Could not persist pending-persistence attempt audit; Redis remains retryable.",
+        "Could not persist pending-persistence attempt audit; storage remains retryable.",
       );
     }
-    return redisDisposition;
+    return storageDisposition;
   }
 
   private async handlePreAttemptFailure(

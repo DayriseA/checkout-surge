@@ -477,7 +477,8 @@ ALTER TABLE "postgres_reservation_holds" ADD CONSTRAINT "pg_hold_run_sale_fk" FO
 ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "postgres_reservation_idempotency_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "pg_idempotency_hold_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."postgres_reservation_holds"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "postgres_run_inventory" ADD CONSTRAINT "pg_inventory_run_sale_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "postgres_reservation_holds_run_idx" ON "postgres_reservation_holds" USING btree ("run_id");
+CREATE INDEX "postgres_reservation_holds_run_idx" ON "postgres_reservation_holds" USING btree ("run_id");--> statement-breakpoint
+CREATE INDEX "postgres_reservation_holds_pending_due_idx" ON "postgres_reservation_holds" USING btree ("run_id","sale_offer_id",("pending_record"->>'nextRecoveryAt'),"id") WHERE "postgres_reservation_holds"."reversed_at" is null and "postgres_reservation_holds"."pending_record" is not null and "postgres_reservation_holds"."pending_record"->>'recoveryStatus'='pending';
 --> statement-breakpoint
 CREATE TABLE "postgres_order_deliveries" (
 	"publication_id" text PRIMARY KEY NOT NULL,

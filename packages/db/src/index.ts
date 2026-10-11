@@ -5,6 +5,7 @@ export * from "./demo-run-locks.js";
 export * from "./demo-run-maintenance.js";
 export * from "./migrations.js";
 export * from "./postgres-order-delivery.js";
+export * from "./postgres-pending-persistence.js";
 export * from "./postgres-stock-reservation.js";
 export * from "./redis.js";
 export * from "./redis-dashboard-projection-dirty.js";

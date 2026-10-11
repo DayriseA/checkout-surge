@@ -185,7 +185,7 @@ export async function startApiServer(): Promise<void> {
     discoveryTimeoutMs: config.pendingPersistenceRecoveryDiscoveryTimeoutMs,
   });
   const pendingPersistenceRecovery = new PendingPersistenceRecoveryService({
-    redis: pendingPersistenceOperations.redis,
+    storage: pendingPersistenceOperations.storage,
     persistence,
     audit: {
       recordAttempt: (input) => persistence.recordPendingPersistenceAttempt(input),

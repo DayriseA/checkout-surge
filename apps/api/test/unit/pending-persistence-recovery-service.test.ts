@@ -1,10 +1,12 @@
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
-import { inventoryKeys } from "@checkout-surge/db";
+import { inventoryKeys, type PendingPersistenceRecord } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { createRedisPendingPersistenceStorage } from "../../src/runtime/pending-persistence-operation-factory.js";
 import {
   PendingPersistenceDiscoveryDeadlineError,
   PendingPersistenceRecoveryService,
+  type PendingPersistenceRecoveryStorage,
 } from "../../src/services/pending-persistence-recovery-service.js";
 import { passThroughRunLocks } from "../pass-through-run-locks.js";
 
@@ -218,7 +220,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const promoteAccepted = vi.fn(async () => undefined);
     const recoveryAudit = audit();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -247,12 +249,127 @@ describe("PendingPersistenceRecoveryService", () => {
     expect(recoveryAudit.markResolved).toHaveBeenCalledOnce();
   });
 
+  it("does not exhaust a newer direct attempt from a stale scheduled snapshot", async () => {
+    const second = { ...hold, id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" };
+    let now = new Date(hold.securedAt);
+    const records = new Map<string, PendingPersistenceRecord>(
+      [hold, second].map((reservation) => [
+        reservation.id,
+        {
+          ...reservation,
+          idempotencyKey: `key-${reservation.id}`,
+          recoveryAttemptCount: 0,
+          recoveryStatus: "pending",
+          nextRecoveryAt: reservation.securedAt,
+        },
+      ]),
+    );
+    const storage: PendingPersistenceRecoveryStorage = {
+      readPage: async ({ dueAt }) => ({
+        records: [...records.values()]
+          .filter(
+            (record) =>
+              record.recoveryStatus === "pending" &&
+              Date.parse(record.nextRecoveryAt) <= dueAt.getTime(),
+          )
+          .map((record) => ({ ...record })),
+        issues: [],
+      }),
+      readRecord: async ({ reservationId }) => ({ record: records.get(reservationId) ?? null }),
+      defer: vi.fn(async (input) => {
+        const current = records.get(input.reservationId);
+        if (!current) return "removed";
+        if (current.recoveryStatus === "exhausted") return "exhausted";
+        // The PostgreSQL adapter rejects a stale snapshot without changing newer metadata.
+        if (current.recoveryAttemptCount > input.attemptCount) return "deferred";
+        records.set(current.id, {
+          ...current,
+          recoveryAttemptCount: input.attemptCount,
+          recoveryStatus: input.status,
+          nextRecoveryAt: input.nextRecoveryAt.toISOString(),
+          recoveryDeadlineAt: input.recoveryDeadlineAt.toISOString(),
+        });
+        return input.status === "exhausted" ? "exhausted" : "deferred";
+      }),
+    };
+    let releaseFirst: (() => void) | undefined;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    const recoveryAudit = audit();
+    const service = new PendingPersistenceRecoveryService({
+      storage,
+      persistence: {
+        ...passThroughRunLocks,
+        getPersistedBuyByReservationId: async (id) => {
+          if (id !== hold.id) return null;
+          firstStarted?.();
+          await firstBlocked;
+          return persisted(hold);
+        },
+        persistSecuredReservation: async () => {
+          throw new Error("Persistence unavailable.");
+        },
+      },
+      audit: recoveryAudit,
+      stockReservations: {
+        promoteAccepted: async ({ reservation }) => {
+          records.delete(reservation.id);
+        },
+      },
+      orderProcessJobPublisher: { enqueue: async () => undefined },
+      listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
+      idempotencyTtlSeconds: 60,
+      recoveryWindowSeconds: 1,
+      initialBackoffMs: 10,
+      maxBackoffMs: 10,
+      logger: createSilentLogger("api"),
+      now: () => now,
+    });
+    const pass = service.runOnce();
+    try {
+      await started;
+      await expect(
+        service.recoverReservation({ reservation: second, idempotencyKey: `key-${second.id}` }),
+      ).resolves.toBeNull();
+      expect(records.get(second.id)).toMatchObject({
+        recoveryAttemptCount: 1,
+        recoveryStatus: "pending",
+      });
+      now = new Date(now.getTime() + 1_000);
+      releaseFirst?.();
+      await expect(pass).resolves.toMatchObject({ resolved: 1, deferred: 1, exhausted: 0 });
+      expect(storage.defer).toHaveBeenLastCalledWith(
+        expect.objectContaining({ reservationId: second.id, attemptCount: 0, status: "exhausted" }),
+      );
+      expect(recoveryAudit.markExhausted).not.toHaveBeenCalled();
+      expect(records.get(second.id)).toMatchObject({
+        recoveryAttemptCount: 1,
+        recoveryStatus: "pending",
+      });
+      // The next pass uses current metadata and can exhaust with the truthful attempt count.
+      await expect(service.runOnce()).resolves.toMatchObject({ discovered: 1, exhausted: 1 });
+      expect(recoveryAudit.markExhausted).toHaveBeenCalledOnce();
+      expect(recoveryAudit.markExhausted).toHaveBeenCalledWith(
+        expect.objectContaining({ reservation: second, attemptCount: 1 }),
+      );
+    } finally {
+      releaseFirst?.();
+      await pass;
+      await service.close();
+    }
+  });
+
   it("uses deterministic bounded backoff and leaves an exhausted hold visible", async () => {
     const pending = pendingRedis();
     const recoveryAudit = audit();
     let now = new Date(hold.securedAt);
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
@@ -300,7 +417,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const recoveryAudit = audit();
     let now = new Date(hold.securedAt);
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
@@ -344,7 +461,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const durable = persisted();
     const persistSecuredReservation = vi.fn(async () => durable);
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -377,7 +494,7 @@ describe("PendingPersistenceRecoveryService", () => {
     pending.record.nextRecoveryAt = "2026-06-20T00:00:05.000Z";
     await pending.redis.zadd("pending", Date.parse(pending.record.nextRecoveryAt), hold.id);
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -416,7 +533,7 @@ describe("PendingPersistenceRecoveryService", () => {
       Array.from({ length: 100 }, (_, index) => `earlier-${index}`),
     );
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => durable),
@@ -445,7 +562,7 @@ describe("PendingPersistenceRecoveryService", () => {
     recoveryAudit.recordAttempt.mockRejectedValueOnce(new Error("audit unavailable"));
     const persistSecuredReservation = vi.fn(async () => persisted());
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -479,7 +596,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const calls: string[] = [];
     const durable = persisted();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         getPersistedBuyByReservationId: vi.fn(async () => null),
@@ -539,7 +656,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const recoveryAudit = audit();
     const markDirty = vi.fn();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -573,7 +690,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const durable = persisted();
     const recoveryAudit = audit();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => durable),
@@ -603,7 +720,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const pending = pendingRedis();
     const recoveryAudit = audit();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -635,7 +752,7 @@ describe("PendingPersistenceRecoveryService", () => {
     let now = new Date(hold.securedAt);
     const recoveryAudit = audit();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
@@ -676,7 +793,7 @@ describe("PendingPersistenceRecoveryService", () => {
       async ({ reservation }: { reservation: SecuredReservationHold }) => persisted(reservation),
     );
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation,
@@ -723,7 +840,7 @@ describe("PendingPersistenceRecoveryService", () => {
       getPersistedBuyByReservationId: vi.fn(async () => null),
     };
     const first = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: failingPersistence,
       audit: firstAudit,
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
@@ -739,7 +856,7 @@ describe("PendingPersistenceRecoveryService", () => {
 
     const restartAudit = audit();
     const restarted = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: failingPersistence,
       audit: restartAudit,
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
@@ -769,7 +886,7 @@ describe("PendingPersistenceRecoveryService", () => {
       getPersistedBuyByReservationId: vi.fn(async () => null),
     };
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence,
       audit: recoveryAudit,
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
@@ -794,7 +911,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const recoveryAudit = audit();
     recoveryAudit.markExhausted.mockRejectedValueOnce(new Error("audit unavailable"));
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -825,7 +942,7 @@ describe("PendingPersistenceRecoveryService", () => {
     });
     const cancelSchedule = vi.fn();
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -859,7 +976,7 @@ describe("PendingPersistenceRecoveryService", () => {
       .mockRejectedValueOnce(new Error("scope read failed"))
       .mockResolvedValue([]);
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -886,7 +1003,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const pending = pendingRedis();
     let scopeReadCount = 0;
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
@@ -929,7 +1046,7 @@ describe("PendingPersistenceRecoveryService", () => {
       discoveryStarted = resolve;
     });
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -960,7 +1077,7 @@ describe("PendingPersistenceRecoveryService", () => {
       secondStarted = resolve;
     });
     const failingService = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -1004,7 +1121,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const openedReservationIds: string[] = [];
     const closedScopes: string[] = [];
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -1065,7 +1182,7 @@ describe("PendingPersistenceRecoveryService", () => {
       releaseScopes = resolve;
     });
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -1108,7 +1225,7 @@ describe("PendingPersistenceRecoveryService", () => {
         }),
     );
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -1157,7 +1274,7 @@ describe("PendingPersistenceRecoveryService", () => {
       attemptStarted = resolve;
     });
     const service = new PendingPersistenceRecoveryService({
-      redis: pending.redis as never,
+      storage: createRedisPendingPersistenceStorage(pending.redis as never),
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => persisted()),
@@ -1210,7 +1327,7 @@ describe("PendingPersistenceRecoveryService", () => {
       const scopeClose = vi.fn(async () => undefined);
       let scopeCount = 0;
       const service = new PendingPersistenceRecoveryService({
-        redis: pending.redis as never,
+        storage: createRedisPendingPersistenceStorage(pending.redis as never),
         persistence: {
           ...passThroughRunLocks,
           persistSecuredReservation: vi.fn(async () => persisted()),

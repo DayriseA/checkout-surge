@@ -76,7 +76,8 @@ export class PostgresStockReservations {
         idempotencyKey: input.idempotencyKey,
         recoveryAttemptCount: 0,
         recoveryStatus: "pending",
-        nextRecoveryAt: hold.securedAt,
+        // Recovery eligibility uses fixed-width UTC ISO text in its due index.
+        nextRecoveryAt: new Date(hold.securedAt).toISOString(),
       };
       const rows = await tx`with stock as (
           update postgres_run_inventory set remaining_stock=remaining_stock-${hold.quantity},

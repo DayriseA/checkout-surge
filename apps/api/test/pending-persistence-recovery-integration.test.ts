@@ -9,7 +9,10 @@ import {
 import { requireTestDatabaseUrl } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
-import { createPendingPersistenceRecoveryOperations } from "../src/runtime/pending-persistence-operation-factory.js";
+import {
+  createPendingPersistenceRecoveryOperations,
+  createRedisPendingPersistenceStorage,
+} from "../src/runtime/pending-persistence-operation-factory.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
 import { passThroughRunLocks } from "./pass-through-run-locks.js";
 
@@ -48,7 +51,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
       discoveryTimeoutMs: 30_000,
     });
     const service = new PendingPersistenceRecoveryService({
-      redis: operations.redis,
+      storage: operations.storage,
       persistence: noOpPersistence(),
       audit: noOpAudit(),
       stockReservations: { promoteAccepted: async () => undefined },
@@ -135,7 +138,7 @@ describe("pending-persistence recovery cancellation boundaries", () => {
     };
     const scopeClose = vi.fn(async () => operationRedis.disconnect());
     const service = new PendingPersistenceRecoveryService({
-      redis: discoveryRedis,
+      storage: createRedisPendingPersistenceStorage(discoveryRedis),
       persistence: noOpPersistence(),
       audit: noOpAudit(),
       stockReservations: { promoteAccepted: async () => undefined },

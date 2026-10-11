@@ -3,8 +3,11 @@ import {
   type CheckoutSurgeRedis,
   createAbortableDatabaseConnection,
   createRedisClient,
+  deferPendingPersistenceRecord,
   demoRuns,
   promoteReservationIdempotencyToAccepted,
+  readPendingPersistencePage,
+  readPendingPersistenceRecord,
 } from "@checkout-surge/db";
 import { inArray } from "drizzle-orm";
 import {
@@ -14,6 +17,7 @@ import {
 import type {
   PendingPersistenceAttemptScope,
   PendingPersistenceDiscoveryScope,
+  PendingPersistenceRecoveryStorage,
 } from "../services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "../services/postgres-buy-persistence.js";
 import {
@@ -35,7 +39,7 @@ export interface PendingPersistenceRunScope {
 }
 
 export interface PendingPersistenceRecoveryOperations {
-  redis: CheckoutSurgeRedis;
+  storage: PendingPersistenceRecoveryStorage;
   openDiscoveryScope(signal: AbortSignal): Promise<PendingPersistenceDiscoveryScope>;
   listRunScopes(signal: AbortSignal): Promise<PendingPersistenceRunScope[]>;
   openAttemptScope(input: {
@@ -84,7 +88,7 @@ export function createPendingPersistenceRecoveryOperations(
   let closePromise: Promise<void> | undefined;
 
   return {
-    redis,
+    storage: createRedisPendingPersistenceStorage(redis),
     openDiscoveryScope: async (signal) => {
       const operationRedis = infrastructure.createRedis(config.redisUrl, {
         lazyConnect: true,
@@ -92,7 +96,7 @@ export function createPendingPersistenceRecoveryOperations(
         commandTimeout: config.discoveryTimeoutMs,
       });
       return {
-        redis: operationRedis,
+        storage: createRedisPendingPersistenceStorage(operationRedis),
         close: createOperationResourceCleanup({
           signal,
           operations: [() => operationRedis.disconnect()],
@@ -191,4 +195,15 @@ export function createPendingPersistenceRecoveryOperations(
 function requireResource<T>(resource: T | undefined, name: string): T {
   if (!resource) throw new Error(`Could not construct ${name}.`);
   return resource;
+}
+
+/** Demo composition adapter; service scheduling and retries share the same port. */
+export function createRedisPendingPersistenceStorage(
+  redis: CheckoutSurgeRedis,
+): PendingPersistenceRecoveryStorage {
+  return {
+    readPage: (input) => readPendingPersistencePage(redis, input),
+    readRecord: (input) => readPendingPersistenceRecord(redis, input),
+    defer: (input) => deferPendingPersistenceRecord(redis, input),
+  };
 }

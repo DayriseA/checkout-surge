@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
+import type postgres from "postgres";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createDatabaseConnection,
+  PostgresPendingPersistence,
   PostgresStockReservations,
   products,
   saleOffers,
@@ -211,4 +213,174 @@ describe("unwired PostgreSQL stock adapter", () => {
       await connection.sql`select remaining_stock,reserved_stock from postgres_run_inventory`;
     expect(row).toEqual({ remaining_stock: 2, reserved_stock: 1 });
   });
+});
+
+describe("PostgreSQL retained pending recovery", () => {
+  it("filters backend, run, status and due eligibility before a bounded page and retains full metadata", async () => {
+    const pending = new PostgresPendingPersistence(connection.sql);
+    const exhausted = attempt("exhausted");
+    const future = attempt("future");
+    const eligible = attempt("eligible");
+    const inputs = [exhausted, future, eligible];
+    for (const input of inputs) await stock.reserve(input);
+    const now = new Date();
+    const deadline = new Date(now.getTime() + 60_000);
+    expect(await pending.readPage({ runId, saleOfferId, limit: 1, dueAt: now })).toEqual({
+      records: [],
+      issues: [],
+    });
+    await connection.sql`update demo_runs set execution_mode='without_redis' where id=${runId}`;
+    await pending.defer({
+      saleOfferId,
+      reservationId: exhausted.reservation.id,
+      attemptCount: 2,
+      status: "exhausted",
+      nextRecoveryAt: now,
+      recoveryDeadlineAt: deadline,
+      lastError: "stopped",
+    });
+    await pending.defer({
+      saleOfferId,
+      reservationId: future.reservation.id,
+      attemptCount: 1,
+      status: "pending",
+      nextRecoveryAt: deadline,
+      recoveryDeadlineAt: deadline,
+      lastError: "retry",
+    });
+    const page = await pending.readPage({ runId, saleOfferId, limit: 1, dueAt: now });
+    expect(page.records).toEqual([
+      {
+        ...eligible.reservation,
+        idempotencyKey: eligible.idempotencyKey,
+        recoveryAttemptCount: 0,
+        recoveryStatus: "pending",
+        nextRecoveryAt: eligible.reservation.securedAt,
+      },
+    ]);
+    await connection.sql`update demo_runs set status='completed' where id=${runId}`;
+    expect((await pending.readPage({ runId, saleOfferId, limit: 1, dueAt: now })).records).toEqual(
+      page.records,
+    );
+    expect(
+      await pending.readPage({ runId: randomUUID(), saleOfferId, limit: 1, dueAt: now }),
+    ).toEqual({ records: [], issues: [] });
+    expect(
+      (await pending.readRecord({ saleOfferId, reservationId: exhausted.reservation.id })).record,
+    ).toEqual({
+      ...exhausted.reservation,
+      idempotencyKey: exhausted.idempotencyKey,
+      recoveryAttemptCount: 2,
+      recoveryStatus: "exhausted",
+      nextRecoveryAt: now.toISOString(),
+      recoveryDeadlineAt: deadline.toISOString(),
+      lastRecoveryError: "stopped",
+    });
+    expect(
+      await pending.defer({
+        saleOfferId,
+        reservationId: exhausted.reservation.id,
+        attemptCount: 0,
+        status: "pending",
+        nextRecoveryAt: now,
+        recoveryDeadlineAt: deadline,
+        lastError: "older",
+      }),
+    ).toBe("exhausted");
+    expect(
+      await pending.defer({
+        saleOfferId,
+        reservationId: future.reservation.id,
+        attemptCount: 0,
+        status: "pending",
+        nextRecoveryAt: now,
+        recoveryDeadlineAt: deadline,
+        lastError: "older",
+      }),
+    ).toBe("deferred");
+    expect(
+      (await pending.readRecord({ saleOfferId, reservationId: future.reservation.id })).record
+        ?.lastRecoveryError,
+    ).toBe("retry");
+  });
+
+  it("does not resurrect cleared promotion or compensation metadata", async () => {
+    await connection.sql`update demo_runs set execution_mode='without_redis' where id=${runId}`;
+    const pending = new PostgresPendingPersistence(connection.sql);
+    for (const action of ["promote", "reverse"]) {
+      const input = attempt(action);
+      await stock.reserve(input);
+      if (action === "promote") await stock.promoteAccepted(input);
+      else await stock.reverse(input);
+      expect(
+        await pending.defer({
+          saleOfferId,
+          reservationId: input.reservation.id,
+          attemptCount: 1,
+          status: "pending",
+          nextRecoveryAt: new Date(),
+          recoveryDeadlineAt: new Date(Date.now() + 60_000),
+          lastError: "late",
+        }),
+      ).toBe("removed");
+      expect(
+        (await pending.readRecord({ saleOfferId, reservationId: input.reservation.id })).record,
+      ).toBeNull();
+    }
+  });
+});
+
+it("does not resurrect pending metadata when deferral waits for actual promotion", async () => {
+  await connection.sql`update demo_runs set execution_mode='without_redis' where id=${runId}`;
+  const input = attempt("promotion-wait");
+  await stock.reserve(input);
+  let holdCommit: (() => void) | undefined;
+  const commitGate = new Promise<void>((resolve) => {
+    holdCommit = resolve;
+  });
+  let updated: (() => void) | undefined;
+  const promotionUpdated = new Promise<void>((resolve) => {
+    updated = resolve;
+  });
+  const promotionSql = new Proxy(connection.sql, {
+    get(target, property, receiver) {
+      if (property === "begin")
+        return (operation: (tx: postgres.TransactionSql) => Promise<unknown>) =>
+          target.begin(async (tx) => {
+            const result = await operation(tx);
+            updated?.();
+            await commitGate;
+            return result;
+          });
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const promotion = new PostgresStockReservations(promotionSql).promoteAccepted(input);
+  const other = open();
+  const pending = new PostgresPendingPersistence(other.sql);
+  const [identity] = await other.sql`select pg_backend_pid() as pid`;
+  let deferral: ReturnType<PostgresPendingPersistence["defer"]> | undefined;
+  try {
+    await promotionUpdated;
+    deferral = pending.defer({
+      saleOfferId,
+      reservationId: input.reservation.id,
+      attemptCount: 1,
+      status: "pending",
+      nextRecoveryAt: new Date(),
+      recoveryDeadlineAt: new Date(Date.now() + 60_000),
+      lastError: "late",
+    });
+    await waitForLock(identity?.pid);
+    holdCommit?.();
+    await promotion;
+    expect(await deferral).toBe("removed");
+    expect(
+      (await pending.readRecord({ saleOfferId, reservationId: input.reservation.id })).record,
+    ).toBeNull();
+  } finally {
+    holdCommit?.();
+    await promotion;
+    await deferral;
+  }
 });

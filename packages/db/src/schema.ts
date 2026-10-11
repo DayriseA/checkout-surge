@@ -283,6 +283,16 @@ export const postgresReservationHolds = pgTable(
       foreignColumns: [demoRunSaleContexts.runId, demoRunSaleContexts.saleOfferId],
     }).onDelete("cascade"),
     index("postgres_reservation_holds_run_idx").on(table.runId),
+    index("postgres_reservation_holds_pending_due_idx")
+      .on(
+        table.runId,
+        table.saleOfferId,
+        sql`(${table.pendingRecord}->>'nextRecoveryAt')`,
+        table.id,
+      )
+      .where(
+        sql`${table.reversedAt} is null and ${table.pendingRecord} is not null and ${table.pendingRecord}->>'recoveryStatus'='pending'`,
+      ),
   ],
 );
 

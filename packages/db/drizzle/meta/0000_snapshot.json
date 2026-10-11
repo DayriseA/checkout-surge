@@ -2590,6 +2590,40 @@
         }
       },
       "indexes": {
+        "postgres_reservation_holds_pending_due_idx": {
+          "name": "postgres_reservation_holds_pending_due_idx",
+          "columns": [
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "sale_offer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "(\"pending_record\"->>'nextRecoveryAt')",
+              "isExpression": true,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "where": "\"postgres_reservation_holds\".\"reversed_at\" is null and \"postgres_reservation_holds\".\"pending_record\" is not null and \"postgres_reservation_holds\".\"pending_record\"->>'recoveryStatus'='pending'",
+          "with": {}
+        },
         "postgres_reservation_holds_run_idx": {
           "name": "postgres_reservation_holds_run_idx",
           "columns": [
