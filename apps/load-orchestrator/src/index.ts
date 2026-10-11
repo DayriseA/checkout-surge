@@ -35,6 +35,7 @@ export async function startLoadOrchestrator(): Promise<void> {
       logger,
       executionStore,
       cancellationTimeoutMs: config.k6CancellationTimeoutMs,
+      ...(config.proofCapture ? { proofCapture: config.proofCapture } : {}),
     }),
     { bootId: processBootId, version: config.commitSha },
   );

@@ -6,6 +6,7 @@ import {
   defaultK6CancellationTimeoutMs,
   maxK6CancellationTimeoutMs,
 } from "../application/k6-child-process-supervisor.js";
+import type { ProofK6CaptureOptions } from "../application/proof-k6-capture.js";
 
 export interface LoadOrchestratorConfig {
   host: string;
@@ -18,6 +19,7 @@ export interface LoadOrchestratorConfig {
   stateDirectory: string;
   runnerLifecycleEnabled: boolean;
   commitSha: string;
+  proofCapture?: ProofK6CaptureOptions;
 }
 
 const unsafeControlServiceTokens = new Set([
@@ -27,6 +29,19 @@ const unsafeControlServiceTokens = new Set([
 
 export function loadLoadOrchestratorConfig(env: NodeJS.ProcessEnv): LoadOrchestratorConfig {
   return {
+    ...(env.PROOF_K6_CAPTURE_DIR?.trim()
+      ? {
+          proofCapture: {
+            directory: env.PROOF_K6_CAPTURE_DIR.trim(),
+            acknowledgementTimeoutMs: parsePositiveInteger(
+              env.PROOF_K6_CAPTURE_ACK_TIMEOUT_MS,
+              "PROOF_K6_CAPTURE_ACK_TIMEOUT_MS",
+              120_000,
+              300_000,
+            ),
+          },
+        }
+      : {}),
     runnerLifecycleEnabled: parseBoolean(env.RUNNER_LIFECYCLE_ENABLED),
     commitSha: env.COMMIT_SHA?.trim() || "unknown",
     host: env.HOST?.trim() || "0.0.0.0",

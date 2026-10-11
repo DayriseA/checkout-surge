@@ -13,6 +13,7 @@ import {
 import { K6RunAccumulator } from "./k6-output-parser.js";
 import { generateK6Script } from "./k6-script.js";
 import { collectLoadRunDiagnostics, type DiagnosticsDependencies } from "./load-run-diagnostics.js";
+import type { ProofK6CaptureOptions } from "./proof-k6-capture.js";
 
 export { readK6SummaryExport, TrafficTerminationUnconfirmedError };
 
@@ -51,6 +52,7 @@ type SpawnK6RunnerOptions = {
   removeWorkDir?: (workDir: string) => Promise<void>;
   startGeneratorResourceSampler?: StartGeneratorResourceSampler;
   diagnostics?: DiagnosticsDependencies;
+  proofCapture?: ProofK6CaptureOptions;
 };
 
 export class SpawnK6Runner implements K6Runner {
@@ -74,6 +76,7 @@ export class SpawnK6Runner implements K6Runner {
       k6Binary: options.k6Binary,
       apiClient: options.apiClient,
       logger: options.logger,
+      ...(options.proofCapture ? { proofCapture: options.proofCapture } : {}),
       ...(options.now ? { now: options.now } : {}),
       ...(options.spawnProcess ? { spawnProcess: options.spawnProcess } : {}),
       ...(options.cancellationTimeoutMs === undefined
@@ -335,6 +338,11 @@ export class SpawnK6Runner implements K6Runner {
         executionPlan: generated.executionPlan,
         diagnostics,
       });
+      // Own rejection before journal I/O: a fast child can fail proof capture meanwhile.
+      const completion = execution.completion.then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
       spawned = true;
       try {
         const { completion: _completion, ...acceptedWithoutCompletion } = accepted;
@@ -345,8 +353,10 @@ export class SpawnK6Runner implements K6Runner {
       } catch (error) {
         if (this.preparationCancelled(input.runId)) {
           await this.supervisor.cancel(input.runId);
+          await completion;
         } else {
           await this.supervisor.stopForPreparationFailure(input.runId);
+          await completion;
           await this.persistPreparationFailure(
             input,
             generated.plannedRequests,
@@ -364,7 +374,9 @@ export class SpawnK6Runner implements K6Runner {
         }
         throw new CancellationRequestedError();
       }
-      const completionTask = execution.completion.then(async (result) => {
+      const completionTask = completion.then(async (settled) => {
+        if ("error" in settled) throw settled.error;
+        const { result } = settled;
         if (result.outcome !== "completed") return;
         await this.options.completionDelivery.persist(result.report);
         await this.supervisor.release(input.runId);

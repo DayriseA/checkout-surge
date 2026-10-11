@@ -1,6 +1,6 @@
 import { type spawn, spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -2355,6 +2355,89 @@ describe("SpawnK6Runner completion reporting", () => {
     await expect(start).rejects.toThrow("journal failed");
     await expect(cancellation).resolves.toBe("aborted");
     await waitForCondition(() => runner.currentRunId() === null, "publication-race cleanup");
+  });
+
+  it.each([
+    "capture failure",
+    "journal failure",
+  ] as const)("owns a fast proof child's completion while its executing journal is gated: %s", async (failure) => {
+    const directory = await mkdtemp(path.join(tmpdir(), "checkout-surge-proof-journal-"));
+    let releaseExecuting: () => void = () => undefined;
+    let rejectExecuting: (_error: Error) => void = () => undefined;
+    const gate = new Promise<void>((resolve, reject) => {
+      releaseExecuting = resolve;
+      rejectExecuting = reject;
+    });
+    class GatedExecutingStore extends InMemoryExecutionStore {
+      override async update(execution: DurableExecution): Promise<void> {
+        if (execution.state === "executing") await gate;
+        await super.update(execution);
+      }
+    }
+    const process = createK6ProcessFixture();
+    const reports: TrafficCompletionReport[] = [];
+    const logger = createSilentLogger("load-orchestrator");
+    const loggedError = vi.spyOn(logger, "error");
+    const runner = new SpawnK6Runner({
+      k6Binary: "k6",
+      logger,
+      executionStore: new GatedExecutingStore(),
+      spawnProcess: process.spawnProcess,
+      proofCapture: { directory, acknowledgementTimeoutMs: 5_000 },
+      diagnostics: { runCommand: async () => null, readText: async () => "" },
+      apiClient: {
+        sendMetrics: async () => undefined,
+        sendCompletion: async (report) => {
+          reports.push(report);
+        },
+      },
+    });
+    try {
+      const starting = runner.start(startRequest);
+      await waitForCondition(
+        () => vi.mocked(process.spawnProcess).mock.calls.length === 1,
+        "gated proof spawn",
+      );
+      const { args } = getSingleSpawnCall(process);
+      const captureDirectory = path.join(directory, (await readdir(directory))[0] ?? "missing");
+      await writeFile(args[args.indexOf("--summary-export") + 1] ?? "missing", "{}");
+      if (failure === "journal failure")
+        await writeFile(path.join(captureDirectory, "metrics.jsonl"), "");
+      process.child.emit("close", 0);
+      await waitForCondition(
+        async () => !(await pathMissing(path.join(captureDirectory, "manifest.json"))),
+        "proof manifest before journal settles",
+      );
+      // Keep the journal pending through an event-loop turn: an unowned rejection escapes here.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      if (failure === "capture failure") {
+        expect(
+          JSON.parse(await readFile(path.join(captureDirectory, "manifest.json"), "utf8")),
+        ).toMatchObject({ status: "capture_failed" });
+        releaseExecuting();
+        await starting;
+        await waitForCondition(() => loggedError.mock.calls.length > 0, "owned capture rejection");
+        await expect(runner.close()).rejects.toThrow("Proof k6 capture failed");
+        expect(reports).toHaveLength(0);
+      } else {
+        const failedStart = expect(starting).rejects.toThrow("executing journal failed");
+        rejectExecuting(new Error("executing journal failed"));
+        await failedStart;
+        await runner.close();
+        expect(reports).toHaveLength(1);
+        expect(reports[0]).toMatchObject({
+          status: "failed",
+          errorMessage: "executing journal failed",
+        });
+        expect(
+          JSON.parse(await readFile(path.join(captureDirectory, "cancelled.json"), "utf8")),
+        ).toEqual({ status: "partial" });
+        expect(await pathMissing(path.join(captureDirectory, "ack-timeout.json"))).toBe(true);
+      }
+      expect(process.child.kill).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("preserves natural completion when close wins during executing-journal publication", async () => {

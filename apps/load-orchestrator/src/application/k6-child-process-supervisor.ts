@@ -25,6 +25,7 @@ import {
 } from "./k6-output-parser.js";
 import type { generateK6Script } from "./k6-script.js";
 import type { collectLoadRunDiagnostics } from "./load-run-diagnostics.js";
+import { ProofK6Capture, type ProofK6CaptureOptions } from "./proof-k6-capture.js";
 
 export const defaultK6CancellationTimeoutMs = 10_000;
 export const maxK6CancellationTimeoutMs = 15_000;
@@ -53,6 +54,11 @@ interface ActiveExecution {
   disposition: Promise<void> | null;
   resourceSampler: GeneratorResourceSampler | null;
   generatorUtilisation: GeneratorUtilisation | null;
+  closedAt: Date | null;
+  proofCapture: ProofK6Capture | null;
+  captureAbort: AbortController;
+  argv: string[];
+  completionProduced: boolean;
 }
 
 export class K6ChildProcessSupervisor {
@@ -70,6 +76,7 @@ export class K6ChildProcessSupervisor {
       maxBufferedMetricSamples?: number;
       removeWorkDir?: (workDir: string) => Promise<void>;
       startGeneratorResourceSampler?: StartGeneratorResourceSampler;
+      proofCapture?: ProofK6CaptureOptions;
     },
   ) {}
 
@@ -126,6 +133,11 @@ export class K6ChildProcessSupervisor {
       disposition: null,
       resourceSampler: null,
       generatorUtilisation: null,
+      closedAt: null,
+      proofCapture: null,
+      captureAbort: new AbortController(),
+      argv: [],
+      completionProduced: false,
     };
     this.lastSettled = null;
     this.active = active;
@@ -136,25 +148,26 @@ export class K6ChildProcessSupervisor {
       const scriptPath = path.join(active.workDir, "scenario.js");
       const summaryPath = path.join(active.workDir, "summary.json");
       await writeFile(scriptPath, input.script, "utf8");
+      if (this.options.proofCapture) {
+        active.proofCapture = await ProofK6Capture.prepare(this.options.proofCapture, input);
+      }
       this.throwIfStartCancelled(active);
-      const child = (this.options.spawnProcess ?? spawn)(
-        this.options.k6Binary,
-        [
-          "run",
-          "--quiet",
-          "--no-usage-report",
-          "--summary-export",
-          summaryPath,
-          "--out",
-          "json=-",
-          scriptPath,
-        ],
-        {
-          detached: false,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        },
-      );
+      active.argv = [
+        "run",
+        "--quiet",
+        "--no-usage-report",
+        "--summary-export",
+        summaryPath,
+        "--out",
+        "json=-",
+        ...(active.proofCapture ? ["--out", `json=${active.proofCapture.outputPath}`] : []),
+        scriptPath,
+      ];
+      const child = (this.options.spawnProcess ?? spawn)(this.options.k6Binary, active.argv, {
+        detached: false,
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
       active.child = child;
       this.attachChildExitObservation(active);
       this.startResourceSampler(active, input.diagnostics);
@@ -185,17 +198,18 @@ export class K6ChildProcessSupervisor {
     if (!active || active.runId !== runId) {
       return Promise.resolve("natural_completion");
     }
-    if (this.lifecycle === "exited") {
+    if (this.lifecycle === "exited" && (!active.proofCapture || active.completionProduced)) {
       return Promise.resolve(active.cancellationAccepted ? "aborted" : "natural_completion");
     }
     if (active.cancellation) return active.cancellation;
 
     active.cancellationAccepted = true;
+    active.captureAbort.abort();
     this.stopResourceSampler(active);
     active.cancellationDeadlineAt ??= Date.now() + this.cancellationTimeoutMs();
     this.lifecycle = "stopping";
     const operation = (
-      active.child
+      active.child && !active.closedAt
         ? this.terminateAndObserveExit(active).then(() => "aborted" as const)
         : Promise.resolve("aborted" as const)
     ).catch((error) => {
@@ -212,6 +226,7 @@ export class K6ChildProcessSupervisor {
       active.deferDisposition = true;
       if (this.lifecycle === "exited") {
         active.cancellationAccepted = true;
+        active.captureAbort.abort();
         return Promise.resolve("aborted");
       }
     }
@@ -367,6 +382,7 @@ export class K6ChildProcessSupervisor {
           "Could not discard cancelled k6 metric work.",
         );
       });
+      await this.finishProofCapture(active, input, exitCode);
       if (!active.deferDisposition) await this.dispose(active);
       return { outcome: "cancelled" };
     }
@@ -379,6 +395,12 @@ export class K6ChildProcessSupervisor {
       this.options.logger.warn({ err: error }, "Could not flush final k6 metric batch.");
     }
     const summary = await readK6SummaryExport(input.summaryPath, this.options.readSummaryFile);
+    await this.finishProofCapture(active, input, exitCode);
+    if (active.cancellationAccepted) {
+      if (!active.deferDisposition) await this.dispose(active);
+      return { outcome: "cancelled" };
+    }
+    active.completionProduced = true;
     const succeeded = !processError && exitCode === 0;
     return {
       outcome: "completed",
@@ -392,7 +414,7 @@ export class K6ChildProcessSupervisor {
                 : `k6 exited with code ${exitCode ?? "unknown"}.`,
             }
           : {}),
-        completedAt: this.options.now?.() ?? new Date(),
+        completedAt: active.closedAt ?? this.options.now?.() ?? new Date(),
         generatorUtilisation: active.generatorUtilisation,
         ...(summary.metrics ? { summaryMetrics: summary.metrics } : {}),
         ...(summary.warning ? { summaryExportWarning: summary.warning } : {}),
@@ -409,6 +431,7 @@ export class K6ChildProcessSupervisor {
       active.processError = error;
     });
     child.once("close", (exitCode) => {
+      if (active.proofCapture) active.closedAt = this.options.now?.() ?? new Date();
       this.stopResourceSampler(active);
       if (this.active === active) this.lifecycle = "exited";
       this.lastSettled = {
@@ -417,6 +440,34 @@ export class K6ChildProcessSupervisor {
       };
       active.resolveExit({ exitCode, processError: active.processError });
     });
+  }
+
+  private async finishProofCapture(
+    active: ActiveExecution,
+    input: { summaryPath: string; stderrCollector: BoundedStderrCollector },
+    exitCode: number | null,
+  ): Promise<void> {
+    if (!active.proofCapture) return;
+    const operation = active.proofCapture.finish({
+      summaryPath: input.summaryPath,
+      stderr: input.stderrCollector.snapshot(),
+      pid: active.child?.pid ?? null,
+      argv: active.argv,
+      closedAt: active.closedAt ?? new Date(),
+      exitCode,
+      signal: active.captureAbort.signal,
+    });
+    // Cancellation keeps the child's existing deadline; partial proof files are best effort.
+    if (active.cancellationAccepted) {
+      await waitForPromise(
+        operation.catch((error) => {
+          this.options.logger.warn({ err: error }, "Could not finalize partial proof capture.");
+        }),
+        1_000,
+      );
+    } else {
+      await operation;
+    }
   }
 
   private throwIfStartCancelled(active: ActiveExecution): void {
