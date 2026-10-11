@@ -35,11 +35,38 @@ export class PostgresOrderDelivery {
   }): Promise<PostgresOrderDeliveryClaim[]> {
     positiveInteger(input.limit);
     positiveInteger(input.leaseSeconds);
+    // Terminal runs can lose their last ACK. Reclaim only work whose business
+    // and notification obligations are already durable; the handler then returns early.
     return this.sql.begin(async (tx) => {
       const rows = await tx`with candidates as (
         select d.publication_id from postgres_order_deliveries d
         join demo_runs r on r.id=d.run_id
-        where r.execution_mode='without_redis' and r.status in ('starting','active','draining')
+        where r.execution_mode='without_redis' and (
+          r.status in ('starting','active','draining') or (
+            r.status in ('completed','failed') and exists (
+              select 1 from orders o
+              where o.id=(d.payload->>'orderId')::uuid and o.run_id=d.run_id
+                and o.run_id::text=d.payload->>'runId'
+                and o.public_order_id=d.payload->>'publicOrderId'
+                and o.reservation_id::text=d.payload->>'reservationId'
+                and o.sale_offer_id::text=d.payload->>'saleOfferId'
+                and o.correlation_id=d.payload->>'correlationId'
+                and to_jsonb(o.quantity)=d.payload->'quantity'
+                and o.queued_at=(d.payload->>'queuedAt')::timestamptz
+                and o.status in ('confirmed','failed')
+                and (o.status='failed' or exists (
+                  select 1 from simulated_notifications n where n.order_id=o.id
+                    and n.run_id=o.run_id and n.sale_offer_id=o.sale_offer_id
+                    and n.correlation_id=o.correlation_id
+                ))
+                and not exists (select 1 from erp_dispatch_calls e
+                  where e.order_id=o.id and e.resolved_at is null)
+                and not exists (select 1 from order_recovery_jobs c
+                  where c.order_id=o.id and (c.status<>'resolved'
+                    or c.unresolved_erp_call_id is not null))
+            )
+          )
+        )
           and d.settled_at is null and d.due_at<=clock_timestamp()
           and (d.lease_until is null or d.lease_until<=clock_timestamp())
         order by d.due_at,d.publication_id limit ${input.limit} for update of d skip locked

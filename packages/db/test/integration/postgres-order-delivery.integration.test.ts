@@ -3,9 +3,14 @@ import type { OrderProcessJob } from "@checkout-surge/contracts";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import {
   createDatabaseConnection,
+  deleteGeneratedRunDurable,
+  inspectGeneratedRunTeardown,
+  orders,
   PostgresOrderDelivery,
   products,
+  reservations,
   saleOffers,
+  simulatedNotifications,
 } from "../../src/index.js";
 import {
   createPurchaseRunFixture,
@@ -49,6 +54,54 @@ function job(context = { runId, saleOfferId }): OrderProcessJob {
     queuedAt: new Date().toISOString(),
     processingGeneration: 0,
   };
+}
+
+async function persistOrder(
+  payload: OrderProcessJob,
+  status: "queued" | "processing" | "confirmed" | "failed",
+) {
+  const now = new Date();
+  await connection.db.insert(reservations).values({
+    id: payload.reservationId,
+    runId: payload.runId,
+    saleOfferId: payload.saleOfferId,
+    correlationId: payload.correlationId,
+    quantity: payload.quantity,
+    reservationToken: payload.reservationId,
+    securedAt: now,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  await connection.db.insert(orders).values({
+    id: payload.orderId,
+    publicOrderId: payload.publicOrderId,
+    reservationId: payload.reservationId,
+    runId: payload.runId,
+    saleOfferId: payload.saleOfferId,
+    correlationId: payload.correlationId,
+    quantity: payload.quantity,
+    queuedAt: new Date(payload.queuedAt),
+    status,
+    ...(status !== "queued" ? { processingAt: now } : {}),
+    ...(status === "confirmed" ? { confirmedAt: now } : {}),
+    ...(status === "failed"
+      ? {
+          failedAt: now,
+          failureCode: "erp_response_contract_invalid",
+          failureMessage: "ERP failed",
+        }
+      : {}),
+  });
+}
+
+async function recordNotification(payload: OrderProcessJob) {
+  await connection.db.insert(simulatedNotifications).values({
+    orderId: payload.orderId,
+    runId: payload.runId,
+    saleOfferId: payload.saleOfferId,
+    correlationId: payload.correlationId,
+    recipientPlaceholder: "simulated-buyer",
+    recordedAt: new Date(),
+  });
 }
 
 beforeEach(async () => {
@@ -140,6 +193,98 @@ it("filters backend, terminal status and due time before the claim limit", async
   const claims = await delivery.claim({ limit: 1, leaseSeconds: 30 });
   expect(claims).toHaveLength(1);
   expect(claims[0]?.job).toEqual(ready);
+});
+
+it("claims only settled terminal business identities before the limit", async () => {
+  const demo = await createRun("demo", "completed");
+  const wrongMode = job(demo);
+  await persistOrder(wrongMode, "confirmed");
+  await recordNotification(wrongMode);
+  await delivery.publish(connection.sql, wrongMode, { dueAt: new Date(Date.now() - 60_000) });
+  for (const status of ["queued", "processing", "confirmed"] as const) {
+    const payload = job();
+    await persistOrder(payload, status);
+    // The confirmed order is missing its durable notification.
+    await delivery.publish(connection.sql, payload, { dueAt: new Date(Date.now() - 30_000) });
+  }
+  const ready = job();
+  await persistOrder(ready, "failed");
+  await delivery.publish(connection.sql, ready);
+  await connection.sql`update demo_runs set status='failed' where id=${runId}`;
+  const claims = await delivery.claim({ limit: 1, leaseSeconds: 30 });
+  expect(claims.map((claim) => claim.job)).toEqual([ready]);
+  const claim = claims[0];
+  if (!claim) throw new Error("Missing terminal claim");
+  expect(await delivery.settle(claim)).toBe(true);
+  expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
+  expect(await inspectGeneratedRunTeardown(connection.db, runId)).toEqual({
+    outcome: "outstanding_work",
+  });
+  expect(await deleteGeneratedRunDurable(connection.db, { runId, saleOfferId })).toEqual({
+    outcome: "outstanding_work",
+  });
+});
+
+it("keeps a terminal run's uncertain processing work outstanding", async () => {
+  const payload = job();
+  await persistOrder(payload, "processing");
+  const callId = randomUUID();
+  await connection.sql`insert into erp_dispatch_calls(id,order_id,processing_generation,idempotency_key,
+    public_order_id,reservation_id,sale_offer_id,run_id,quantity,correlation_id,dispatched_at)
+    values(${callId},${payload.orderId},0,${payload.orderId},${payload.publicOrderId},${payload.reservationId},
+      ${payload.saleOfferId},${payload.runId},1,${payload.correlationId},clock_timestamp())`;
+  await connection.sql`insert into order_recovery_jobs(recovery_key,job_id,order_id,payload,reason,unresolved_erp_call_id)
+    values(${`order:${payload.orderId}`},${payload.orderId},${payload.orderId},${JSON.stringify(payload)}::jsonb,'erp_uncertain',${callId})`;
+  await delivery.publish(connection.sql, payload);
+  await connection.sql`update demo_runs set status='failed' where id=${runId}`;
+  expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
+  expect(await inspectGeneratedRunTeardown(connection.db, runId)).toEqual({
+    outcome: "outstanding_work",
+  });
+});
+
+it("claims completed-run terminal deliveries once across concurrent claimers", async () => {
+  for (let index = 0; index < 2; index++) {
+    const payload = job();
+    await persistOrder(payload, "failed");
+    await delivery.publish(connection.sql, payload);
+  }
+  await connection.sql`update demo_runs set status='completed' where id=${runId}`;
+  const batches = await Promise.all([
+    delivery.claim({ limit: 1, leaseSeconds: 30 }),
+    delivery.claim({ limit: 1, leaseSeconds: 30 }),
+  ]);
+  expect(batches.map((batch) => batch.length)).toEqual([1, 1]);
+  expect(new Set(batches.flat().map((claim) => claim.publicationId)).size).toBe(2);
+  expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
+});
+
+it.each([
+  "publicOrderId",
+  "reservationId",
+  "saleOfferId",
+  "correlationId",
+  "runId",
+  "quantity",
+  "queuedAt",
+] as const)("refuses a terminal delivery with mismatched %s", async (field) => {
+  const payload = job();
+  await persistOrder(payload, "confirmed");
+  await recordNotification(payload);
+  const replacement =
+    field === "runId" ? (await createRun("without_redis", "completed")).runId : randomUUID();
+  const changed = {
+    ...payload,
+    [field]:
+      field === "quantity"
+        ? 2
+        : field === "queuedAt"
+          ? new Date(Date.now() + 1000).toISOString()
+          : replacement,
+  };
+  await delivery.publish(connection.sql, changed);
+  await connection.sql`update demo_runs set status='completed' where id=${runId}`;
+  expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
 });
 
 it.each([

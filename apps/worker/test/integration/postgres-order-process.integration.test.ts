@@ -1,11 +1,20 @@
 import { randomUUID } from "node:crypto";
 import type { OrderProcessJob } from "@checkout-surge/contracts";
+import { emptyServerReservationTimingSummary } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
+  createRedisClient,
+  dashboardProjectionScopeKey,
+  deleteGeneratedRunDurable,
+  demoRunSummaries,
   demoRuns,
+  initializeDashboardProjectionScope,
+  inspectGeneratedRunTeardown,
   orders,
   PostgresOrderDelivery,
   products,
+  readBusinessOutcomeSummary,
   reservations,
   saleOffers,
 } from "@checkout-surge/db";
@@ -17,12 +26,15 @@ import {
 import { createSilentLogger } from "@checkout-surge/logger";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { PostgresTerminalDemoRunSummaryWriter } from "../../../api/src/services/terminal-demo-run-transition.js";
+import { syntheticFailedTrafficSummary } from "../../../api/src/services/traffic-delivery-plan.js";
 import { HttpErpOrderConfirmation } from "../../src/application/erp-confirmation-client.js";
 import { createErpDeclaredDispatchGate } from "../../src/application/erp-declared-dispatch-gate.js";
 import {
   ErpUnresolvedCallReconciler,
   ScheduledErpOrderConfirmation,
 } from "../../src/application/erp-reconciliation.js";
+import { createNotificationRecordJobHandler } from "../../src/application/notification-record-job-handler.js";
 import { AdaptiveErpRuntimeAdmission } from "../../src/application/order-process-admission.js";
 import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
 import {
@@ -32,11 +44,16 @@ import {
 import { PostgresErpAttemptPersistence } from "../../src/persistence/postgres-erp-attempt-persistence.js";
 import { PostgresErpScopeResiliencePersistence } from "../../src/persistence/postgres-erp-scope-resilience-persistence.js";
 import { PostgresGeneratedRunPublicationFence } from "../../src/persistence/postgres-generated-run-publication-fence.js";
+import { PostgresNotificationRecordPersistence } from "../../src/persistence/postgres-notification-record-persistence.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderRecoveryPersistence } from "../../src/persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "../../src/persistence/postgres-run-config-reader.js";
-import { createNotificationRecordPublisher } from "../../src/queue/bullmq-notification-record-publisher.js";
+import { createBullMqNotificationRecordConsumer } from "../../src/queue/bullmq-notification-record-consumer.js";
+import {
+  createBullMqNotificationRecordPublisher,
+  createNotificationRecordPublisher,
+} from "../../src/queue/bullmq-notification-record-publisher.js";
 import { createPostgresOrderProcessConsumer } from "../../src/queue/postgres-order-process-consumer.js";
 import { createPostgresOrderProcessJobPublisher } from "../../src/queue/postgres-order-process-job-publisher.js";
 
@@ -382,4 +399,153 @@ it("cannot acknowledge a newer claim after its old delivery lease expires", asyn
   const [row] =
     await connection.sql`select delivery_generation,settled_at from postgres_order_deliveries where publication_id=${job.orderId}`;
   expect(row).toMatchObject({ delivery_generation: newClaim.deliveryGeneration, settled_at: null });
+});
+
+it.each([
+  "confirmed",
+  "failed",
+] as const)("settles a lost ACK for a terminal %s order without repeating business work", async (outcome) => {
+  const job = await seed("without_redis");
+  const redisUrl = process.env.TEST_REDIS_URL;
+  if (!redisUrl) throw new Error("TEST_REDIS_URL is required for the real notification transport.");
+  const redis = createRedisClient(redisUrl, { lazyConnect: true });
+  await initializeDashboardProjectionScope(redis, job);
+  const projectionScope = await redis.get(dashboardProjectionScopeKey(job.runId));
+  const notificationConnection = { url: redisUrl, maxRetriesPerRequest: null };
+  const notifications = createBullMqNotificationRecordPublisher({
+    connection: notificationConnection,
+    publicationFence: new PostgresGeneratedRunPublicationFence(connection.db),
+  });
+  const notificationHandler = createNotificationRecordJobHandler({
+    persistence: new PostgresNotificationRecordPersistence(connection.db),
+    logger,
+    publishBusinessOutcomeUpdate: async () => {},
+  });
+  const record = vi.spyOn(notificationHandler, "handle");
+  const notificationConsumer = createBullMqNotificationRecordConsumer({
+    connection: notificationConnection,
+    concurrency: 1,
+    handler: notificationHandler,
+    logger,
+  });
+  const confirmation = vi.fn().mockResolvedValue(
+    outcome === "confirmed"
+      ? { disposition: "succeeded" }
+      : {
+          disposition: "technical_failure",
+          errorCode: "erp_response_contract_invalid",
+          errorMessage: "Invalid ERP response",
+        },
+  );
+  const publish = vi.spyOn(notifications, "publishForConfirmedOrder");
+  const businessUpdates = vi.fn().mockResolvedValue(undefined);
+  const handler = createOrderProcessJobHandler({
+    confirmation: { confirm: confirmation },
+    persistence: new PostgresOrderTransitionPersistence(connection.db),
+    recovery: createOrderRecoveryHandoff(
+      new PostgresOrderRecoveryPersistence(connection.db, undefined, "without_redis"),
+    ),
+    logger,
+    notificationRecordPublisher: notifications,
+    publishBusinessOutcomeUpdate: businessUpdates,
+  });
+  let release!: () => void;
+  let businessDone = false;
+  const afterBusiness = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const oldConsumer = consumer({
+    handle: async (...args) => {
+      await handler.handle(...args);
+      businessDone = true;
+      await afterBusiness;
+    },
+  });
+  notificationConsumer.start();
+  try {
+    await publisher().enqueue(job);
+    oldConsumer.start();
+    await vi.waitFor(() => expect(businessDone).toBe(true), { interval: 10 });
+    await vi.waitFor(async () => {
+      expect(await readBusinessOutcomeSummary(connection.db, job)).toMatchObject({
+        confirmedOrders: outcome === "confirmed" ? 1 : 0,
+        failedOrders: outcome === "failed" ? 1 : 0,
+        notificationsRecorded: outcome === "confirmed" ? 1 : 0,
+      });
+    });
+    const writer = new PostgresTerminalDemoRunSummaryWriter(connection.db, {
+      synchronize: async () => {},
+    });
+    expect(
+      await writer.writePrepared(job.runId, async (tx) => {
+        const [run] = await tx.select().from(demoRuns).where(eq(demoRuns.id, job.runId));
+        if (!run) throw new Error("Missing run");
+        return {
+          run,
+          terminalStatus: "failed",
+          failureReason: "traffic_failed",
+          replayPossible: false,
+          finalizedAt: new Date(),
+          allowedCurrentStatuses: ["draining"],
+          terminalTrafficStatus: "failed",
+          ...syntheticFailedTrafficSummary(
+            previewRunConfigSnapshotFixture(),
+            ["Traffic completion unavailable after runner failure"],
+            "unavailable",
+          ),
+          httpTimingBreakdownSummary: {},
+          serverReservationTimingSummary: emptyServerReservationTimingSummary,
+          loadRunDiagnosticsSummary: {},
+          businessOutcome: await readBusinessOutcomeSummary(tx, job),
+          terminalInventorySnapshot: null,
+          runSignalTimelineSummary: null,
+        };
+      }),
+    ).toBe(true);
+    const before = {
+      summaries: await connection.db.select().from(demoRunSummaries),
+      events: await connection.sql`select * from order_events order by id`,
+      order: await connection.db.select().from(orders),
+      control: await connection.sql`select * from order_recovery_jobs`,
+    };
+    expect(await inspectGeneratedRunTeardown(connection.db, job.runId)).toEqual({
+      outcome: "outstanding_work",
+    });
+    expect(await deleteGeneratedRunDurable(connection.db, job)).toEqual({
+      outcome: "outstanding_work",
+    });
+    await oldConsumer.close(); // The handler is still alive past the forced-close deadline.
+    expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
+    await connection.sql`update postgres_order_deliveries set lease_until=clock_timestamp()-interval '1 second' where publication_id=${job.orderId}`;
+    const fresh = consumer(handler);
+    fresh.start();
+    await vi.waitFor(
+      async () => expect(await publisher().isDeliveryPending(job.orderId)).toBe(false),
+      { interval: 10 },
+    );
+    await fresh.close();
+    release();
+    await afterBusiness;
+    expect(confirmation).toHaveBeenCalledOnce();
+    expect(publish).toHaveBeenCalledTimes(outcome === "confirmed" ? 1 : 0);
+    expect(record).toHaveBeenCalledTimes(outcome === "confirmed" ? 1 : 0);
+    expect(businessUpdates).toHaveBeenCalledTimes(2);
+    expect({
+      summaries: await connection.db.select().from(demoRunSummaries),
+      events: await connection.sql`select * from order_events order by id`,
+      order: await connection.db.select().from(orders),
+      control: await connection.sql`select * from order_recovery_jobs`,
+    }).toEqual(before);
+    expect(await redis.get(dashboardProjectionScopeKey(job.runId))).toBe(projectionScope);
+    expect(await inspectGeneratedRunTeardown(connection.db, job.runId)).toMatchObject({
+      outcome: "ready",
+    });
+    expect(await deleteGeneratedRunDurable(connection.db, job)).toEqual({ outcome: "deleted" });
+  } finally {
+    release();
+    await oldConsumer.close();
+    await notificationConsumer.close();
+    await notifications.close();
+    redis.disconnect();
+  }
 });
