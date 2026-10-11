@@ -15,6 +15,20 @@ const input = {
 };
 
 describe("authoritative buying context", () => {
+  it("rejects unsupported hydration and activation without falling back for matched buys", async () => {
+    const reserve = vi.fn();
+    const context = new ActiveBuyingRunContext({
+      reader: { readCurrent: async () => ({ ...run, executionMode: "without_redis" }) },
+      services: { demo: { reserve } },
+    });
+    await expect(context.hydrate()).rejects.toThrow("not supported");
+    await expect(context.activate(runId)).rejects.toThrow("not supported");
+    expect(() => context.reserve(input)).toThrow("not supported");
+    expect(reserve).not.toHaveBeenCalled();
+    await context.reserve({ ...input, request: { ...input.request, runId: randomUUID() } });
+    expect(reserve).toHaveBeenCalledOnce();
+  });
+
   it("hydrates once and keeps current, unknown and stale buys off the context reader", async () => {
     const readCurrent = vi.fn(async () => run);
     const reserve = vi.fn(async () => ({

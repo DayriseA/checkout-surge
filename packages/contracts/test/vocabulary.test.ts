@@ -9,6 +9,7 @@ import {
   orderWaitingReasonValues,
   recoveryJobStatusValues,
   reservationPendingPersistenceStatusValues,
+  runExecutionModeValues,
   technicalOrderFailureCodeValues,
   trafficCompletionEnrichmentStatusValues,
   trafficDeliveryStatusValues,
@@ -17,6 +18,7 @@ import {
 
 describe("shared PostgreSQL vocabulary", () => {
   it("preserves every behavior-bearing ordered tuple", () => {
+    expect(runExecutionModeValues).toEqual(["demo", "without_redis"]);
     expect(orderStatusValues).toEqual(["queued", "processing", "confirmed", "failed"]);
     expect(erpAttemptStatusValues).toEqual(["succeeded", "failed", "timed_out"]);
     expect(recoveryJobStatusValues).toEqual(["pending", "enqueued", "escalated", "resolved"]);

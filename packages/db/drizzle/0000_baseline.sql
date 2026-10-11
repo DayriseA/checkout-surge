@@ -1,7 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";--> statement-breakpoint
 CREATE TYPE "public"."demo_preset_visibility" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> statement-breakpoint
-CREATE TYPE "public"."run_execution_mode" AS ENUM('demo');--> statement-breakpoint
+CREATE TYPE "public"."run_execution_mode" AS ENUM('demo', 'without_redis');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_traffic_status" AS ENUM('not_started', 'starting', 'active', 'succeeded', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."erp_attempt_status" AS ENUM('succeeded', 'failed', 'timed_out');--> statement-breakpoint
@@ -478,3 +478,17 @@ ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "postgres_reservat
 ALTER TABLE "postgres_reservation_idempotency" ADD CONSTRAINT "pg_idempotency_hold_fk" FOREIGN KEY ("reservation_id") REFERENCES "public"."postgres_reservation_holds"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "postgres_run_inventory" ADD CONSTRAINT "pg_inventory_run_sale_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_run_sale_contexts"("run_id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "postgres_reservation_holds_run_idx" ON "postgres_reservation_holds" USING btree ("run_id");
+--> statement-breakpoint
+CREATE TABLE "postgres_order_deliveries" (
+	"publication_id" text PRIMARY KEY NOT NULL,
+	"run_id" uuid NOT NULL,
+	"payload" jsonb NOT NULL,
+	"due_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"lease_until" timestamp with time zone,
+	"delivery_generation" integer DEFAULT 0 NOT NULL,
+	"settled_at" timestamp with time zone,
+	CONSTRAINT "postgres_order_deliveries_generation_nonnegative" CHECK ("postgres_order_deliveries"."delivery_generation" >= 0)
+);
+--> statement-breakpoint
+ALTER TABLE "postgres_order_deliveries" ADD CONSTRAINT "postgres_order_deliveries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "postgres_order_deliveries_due_idx" ON "postgres_order_deliveries" USING btree ("due_at") WHERE "postgres_order_deliveries"."settled_at" is null;

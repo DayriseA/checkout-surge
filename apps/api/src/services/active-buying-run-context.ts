@@ -45,7 +45,9 @@ export class ActiveBuyingRunContext {
   constructor(
     private readonly options: {
       reader: BuyingRunContextReader;
-      services: Record<RunExecutionMode, Pick<ReserveOrderService, "reserve">>;
+      services: Partial<Record<RunExecutionMode, Pick<ReserveOrderService, "reserve">>> & {
+        demo: Pick<ReserveOrderService, "reserve">;
+      };
     },
   ) {}
 
@@ -63,7 +65,9 @@ export class ActiveBuyingRunContext {
         ? current.executionMode
         : "demo";
     // Unmatched requests retain Redis's existing missing/closed inventory vocabulary.
-    return this.options.services[mode].reserve(input);
+    const service = this.options.services[mode];
+    if (!service) throw new Error("Buyer execution mode is not supported.");
+    return service.reserve(input);
   }
 
   private install(runId?: string): Promise<void> {
@@ -75,6 +79,9 @@ export class ActiveBuyingRunContext {
           throw new Error("Buyer activation requires the current generated run.");
         }
         this.current = context;
+        if (context && !this.options.services[context.executionMode]) {
+          throw new Error("Buyer execution mode is not supported.");
+        }
       });
     this.pending = operation;
     return operation;

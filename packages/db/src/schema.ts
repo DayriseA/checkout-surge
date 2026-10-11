@@ -8,6 +8,7 @@ import type {
   ErpRunConfig,
   HttpTimingBreakdownSummary,
   InventoryConfig,
+  OrderProcessJob,
   PublicRuntimePolicyMutable as PublicRuntimePolicyMutableContract,
   RealLoadRunDiagnosticsSummary,
   RunSignalTimelineSummary,
@@ -832,6 +833,30 @@ export const demoRunSummaries = pgTable(
     uniqueIndex("demo_run_summaries_run_id_unique").on(table.runId),
     check("demo_run_summaries_terminal_status", sql`${table.status} IN ('completed', 'failed')`),
     index("demo_run_summaries_captured_at_idx").on(table.capturedAt),
+  ],
+);
+
+export const postgresOrderDeliveries = pgTable(
+  "postgres_order_deliveries",
+  {
+    publicationId: text("publication_id").primaryKey(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => demoRuns.id, { onDelete: "cascade" }),
+    payload: jsonObject<OrderProcessJob>("payload"),
+    dueAt: timestamp("due_at", { withTimezone: true }).defaultNow().notNull(),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    deliveryGeneration: integer("delivery_generation").default(0).notNull(),
+    settledAt: timestamp("settled_at", { withTimezone: true }),
+  },
+  (table) => [
+    check(
+      "postgres_order_deliveries_generation_nonnegative",
+      sql`${table.deliveryGeneration} >= 0`,
+    ),
+    index("postgres_order_deliveries_due_idx")
+      .on(table.dueAt)
+      .where(sql`${table.settledAt} is null`),
   ],
 );
 

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type OrderProcessJob, securedReservationHoldSchema } from "@checkout-surge/contracts";
 import {
   createDatabaseConnection,
+  PostgresOrderDelivery,
   PostgresStockReservations,
   products,
   saleOffers,
@@ -35,10 +36,10 @@ it("persists and publishes PostgreSQL acceptance on the same admission session w
       saleEndsAt: new Date(Date.now() + 60_000),
     });
     await createPurchaseRunFixture(connection.db, { runId, saleOfferId });
+    await connection.sql`update demo_runs set execution_mode='without_redis' where id=${runId}`;
     const stock = new PostgresStockReservations(connection.sql);
     await stock.initialize({ runId, saleOfferId, allocatedStock: 1 });
-    // The temporary table is test-only publication evidence, not an application queue.
-    await connection.sql`create temporary table test_order_publications(order_id uuid primary key)`;
+    const delivery = new PostgresOrderDelivery(connection.sql);
     const [identity] = await connection.sql`select pg_backend_pid() as pid`;
     const publishedPids: number[] = [];
     let publishedJob: OrderProcessJob | undefined;
@@ -49,7 +50,7 @@ it("persists and publishes PostgreSQL acceptance on the same admission session w
           publishedJob = job;
           const [current] = await session`select pg_backend_pid() as pid`;
           publishedPids.push(current?.pid);
-          await session`insert into test_order_publications(order_id) values(${job.orderId}) on conflict do nothing`;
+          await delivery.publish(session, job);
         },
       });
     const buy = async (finishAfterStockDecision = false) => {
@@ -107,8 +108,11 @@ it("persists and publishes PostgreSQL acceptance on the same admission session w
     const [counts] =
       await connection.sql`select (select count(*)::int from reservations) as reservations,
       (select count(*)::int from orders) as orders,(select count(*)::int from order_events) as events,
-      (select count(*)::int from test_order_publications) as publications`;
+      (select count(*)::int from postgres_order_deliveries) as publications`;
     expect(counts).toEqual({ reservations: 1, orders: 1, events: 2, publications: 1 });
+    const [publication] = await connection.sql`select payload from postgres_order_deliveries`;
+    expect(publication?.payload).toEqual(job);
+    expect(await delivery.claim({ limit: 1, leaseSeconds: 30 })).toEqual([]);
   } finally {
     await connection.close();
   }
