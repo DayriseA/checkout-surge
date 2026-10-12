@@ -77,7 +77,7 @@ The waiting route still waits only when the run is a `synchronous_confirmation` 
 - **k6:**
   - expected statuses 200, 202 and 409;
   - accepted = `200 order_confirmed` or the existing 202 outcomes;
-  - a new counter `checkout_order_confirmed`;
+  - new counters `checkout_order_confirmed` and `checkout_reservation_pending_persistence` (review F2);
   - one wall-latency Trend per outcome (accepted, sold out) with count, average, p95 and **max**, ported from `94f7ee1d`.
   - The contract gains optional `httpSummary.buyerWallLatencySummary` and `confirmedResponses`; an unknown value stays null.
 - **Deadline: 45 s from request arrival** (a contracts constant).
@@ -96,7 +96,7 @@ The waiting route still waits only when the run is a `synchronous_confirmation` 
 **Chaining.**
 - **Run 1:** the normal start path (visitor check, budget, admission), with `comparison_mode = demo`.
 - **Run 2:** on each lifecycle poll tick, after `finalizeReadyRuns`, `startDueComparisonPartner()` runs under the maintenance authority.
-  - **Due when:** the latest run is a `completed` comparison first run, finalized less than 60 s ago, with no partner and no nonterminal run.
+  - **Due when** (review F3): the last run to finish is a `completed` run in the comparison's first mode, finalized less than 60 s ago, and no run has been created since. There must also be no nonterminal run.
   - **What it does:** it inserts run 2 with the same preset, snapshot and operator mode, the other mode and the link. It then runs the extracted tail of the start path (`launchAcceptedRun`), with no budget and no visitor check.
 - **Slot:** the same predicate holds the slot, so any other start meanwhile gets `run_conflict` / `active_run_exists`.
 - **Failures:** a failed or reset run 1 gets no partner. A failed start of run 2 is an ordinary failed run.
@@ -110,24 +110,29 @@ The waiting route still waits only when the run is a `synchronous_confirmation` 
 - Watch follows the visitor: when the live run's `firstRunId` is the visitor's run, Watch tracks the live run as the visitor's own. The panel titles itself "One comparison, two runs" and labels its columns "Run 1 of 2" and "Run 2 of 2".
 - Unknown data reads "Not recorded", and a partner not yet run or still running is stated. No winner is computed.
 - History rows show the mode.
+- **After the review:**
+  - The panel shows for every viewer of a live comparison run (F9).
+  - It says "No second run was started." when none will come, and "Report not available." for a read error (F5).
+  - The admin UI estimates and starts a comparison preset with its slug alone, with the run values locked (F1).
 
 | Row (equal cohorts) | Source |
 | :-- | :-- |
 | Winners' time to answer: average and p95, all winners | k6 accepted cohort |
 | Every buyer answered within (longest single wait) | max of the accepted and sold-out cohort maxima |
-| Winners told "confirmed" / "still being confirmed" / no answer | `confirmedResponses`, `accepted − confirmed`, `transportFailures` |
+| Winners told "confirmed" / "secured, not yet confirmed" | `confirmedResponses`, `accepted − confirmed` |
+| Buyers without an expected answer | `transportFailures + unexpectedResponses` |
 | Orders confirmed (failed) by the ERP | durable business outcome |
 | ERP pace against the declared limit | confirmed ÷ (arrival window + `convergenceDurationSeconds`); `erpConfig.maxTps` |
 | Slowest order, from secured to confirmed | `confirmationConvergence.maxLagMs` |
 
-The takeaway shows only when both runs completed:
+The takeaway shows only when both runs completed with every buyer answered as expected, every order confirmed and none failed, and ERP paces within 10 % of each other (review F2). Its deadline sentence counts `accepted − confirmed − pending persistence`, the waits that really ended at the deadline:
 
 > Same buyers, stock and ERP limit. Both runs confirmed {n} orders at about {pace}/s: the queue does not make the back office faster. With the queue, every winner heard back within {a}; without it, each winner waited for their turn at the ERP, up to {b}. [{k} winners stopped waiting at 45 s and were told their order was still being confirmed; it was confirmed later like the others.] The queue moves the wait from the buyer to the back office.
 
 One line discloses the mechanism: the request stays open while the same worker confirms at the ERP's pace.
 
 **Measurement (design §5).**
-- The capacity script gains `{label, presetSlug}` entries. For each, it starts once, waits for both terminal details, appends two records (mode and pair), and tears both runs down.
+- The capacity script gains `{label, presetSlug}` entries. For each, it starts once, waits for both terminal details, and appends two records with the mode and a `pairId` (the first run's id; review F7). It then tears both runs down, the first run first (F3).
 - 5 starts, with pair 1 discarded as warm-up.
 - Per mode, report the median and min–max of:
   - winners' average and p95;
@@ -246,3 +251,78 @@ Docs: 9 lines (k6 classification, comparison runs). The production total is 153 
   - **Cause:** deleting pair 4's second run made its first run look unpaired again; deleting that first run then nulled the link of the new run, which in turn looked like a first run.
   - **Effect on the data:** pair 5 waited for the slot, then ran normally. The unrequested runs did not overlap any measured run.
   - Both runs are left in the proof history. The fix (below) requires the comparison's first mode and no later run.
+
+### Review fixes (2026-10-12)
+
+The supervisor's arbitration on the independent review (`scratchpad/review/task03-code-review.md`). Each finding was checked against the code first.
+
+- **F1, admin UI could not start the preset:** confirmed and fixed. The UI now sends `{ presetSlug }` alone for a comparison preset and locks its run values. Tested in the web (the request body) and in the API (estimate and start with that shape).
+- **F2, takeaway checked nothing:** fixed. The takeaway is gated (see Panel). The row that called transport failures "winners" now reads "Buyers without an expected answer".
+- **F3, a deleted link re-armed chaining:** confirmed live during the measurement, then fixed as above. The capacity script now tears the first run down first.
+  - **Residual:** an operator who deletes a second run within 60 s of its first run's finalization re-arms that first run once. The new second run is correctly linked to it, so the pair stays consistent.
+- **F4, waiter at shutdown and on a slow read:** fixed. After shutdown begins, `wait()` answers at once, and deadlines are settled on every tick, even during a slow read.
+- **F5, panel showed pending forever:** fixed (see Panel).
+- **F7, analysis paired by label:** fixed. Pairs are matched by `pairId`, with the label as a fallback for older records, and a null count stays unknown.
+- **F8, duplicated preset kept the comparison text:** fixed. A duplicated comparison preset gets a neutral description.
+- **F9, spectators saw no panel:** on `dev`, spectators do see a terminal run's conclusion, so the panel now shows for any live comparison run.
+- **Simplifications:**
+  - The route alone validates the response.
+  - The unused `now` options are gone.
+  - The history page passes its own report instead of reading it twice.
+- **New tests:**
+  - the startup replay reaching the waiting route;
+  - the deadline's margin under k6's request timeout;
+  - Watch following run 1 to run 2;
+  - the admin request shape;
+  - "No second run was started.";
+  - a slow read and a wait after shutdown.
+- **Not done, per the arbitration:** F6, merging the service into the waiter, sharing metric definitions between the script and the panel.
+- **Commits:**
+  - `503cffc5` fix(api): chain only a comparison's latest first run and harden the wait
+  - `953f5cd8` fix(web): state the comparison's takeaway only when the data shows it
+  - `3740a0ce` fix(scripts): pair comparison records by start and tear the first run down first
+  - `91c7fa56` fix(api): judge a due second run by what was created after the first run finished. The first version ordered by creation time, which ties under a fixed test clock.
+- **Validation:**
+  - Dev container: `pnpm type-check` and `pnpm test:unit` pass.
+  - Fly test runner: `pnpm test` passes in full: every unit suite, `test:api` 365, and `test:integration` (db 82, worker 103, mock-erp 7).
+- **Re-verification on the proof environment** (deployed at `6c926f46`, no schema change, so no fresh core):
+  - The pair was estimated, then started with `{ presetSlug: "queue-comparison" }`, the admin UI's request shape. The estimate was `admitted`.
+  - Run 1 `d40887bb` (with the queue): winners' wait 2.6 s average and 3.8 s p95; every buyer answered within 5.4 s; 500 of 500 orders confirmed; about 17/s.
+  - Run 2 `57c941e2` (without the queue): 14.6 s and 26.5 s; every buyer answered within 28.0 s; 500 confirmed answers and 0 deadline answers; 500 of 500 orders confirmed; about 18/s.
+  - The panel and takeaway read correctly on Watch, seen as a spectator, and on both run reports.
+  - No run followed the pair.
+  - **Not done:** starting from the admin UI itself. The proof admin sign-in needs the passphrase typed into a public site, which this agent may not do. The owner should sign in and press Start for checkpoint A.
+
+**Sizes after the fixes:** 1,197 production lines (+104), 710 test lines (+130), 9 lines of docs.
+
+**Machines:** every proof Machine is stopped: core `871473b0632e78`, runner `89663dc6ed09e8`, gate `822090c7037938` and guard `e822636c56e428` (still scheduled hourly). The test runner `859726b4e16938` is stopped too.
+
+### Checkpoint A summary
+
+**What was built.**
+- **A preset:** `queue-comparison`, admin-only, Surge 5k shape (5,000 buyers, 500 units, ERP 100 ms and 20/s). One start runs it twice in the same slot, with the order queue first, then without it. The budget is charged once, and each run keeps its own ceiling and automatic reset.
+- **The mode without the queue:** a winner's request stays open until the same worker has the order confirmed by the ERP at the ERP's pace. It gets `200 order_confirmed`. After 45 s it would get the queued mode's own `202`, and the order would still be confirmed later. The worker, the ERP client and their pacing are unchanged.
+- **The panel:** one panel on Watch and on both run reports, comparing all winners of each run, with unknown facts shown as unknown. A takeaway is shown only when the data supports it.
+
+**What the measured pairs show** (proof environment, 4 pairs after a warm-up pair, median and min–max):
+- **Winners' wait:**
+  - With the queue: 2.0 s average and 3.2 s p95 (2.95–3.37 s).
+  - Without it: 14.2 s average and 26.1 s p95 (25.8–26.9 s).
+  - Without the queue they wait 8.2 times longer at p95 (7.7–8.7), and every pair agrees.
+- **Every buyer answered within:** 4.8 s with the queue, 27.3 s without.
+- **Orders:** 500 of 500 confirmed in every run, none failed.
+- **ERP pace:** 18.1/s and 18.3/s.
+- **Slowest order, secured to confirmed:** about 27 s in both modes.
+
+**Visitor takeaway.** Same buyers, same stock, same ERP limit. The ERP confirms every order at the same pace either way, so the queue does not make the back office faster. With the queue, every buyer has an answer within about 5 s. Without it, each winner waits for their turn at the ERP, up to about 28 s. The queue moves the wait from the buyer to the back office.
+
+**Sizes:** 1,197 production lines, 710 test lines, 9 lines of docs. The plan budgeted ~940 and ~525: 1,093 production lines were accepted before the review, and the review fixes added the rest.
+
+**Decision asked.** Validate the comparison live: sign in on `https://cs-proof-gate.fly.dev/admin`, start "Queue comparison", and watch both runs. Then decide whether it becomes public. **Recommendation:** validate and make it public with task 05's texts. The effect is large, stable in every pair, and stated without exaggeration.
+
+**Open points:**
+- No deadline answer occurred on the preset (the last winner waited about 28 s), so the "still being confirmed" path is shown in tests only.
+- The fixed run order (with the queue first) is disclosed in the panel text.
+- Two unrequested runs from the F3 defect (`8e1be680`, `fec42da1`) remain in the proof history.
+- Production needs a fresh core for this schema (task 06).
+
