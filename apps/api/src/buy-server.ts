@@ -105,6 +105,9 @@ function startPrimary(): void {
   if (!Number.isSafeInteger(processes) || processes < 1) {
     throw new Error("API_BUY_PROCESSES must be a positive integer.");
   }
+  // Each process accepts its own connections. Round-robin hands every connection to a process
+  // over IPC, one at a time per process, which throttled a buyer spike's intake.
+  cluster.schedulingPolicy = cluster.SCHED_NONE;
   let stopping = false;
   for (let index = 0; index < processes; index += 1) cluster.fork();
   cluster.on("exit", () => {
