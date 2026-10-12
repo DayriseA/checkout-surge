@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import {
+  applyInventoryCountBatch,
   BusinessOutcomePublicationScheduler,
   type CheckoutSurgeDatabase,
   createDatabaseConnection,
@@ -38,6 +39,7 @@ import { createTerminalInventoryReadOperation } from "./runtime/terminal-invento
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
+import { BatchedInventoryCounts } from "./services/batched-inventory-counts.js";
 import {
   type CoreIdleShutdown,
   CoreIdleStop,
@@ -73,6 +75,8 @@ import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
+import { PostgresStockBuyService } from "./services/postgres-stock-buy-service.js";
+import { PostgresStockPersistence } from "./services/postgres-stock-persistence.js";
 import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "./services/public-runtime-policy-service.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
@@ -449,6 +453,25 @@ export async function startApiServer(): Promise<void> {
     waiter: confirmationWaiter,
   });
 
+  const inventoryCounts = new BatchedInventoryCounts({
+    apply: (batch) => applyInventoryCountBatch(redis, batch),
+    onError: (error, batch) => {
+      logger.warn(
+        { err: error, runId: batch.runId, saleOfferId: batch.saleOfferId },
+        "Could not add batched inventory counts to the run's live counters.",
+      );
+    },
+  });
+  const postgresStockBuyService = new PostgresStockBuyService({
+    stock: new PostgresStockPersistence(connection.db, persistence),
+    counts: inventoryCounts,
+    reservationHoldMinutes: config.reservationHoldMinutes,
+    dashboardSourceDirtyScheduler,
+    soldOutObservations: dashboardSourceDirtyScheduler,
+    businessOutcomeUpdates: businessOutcomePublications,
+    reservationTimingObservations: reservationTiming,
+  });
+
   const automaticRunReset = new AutomaticRunResetService({
     db: connection.db,
     resetWorkflow: adminDemoReset,
@@ -482,6 +505,7 @@ export async function startApiServer(): Promise<void> {
         },
         closeDashboardAndReservationSchedulers: async () => {
           await Promise.all([
+            inventoryCounts.close(),
             dashboardSourceDirtyScheduler.close(),
             dashboardProjectionPublications.close(),
             reservationTiming.close(),
@@ -563,6 +587,7 @@ export async function startApiServer(): Promise<void> {
       queueStatusService,
       reserveOrderService,
       synchronousConfirmationBuyService,
+      postgresStockBuyService,
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,

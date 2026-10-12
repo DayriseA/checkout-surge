@@ -9,6 +9,7 @@ import {
   type InventoryStatus,
   isReplayPossible,
   realLoadRunDiagnosticsSummarySchema,
+  storeLoadSettleMs,
   type TrafficDeliverySummary,
   type TrafficHttpSummary,
   type TransportAttemptCounts,
@@ -24,6 +25,7 @@ import {
   publishDashboardProjectionDirtySignal,
   readBusinessOutcomeSummary,
   readRunSignalTimeline,
+  readStoreLoadCounters,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq, inArray } from "drizzle-orm";
@@ -168,6 +170,7 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
       return toDemoRunSnapshot(row.run);
     }
 
+    await this.captureStoreLoadEnd(row.run, now);
     const evidence = parseFinalizationEvidence(row.run, finalization);
     try {
       validateTrafficCompletionInventoryEvidence(finalization, runId);
@@ -353,12 +356,27 @@ export class DemoRunFinalizationService implements DemoRunFinalizationController
     const blockers = [
       ...businessBlockers,
       ...(accounting.accounted ? [] : ["accepted_response_accounting"]),
+      ...(storeLoadSettling(input.run, input.now) ? ["store_load_settling"] : []),
     ];
     if (blockers.length > 0) {
       return { ready: false, blockers };
     }
 
     return { ready: true };
+  }
+
+  /** Closes a measured run's store-load window once, as it finalizes. Advisory. */
+  private async captureStoreLoadEnd(run: typeof demoRuns.$inferSelect, now: Date): Promise<void> {
+    if (!run.storeLoad || run.storeLoad.end) return;
+    try {
+      const end = await readStoreLoadCounters(this.options.db, this.options.redis, now);
+      await this.options.db
+        .update(demoRuns)
+        .set({ storeLoad: { start: run.storeLoad.start, end } })
+        .where(eq(demoRuns.id, run.id));
+    } catch (error) {
+      this.options.logger.warn({ err: error, runId: run.id }, "Could not record store load.");
+    }
   }
 
   private async readTerminalInventory(
@@ -553,6 +571,17 @@ function appendAccountingWarning(
     ? diagnostics.accountingWarnings
     : [];
   return { ...diagnostics, accountingWarnings: [...existingWarnings, warning] };
+}
+
+/**
+ * A measured run waits until PostgreSQL has published its connections' statistics for the whole
+ * traffic, so its store-load window, and the next run's, are complete.
+ */
+function storeLoadSettling(run: typeof demoRuns.$inferSelect, now: Date): boolean {
+  return (
+    Boolean(run.storeLoad && !run.storeLoad.end && run.trafficEndedAt) &&
+    now.getTime() < (run.trafficEndedAt?.getTime() ?? 0) + storeLoadSettleMs
+  );
 }
 
 function validateTrafficCompletionInventoryEvidence(

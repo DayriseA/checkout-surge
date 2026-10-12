@@ -20,6 +20,7 @@ import {
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import {
+  buildSeedPresets,
   createDatabaseConnection,
   createRedisClient,
   dashboardProjectionRevisionKey,
@@ -33,6 +34,7 @@ import {
   isRunSaleEligible,
   markReservationPendingPersistence,
   orders,
+  postgresRunStock,
   products,
   promoteReservationIdempotencyToAccepted,
   publicRuntimePolicies,
@@ -2588,6 +2590,69 @@ describe("comparison runs", () => {
     await completeRun(first.run.runId, "failed");
     await service.startDueComparisonPartner();
     expect(await db.select().from(demoRuns)).toHaveLength(1);
+  });
+
+  it("starts the public Redis comparison, its second run on PostgreSQL's stock, measuring both runs", async () => {
+    const db = requireConnection(connection).db;
+    const seeded = buildSeedPresets().find((preset) => preset.slug === "redis-comparison");
+    if (!seeded) throw new Error("Expected the seeded Redis comparison preset.");
+    const { overwriteOnConflict: _overwrite, ...preset } = seeded;
+    await db.insert(demoPresets).values(preset);
+    const starts: TrafficExecutionStartRequest[] = [];
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: {
+        reserve: async () => ({
+          outcome: "allowed" as const,
+          reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+        }),
+        release: vi.fn(),
+      },
+      trafficExecutionGateway: {
+        start: async (request) => {
+          starts.push(request);
+          return {
+            runId: request.runId,
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            correlationId: request.correlationId,
+          };
+        },
+      },
+    });
+    const request = {
+      presetSlug: "redis-comparison",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+
+    // A visitor's estimate and start take the fixed constant-arrival preset as defined.
+    expect((await service.previewRun(request)).result.decision).toBe("admitted");
+    const first = await service.startRun(request, "comparison");
+    await completeRun(first.run.runId, "completed");
+    await service.startDueComparisonPartner();
+
+    const runs = await db.select().from(demoRuns);
+    const second = runs.find((run) => run.comparisonFirstRunId === first.run.runId);
+    expect(runs.map((run) => run.comparisonMode).sort()).toEqual(["postgres", "redis"]);
+    expect(starts.map((start) => start.apiBaseUrl)).toEqual([
+      "http://api.test",
+      "http://api.test/stock-in-postgres",
+    ]);
+    expect(await db.select().from(postgresRunStock)).toEqual([
+      {
+        runId: second?.id,
+        saleOfferId: second?.saleOfferId,
+        remainingStock: 1,
+        reservedStock: 0,
+      },
+    ]);
+    for (const run of runs) {
+      expect(run.storeLoad?.start).toMatchObject({
+        postgresTransactions: expect.any(Number),
+        postgresBusyMs: expect.any(Number),
+        redisCpuMs: expect.any(Number),
+      });
+    }
   });
 });
 

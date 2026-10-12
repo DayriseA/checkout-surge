@@ -10,14 +10,22 @@ import { and, desc, eq, gte, ne } from "drizzle-orm";
 /** Path prefix of the buy route that waits for the order's confirmation. */
 export const synchronousConfirmationBuyPathPrefix = "/synchronous-confirmation";
 
+/** Path prefix of the buy route where PostgreSQL decides the stock. */
+export const postgresStockBuyPathPrefix = "/stock-in-postgres";
+
 /**
  * The base URL the runner's k6 posts `/buy` to. A run without the order queue targets the waiting
- * route, so the buy path needs no per-request lookup of the run's mode.
+ * route, and a run whose stock PostgreSQL decides targets that route, so the buy path needs no
+ * per-request lookup of the run's mode.
  */
 export function buyTargetBaseUrl(apiBaseUrl: string, mode: ComparisonMode | null | undefined) {
-  return mode === "synchronous_confirmation"
-    ? `${apiBaseUrl.replace(/\/+$/, "")}${synchronousConfirmationBuyPathPrefix}`
-    : apiBaseUrl;
+  const prefix =
+    mode === "synchronous_confirmation"
+      ? synchronousConfirmationBuyPathPrefix
+      : mode === "postgres"
+        ? postgresStockBuyPathPrefix
+        : null;
+  return prefix ? `${apiBaseUrl.replace(/\/+$/, "")}${prefix}` : apiBaseUrl;
 }
 
 /**

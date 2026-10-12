@@ -285,6 +285,7 @@ async function buildTestServer(options: {
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   pendingPersistenceRecovery?: PendingPersistenceRecovery;
   confirmationReader?: OrderConfirmationReader;
+  postgresStockBuyService?: BuildApiServerOptions["postgresStockBuyService"];
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -395,6 +396,9 @@ async function buildTestServer(options: {
         intervalMs: 10,
       }),
     }),
+    postgresStockBuyService: options.postgresStockBuyService ?? {
+      buy: async () => Promise.reject(new Error("Unexpected buy on the PostgreSQL stock path.")),
+    },
     presetService: options.presetService ?? demoPresetControllerFixture(),
     runtimePolicyService: options.runtimePolicyService ?? publicRuntimePolicyControllerFixture(),
     demoRunLifecycleService: options.demoRunLifecycleService ?? demoRunLifecycleControllerFixture(),
@@ -1112,6 +1116,7 @@ describe("API gateway routes", () => {
     runnerRecreation?: BuildApiServerOptions["runnerRecreation"];
     runHistoryService?: RunHistoryController;
     confirmationReader?: OrderConfirmationReader;
+    postgresStockBuyService?: BuildApiServerOptions["postgresStockBuyService"];
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -3336,6 +3341,41 @@ describe("API gateway routes", () => {
     });
     expect(queued.statusCode).toBe(202);
     expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("routes a run whose stock PostgreSQL decides to its own buy path", async () => {
+    const buy = vi.fn(async ({ correlationId }: { correlationId: string }) =>
+      buyResponseSchema.parse({
+        outcome: "sold_out",
+        correlationId,
+        timestamp: "2026-06-20T00:00:20.000Z",
+        reservation: null,
+        order: null,
+      }),
+    );
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      postgresStockBuyService: { buy },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/stock-in-postgres/buy",
+      payload: {
+        runId: fixtureIds.run,
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "turned-away",
+        quantity: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.headers[buyOutcomeHeaderName]).toBe("sold_out");
+    expect(buy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request: expect.objectContaining({ idempotencyKey: "turned-away" }),
+      }),
+    );
   });
 
   it("answers the waiting route at once for a run with the order queue", async () => {

@@ -10,13 +10,18 @@ import {
 import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
-import { synchronousConfirmationBuyPathPrefix } from "../services/comparison-runs.js";
+import {
+  postgresStockBuyPathPrefix,
+  synchronousConfirmationBuyPathPrefix,
+} from "../services/comparison-runs.js";
+import type { PostgresStockBuyService } from "../services/postgres-stock-buy-service.js";
 import type { ReserveOrderService } from "../services/reserve-order-service.js";
 import type { SynchronousConfirmationBuyService } from "../services/synchronous-confirmation-buy-service.js";
 
 export interface BuyRouteOptions {
   reserveOrderService: ReserveOrderService;
   synchronousConfirmationBuyService: SynchronousConfirmationBuyService;
+  postgresStockBuyService: Pick<PostgresStockBuyService, "buy">;
 }
 
 type Buy = (input: { request: BuyRequest; correlationId: string }) => Promise<BuyResponse>;
@@ -26,6 +31,10 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
   // The runner of a run without the order queue targets this route (see buyTargetBaseUrl).
   registerBuyRoute(app, `${synchronousConfirmationBuyPathPrefix}/buy`, (input) =>
     options.synchronousConfirmationBuyService.buy(input),
+  );
+  // The runner of a run whose stock PostgreSQL decides targets this route.
+  registerBuyRoute(app, `${postgresStockBuyPathPrefix}/buy`, (input) =>
+    options.postgresStockBuyService.buy(input),
   );
 }
 

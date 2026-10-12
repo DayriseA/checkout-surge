@@ -155,6 +155,33 @@ describe("run history service", () => {
     expect(protectedDetail?.overallDurationMs).toBe(publicDetail?.overallDurationMs);
   });
 
+  it("reports a measured run's store load as what its window counted, and nothing for others", async () => {
+    const db = requireConnection(connection).db;
+    const service = createService(connection);
+    await seedHistory(db);
+    const counters = (
+      postgresTransactions: number,
+      postgresBusyMs: number,
+      redisCpuMs: number,
+    ) => ({
+      postgresTransactions,
+      postgresBusyMs,
+      redisCpuMs,
+      capturedAt: "2026-06-20T00:00:00.000Z",
+    });
+    await db
+      .update(demoRuns)
+      .set({ storeLoad: { start: counters(100, 50, 2000), end: counters(10_350, 3_050, 2_400) } })
+      .where(eq(demoRuns.id, ids.newerRun));
+
+    expect((await service.detail(ids.newerRun))?.run.storeLoad).toEqual({
+      postgresTransactions: 10_250,
+      postgresBusyMs: 3_000,
+      redisCpuMs: 400,
+    });
+    expect((await service.detail(ids.olderRun))?.run.storeLoad).toBeUndefined();
+  });
+
   it("keeps list payloads headline-only and detail payloads series-bearing", async () => {
     const db = requireConnection(connection).db;
     const service = createService(connection);

@@ -6,6 +6,7 @@ import {
   type ComparisonMode,
   collectAcceptedRunConfigSnapshotViolations,
   comparisonModes,
+  comparisonOfMode,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
@@ -32,7 +33,9 @@ import {
   demoRuns,
   getInventoryStatus,
   initializeInventory,
+  postgresRunStock,
   products,
+  readStoreLoadCounters,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
@@ -240,6 +243,14 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         initializedAt: now,
         run: { runId: run.runId, status: "accepting" },
       });
+      // Its live counters stay in Redis; its stock is decided in PostgreSQL.
+      if (run.comparison?.mode === "postgres") {
+        await this.options.db.insert(postgresRunStock).values({
+          runId: run.runId,
+          saleOfferId,
+          remainingStock: run.configSnapshot.inventoryConfig.startingStock,
+        });
+      }
     } catch (error) {
       await this.failRun(
         run.runId,
@@ -275,6 +286,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     // If this write fails, the run stays starting: reconciliation then fails it when the boot
     // is not recorded, or replays it against the boot when the write did commit.
     await this.recordRunnerBoot(run.runId, boot);
+
+    await this.captureStoreLoadStart(run);
 
     let trafficResponse: TrafficExecutionStartResponse;
     try {
@@ -676,6 +689,23 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         mergeConfigSnapshot(base, request.configOverride),
       ),
     };
+  }
+
+  /**
+   * Before a Redis comparison run's traffic, records PostgreSQL's and Redis's own counters; its
+   * finalization records them again. Advisory: without them, the run's store load reads unknown.
+   */
+  private async captureStoreLoadStart(run: DemoRunSnapshot): Promise<void> {
+    if (!run.comparison || comparisonOfMode(run.comparison.mode) !== "redis") return;
+    try {
+      const start = await readStoreLoadCounters(this.options.db, this.options.redis, this.now());
+      await this.options.db
+        .update(demoRuns)
+        .set({ storeLoad: { start } })
+        .where(eq(demoRuns.id, run.runId));
+    } catch (error) {
+      this.options.logger.warn({ err: error, runId: run.runId }, "Could not record store load.");
+    }
   }
 
   private async recordRunnerBoot(runId: string, boot: RunnerBoot): Promise<void> {

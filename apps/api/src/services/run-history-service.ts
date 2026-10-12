@@ -38,6 +38,7 @@ import {
   demoRuns,
   erpAttempts,
   readCumulativeErpOutcomeCounts,
+  storeLoadOf,
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -479,6 +480,7 @@ function toPublicRunHistoryRun(
   partnerRunId: string | null,
 ): PublicRunHistoryRun {
   const context = `demo run ${row.id}`;
+  const storeLoad = storeLoadOf(row.storeLoad);
   return publicRunHistoryRunSchema.parse({
     runId: row.id,
     presetName: row.presetName,
@@ -495,6 +497,7 @@ function toPublicRunHistoryRun(
       : {}),
     ...(row.runnerRegion ? { runnerRegion: row.runnerRegion } : {}),
     ...(row.comparisonMode ? { comparison: { mode: row.comparisonMode, partnerRunId } } : {}),
+    ...(storeLoad ? { storeLoad } : {}),
   });
 }
 

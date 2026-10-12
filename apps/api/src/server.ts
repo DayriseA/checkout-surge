@@ -32,6 +32,7 @@ import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-ret
 import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { OrderStatusController } from "./services/order-status-service.js";
+import type { PostgresStockBuyService } from "./services/postgres-stock-buy-service.js";
 import type { PublicRuntimePolicyController } from "./services/public-runtime-policy-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
@@ -53,6 +54,7 @@ export interface BuildApiServerOptions {
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
   synchronousConfirmationBuyService: SynchronousConfirmationBuyService;
+  postgresStockBuyService: Pick<PostgresStockBuyService, "buy">;
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;
@@ -143,6 +145,7 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
   registerBuyRoutes(app, {
     reserveOrderService: options.reserveOrderService,
     synchronousConfirmationBuyService: options.synchronousConfirmationBuyService,
+    postgresStockBuyService: options.postgresStockBuyService,
   });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });

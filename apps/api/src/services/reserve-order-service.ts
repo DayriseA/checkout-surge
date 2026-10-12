@@ -178,7 +178,7 @@ function safelyReportPartialFailure<Report extends ReservationPartialFailureRepo
   }
 }
 
-type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
+export type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
 
 /** A reservation's answer, with its run's comparison mode when the admission lock read the run. */
 export interface RunReservation {
@@ -696,27 +696,17 @@ export class ReserveOrderService {
     correlationId: string,
     securedAt: Date,
   ): SecuredReservationHold {
-    const tokenId = this.generateId();
-    return {
-      id: this.generateId(),
-      saleOfferId: request.saleOfferId,
+    return createReservationHold({
+      request,
       correlationId,
-      runId: request.runId,
-      quantity: request.quantity,
-      reservationToken: `res_${tokenId}`,
-      securedAt: securedAt.toISOString(),
-      expiresAt: new Date(securedAt.getTime() + this.reservationHoldMinutes * 60_000).toISOString(),
-    };
+      securedAt,
+      holdMinutes: this.reservationHoldMinutes,
+      generateId: this.generateId,
+    });
   }
 
   private acceptedResponse(persisted: PersistedBuyAcceptance, correlationId: string): BuyResponse {
-    return buyResponseSchema.parse({
-      outcome: "reservation_secured",
-      correlationId,
-      timestamp: persisted.reservation.securedAt,
-      reservation: persisted.reservation,
-      order: persisted.order,
-    });
+    return acceptedBuyResponse(persisted, correlationId);
   }
 
   private pendingResponse(
@@ -739,12 +729,54 @@ export class ReserveOrderService {
     correlationId: string,
     now: Date,
   ): BuyResponse {
-    return buyResponseSchema.parse({
-      outcome,
-      correlationId,
-      timestamp: now.toISOString(),
-      reservation: null,
-      order: null,
-    });
+    return rejectedBuyResponse(outcome, correlationId, now);
   }
+}
+
+/** A new reservation's identity and hold window, decided before the stock is. */
+export function createReservationHold(input: {
+  request: BuyRequest;
+  correlationId: string;
+  securedAt: Date;
+  holdMinutes: number;
+  generateId: () => string;
+}): SecuredReservationHold {
+  const tokenId = input.generateId();
+  return {
+    id: input.generateId(),
+    saleOfferId: input.request.saleOfferId,
+    correlationId: input.correlationId,
+    runId: input.request.runId,
+    quantity: input.request.quantity,
+    reservationToken: `res_${tokenId}`,
+    securedAt: input.securedAt.toISOString(),
+    expiresAt: new Date(input.securedAt.getTime() + input.holdMinutes * 60_000).toISOString(),
+  };
+}
+
+export function acceptedBuyResponse(
+  persisted: PersistedBuyAcceptance,
+  correlationId: string,
+): BuyResponse {
+  return buyResponseSchema.parse({
+    outcome: "reservation_secured",
+    correlationId,
+    timestamp: persisted.reservation.securedAt,
+    reservation: persisted.reservation,
+    order: persisted.order,
+  });
+}
+
+export function rejectedBuyResponse(
+  outcome: RejectedReservationOutcome,
+  correlationId: string,
+  now: Date,
+): BuyResponse {
+  return buyResponseSchema.parse({
+    outcome,
+    correlationId,
+    timestamp: now.toISOString(),
+    reservation: null,
+    order: null,
+  });
 }
