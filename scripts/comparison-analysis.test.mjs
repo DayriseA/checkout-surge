@@ -78,6 +78,9 @@ function redisRecord(pairId, comparisonMode, postgresTransactions) {
       },
     },
     storeLoad: { postgresTransactions, postgresBusyMs: postgresTransactions / 10, redisCpuMs: 500 },
+    business: { confirmedOrders: 1 },
+    arrival: { dispatchDurationSeconds: 10 },
+    signals: { convergenceDurationSeconds: 1, inventoryDrain: { timeToDepletionSeconds: 0.1 } },
   };
 }
 
