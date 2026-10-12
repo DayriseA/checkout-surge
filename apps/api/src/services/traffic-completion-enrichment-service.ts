@@ -6,6 +6,7 @@ import {
   demoRuns,
   getInventoryStatus,
   InventoryNotInitializedError,
+  readStoreLoadCounters,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
@@ -52,6 +53,7 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
     // Counts closure would drop. Re-drive fail-closed admission even when enrichment completed.
     await this.options.flushBatchedCounts?.();
     await this.closeAdmission(row.run.id, row.run.saleOfferId);
+    await this.closeStoreLoadWindow(row.run);
 
     if (
       row.run.status !== "draining" ||
@@ -141,6 +143,24 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
         "Traffic-completion inventory capture concluded without a snapshot.",
       );
       return null;
+    }
+  }
+
+  /**
+   * Closes a measured run's store-load window once, now that every buyer has been answered: the
+   * selling window. Advisory. PostgreSQL publishes a busy connection's statistics about once a
+   * second, so up to the window's last second of PostgreSQL work may be left out.
+   */
+  private async closeStoreLoadWindow(run: typeof demoRuns.$inferSelect): Promise<void> {
+    if (!run.storeLoad || run.storeLoad.end) return;
+    try {
+      const end = await readStoreLoadCounters(this.options.db, this.options.redis, this.now());
+      await this.options.db
+        .update(demoRuns)
+        .set({ storeLoad: { start: run.storeLoad.start, end } })
+        .where(eq(demoRuns.id, run.id));
+    } catch (error) {
+      this.options.logger.warn({ err: error, runId: run.id }, "Could not record store load.");
     }
   }
 

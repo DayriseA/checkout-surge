@@ -107,6 +107,26 @@ describe("TrafficCompletionService", () => {
     expect(finalizeRun).toHaveBeenCalledWith(runId, "corr-completion");
   });
 
+  it("closes a measured run's store-load window once every buyer is answered", async () => {
+    const db = requireConnection(connection).db;
+    const start = {
+      postgresTransactions: 0,
+      postgresBusyMs: 0,
+      redisCpuMs: 0,
+      capturedAt: "2026-07-19T00:00:01.000Z",
+    };
+    await db.update(demoRuns).set({ storeLoad: { start } }).where(eq(demoRuns.id, runId));
+    const service = createCompletionService(requireConnection(connection), requireRedis(redis));
+
+    await service.recordTrafficCompletion(completionReport());
+
+    const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, runId));
+    expect(run?.storeLoad).toMatchObject({
+      start,
+      end: { postgresTransactions: expect.any(Number), capturedAt: "2026-07-19T00:00:11.000Z" },
+    });
+  });
+
   it("accepts semantic redelivery and rejects conflicting evidence before side effects", async () => {
     const enrichment = createEnrichmentService(requireConnection(connection), requireRedis(redis));
     const completePendingEnrichment = vi.fn((id: string) =>

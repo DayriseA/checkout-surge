@@ -45,14 +45,9 @@ export const comparisonPartnerStartGraceMs = 60_000;
 export const synchronousConfirmationDeadlineMs = 45_000;
 
 /**
- * PostgreSQL publishes a connection's statistics up to 10 s after it goes idle. A run whose store
- * load is measured finalizes no sooner than this after its traffic ended, so its window is complete.
- */
-export const storeLoadSettleMs = 12_000;
-
-/**
- * The work PostgreSQL and Redis did during a measured run, from their own statistics: the whole
- * database's transactions and busy (statement execution) time, and the Redis process's CPU time.
+ * The work PostgreSQL and Redis did during a measured run's selling window (from the run's start
+ * until every buyer is answered), from their own statistics: the whole database's transactions and
+ * busy (statement execution) time, and the Redis process's CPU time.
  */
 export const storeLoadSchema = z
   .object({

@@ -1147,29 +1147,6 @@ describe("demo run finalization service", () => {
     }
   });
 
-  it("finalizes a measured run once PostgreSQL's statistics settled, and records its store load", async () => {
-    const db = requireConnection(connection).db;
-    await seedDrainingRun({ db, redis: requireRedis(redis), trafficDeliveryStatus: "complete" });
-    const start = {
-      postgresTransactions: 0,
-      postgresBusyMs: 0,
-      redisCpuMs: 0,
-      capturedAt: "2026-06-20T00:00:01.000Z",
-    };
-    await db.update(demoRuns).set({ storeLoad: { start } }).where(eq(demoRuns.id, ids.run));
-    const at = (instant: string) =>
-      createService(connection, redis, { now: () => new Date(instant) });
-
-    // Its traffic ended at 00:00:05; PostgreSQL may still be publishing that traffic's statistics.
-    expect((await at("2026-06-20T00:00:10.000Z").finalizeRun(ids.run))?.status).toBe("draining");
-    expect((await at("2026-06-20T00:00:18.000Z").finalizeRun(ids.run))?.status).toBe("completed");
-    const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, ids.run));
-    expect(run?.storeLoad).toMatchObject({
-      start,
-      end: { postgresTransactions: expect.any(Number), capturedAt: "2026-06-20T00:00:18.000Z" },
-    });
-  });
-
   it("publishes caller correlation over the persisted root after commit", async () => {
     const db = requireConnection(connection).db;
     const redisClient = requireRedis(redis);
