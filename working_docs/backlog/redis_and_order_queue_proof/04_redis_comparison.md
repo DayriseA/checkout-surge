@@ -232,6 +232,13 @@ The conservative estimate is about 25 s per run and 50 s for the pair, against t
 - for every buyer, one read-only statement (stock row, run status, idempotency key), which writes nothing and takes no lock;
 - for a winner only, a transaction: the run fence's shared lock, a fresh read of the run's status, the same rows as the Redis path plus the queue job, the stock decrement last, and the notification.
 
-The headline is unchanged: a turned-away buyer costs PostgreSQL one read-only statement. The plan's tilt toward PostgreSQL for winners (one round trip) is gone: a winner now makes about 11 PostgreSQL round trips (the decision read, then 10 in its transaction), against the Redis mode's 8 PostgreSQL and 3 Redis round trips.
+The headline is unchanged: a turned-away buyer costs PostgreSQL one read-only statement. **Fairness point:** the plan's tilt toward PostgreSQL for winners (one round trip) is gone. A winner now makes about 11 PostgreSQL round trips (the decision read, then 10 in its transaction), against the Redis mode's 8 PostgreSQL and 3 Redis round trips, so winners are treated about evenly. The supervisor accepted the deviation.
+
+**Size** (net lines against `865054e0`, comments and blank lines included, generated snapshot excluded): about 1,263 production and 841 test lines, against a plan of 915 and 630. The supervisor accepted it as is. Where it grew:
+- the worker queue (pacing, lease, retry, LISTEN, wiring): about 281 against 200;
+- the API buy path, with the stock decision in TypeScript instead of SQL: about 433 against about 310;
+- the live-counter batch script and the store-load reading: about 136 against 55;
+- the web panel and labels: about 180 against 160;
+- the scripts: about 49 against 25.
 
 **Public admission path (supervisor check).** HD-53 is superseded by HD-59: the public custom limits bind only the custom preset. A fixed public preset takes no override and no custom-run capacity admission; its VUs are resolved at admission (1,000/s × 4 s = 4,000, within the 10,000 caps). The capacity test classifies `redis-comparison` as expected to complete on both deployments, and an API test estimates and starts it as a public visitor (budget charged once, run 2 chained).
