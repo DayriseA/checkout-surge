@@ -404,6 +404,7 @@ export function AdminPresetView({
   const archiveReasonId = useId();
   const duplicateReasonId = useId();
   const actionPendingReason = isPending ? "A preset action is in progress." : null;
+  const configLocked = isPending || Boolean(selectedPreset?.comparison);
   const saveReason = selectedPreset
     ? (actionPendingReason ?? saveUnavailableReason(selectedPreset))
     : null;
@@ -472,7 +473,11 @@ export function AdminPresetView({
                 />
               </span>
             </div>
-            {!selectedPreset.isEditable ? (
+            {selectedPreset.comparison ? (
+              <p className="m-0 rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-sm font-semibold text-warning">
+                A comparison preset runs only as defined: its two runs share these values
+              </p>
+            ) : !selectedPreset.isEditable ? (
               <p className="m-0 rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-sm font-semibold text-warning">
                 You're editing values for a one-off run — {selectedPreset.display.name} itself can't
                 be changed
@@ -537,9 +542,9 @@ export function AdminPresetView({
               />
             </div>
             <div className="border-y border-border">
-              <ConfigFieldset disabled={isPending} legend="Traffic">
+              <ConfigFieldset disabled={configLocked} legend="Traffic">
                 <TrafficEditor
-                  disabled={isPending}
+                  disabled={configLocked}
                   draft={draft}
                   errors={fieldErrors}
                   hardCaps={hardCaps}
@@ -548,19 +553,19 @@ export function AdminPresetView({
                   prefix="preset"
                 />
               </ConfigFieldset>
-              <ConfigFieldset disabled={isPending} legend="Inventory">
+              <ConfigFieldset disabled={configLocked} legend="Inventory">
                 <RunConfigInputs
                   draft={draft}
                   errors={fieldErrors}
                   fields={inventoryFields}
-                  disabled={isPending}
+                  disabled={configLocked}
                   onBlur={onBlurField}
                   onUpdateDraft={onUpdateDraft}
                   prefix="preset"
                 />
               </ConfigFieldset>
               <ConfigFieldset
-                disabled={isPending}
+                disabled={configLocked}
                 hint={adminFieldHints.perRunErp}
                 legend="Per-run ERP"
               >
@@ -568,7 +573,7 @@ export function AdminPresetView({
                   draft={draft}
                   errors={fieldErrors}
                   fields={erpFields}
-                  disabled={isPending}
+                  disabled={configLocked}
                   onBlur={onBlurField}
                   onUpdateDraft={onUpdateDraft}
                   prefix="preset"
@@ -576,7 +581,7 @@ export function AdminPresetView({
                 <Checkbox
                   label="ERP forced outage"
                   hint={adminDraftFieldHints.erpForcedOutage}
-                  disabled={isPending}
+                  disabled={configLocked}
                   id="preset-erpForcedOutage"
                   checked={draft.erpForcedOutage}
                   error={fieldErrors.erpForcedOutage}
@@ -584,7 +589,7 @@ export function AdminPresetView({
                 />
               </ConfigFieldset>
               <ConfigFieldset
-                disabled={isPending}
+                disabled={configLocked}
                 hint={adminFieldHints.workerBackpressure}
                 legend="Worker and backpressure"
               >
@@ -592,7 +597,7 @@ export function AdminPresetView({
                   draft={draft}
                   errors={fieldErrors}
                   fields={workerFields}
-                  disabled={isPending}
+                  disabled={configLocked}
                   onBlur={onBlurField}
                   onUpdateDraft={onUpdateDraft}
                   prefix="preset"

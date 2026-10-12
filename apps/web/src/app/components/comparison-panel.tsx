@@ -72,6 +72,13 @@ function completedFacts(member: ComparisonMember) {
     : null;
 }
 
+const memberStatus = {
+  running: "In progress: results appear when the run ends.",
+  unavailable: "Report not available.",
+  not_started: "Starts when run 1 completes.",
+  never: "No second run was started.",
+} as const;
+
 function ComparisonColumn({ label, member }: { label: string; member: ComparisonMember }) {
   const facts = completedFacts(member);
   const value = (text: string | null) => text ?? notRecorded;
@@ -86,9 +93,10 @@ function ComparisonColumn({ label, member }: { label: string; member: Comparison
           value(formatDurationMs(facts.everyBuyerAnsweredWithinMs)),
         ],
         [
-          "Winners told “confirmed” / “secured, still being confirmed” / no answer",
-          `${value(formatCount(facts.confirmedAnswers))} / ${value(formatCount(facts.stillConfirmingAnswers))} / ${value(formatCount(facts.unanswered))}`,
+          "Winners told “confirmed” / “secured, not yet confirmed”",
+          `${value(formatCount(facts.confirmedAnswers))} / ${value(formatCount(facts.notYetConfirmedAnswers))}`,
         ],
+        ["Buyers without an expected answer", value(formatCount(facts.withoutExpectedAnswer))],
         [
           "Orders confirmed by the ERP (failed)",
           `${formatCount(facts.ordersConfirmed)} (${formatCount(facts.ordersFailed)})`,
@@ -103,10 +111,8 @@ function ComparisonColumn({ label, member }: { label: string; member: Comparison
   return (
     <article className="rounded-xl bg-surface-muted p-4">
       <h3 className="type-title m-0 text-base">{label}</h3>
-      {member.state === "pending" ? (
-        <p className="mb-0 mt-1 text-sm text-muted">
-          {member.runId ? "In progress: results appear when the run ends." : "Not started yet."}
-        </p>
+      {member.state !== "available" ? (
+        <p className="mb-0 mt-1 text-sm text-muted">{memberStatus[member.state]}</p>
       ) : (
         <>
           {facts ? null : (

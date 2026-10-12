@@ -289,6 +289,23 @@ describe("watch narrative", () => {
     expect(output).not.toContain("<meter");
   });
 
+  it("follows the visitor from a comparison's first run to its second", () => {
+    const firstRunId = "66666666-6666-4666-8666-666666666661";
+    const secondRun: DemoRunSnapshot = {
+      ...run("active"),
+      comparison: { mode: "synchronous_confirmation", firstRunId },
+    };
+    const output = renderToStaticMarkup(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(projection(secondRun)),
+        acceptedResult: { status: "awaiting", runId: firstRunId },
+      }),
+    );
+
+    expect(output).toContain(`Accepted run ID: <code>${secondRun.runId}</code>`);
+    expect(output).not.toContain(firstRunId);
+  });
+
   it("keeps the run story bands ahead of the grouped technical sections", () => {
     for (const status of ["active", "draining", "completed", "failed"] as const) {
       const currentProjection =

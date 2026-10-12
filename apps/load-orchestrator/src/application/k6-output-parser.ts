@@ -94,6 +94,7 @@ export interface K6SummaryMetrics {
   responsesCompleted?: number;
   acceptedResponses?: number;
   confirmedResponses?: number;
+  pendingPersistenceResponses?: number;
   soldOutResponses?: number;
   transportFailures?: number;
   requestTimeouts?: number;
@@ -133,6 +134,7 @@ export const counterMetricFields = {
   checkout_responses_completed: "responsesCompleted",
   checkout_reservation_accepted: "acceptedResponses",
   checkout_order_confirmed: "confirmedResponses",
+  checkout_reservation_pending_persistence: "pendingPersistenceResponses",
   checkout_sold_out_rejections: "soldOutResponses",
   checkout_transport_failures: "transportFailures",
   checkout_request_timeouts: "requestTimeouts",
@@ -203,6 +205,10 @@ export class K6RunAccumulator {
     const confirmedResponses = this.selectCount(
       input.summaryMetrics?.confirmedResponses,
       "checkout_order_confirmed",
+    );
+    const pendingPersistenceResponses = this.selectCount(
+      input.summaryMetrics?.pendingPersistenceResponses,
+      "checkout_reservation_pending_persistence",
     );
     const soldOutResponses = this.selectCount(
       input.summaryMetrics?.soldOutResponses,
@@ -284,6 +290,7 @@ export class K6RunAccumulator {
         failedRequests,
         acceptedResponses: acceptedResponses.valueOrNull,
         confirmedResponses: confirmedResponses.valueOrNull,
+        pendingPersistenceResponses: pendingPersistenceResponses.valueOrNull,
         soldOutResponses: soldOutResponses.valueOrNull,
         transportFailures: transportFailures.valueOrNull,
         requestTimeouts: requestTimeouts.valueOrNull,

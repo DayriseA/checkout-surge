@@ -182,6 +182,7 @@ describe("K6RunAccumulator summary precedence", () => {
           checkout_responses_completed: { count: 10 },
           checkout_reservation_accepted: { count: 10 },
           checkout_order_confirmed: { count: 4 },
+          checkout_reservation_pending_persistence: { count: 1 },
           // A cohort counts only when it covers exactly its outcome's replies.
           checkout_accepted_buyer_wall_latency: {
             values: { count: 10, avg: 120, "p(95)": 200, max: 250 },
@@ -210,6 +211,7 @@ describe("K6RunAccumulator summary precedence", () => {
       failedRequests: 0,
       acceptedResponses: 10,
       confirmedResponses: 4,
+      pendingPersistenceResponses: 1,
       soldOutResponses: 0,
       transportFailures: 0,
       requestTimeouts: 0,
@@ -243,6 +245,7 @@ describe("K6RunAccumulator summary precedence", () => {
       failedRequests: null,
       acceptedResponses: 3,
       confirmedResponses: null,
+      pendingPersistenceResponses: null,
       soldOutResponses: null,
       transportFailures: null,
       requestTimeouts: null,

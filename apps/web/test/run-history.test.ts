@@ -937,8 +937,10 @@ describe("run history", () => {
     });
     const second = comparisonDetail("synchronous_confirmation", secondId, firstId, {
       longestWaitMs: 45_100,
-      confirmed: 230,
+      confirmed: 228,
     });
+    // Two winners got the pending-persistence answer: they never waited for the deadline.
+    second.summary.httpSummary.pendingPersistenceResponses = 2;
     getRunHistoryDetail.mockImplementation(async (runId: string) => ({
       status: "available",
       data: runId === firstId ? first : second,
@@ -959,10 +961,28 @@ describe("run history", () => {
     );
     expect(markup).toContain("The queue moves the wait from the buyer to the back office.");
 
+    // The takeaway is stated only when the data shows it; otherwise the numbers stand alone.
+    second.summary.businessOutcomeSummary.failedOrders = 1;
+    expect(await page()).not.toContain("The queue moves the wait");
+    second.summary.businessOutcomeSummary.failedOrders = 0;
+    second.summary.httpSummary.transportFailures = 1;
+    expect(await page()).not.toContain("The queue moves the wait");
+    second.summary.httpSummary.transportFailures = 0;
     second.summary.httpSummary.buyerWallLatencySummary = { accepted: null, soldOut: null };
     const unknown = await page();
     expect(unknown).toContain("Not recorded");
     expect(unknown).not.toContain("The queue moves the wait");
+  });
+
+  it("says so when a comparison's second run will never come", async () => {
+    const runId = "66666666-6666-4666-8666-666666666661";
+    const first = comparisonDetail("demo", runId, null, { longestWaitMs: 2_400, confirmed: 0 });
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: first });
+
+    const markup = renderToStaticMarkup(
+      await RunHistoryDetailPage({ params: Promise.resolve({ runId }) }),
+    );
+    expect(markup).toContain("No second run was started.");
   });
 
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
@@ -1462,7 +1482,7 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
 function comparisonDetail(
   mode: ComparisonMode,
   runId: string,
-  partnerRunId: string,
+  partnerRunId: string | null,
   input: { longestWaitMs: number; confirmed: number },
 ): PublicRunHistoryDetailResponse {
   const detail = detailFixture();
@@ -1474,6 +1494,7 @@ function comparisonDetail(
       httpSummary: {
         ...detail.summary.httpSummary,
         confirmedResponses: input.confirmed,
+        pendingPersistenceResponses: 0,
         buyerWallLatencySummary: {
           accepted: {
             sampleCount: 250,

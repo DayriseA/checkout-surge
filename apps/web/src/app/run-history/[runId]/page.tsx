@@ -52,7 +52,12 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
   const comparison =
     (publicDetail?.status === "available" && publicDetail.data.run.comparison) ||
     (adminDetail?.status === "available" && adminDetail.data.run.comparison)
-      ? await readComparison(parsedParams.data.runId, null, getRunHistoryDetail)
+      ? await readComparison(
+          parsedParams.data.runId,
+          null,
+          getRunHistoryDetail,
+          publicDetail ?? undefined,
+        )
       : null;
   const comparisonReport = comparison ? (
     <div className="mb-4 grid">

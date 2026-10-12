@@ -61,6 +61,7 @@ const attemptsStarted = new Counter("checkout_attempts_started");
 const responsesCompleted = new Counter("checkout_responses_completed");
 const acceptedResponses = new Counter("checkout_reservation_accepted");
 const confirmedResponses = new Counter("checkout_order_confirmed");
+const pendingPersistenceResponses = new Counter("checkout_reservation_pending_persistence");
 const soldOutResponses = new Counter("checkout_sold_out_rejections");
 const transportFailures = new Counter("checkout_transport_failures");
 const requestTimeouts = new Counter("checkout_request_timeouts");
@@ -94,6 +95,7 @@ export function setup() {
     responsesCompleted,
     acceptedResponses,
     confirmedResponses,
+    pendingPersistenceResponses,
     soldOutResponses,
     transportFailures,
     requestTimeouts,
@@ -154,11 +156,12 @@ export default function () {
   const outcome = readResponseHeader(response, checkoutOutcomeHeaderName);
   // 200 comes only from the waiting route of a run without the order queue.
   const isConfirmed = response.status === 200 && outcome === "order_confirmed";
+  const isPendingPersistence =
+    response.status === 202 && outcome === "reservation_pending_persistence";
   const isAccepted =
     isConfirmed ||
-    (response.status === 202 &&
-      (outcome === "reservation_secured" ||
-        outcome === "reservation_pending_persistence"));
+    isPendingPersistence ||
+    (response.status === 202 && outcome === "reservation_secured");
   const isSoldOut = response.status === 409 && outcome === "sold_out";
 
   if (response.status === 0) {
@@ -168,6 +171,7 @@ export default function () {
   } else if (isAccepted) {
     acceptedResponses.add(1);
     if (isConfirmed) confirmedResponses.add(1);
+    if (isPendingPersistence) pendingPersistenceResponses.add(1);
     acceptedBuyerWallLatency.add(wallLatencyMs);
   } else if (isSoldOut) {
     soldOutResponses.add(1);

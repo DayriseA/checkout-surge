@@ -775,7 +775,7 @@ export function AdminPresetController({
   const estimate = useRunEstimate(
     startConfirmation?.request ??
       (selectedPreset && effectiveConfig?.values
-        ? { presetSlug: selectedPreset.slug, configOverride: effectiveConfig.values }
+        ? runRequest(selectedPreset, effectiveConfig.values)
         : null),
     "admin",
     !controlsBlocked && !acceptedRun,
@@ -851,10 +851,7 @@ export function AdminPresetController({
       setValidationSummaryRevision((revision) => revision + 1);
       return;
     }
-    const parsed = startDemoRunRequestSchema.safeParse({
-      presetSlug: selectedPreset.slug,
-      configOverride: built.values,
-    });
+    const parsed = startDemoRunRequestSchema.safeParse(runRequest(selectedPreset, built.values));
     if (!parsed.success) {
       setNotice(adminValidationMessage());
       return;
@@ -1860,4 +1857,14 @@ function serverDraftField(path: string[], context: ServerFieldContext): string |
     return backpressureServerFields.has(field) ? field : undefined;
   }
   return undefined;
+}
+
+/** A comparison preset runs only as defined, so its requests carry no configuration override. */
+function runRequest(
+  preset: AdminPresetListItem,
+  values: NonNullable<StartDemoRunRequest["configOverride"]>,
+): StartDemoRunRequest {
+  return preset.comparison
+    ? { presetSlug: preset.slug }
+    : { presetSlug: preset.slug, configOverride: values };
 }

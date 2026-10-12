@@ -335,6 +335,8 @@ export const trafficHttpSummarySchema = z
     acceptedResponses: nonnegativeIntegerSchema.nullable(),
     /** Accepted responses answered `order_confirmed`; absent from runs recorded before it. */
     confirmedResponses: nonnegativeIntegerSchema.nullable().optional(),
+    /** Accepted responses answered `reservation_pending_persistence`; absent before it. */
+    pendingPersistenceResponses: nonnegativeIntegerSchema.nullable().optional(),
     soldOutResponses: nonnegativeIntegerSchema.nullable(),
     transportFailures: nonnegativeIntegerSchema.nullable(),
     /** Transport failures that hit k6's request timeout; absent from runs recorded before it. */

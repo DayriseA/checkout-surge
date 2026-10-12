@@ -231,19 +231,18 @@ export function OperatorDashboard({
   );
 }
 
-/** The comparison the visitor's run belongs to, from the live run or from its saved report. */
+/** The comparison of the run shown live, for every viewer, or of the visitor's saved run. */
 function watchedComparison(
   tracked: AcceptedRunResult | undefined,
   liveRun: DemoRunSnapshot | null,
 ): { runId: string; firstRunId: string | null; refreshKey: string } | null {
-  if (!tracked) return null;
-  if (liveRun?.runId === tracked.runId && liveRun.comparison)
+  if (liveRun?.comparison)
     return {
       runId: liveRun.runId,
       firstRunId: liveRun.comparison.firstRunId ?? null,
       refreshKey: `${liveRun.runId}:${liveRun.status}`,
     };
-  if (tracked.status === "available" && tracked.comparison)
+  if (tracked?.status === "available" && tracked.comparison)
     return {
       runId: tracked.runId,
       firstRunId: tracked.comparison.mode === "demo" ? null : tracked.comparison.partnerRunId,
