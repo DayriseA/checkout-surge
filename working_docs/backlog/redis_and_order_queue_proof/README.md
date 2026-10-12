@@ -43,7 +43,7 @@ Choices waiting for the owner, added with the task, the options and a recommenda
 
 | # | Task | Depends on | Status |
 | :-- | :-- | :-- | :-- |
-| 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | in progress |
+| 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | done |
 | 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | done |
 | 03 | [Queue comparison](03_queue_comparison.md), owner checkpoint A | 01 | todo |
 | 04 | [Redis comparison](04_redis_comparison.md), owner checkpoint B | 03 | todo |

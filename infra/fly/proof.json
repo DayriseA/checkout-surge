@@ -1,0 +1,9 @@
+{
+  "organization": "playground-416",
+  "apps": {
+    "core": "cs-proof-core",
+    "runner": "cs-proof-runner",
+    "gate": "cs-proof-gate"
+  },
+  "publicOrigin": "https://cs-proof-gate.fly.dev"
+}
