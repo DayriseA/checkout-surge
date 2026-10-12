@@ -366,3 +366,61 @@ The independent review (`scratchpad/review/task04-code-review.md`) found the com
   - the container-CPU ratio (about 3.5) is smaller than the busy-time ratio (about 10).
 - **The trade-off from Q6:** Redis's extra work per winner does not show at one unit.
 - **Production rollout:** the baseline edit requires `--fresh-core` (task 06/07).
+
+### Re-tuning with units left: fairness check and exploration (2026-10-13, stopped before choosing)
+
+Owner request, after checkpoint B: stock 1 hides the contention and the order work that a real flash sale puts on the database. Re-tune with units left.
+
+**Fairness check under contention.** The PostgreSQL mode is a single stock row with a conditional decrement, a standard design.
+- **The pre-check** is a prepared, read-only statement.
+- **A buyer who sees units left** runs one transaction. The row lock is taken last, by the conditional `UPDATE … WHERE remaining_stock >= qty`, and held only until the commit.
+- **The pool** is the same 10 connections as in the Redis mode. The winner's inserts use Drizzle, unprepared, like the Redis mode's persistence.
+- **One avoidable cost, fixed** (`64c79d05`): the `NOTIFY` ran after the decrement, holding the row lock one round trip longer. It now runs before.
+- **Inherent costs:** buyers racing for the last units insert their rows and roll back; and winners serialize on the row through their commit.
+
+**Exploration.**
+- **Method:** in the proof environment only, the seeded preset row was edited in place (`psql`, at `1ae73d47`; the seed restores it on the next core start). 2 pairs per candidate, with the Redis run first. ERP 100 ms and 20/s, concurrency 5.
+- Every run completed: 0 failed, 0 dropped, 500 accepted, 500 orders confirmed.
+- **Columns:**
+  - **Tx / busy:** PostgreSQL transactions, and busy time in seconds.
+  - **Winners / turned away:** average / p95 wait, in seconds.
+  - **Sold out:** time until the stock sold out, in seconds.
+  - **All answered:** time until every buyer was answered, in seconds.
+  - **Main / PG CPU:** API main thread, and PostgreSQL CPU, in cores over the answering period.
+  - **Pace:** the ERP pace, in orders per second.
+
+| Run | Mode | Tx | Busy | Winners | Turned away | Sold out | All answered | Main | PG CPU | Pace |
+| :-- | :-- | --: | --: | --: | --: | --: | --: | --: | --: | --: |
+| A1 (5k spike) | Redis | 19,385 | 12.0 | 4.3 / 7.2 | 7.8 / 10.8 | 0.70 | 11.0 | 0.86 | – | 16.9 |
+| A1 | PostgreSQL | 18,157 | 17.9 | 3.0 / 4.7 | 11.2 / 12.6 | 0.53 | 12.9 | 0.94 | – | 15.4 |
+| A2 | Redis | 19,038 | 11.0 | 2.7 / 5.0 | 6.7 / 8.8 | 2.34 | 9.1 | 0.89 | – | 18.3 |
+| A2 | PostgreSQL | 17,171 | 14.4 | 1.6 / 3.0 | 5.9 / 6.5 | 0.83 | 6.8 | 0.95 | – | 15.9 |
+| B1 (10k spike) | Redis | 19,648 | 11.2 | 3.7 / 5.9 | 9.0 / 13.5 | 0.56 | 13.7 | 0.82 | 1.23 | 17.4 |
+| B1 | PostgreSQL | 22,093 | 14.2 | 2.1 / 3.6 | 7.6 / 10.9 | 0.74 | 11.5 | 0.88 | 1.29 | 15.7 |
+| B2 | Redis | 19,645 | 11.7 | 3.7 / 5.6 | 6.3 / 10.7 | 0.56 | 11.1 | 0.82 | 1.14 | 17.5 |
+| B2 | PostgreSQL | 21,840 | 14.0 | 1.9 / 3.2 | 5.9 / 8.2 | 0.50 | 8.4 | 0.84 | 1.35 | 15.8 |
+
+(The PostgreSQL CPU sampler was not running during candidate A.)
+
+**What it shows. This contradicts the expectation, so the work stopped here.**
+- **The single API process is saturated in both modes, for both candidates.** Its main thread stays at 0.82–0.98 of a core for the whole answering period (7–13 s): the per-second samples are pinned from the spike's first second until the last answer. Every wait is dominated by that process, not by the store.
+- **The database's work is not clearly higher without Redis:**
+  - PostgreSQL ran 17,000–22,000 transactions in both modes. With the 5k spike it ran *fewer* without Redis.
+  - Busy time is only about 20–60 % higher without Redis.
+  - PostgreSQL CPU is about the same (1.1–1.35 cores).
+- **Most of the Redis mode's PostgreSQL work is order work.** It comes to about 39 transactions per order.
+  - **The likely main cause** (from the code, not separately measured): while the 500 orders wait for the ERP's pace (about 28 s), the worker's dispatch scanner re-publishes every queued order older than 1 s to BullMQ, up to 100 per second. Each re-publication is fenced by 3 PostgreSQL statements (lock, run check, unlock), so this could be up to about 8,000 transactions per run.
+  - This repair loop exists only for the Redis mode's dual write; the PostgreSQL queue's job commits with its order.
+  - The decision reads that the PostgreSQL mode adds (one per buyer) are of the same order of magnitude, so the totals come out about even.
+- **Winners were answered faster without Redis in every pair:** p95 3.0–4.7 s, against 5.0–7.2 s.
+  - Turned-away buyers: mixed with the 5k spike, faster without Redis with the 10k spike.
+  - The stock sold out in about the same time (0.5–0.8 s); the single stock row did not visibly slow selling.
+- Nothing was changed in the preset, the panel or the seed.
+
+**Decision needed (supervisor or owner).**
+- **The buyer pool, required by step 3** because the process is pinned (owner: 2 processes first).
+- **The store-load scope, whatever the topology.** As measured, it mixes the selling phase with the order lifecycle, and it charges the Redis mode with the dispatch scanner's re-publication loop. Options:
+  1. measure only the selling window (until every buyer is answered);
+  2. treat the scanner's per-second re-assertion as a separate finding (it is an inefficiency of the demo's current design, also present in ordinary runs);
+  3. both.
+- **Whether stock 500 still serves the database-load claim.** It may instead serve a different, contention-centred claim.
