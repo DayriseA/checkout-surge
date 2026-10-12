@@ -156,11 +156,11 @@ Plan against actual net lines (git diff from `aea8ef8a`, comments and blank line
 | Scripts: capacity entries and analysis | 115 | 131 | 30 | 61 |
 | **Total** | **~940** | **1,093** | **~525** | **580** |
 
-Docs: 9 lines (k6 classification, comparison runs). **The production total is 153 lines (16 %) over the accepted budget; implementation stopped there for the supervisor's decision (see Implementation).**
+Docs: 9 lines (k6 classification, comparison runs). The production total is 153 lines (16 %) over the plan's budget. The supervisor accepted it as is (see Implementation).
 
 **Risks.**
 - The proof core's drain may approach 45 s (the archived hosted queued run's last confirmation came at about 47 s). Measure it first, and tune the stock if needed.
-- The baseline SQL is edited: the proof core needs a fresh install, and task 06 a fresh core (HD-48).
+- The baseline SQL is edited. As the project convention requires (HD-05, HD-48), the proof core is installed fresh. **For task 06:** production must deploy this work with `node infra/fly/deploy.mjs all --fresh-core` before the merge to `main`. That wipes the hosted run history and admin edits.
 - The 5 s poll plus the runner boot leave a gap of about 10–35 s between the two runs; Watch labels it.
 - An API restart during run 2 drops the waiting connections, as it would for any run.
 
@@ -196,9 +196,53 @@ Docs: 9 lines (k6 classification, comparison runs). **The production total is 15
 - The added requirement to read the run's mode from the admission lock took 41 lines. The mode goes through `ReserveOrderService`'s return paths and the persistence lock.
 - Chaining, the waiter and the scripts each took 16–28 lines more than planned, mostly doc comments and type declarations.
 
-The proof deployment and the measurement wait for the supervisor's decision: accept the size, or trim. Trimming candidates, about 60–80 lines in total:
-- remove the doc comments;
-- merge `synchronous-confirmation-buy-service.ts` into the waiter file;
-- drop the history-list mode label;
-- shorten the analysis script.
+**Supervisor's decision:** 1,093 lines accepted as is, with no trimming.
 
+### Live end-to-end run (proof environment, 2026-10-12)
+
+- **Deploy.** `node infra/fly/proof.mjs deploy --fresh-core` at `70a03a38`. The first wake through the gate reinstalled the core fresh, on new core Machine `871473b0632e78`.
+- **The pair**, started as an admin through the API, each run `completed-successfully`:
+
+| | Run 1 `f28c7826`, with the queue | Run 2 `c024483d`, without the queue |
+| :-- | --: | --: |
+| Requests completed / failed | 5,000 / 0 | 5,000 / 0 |
+| Winners answered "confirmed" / "secured, still being confirmed" | 0 / 500 | 500 / 0 |
+| Winners' wait, average / p95 | 2.9 s / 4.2 s | 14.5 s / 26.3 s |
+| Every buyer answered within | 5.4 s | 27.8 s |
+| Orders confirmed (failed) | 500 (0) | 500 (0) |
+| ERP pace (limit 20/s) | about 17/s | about 18/s |
+| Slowest order, secured to confirmed | 29.1 s | 27.0 s |
+
+- **Chaining.** Run 1 finalized at 17:18:48.3 and run 2 was accepted 0.3 s later, in the same lifecycle tick. The pair held the slot for 76 s, from 17:18:07 to 17:19:23.5. Run 2 finalized as soon as its traffic ended, since every order was already confirmed.
+- **No deadline answer.** The last winner waited 27.8 s, so no wait reached the 45 s deadline.
+- **Panel**, checked in the built-in browser as a visitor:
+  - Watch, opened on run 1, followed run 2 by itself; the accepted run ID switched to run 2.
+  - The panel showed "Run 1 in progress / Run 2 not started yet", then run 1's facts with run 2 in progress, then both runs with the takeaway.
+  - The same panel appears on both run reports, and history lists both runs with their mode.
+
+
+### Measurement (proof environment, 2026-10-12, design §5)
+
+- **Setup:** 5 starts of `queue-comparison` with `scripts/capacity-measurement.mjs`, run inside the proof core's API container from 17:20 to 17:28 UTC.
+- **Order:** fixed (with the queue first), so pairs are AB; pair 1 is discarded as warm-up.
+- **Every run** completed: 5,000 of 5,000 requests, 0 failed, 500 accepted, 4,500 sold out, 500 of 500 orders confirmed, 0 failed.
+- **Summary** from `scripts/comparison-analysis.mjs`, pairs 2–5, median (min–max):
+
+| Metric | With the queue | Without the queue | Ratio without/with | Pairs |
+| :-- | --: | --: | --: | :-- |
+| Winners' average wait | 2.02 s (1.75–2.14) | 14.15 s (13.75–14.54) | 7.1 (6.7–7.9) | all higher without the queue |
+| Winners' p95 wait | 3.23 s (2.95–3.37) | 26.07 s (25.78–26.93) | 8.2 (7.7–8.7) | all higher without the queue |
+| Every buyer answered within | 4.83 s (4.70–5.07) | 27.34 s (26.99–28.49) | 5.6 (5.4–6.1) | all higher without the queue |
+| Winners told "confirmed" | 0 | 500 | – | – |
+| Winners told "secured, still being confirmed" | 500 | 0 | – | no deadline answer in any run |
+| Orders confirmed | 500 | 500 | 1 | all equal |
+| ERP pace | 18.1/s (18.0–18.3) | 18.3/s (17.6–18.5) | 1.0 | equal within 4 % |
+| Slowest order, secured to confirmed | 27.1 s (27.0–27.3) | 27.0 s (25.8–28.1) | 1.0 | equal within 9 % |
+
+- **Warm-up pair 1** fell in the same ranges: winners' p95 3.9 s against 27.0 s.
+- **The claim holds in every pair.** Winners wait 7–9 times longer without the queue, at p95 and on average. The ERP confirms every order at the same pace either way, and the back office's own time (slowest order about 27 s) is the same in both modes. Only who waits for it changes.
+- **Against the checkpoint:** the archived checkpoint measured winner p95 at 2.3 s against 33.7 s, on a different topology. Here the drain is shorter (about 27 s against 35 s) because the realized ERP pace is about 18/s.
+- **Chaining defect found during the series (review F3).** After the capacity script tore down pair 4, the lifecycle poll started two unrequested runs without the queue, `8e1be680` at 17:25:23 and `fec42da1` at 17:25:58.
+  - **Cause:** deleting pair 4's second run made its first run look unpaired again; deleting that first run then nulled the link of the new run, which in turn looked like a first run.
+  - **Effect on the data:** pair 5 waited for the slot, then ran normally. The unrequested runs did not overlap any measured run.
+  - Both runs are left in the proof history. The fix (below) requires the comparison's first mode and no later run.
