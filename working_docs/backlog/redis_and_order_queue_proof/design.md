@@ -81,8 +81,9 @@ A first implementation (branch `codex/redis-order-queue-feasibility`, archived, 
 
 - **Restart from `dev`** on branch `claude/redis-queue-comparisons`, with a lean design. Sound parts of the archived branch are ported, not merged.
 - **Two fixed presets, one per comparison.** Each preset runs its two modes as two chained runs on the same workload, and the visitor's run budget is charged once. There is no parent run or "one button, four runs" flow.
-- **Ordinary runs and the production topology stay unchanged.** The conditions a comparison needs (several buy-only API processes, a distance to the stores) apply to comparison runs only. No new production app, and no recalibration of the `CAPACITY_*` values: custom runs never carry a comparative mode, so the admission model is unaffected.
-- **Distance is simulated** for comparison runs, with the same added latency to PostgreSQL and Redis, and stated as a simulation in the visitor-facing text.
+- **Ordinary runs and the production topology stay unchanged.** No new production app, and no recalibration of the `CAPACITY_*` values: custom runs never carry a comparative mode, so the admission model is unaffected.
+- **No store distance, simulated or real** (owner, after reviewing task 04's plan; replaces the 2026-10-09 "realistic distance" decision). A turned-away buyer makes exactly one round trip in either mode, so a distance would add about the same to every answer in both runs without changing what the comparison shows. The visitor-facing texts state openly that PostgreSQL and Redis run on the API's Machine, and that in a real deployment they would sit about a millisecond away (task 06).
+- **Several API processes only if measured necessary.** The Redis comparison is first measured with the ordinary single API process. A buy-only pool is added only if that process saturates in the PostgreSQL mode (dropped arrivals, or sold-out latency drifting upward), with the smallest process count that suffices.
 - **The Redis comparison's headline is database load.** Redis keeps turned-away buyers off PostgreSQL. Response times are shown only if they are stable across repetitions.
 - **Without the order queue, no order is lost or failed because a buyer stopped waiting.** A buyer whose wait reaches the deadline gets an honest "still being confirmed" answer, and the order is confirmed later as usual. The honest message is that the buyer pays for the back office's pace, not that the system breaks.
 - **The queue comparison comes first**, end to end, since its effect is the largest and was confirmed at the checkpoint. The Redis comparison follows.
@@ -135,7 +136,6 @@ A first implementation (branch `codex/redis-order-queue-feasibility`, archived, 
 
 ## 7. Open Points
 
-Settled on 2026-10-12 (section 3.1): separate machines or simulated latency (simulated, comparison runs only), production topology (unchanged), what the presets show (database load for Redis; buyer waiting for the queue), how chained runs fit the run slot (two chained runs per preset), and how the mode without the order queue reads (it does not fail by design). Still open:
+Settled on 2026-10-12 (section 3.1): separate machines or simulated latency (neither: no store distance), production topology (unchanged), what the presets show (database load for Redis; buyer waiting for the queue), how chained runs fit the run slot (two chained runs per preset), and how the mode without the order queue reads (it does not fail by design). Still open:
 
-- **Distance value:** which added round trip stands for "production" (start from the measured private-network round trip on Fly, about 0.8 ms).
 - **Redis script:** whether to slim the stock Lua script. Default: leave it unchanged.

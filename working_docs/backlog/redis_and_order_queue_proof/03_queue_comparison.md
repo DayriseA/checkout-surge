@@ -165,7 +165,7 @@ Docs: 9 lines (k6 classification, comparison runs). The production total is 153 
 
 **Risks.**
 - The proof core's drain may approach 45 s (the archived hosted queued run's last confirmation came at about 47 s). Measure it first, and tune the stock if needed.
-- The baseline SQL is edited. As the project convention requires (HD-05, HD-48), the proof core is installed fresh. **For task 06:** production must deploy this work with `node infra/fly/deploy.mjs all --fresh-core` before the merge to `main`. That wipes the hosted run history and admin edits.
+- The baseline SQL is edited. As the project convention requires (HD-05, HD-48), the proof core is installed fresh. **For task 07:** production must deploy this work with `node infra/fly/deploy.mjs all --fresh-core` before the merge to `main`. That wipes the hosted run history and admin edits.
 - The 5 s poll plus the runner boot leave a gap of about 10–35 s between the two runs; Watch labels it.
 - An API restart during run 2 drops the waiting connections, as it would for any run.
 
@@ -324,7 +324,7 @@ The supervisor's arbitration on the independent review (`scratchpad/review/task0
 - No deadline answer occurred on the preset (the last winner waited about 28 s), so the "still being confirmed" path is shown in tests only.
 - The fixed run order (with the queue first) is disclosed in the panel text.
 - Two unrequested runs from the F3 defect (`8e1be680`, `fec42da1`) remain in the proof history.
-- Production needs a fresh core for this schema (task 06).
+- Production needs a fresh core for this schema (task 07).
 
 
 ### Owner checkpoint A (2026-10-12)
