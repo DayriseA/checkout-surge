@@ -35,6 +35,8 @@ export interface ApiConfig {
   pendingPersistenceRecoveryMaxConcurrentDirectAttempts: number;
   webOrigins: string[];
   apiBaseUrl: string;
+  /** Where the buy-only processes listen, for the Redis comparison's runs; null without them. */
+  buyPoolBaseUrl: string | null;
   loadOrchestratorBaseUrl: string;
   controlServiceToken: string;
   /** This API's commit, for the version handshake with the runner. */
@@ -154,6 +156,7 @@ export function loadApiConfig(env: NodeJS.ProcessEnv): ApiConfig {
     ),
     webOrigins: parseCsv(env.WEB_ORIGIN),
     apiBaseUrl: parseApiBaseUrl(env),
+    buyPoolBaseUrl: parseBuyPoolBaseUrl(env),
     loadOrchestratorBaseUrl: parseUrl(
       env.LOAD_ORCHESTRATOR_BASE_URL,
       "LOAD_ORCHESTRATOR_BASE_URL",
@@ -491,6 +494,15 @@ function parseApiBaseUrl(env: NodeJS.ProcessEnv): string {
     ? `http://[${flyPrivateIp}]:${parsePositiveInteger(env.PORT, "PORT", 4000)}`
     : "http://localhost:4000";
   return parseUrl(env.API_BASE_URL, "API_BASE_URL", fallback);
+}
+
+/** The API's own base URL on the buy-only processes' port, when the deployment runs them. */
+function parseBuyPoolBaseUrl(env: NodeJS.ProcessEnv): string | null {
+  const port = parseOptionalString(env.API_BUY_POOL_PORT);
+  if (port === null) return null;
+  const url = new URL(parseApiBaseUrl(env));
+  url.port = String(parsePositiveInteger(port, "API_BUY_POOL_PORT", 4001));
+  return url.toString().replace(/\/+$/, "");
 }
 
 function parseUrl(value: string | undefined, name: string, fallback: string): string {

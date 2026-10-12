@@ -1,6 +1,5 @@
 import { readFile } from "node:fs/promises";
 import {
-  applyInventoryCountBatch,
   BusinessOutcomePublicationScheduler,
   type CheckoutSurgeDatabase,
   createDatabaseConnection,
@@ -12,12 +11,8 @@ import {
   demoRuns,
   getInventoryStatus,
   inspectGeneratedRunTeardown,
-  markReservationPendingPersistence,
-  promoteReservationIdempotencyToAccepted,
   publishDashboardProjectionDirtySignal,
   purgeResetRunDurable,
-  reserveInventoryStock,
-  reverseReservation,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
 import { type FlyMachineConfig, FlyMachinesClient } from "@checkout-surge/fly-machines";
@@ -29,6 +24,7 @@ import { createBullMqOrderProcessQueueInspector } from "./queue/bullmq-order-pro
 import { DashboardProjectionFanout } from "./realtime/dashboard-projection-fanout.js";
 import { invalidDashboardDirtySignalMetadata } from "./realtime/invalid-dashboard-dirty-signal-metadata.js";
 import { closeApiResources } from "./runtime/api-resource-cleanup.js";
+import { createBuyPath, createStockReservationGateway } from "./runtime/buy-path.js";
 import { type ApiConfig, loadApiConfig } from "./runtime/config.js";
 import { createDashboardRecoveryOperationFactory } from "./runtime/dashboard-recovery-operation-factory.js";
 import type { ApiFastifyInstance } from "./runtime/fastify.js";
@@ -39,7 +35,6 @@ import { createTerminalInventoryReadOperation } from "./runtime/terminal-invento
 import { buildApiServer } from "./server.js";
 import { AdminDemoResetService } from "./services/admin-demo-reset-service.js";
 import { AutomaticRunResetService } from "./services/automatic-run-reset-service.js";
-import { BatchedInventoryCounts } from "./services/batched-inventory-counts.js";
 import {
   type CoreIdleShutdown,
   CoreIdleStop,
@@ -66,17 +61,11 @@ import { FlyRunnerHost } from "./services/fly-runner-host.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
-import {
-  OrderConfirmationWaiter,
-  PostgresOrderConfirmationReader,
-} from "./services/order-confirmation-waiter.js";
 import { DemoRunQueueLimits } from "./services/order-process-queue-limits.js";
 import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
 import { PostgresBuyPersistence } from "./services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "./services/postgres-demo-reset-workflow-fence.js";
-import { PostgresStockBuyService } from "./services/postgres-stock-buy-service.js";
-import { PostgresStockPersistence } from "./services/postgres-stock-persistence.js";
 import { RedisPublicRunBudgetStore } from "./services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "./services/public-runtime-policy-service.js";
 import { QueueStatusService } from "./services/queue-status-service.js";
@@ -84,17 +73,10 @@ import {
   RedisReservationTimingStore,
   ReservationTimingObservationScheduler,
 } from "./services/reservation-timing-observation.js";
-import {
-  type BusinessOutcomeUpdateFailureReport,
-  type OrderEnqueueFailureReport,
-  type ReservationPartialFailureReport,
-  ReserveOrderService,
-} from "./services/reserve-order-service.js";
 import { RunHistoryService } from "./services/run-history-service.js";
 import { alwaysOnRunnerHost, type RunnerHost } from "./services/runner-host.js";
 import { PostgresMonitoredRunReader, RunnerLossMonitor } from "./services/runner-loss-monitor.js";
 import { RunnerOperations } from "./services/runner-operations.js";
-import { SynchronousConfirmationBuyService } from "./services/synchronous-confirmation-buy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 import { TrafficCompletionService } from "./services/traffic-completion-service.js";
@@ -130,15 +112,7 @@ export async function startApiServer(): Promise<void> {
   });
 
   const persistence = new PostgresBuyPersistence(connection.db);
-  const stockReservationGateway = {
-    reserve: (input: Parameters<typeof reserveInventoryStock>[1]) =>
-      reserveInventoryStock(redis, input),
-    markPendingPersistence: (input: Parameters<typeof markReservationPendingPersistence>[1]) =>
-      markReservationPendingPersistence(redis, input),
-    promoteAccepted: (input: Parameters<typeof promoteReservationIdempotencyToAccepted>[1]) =>
-      promoteReservationIdempotencyToAccepted(redis, input).then(() => undefined),
-    reverse: (input: Parameters<typeof reverseReservation>[1]) => reverseReservation(redis, input),
-  };
+  const stockReservationGateway = createStockReservationGateway(redis);
   const dashboardProjectionFanout = new DashboardProjectionFanout({
     logger,
     maxClients: config.dashboardMaxSseClients,
@@ -222,6 +196,26 @@ export async function startApiServer(): Promise<void> {
     new RedisReservationTimingStore(redis),
     logger,
   );
+  const {
+    inventoryCounts,
+    confirmationWaiter,
+    reserveOrderService,
+    synchronousConfirmationBuyService,
+    postgresStockBuyService,
+  } = createBuyPath({
+    config,
+    logger,
+    db: connection.db,
+    sql: connection.sql,
+    redis,
+    persistence,
+    stockReservations: stockReservationGateway,
+    orderProcessJobPublisher,
+    pendingPersistenceRecovery,
+    dashboardSourceDirtyScheduler,
+    businessOutcomePublications,
+    reservationTiming,
+  });
   const trafficMetricIngestion = new TrafficMetricIngestionService({
     db: connection.db,
     store: trafficMetricStore,
@@ -319,15 +313,6 @@ export async function startApiServer(): Promise<void> {
     },
   );
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
-  const inventoryCounts = new BatchedInventoryCounts({
-    apply: (batch) => applyInventoryCountBatch(redis, batch),
-    onError: (error, batch) => {
-      logger.warn(
-        { err: error, runId: batch.runId, saleOfferId: batch.saleOfferId },
-        "Could not add batched inventory counts to the run's live counters.",
-      );
-    },
-  });
   const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
     db: connection.db,
     redis,
@@ -369,6 +354,7 @@ export async function startApiServer(): Promise<void> {
     businessOutcomeReader,
     terminalRunWriter,
     apiBaseUrl: config.apiBaseUrl,
+    buyPoolBaseUrl: config.buyPoolBaseUrl,
     logger,
     publicClientCookieSecret: config.publicClientCookieSecret,
     estimatorConstants: config.estimatorConstants,
@@ -382,6 +368,7 @@ export async function startApiServer(): Promise<void> {
     trafficExecutionGateway,
     undispatchedRuns: demoRunLifecycleService,
     apiBaseUrl: config.apiBaseUrl,
+    buyPoolBaseUrl: config.buyPoolBaseUrl,
     listDrainingRuns: () =>
       connection.db.select().from(demoRuns).where(eq(demoRuns.status, "draining")),
     closeRunSaleEligibility: ({ runId, saleOfferId }) =>
@@ -401,78 +388,6 @@ export async function startApiServer(): Promise<void> {
     finalizationService: demoRunFinalizationService,
     logger,
   });
-  const reserveOrderService = new ReserveOrderService({
-    persistence,
-    orderProcessJobPublisher,
-    stockReservations: stockReservationGateway,
-    reservationHoldMinutes: config.reservationHoldMinutes,
-    idempotencyTtlSeconds: config.idempotencyTtlSeconds,
-    pendingPersistenceRetryAfterSeconds: config.pendingPersistenceRetryAfterSeconds,
-    pendingPersistenceRecovery,
-    dashboardSourceDirtyScheduler,
-    soldOutObservations: dashboardSourceDirtyScheduler,
-    reservationTimingObservations: reservationTiming,
-    reportPersistenceFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Redis secured a reservation but PostgreSQL persistence failed.",
-      );
-    },
-    reportPendingPersistenceEnsureFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Could not ensure the Redis pending-persistence marker.",
-      );
-    },
-    reportPromotionFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Durable reservation succeeded but Redis idempotency promotion failed.",
-      );
-    },
-    reportOrderEnqueueFailure: (report) => {
-      logger.error(
-        orderEnqueueFailureLogContext(report),
-        "Durable reservation succeeded but order-processing enqueue failed.",
-      );
-    },
-    reportReservationReversalFailure: (report) => {
-      logger.error(
-        partialFailureLogContext(report),
-        "Could not reverse a definitively rejected Redis reservation hold.",
-      );
-    },
-    publishBusinessOutcomeUpdate: async (input) => businessOutcomePublications.markDirty(input),
-    scheduleBusinessOutcomeUpdate: (task) => task(),
-    reportBusinessOutcomeUpdateFailure: (report) => {
-      logger.error(
-        businessOutcomeUpdateFailureLogContext(report),
-        "Durable reservation succeeded but dashboard business outcome publication failed.",
-      );
-    },
-  });
-
-  const confirmationWaiter = new OrderConfirmationWaiter({
-    reader: new PostgresOrderConfirmationReader(connection.db),
-    onReadError: (error) => {
-      logger.warn({ err: error }, "Could not read the confirmations of waiting buy requests.");
-    },
-  });
-  const synchronousConfirmationBuyService = new SynchronousConfirmationBuyService({
-    reserveOrderService,
-    waiter: confirmationWaiter,
-  });
-
-  const postgresStockBuyService = new PostgresStockBuyService({
-    stock: new PostgresStockPersistence(connection.db, connection.sql, persistence),
-    counts: inventoryCounts,
-    reservationHoldMinutes: config.reservationHoldMinutes,
-    dashboardSourceDirtyScheduler,
-    soldOutObservations: dashboardSourceDirtyScheduler,
-    businessOutcomeUpdates: businessOutcomePublications,
-    reservationTimingObservations: reservationTiming,
-  });
-
   const automaticRunReset = new AutomaticRunResetService({
     db: connection.db,
     resetWorkflow: adminDemoReset,
@@ -676,33 +591,6 @@ function createCoreIdleShutdown(
     stopCore: () => machines.stopMachine(idleStop.machineId),
     logger,
   });
-}
-
-function orderEnqueueFailureLogContext(report: OrderEnqueueFailureReport) {
-  return {
-    ...partialFailureLogContext(report),
-    orderId: report.orderId,
-  };
-}
-
-function partialFailureLogContext(report: ReservationPartialFailureReport) {
-  return {
-    err: report.error,
-    reservationId: report.reservationId,
-    saleOfferId: report.saleOfferId,
-    runId: report.runId,
-    correlationId: report.correlationId,
-    idempotencyKey: report.idempotencyKey,
-  };
-}
-
-function businessOutcomeUpdateFailureLogContext(report: BusinessOutcomeUpdateFailureReport) {
-  return {
-    err: report.error,
-    saleOfferId: report.saleOfferId,
-    runId: report.runId,
-    correlationId: report.correlationId,
-  };
 }
 
 if (process.env.NODE_ENV !== "test" && import.meta.url === `file://${process.argv[1]}`) {

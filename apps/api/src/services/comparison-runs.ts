@@ -2,6 +2,7 @@ import {
   type Comparison,
   type ComparisonMode,
   comparisonModes,
+  comparisonOfMode,
   comparisonPartnerStartGraceMs,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoPresets, demoRuns } from "@checkout-surge/db";
@@ -16,16 +17,23 @@ export const postgresStockBuyPathPrefix = "/stock-in-postgres";
 /**
  * The base URL the runner's k6 posts `/buy` to. A run without the order queue targets the waiting
  * route, and a run whose stock PostgreSQL decides targets that route, so the buy path needs no
- * per-request lookup of the run's mode.
+ * per-request lookup of the run's mode. Both runs of the Redis comparison go to the buy-only
+ * processes when the deployment has them; every other run goes to this API.
  */
-export function buyTargetBaseUrl(apiBaseUrl: string, mode: ComparisonMode | null | undefined) {
+export function buyTargetBaseUrl(
+  apiBaseUrl: string,
+  mode: ComparisonMode | null | undefined,
+  buyPoolBaseUrl?: string | null,
+) {
+  const base =
+    mode && buyPoolBaseUrl && comparisonOfMode(mode) === "redis" ? buyPoolBaseUrl : apiBaseUrl;
   const prefix =
     mode === "synchronous_confirmation"
       ? synchronousConfirmationBuyPathPrefix
       : mode === "postgres"
         ? postgresStockBuyPathPrefix
         : null;
-  return prefix ? `${apiBaseUrl.replace(/\/+$/, "")}${prefix}` : apiBaseUrl;
+  return prefix ? `${base.replace(/\/+$/, "")}${prefix}` : base;
 }
 
 /**

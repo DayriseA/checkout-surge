@@ -196,6 +196,7 @@
         "CAPACITY_BUYER_SPIKE_ACCEPTED_PER_SECOND": "240",
         "CAPACITY_VU_LATENCY_BUDGET_SECONDS": "4",
         "CORE_IDLE_STOP_ENABLED": "true",
+        "API_BUY_POOL_PORT": "4001",
         "WEB_ORIGIN": "https://checkout-surge-gate.fly.dev"
       },
       "secrets": [
@@ -239,6 +240,59 @@
               "node",
               "-e",
               "fetch('http://127.0.0.1:4000/health/ready',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+            ]
+          },
+          "interval": 2,
+          "timeout": 3
+        }
+      ]
+    },
+    {
+      "name": "api-buy",
+      "image": "api",
+      "cmd": ["node", "dist/buy-server.js"],
+      "env": {
+        "HOST": "::",
+        "PORT": "4001",
+        "API_BUY_PROCESSES": "2",
+        "API_LISTEN_BACKLOG": "8192",
+        "API_TRUSTED_PROXY_CIDRS": "127.0.0.0/8,::1/128"
+      },
+      "secrets": [
+        {
+          "env_var": "DATABASE_URL"
+        },
+        {
+          "env_var": "REDIS_URL"
+        },
+        {
+          "env_var": "CONTROL_SERVICE_TOKEN"
+        },
+        {
+          "env_var": "PUBLIC_CLIENT_COOKIE_SECRET"
+        }
+      ],
+      "restart": {
+        "policy": "on-failure"
+      },
+      "depends_on": [
+        {
+          "name": "setup",
+          "condition": "exited_successfully"
+        },
+        {
+          "name": "redis",
+          "condition": "healthy"
+        }
+      ],
+      "healthchecks": [
+        {
+          "name": "ready",
+          "exec": {
+            "command": [
+              "node",
+              "-e",
+              "fetch('http://127.0.0.1:4001/health/ready',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
             ]
           },
           "interval": 2,

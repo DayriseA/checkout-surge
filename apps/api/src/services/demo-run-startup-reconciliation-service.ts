@@ -94,6 +94,7 @@ export class DemoRunStartupReconciliationService {
       trafficExecutionGateway: Pick<TrafficExecutionGateway, "start">;
       undispatchedRuns: Pick<DemoRunLifecycleService, "failUndispatchedRun">;
       apiBaseUrl: string;
+      buyPoolBaseUrl?: string | null;
       listDrainingRuns: () => Promise<DemoRunRow[]>;
       closeRunSaleEligibility: (input: { runId: string; saleOfferId: string }) => Promise<boolean>;
       now?: () => Date;
@@ -134,7 +135,11 @@ export class DemoRunStartupReconciliationService {
         const response = await this.options.trafficExecutionGateway.start({
           runId: run.id,
           saleOfferId: run.saleOfferId,
-          apiBaseUrl: buyTargetBaseUrl(this.options.apiBaseUrl, run.comparisonMode),
+          apiBaseUrl: buyTargetBaseUrl(
+            this.options.apiBaseUrl,
+            run.comparisonMode,
+            this.options.buyPoolBaseUrl,
+          ),
           expectedBootId: run.runnerBootId,
           correlationId,
           configSnapshot: parsePersistedAcceptedRunConfigSnapshot(

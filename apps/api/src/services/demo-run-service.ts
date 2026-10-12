@@ -139,6 +139,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       apiBaseUrl: string;
+      /** The buy-only processes' base URL, for the Redis comparison's runs; null without them. */
+      buyPoolBaseUrl?: string | null;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
       estimatorConstants: DurationEstimatorConstants;
@@ -294,7 +296,11 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       trafficResponse = await this.options.trafficExecutionGateway.start({
         runId: run.runId,
         saleOfferId,
-        apiBaseUrl: buyTargetBaseUrl(this.options.apiBaseUrl, run.comparison?.mode),
+        apiBaseUrl: buyTargetBaseUrl(
+          this.options.apiBaseUrl,
+          run.comparison?.mode,
+          this.options.buyPoolBaseUrl,
+        ),
         expectedBootId: boot.bootId,
         correlationId,
         configSnapshot: run.configSnapshot,

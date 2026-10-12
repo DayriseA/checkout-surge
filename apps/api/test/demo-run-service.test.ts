@@ -2635,8 +2635,8 @@ describe("comparison runs", () => {
     const second = runs.find((run) => run.comparisonFirstRunId === first.run.runId);
     expect(runs.map((run) => run.comparisonMode).sort()).toEqual(["postgres", "redis"]);
     expect(starts.map((start) => start.apiBaseUrl)).toEqual([
-      "http://api.test",
-      "http://api.test/stock-in-postgres",
+      "http://api.test:4001",
+      "http://api.test:4001/stock-in-postgres",
     ]);
     expect(await db.select().from(postgresRunStock)).toEqual([
       {
@@ -2786,6 +2786,8 @@ function createStartService(
     },
     businessOutcomeReader,
     apiBaseUrl: "http://api.test",
+    // Only the Redis comparison's runs target the buy-only processes.
+    buyPoolBaseUrl: "http://api.test:4001",
     logger,
     publicClientCookieSecret: publicCookieSecret,
     estimatorConstants: conservativeDurationEstimatorConstants,

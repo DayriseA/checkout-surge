@@ -69,7 +69,12 @@ export interface BuildApiServerOptions {
   startedAt?: Date;
 }
 
-export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
+/** The Fastify app every API process serves from: correlation, CORS and the error contract. */
+async function createApiApp(
+  options: Pick<BuildApiServerOptions, "logger"> & {
+    config: Pick<ApiConfig, "trustedProxyCidrs" | "webOrigins">;
+  },
+): Promise<ApiFastifyInstance> {
   const app = fastify({
     loggerInstance: options.logger,
     // Fastify's two lines per request flood the log under load; failures are logged below.
@@ -136,6 +141,34 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
       correlationId,
     });
   });
+
+  return app;
+}
+
+/** A buy-only process: the buy routes and health, nothing that owns runs (HD-11). */
+export async function buildBuyServer(
+  options: Pick<
+    BuildApiServerOptions,
+    | "config"
+    | "logger"
+    | "readiness"
+    | "reserveOrderService"
+    | "synchronousConfirmationBuyService"
+    | "postgresStockBuyService"
+    | "startedAt"
+  >,
+): Promise<ApiFastifyInstance> {
+  const app = await createApiApp(options);
+  registerHealthRoutes(app, {
+    readiness: options.readiness,
+    ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+  });
+  registerBuyRoutes(app, options);
+  return app;
+}
+
+export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
+  const app = await createApiApp(options);
 
   registerHealthRoutes(app, {
     readiness: options.readiness,
