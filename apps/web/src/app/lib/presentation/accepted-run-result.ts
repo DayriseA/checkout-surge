@@ -30,6 +30,7 @@ export type AcceptedRunResult =
       runId: string;
       presetName: string;
       endedAt: string;
+      comparison?: PublicRunHistoryDetailResponse["run"]["comparison"];
     } & (
       | { cancellation: { automatic: boolean }; reportEvidence?: never }
       | { cancellation?: never; reportEvidence?: AcceptedRunReportEvidence }
@@ -48,6 +49,7 @@ export function acceptedRunResultFromRead(
           runId,
           presetName: read.data.summary.presetName,
           endedAt: read.data.summary.endedAt,
+          ...(read.data.run.comparison ? { comparison: read.data.run.comparison } : {}),
           ...(read.data.summary.dataDiscarded
             ? {
                 cancellation: {

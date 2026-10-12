@@ -2,6 +2,8 @@
 
 import {
   type AdminRunHistoryDetailResponse,
+  type ComparisonMode,
+  confirmationLagBoundary,
   demoRunSnapshotSchema,
   deriveRunResult,
   emptyHttpTimingBreakdownSummary,
@@ -10,8 +12,11 @@ import {
   type PublicRunHistoryDetailResponse,
   publicRunHistoryDetailResponseSchema,
   publicRunHistorySummarySchema,
+  queueBacklogDefinition,
+  queueBacklogDrainDurationBoundary,
   type RunHistoryListResponse,
   runHistorySummarySchema,
+  runSignalBucketCount,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -923,6 +928,43 @@ describe("run history", () => {
     expect(markup).toContain("200 orders were confirmed, 50 failed, and 0 remain pending.");
   });
 
+  it("shows both runs of a queue comparison as one report, keeping unrecorded facts unknown", async () => {
+    const firstId = "66666666-6666-4666-8666-666666666661";
+    const secondId = "66666666-6666-4666-8666-666666666662";
+    const first = comparisonDetail("demo", firstId, secondId, {
+      longestWaitMs: 2_400,
+      confirmed: 0,
+    });
+    const second = comparisonDetail("synchronous_confirmation", secondId, firstId, {
+      longestWaitMs: 45_100,
+      confirmed: 230,
+    });
+    getRunHistoryDetail.mockImplementation(async (runId: string) => ({
+      status: "available",
+      data: runId === firstId ? first : second,
+    }));
+    const page = async () =>
+      renderToStaticMarkup(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: secondId }) }),
+      );
+
+    const markup = await page();
+    expect(markup).toContain("One comparison, two runs");
+    expect(markup.indexOf("Run 1 of 2 · With the order queue")).toBeLessThan(
+      markup.indexOf("Run 2 of 2 · Without the order queue"),
+    );
+    expect(markup).toContain("every buyer had an answer within 2.4 s");
+    expect(markup).toContain(
+      "20 winners stopped waiting after 45 s and were told their order was still being confirmed",
+    );
+    expect(markup).toContain("The queue moves the wait from the buyer to the back office.");
+
+    second.summary.httpSummary.buyerWallLatencySummary = { accepted: null, soldOut: null };
+    const unknown = await page();
+    expect(unknown).toContain("Not recorded");
+    expect(unknown).not.toContain("The queue moves the wait");
+  });
+
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
     const detail = detailFixture();
     const { terminalInventorySnapshot: _terminalInventorySnapshot, ...summary } = detail.summary;
@@ -1414,6 +1456,68 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     erpAttemptSummary: detail.erpAttempts,
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function comparisonDetail(
+  mode: ComparisonMode,
+  runId: string,
+  partnerRunId: string,
+  input: { longestWaitMs: number; confirmed: number },
+): PublicRunHistoryDetailResponse {
+  const detail = detailFixture();
+  return {
+    ...detail,
+    summary: {
+      ...detail.summary,
+      runId,
+      httpSummary: {
+        ...detail.summary.httpSummary,
+        confirmedResponses: input.confirmed,
+        buyerWallLatencySummary: {
+          accepted: {
+            sampleCount: 250,
+            averageMs: input.longestWaitMs / 2,
+            p95Ms: input.longestWaitMs * 0.9,
+            maxMs: input.longestWaitMs,
+          },
+          soldOut: { sampleCount: 750, averageMs: 300, p95Ms: 900, maxMs: 1_000 },
+        },
+      },
+      runSignalTimelineSummary: {
+        window: {
+          anchoredAt: "2026-06-20T00:00:01.000Z",
+          endedAt: "2026-06-20T00:00:40.000Z",
+          bucketCount: runSignalBucketCount,
+          bucketWidthSeconds: 0.325,
+        },
+        inventoryDrain: {
+          startingStock: 250,
+          remainingStock: 0,
+          depletedAt: "2026-06-20T00:00:02.000Z",
+          timeToDepletionSeconds: 1,
+        },
+        queueBacklog: {
+          peakBacklog: 250,
+          peakAtElapsedSeconds: 1,
+          backlogDrainedAt: "2026-06-20T00:00:14.000Z",
+          drainDurationSeconds: 13,
+          drainDurationBoundary: queueBacklogDrainDurationBoundary,
+          definition: queueBacklogDefinition,
+        },
+        confirmationConvergence: {
+          confirmedOrderCount: 250,
+          failedOrderCount: 0,
+          pendingAtCaptureCount: 0,
+          averageLagMs: 7_000,
+          p95LagMs: 12_000,
+          maxLagMs: 13_000,
+          boundary: confirmationLagBoundary,
+        },
+        convergenceDurationSeconds: 13,
+      },
+    },
+    run: { ...detail.run, runId, comparison: { mode, partnerRunId } },
   };
 }
 

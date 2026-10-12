@@ -2,6 +2,7 @@
 
 import {
   type DashboardProjection,
+  type DemoRunSnapshot,
   deriveOversoldUnits,
   type RunHistoryListItem,
 } from "@checkout-surge/contracts";
@@ -34,6 +35,7 @@ import {
   deriveWatchComposition,
   type WatchComposition,
 } from "../lib/presentation/watch-composition";
+import { WatchComparisonPanel } from "./comparison-panel";
 import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-styles";
 import {
   ConsistencyLagPanel,
@@ -99,13 +101,18 @@ export function OperatorDashboard({
   const [resetRunId, setResetRunId] = useState(incompleteRunId);
   const currentRun = recovery.status === "available" ? recovery.data.currentRun : null;
   const currentRunId = currentRun?.runId;
+  // The second run of a comparison continues the visitor's first run: Watch follows it.
+  const followedResult: AcceptedRunResult | undefined =
+    currentRun && acceptedResult && currentRun.comparison?.firstRunId === acceptedResult.runId
+      ? { status: "awaiting", runId: currentRun.runId }
+      : acceptedResult;
   useEffect(() => {
     if (incompleteRunId) setResetRunId(incompleteRunId);
     else if (currentRunId)
       setResetRunId((previous) => (previous === currentRunId ? previous : null));
   }, [incompleteRunId, currentRunId]);
   const resultContext =
-    acceptedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
+    followedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
   // The saved report cannot exist while the accepted run is still shown in progress.
   const acceptedRunInProgress =
     recovery.status === "available" &&
@@ -166,6 +173,7 @@ export function OperatorDashboard({
     visibleResult?.status === "available" && visibleResult.runId === liveRun?.runId
       ? (visibleResult.reportEvidence ?? null)
       : null;
+  const comparison = watchedComparison(trackedResult, liveRun);
   return (
     <div className="grid grid-cols-12 gap-4">
       {invalidAcceptedRunContext ? <InvalidAcceptedRunContext /> : null}
@@ -190,6 +198,7 @@ export function OperatorDashboard({
         savedEvidence={savedEvidence}
         sharedDemo={Boolean(trackedResult && !sameRunAccepted)}
       />
+      {comparison ? <WatchComparisonPanel {...comparison} /> : null}
       <div className="col-span-12">
         <SyncNotice
           composition={composition}
@@ -220,6 +229,27 @@ export function OperatorDashboard({
       />
     </div>
   );
+}
+
+/** The comparison the visitor's run belongs to, from the live run or from its saved report. */
+function watchedComparison(
+  tracked: AcceptedRunResult | undefined,
+  liveRun: DemoRunSnapshot | null,
+): { runId: string; firstRunId: string | null; refreshKey: string } | null {
+  if (!tracked) return null;
+  if (liveRun?.runId === tracked.runId && liveRun.comparison)
+    return {
+      runId: liveRun.runId,
+      firstRunId: liveRun.comparison.firstRunId ?? null,
+      refreshKey: `${liveRun.runId}:${liveRun.status}`,
+    };
+  if (tracked.status === "available" && tracked.comparison)
+    return {
+      runId: tracked.runId,
+      firstRunId: tracked.comparison.mode === "demo" ? null : tracked.comparison.partnerRunId,
+      refreshKey: tracked.runId,
+    };
+  return null;
 }
 
 type TrackedAcceptedResult = { retriesExhausted: boolean; result: AcceptedRunResult };
