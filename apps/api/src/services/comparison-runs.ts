@@ -5,7 +5,7 @@ import {
   comparisonPartnerStartGraceMs,
 } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoPresets, demoRuns } from "@checkout-surge/db";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, ne } from "drizzle-orm";
 
 /** Path prefix of the buy route that waits for the order's confirmation. */
 export const synchronousConfirmationBuyPathPrefix = "/synchronous-confirmation";
@@ -21,9 +21,10 @@ export function buyTargetBaseUrl(apiBaseUrl: string, mode: ComparisonMode | null
 }
 
 /**
- * The latest run, when it is a completed first run of a comparison, finalized recently: its second
- * run is due, and until it starts it holds the run slot. Any later run, the second one included,
- * ends this; a run in another mode never counts as a first run, even if its link was deleted.
+ * The last run to finish, when it is a completed first run of a comparison, finalized recently,
+ * and no run was created since: its second run is due, and until it starts it holds the run slot.
+ * Any later run, the second one included, ends this; a run in another mode never counts as a
+ * first run, even if its link was deleted.
  */
 export async function findRunAwaitingComparisonPartner(
   db: Pick<CheckoutSurgeDatabase, "select">,
@@ -33,16 +34,27 @@ export async function findRunAwaitingComparisonPartner(
     .select({ run: demoRuns, comparison: demoPresets.comparison })
     .from(demoRuns)
     .innerJoin(demoPresets, eq(demoPresets.id, demoRuns.presetId))
-    .orderBy(desc(demoRuns.createdAt))
+    .where(
+      and(
+        eq(demoRuns.status, "completed"),
+        gte(demoRuns.finalizedAt, new Date(now.getTime() - comparisonPartnerStartGraceMs)),
+      ),
+    )
+    .orderBy(desc(demoRuns.finalizedAt))
     .limit(1);
-  if (!latest?.comparison) return null;
-  const { run, comparison } = latest;
-  const due =
-    run.status === "completed" &&
-    run.comparisonMode === comparisonModes[comparison][0] &&
-    run.finalizedAt !== null &&
-    run.finalizedAt.getTime() >= now.getTime() - comparisonPartnerStartGraceMs;
-  return due ? { run, comparison } : null;
+  const finalizedAt = latest?.run.finalizedAt;
+  if (
+    !latest?.comparison ||
+    !finalizedAt ||
+    latest.run.comparisonMode !== comparisonModes[latest.comparison][0]
+  )
+    return null;
+  const [later] = await db
+    .select({ id: demoRuns.id })
+    .from(demoRuns)
+    .where(and(ne(demoRuns.id, latest.run.id), gte(demoRuns.createdAt, finalizedAt)))
+    .limit(1);
+  return later ? null : { run: latest.run, comparison: latest.comparison };
 }
 
 /** The other run of a comparison: the first run it continues, or the run continuing it. */
