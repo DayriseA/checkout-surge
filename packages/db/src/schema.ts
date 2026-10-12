@@ -706,7 +706,6 @@ export const postgresRunStock = pgTable(
       .references(() => demoRuns.id, { onDelete: "cascade" }),
     saleOfferId: uuid("sale_offer_id").notNull(),
     remainingStock: integer("remaining_stock").notNull(),
-    reservedStock: integer("reserved_stock").default(0).notNull(),
   },
   (table) => [check("postgres_run_stock_remaining_nonnegative", sql`${table.remainingStock} >= 0`)],
 );
@@ -715,18 +714,14 @@ export const postgresRunStock = pgTable(
 export const postgresOrderQueueChannel = "postgres_order_queue";
 
 /** The order queue when PostgreSQL holds it: one row per order awaiting delivery to the worker. */
-export const postgresOrderQueue = pgTable(
-  "postgres_order_queue",
-  {
-    orderId: uuid("order_id")
-      .primaryKey()
-      .references(() => orders.id, { onDelete: "cascade" }),
-    availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
-    lockedUntil: timestamp("locked_until", { withTimezone: true }),
-    deliveries: integer("deliveries").default(0).notNull(),
-  },
-  (table) => [index("postgres_order_queue_available_at_idx").on(table.availableAt)],
-);
+export const postgresOrderQueue = pgTable("postgres_order_queue", {
+  orderId: uuid("order_id")
+    .primaryKey()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  queuedAt: timestamp("queued_at", { withTimezone: true }).defaultNow().notNull(),
+  // Set by a claim: until then, no other claim delivers the job.
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+});
 
 export const demoRunSoldOutCounts = pgTable(
   "demo_run_sold_out_counts",

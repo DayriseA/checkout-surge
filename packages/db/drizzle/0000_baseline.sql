@@ -267,16 +267,14 @@ CREATE TABLE "orders" (
 --> statement-breakpoint
 CREATE TABLE "postgres_order_queue" (
 	"order_id" uuid PRIMARY KEY NOT NULL,
-	"available_at" timestamp with time zone DEFAULT now() NOT NULL,
-	"locked_until" timestamp with time zone,
-	"deliveries" integer DEFAULT 0 NOT NULL
+	"queued_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"locked_until" timestamp with time zone
 );
 --> statement-breakpoint
 CREATE TABLE "postgres_run_stock" (
 	"run_id" uuid PRIMARY KEY NOT NULL,
 	"sale_offer_id" uuid NOT NULL,
 	"remaining_stock" integer NOT NULL,
-	"reserved_stock" integer DEFAULT 0 NOT NULL,
 	CONSTRAINT "postgres_run_stock_remaining_nonnegative" CHECK ("postgres_run_stock"."remaining_stock" >= 0)
 );
 --> statement-breakpoint
@@ -401,7 +399,6 @@ CREATE INDEX "orders_run_id_queued_at_created_at_idx" ON "orders" USING btree ("
 CREATE INDEX "orders_run_id_correlation_id_idx" ON "orders" USING btree ("run_id","correlation_id");--> statement-breakpoint
 CREATE INDEX "orders_correlation_id_idx" ON "orders" USING btree ("correlation_id");--> statement-breakpoint
 CREATE INDEX "orders_status_idx" ON "orders" USING btree ("status");--> statement-breakpoint
-CREATE INDEX "postgres_order_queue_available_at_idx" ON "postgres_order_queue" USING btree ("available_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "products_sku_unique" ON "products" USING btree ("sku");--> statement-breakpoint
 CREATE UNIQUE INDEX "products_slug_unique" ON "products" USING btree ("slug");--> statement-breakpoint
 CREATE INDEX "products_is_active_idx" ON "products" USING btree ("is_active");--> statement-breakpoint
