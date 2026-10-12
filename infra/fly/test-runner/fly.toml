@@ -1,0 +1,20 @@
+# Dedicated test runner Machine (no services). Image built from ./Dockerfile; see README.md.
+app = "cs-test-runner"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  MAX_RUNTIME_SECONDS = "7200"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+  initial_size = "20gb"
+
+[[vm]]
+  size = "performance-8x"
+
+[[restart]]
+  policy = "never"
