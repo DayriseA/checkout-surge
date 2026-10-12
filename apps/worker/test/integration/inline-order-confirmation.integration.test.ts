@@ -12,6 +12,7 @@ import {
   products,
   reservations,
   saleOffers,
+  terminalDemoRunTransitionLockKey,
 } from "@checkout-surge/db";
 import {
   createPurchaseRunFixture,
@@ -20,7 +21,7 @@ import {
 } from "@checkout-surge/db/testing";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { Queue } from "bullmq";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { fastify } from "fastify";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
@@ -234,7 +235,7 @@ async function runtime(
     publishBusinessOutcomeUpdate: async () => {},
   });
   const createService = () => {
-    const service = new InlineOrderConfirmation({ reader, handler, control });
+    const service = new InlineOrderConfirmation({ reader, handler, control, expiry: persistence });
     cleanups.push(() => {
       service.close();
       return undefined;
@@ -367,18 +368,23 @@ it("restarts scanner recovery after the buyer window using only real HTTP lookup
   );
 });
 
-it("retains crash-left queued orders without dispatch or fabricated confirmation", async () => {
+it("expires crash-left queued orders once without dispatch or fabricated ERP evidence", async () => {
   const request = await seed(new Date(Date.now() - 60_000));
   const r = await runtime();
   const recovery = scanner(r.service);
   await recovery.scanOnce();
   expect(r.posts()).toBe(0);
   expect(r.lookups()).toBe(0);
-  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
-  expect(await r.control.readControlRecord({ orderId: request.orderId })).toMatchObject({
-    waitingReason: "uncertain_result",
-    leaseExpiresAt: null,
+  expect((await r.reader.read(request))?.result).toMatchObject({
+    outcome: "order_confirmation_failed",
+    order: { failureCode: "inline_confirmation_window_expired" },
   });
+  await recovery.scanOnce();
+  expect(
+    await db.sql`select * from order_events where order_id=${request.orderId} and event_name='order.failed'`,
+  ).toHaveLength(1);
+  expect(await db.sql`select * from erp_attempts`).toHaveLength(0);
+  expect(await r.notificationQueue.getJob(`${request.orderId}-email`)).toBeUndefined();
   expect(await db.sql`select * from erp_dispatch_calls`).toHaveLength(0);
   expect(await db.sql`select * from postgres_order_deliveries`).toHaveLength(0);
   expect(await r.orderQueue.getJob(request.orderId)).toBeUndefined();
@@ -499,3 +505,197 @@ it("registers cancellation immediately, retains dispatch uncertainty and keeps r
   expect(await r.attempts.findUnresolvedCall(request.orderId)).not.toBeNull();
   expect((await r.service.status(request)).outcome).toBe("order_confirmation_pending");
 }, 10_000);
+
+it("preserves a live processing owner and settles its undispatched order after lease expiry", async () => {
+  const request = await seed(new Date(Date.now() - 60_000));
+  const r = await runtime();
+  const snapshot = await r.reader.read(request);
+  if (!snapshot) throw new Error("Expected canonical order");
+  await r.persistence.transitionToProcessing(snapshot.job, {
+    attemptNumber: 1,
+    attemptsMade: 0,
+    deliveryId: `inline:${request.orderId}`,
+    processingGeneration: 0,
+  });
+  await r.service.recover(request);
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
+  expect(r.posts()).toBe(0);
+  await db.sql`update order_recovery_jobs set lease_expires_at=now()-interval '1 second' where order_id=${request.orderId}`;
+  await r.service.recover(request);
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_failed");
+  expect(await r.control.readControlRecord({ orderId: request.orderId })).toMatchObject({
+    status: "resolved",
+    leaseExpiresAt: null,
+    publicationOwner: null,
+    processingGeneration: 0,
+    unresolvedErpCallId: null,
+  });
+  await r.service.recover(request);
+  expect(
+    await db.sql`select * from order_events where order_id=${request.orderId} and event_name='order.failed'`,
+  ).toHaveLength(1);
+  expect(await db.sql`select * from erp_attempts`).toHaveLength(0);
+});
+
+it("keeps unexpired and accepted recovery evidence outside local expiry", async () => {
+  const request = await seed();
+  const r = await runtime();
+  const snapshot = await r.reader.read(request);
+  if (!snapshot) throw new Error("Expected canonical order");
+  expect(await r.persistence.expireUndispatched(snapshot.job)).toBe(false);
+  await r.control.recordRecoverable({
+    job: snapshot.job,
+    delivery: { attemptNumber: 1, attemptsMade: 0 },
+    reason: "erp_accepted_local_persistence_incomplete",
+    error: new Error("Accepted result awaiting local persistence"),
+    accepted: true,
+    attempt: { disposition: "succeeded" },
+  });
+  await db.sql`update reservations set secured_at=now()-interval '60 seconds' where id=${request.reservationId}`;
+  expect(await r.persistence.expireUndispatched(snapshot.job)).toBe(false);
+  expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
+});
+
+it.each([
+  "expiry",
+  "dispatch",
+] as const)("serializes %s-first expiry against a delayed dispatch intent under the order lock", async (first) => {
+  const request = await seed();
+  const r = await runtime();
+  const snapshot = await r.reader.read(request);
+  if (!snapshot) throw new Error("Expected canonical order");
+  await r.persistence.transitionToProcessing(snapshot.job, {
+    attemptNumber: 1,
+    attemptsMade: 0,
+    deliveryId: `inline:${request.orderId}`,
+    processingGeneration: 0,
+  });
+  const before = new Date();
+  // A dispatch captures eligibility before awaiting a connection/order lock.
+  // Expiry's later clock observes that owner's lease as expired.
+  const concurrent = createDatabaseConnection(requireTestDatabaseUrl(), { max: 3 });
+  cleanups.push(() => concurrent.close());
+  const expiry = new PostgresOrderTransitionPersistence(
+    concurrent.db,
+    () => new Date(before.getTime() + 60_000),
+  );
+  const attempts = new PostgresErpAttemptPersistence(concurrent.db, () => before);
+  let release = () => {};
+  let locked = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const blocker = db.db.transaction(async (tx) => {
+    await tx.execute(sql`select id from orders where id=${request.orderId} for update`);
+    locked();
+    await held;
+  });
+  await acquired;
+  const expire = () => expiry.expireUndispatched(snapshot.job);
+  const dispatch = () =>
+    attempts.recordDispatchIntent({
+      job: snapshot.job,
+      idempotencyKey: toConfirmationIdempotencyKey(snapshot.job),
+      dispatchedAt: before,
+      expectedProcessingGeneration: 0,
+    });
+  const firstResult = (first === "expiry" ? expire() : dispatch()).then(
+    (value) => ({ value }),
+    (error) => ({ error }),
+  );
+  const waiters = async () => {
+    const [row] =
+      await concurrent.sql`select count(*)::int as count from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%orders%'`;
+    return row?.count ?? 0;
+  };
+  try {
+    await vi.waitFor(async () => expect(await waiters()).toBe(1));
+    const secondResult = (first === "expiry" ? dispatch() : expire()).then(
+      (value) => ({ value }),
+      (error) => ({ error }),
+    );
+    await vi.waitFor(async () => expect(await waiters()).toBe(2));
+    release();
+    await blocker;
+    const [one, two] = await Promise.all([firstResult, secondResult]);
+    const expiryResult = first === "expiry" ? one : two;
+    const dispatchResult = first === "dispatch" ? one : two;
+    if (first === "dispatch" && "error" in dispatchResult) throw dispatchResult.error;
+    expect(expiryResult).toEqual({ value: first === "expiry" });
+    if (first === "expiry") {
+      expect(dispatchResult).toHaveProperty("error");
+      expect(
+        await concurrent.sql`select * from erp_dispatch_calls where order_id=${request.orderId}`,
+      ).toHaveLength(0);
+      expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_failed");
+    } else {
+      expect(dispatchResult).toHaveProperty("value");
+      expect((await r.reader.read(request))?.result.outcome).toBe("order_confirmation_pending");
+      expect(
+        await concurrent.sql`select * from order_events where order_id=${request.orderId} and event_name='order.failed'`,
+      ).toHaveLength(0);
+    }
+    expect(r.posts()).toBe(0);
+    expect(await concurrent.sql`select * from erp_attempts`).toHaveLength(0);
+  } finally {
+    release();
+    await blocker;
+  }
+});
+
+it("waits behind the shared terminal fence and refuses expiry after reset wins", async () => {
+  const request = await seed(new Date(Date.now() - 60_000));
+  const r = await runtime();
+  const snapshot = await r.reader.read(request);
+  if (!snapshot) throw new Error("Expected canonical order");
+  const concurrent = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+  cleanups.push(() => concurrent.close());
+  let release = () => {};
+  let locked = () => {};
+  const acquired = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const reset = concurrent.db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${terminalDemoRunTransitionLockKey(request.runId)}))`,
+    );
+    await tx.update(demoRuns).set({ status: "failed" }).where(eq(demoRuns.id, request.runId));
+    locked();
+    await held;
+  });
+  await acquired;
+  let settled = false;
+  const expiry = r.persistence.expireUndispatched(snapshot.job).finally(() => {
+    settled = true;
+  });
+  try {
+    // Query the separate observer pool while expiry waits on the fence.
+    const observer = createDatabaseConnection(requireTestDatabaseUrl(), { max: 1 });
+    try {
+      await vi.waitFor(async () => {
+        const [row] =
+          await observer.sql`select count(*)::int as count from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like '%pg_advisory_xact_lock_shared%'`;
+        expect(row?.count).toBe(1);
+      });
+      expect(settled).toBe(false);
+    } finally {
+      await observer.close();
+    }
+    release();
+    await reset;
+    expect(await expiry).toBe(false);
+    expect(
+      await db.sql`select * from order_events where order_id=${request.orderId} and event_name='order.failed'`,
+    ).toHaveLength(0);
+  } finally {
+    release();
+    await reset;
+    await expiry;
+  }
+});

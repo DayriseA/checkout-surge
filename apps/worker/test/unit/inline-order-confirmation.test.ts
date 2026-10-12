@@ -63,14 +63,17 @@ function fixture() {
     readControlRecord: vi.fn().mockResolvedValue(null),
     claimForPublication: vi.fn().mockResolvedValue(null),
   };
+  const expiry = { expireUndispatched: vi.fn().mockResolvedValue(false) };
   const service = new InlineOrderConfirmation({
     reader,
+    expiry,
     handler,
     control,
     now: () => new Date(now),
   });
   return {
     service,
+    expiry,
     reader,
     handler,
     control,
@@ -533,4 +536,34 @@ it.each([
   expect(signal?.aborted).toBe(true);
   release();
   await vi.advanceTimersByTimeAsync(0);
+});
+
+it("settles expired undispatched recovery without entering the ERP handler", async () => {
+  const f = fixture();
+  f.setNow(60_000);
+  f.expiry.expireUndispatched.mockImplementation(async () => {
+    const order = f.snapshot.result.order;
+    if (!order) throw new Error("Expected order");
+    f.snapshot.result = {
+      outcome: "order_confirmation_failed",
+      order: {
+        ...order,
+        status: "failed",
+        failedAt: new Date(60_000).toISOString(),
+        failureCode: "inline_confirmation_window_expired",
+      },
+    };
+    return true;
+  });
+  await expect(f.service.recover(request)).resolves.toMatchObject({
+    outcome: "order_confirmation_failed",
+  });
+  expect(f.expiry.expireUndispatched).toHaveBeenCalledWith(f.snapshot.job);
+  expect(f.handler.handle).not.toHaveBeenCalled();
+});
+
+it("does not attempt expiry before the original window", async () => {
+  const f = fixture();
+  await f.service.recover(request);
+  expect(f.expiry.expireUndispatched).not.toHaveBeenCalled();
 });

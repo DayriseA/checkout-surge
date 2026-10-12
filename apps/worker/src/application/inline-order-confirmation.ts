@@ -16,6 +16,10 @@ export interface InlineOrderSnapshot {
   result: InlineConfirmationResult;
 }
 
+export interface InlineOrderExpiry {
+  expireUndispatched(job: OrderProcessJob): Promise<boolean>;
+}
+
 export interface InlineOrderReader {
   read(request: InlineConfirmationRequest): Promise<InlineOrderSnapshot | null>;
 }
@@ -37,6 +41,7 @@ export class InlineOrderConfirmation {
   constructor(
     private readonly options: {
       reader: InlineOrderReader;
+      expiry: InlineOrderExpiry;
       handler: OrderProcessJobHandler;
       control: Pick<OrderRecoveryPersistence, "readControlRecord" | "claimForPublication">;
       now?: () => Date;
@@ -60,6 +65,14 @@ export class InlineOrderConfirmation {
       this.active.has(request.orderId)
     )
       return snapshot.result;
+    // Persistence excludes dispatch history and active ownership atomically.
+    // Dispatched uncertainty remains lookup-only after the original buyer window.
+    if (
+      this.now().getTime() >= snapshot.securedAt.getTime() + inlineConfirmationProcessingWindowMs &&
+      (await this.options.expiry.expireUndispatched(snapshot.job))
+    ) {
+      return (await this.options.reader.read(request))?.result ?? snapshot.result;
+    }
     const controller = new AbortController();
     const result = this.process(
       request,

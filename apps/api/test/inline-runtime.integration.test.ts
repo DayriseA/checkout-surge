@@ -267,7 +267,7 @@ async function runtime(
     logger,
     publishBusinessOutcomeUpdate: async () => {},
   });
-  let inline = new InlineOrderConfirmation({ reader, handler, control });
+  let inline = new InlineOrderConfirmation({ reader, handler, control, expiry: transitions });
   cleanups.push(() => {
     inline.close();
     return undefined;
@@ -395,7 +395,7 @@ async function runtime(
     },
     restartAndScan: async (allowanceMs: number) => {
       inline.close();
-      inline = new InlineOrderConfirmation({ reader, handler, control });
+      inline = new InlineOrderConfirmation({ reader, handler, control, expiry: transitions });
       const scanner = createInlineOrderRecoveryScanner({
         service: inline,
         recovery: control,
@@ -609,7 +609,11 @@ it("materializes an expired pending hold without ORDER publication and survives 
   await r.scanOnce();
   expect(r.posts()).toBe(0);
   expect(r.lookups()).toBe(0);
-  expect((await db.db.select().from(orders))[0]).toMatchObject({ status: "processing" });
+  expect((await db.db.select().from(orders))[0]).toMatchObject({
+    status: "failed",
+    failureCode: "inline_confirmation_window_expired",
+  });
+  expect(await db.sql`select * from erp_attempts`).toHaveLength(0);
   expect(await r.orderQueue.getJobs()).toHaveLength(0);
   expect(await db.sql`select * from postgres_order_deliveries`).toHaveLength(0);
   expect(await db.sql`select * from erp_dispatch_calls`).toHaveLength(0);

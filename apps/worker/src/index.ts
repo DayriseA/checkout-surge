@@ -206,6 +206,18 @@ export async function startWorker(): Promise<void> {
   );
   const inlineConfirmation = new InlineOrderConfirmation({
     reader: new PostgresInlineOrderConfirmationReader(database.db),
+    expiry: {
+      async expireUndispatched(job) {
+        const changed = await orderTransitionPersistence.expireUndispatched(job);
+        if (changed)
+          businessOutcomePublications.markDirty({
+            saleOfferId: job.saleOfferId,
+            runId: job.runId,
+            correlationId: job.correlationId,
+          });
+        return changed;
+      },
+    },
     handler: orderProcessHandler,
     control: inlineRecoveryPersistence,
   });

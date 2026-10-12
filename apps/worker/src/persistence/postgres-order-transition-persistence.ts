@@ -1,12 +1,20 @@
-import type { OrderProcessJob, OrderStatus } from "@checkout-surge/contracts";
+import {
+  inlineConfirmationProcessingWindowMs,
+  type OrderProcessJob,
+  type OrderStatus,
+} from "@checkout-surge/contracts";
 import {
   type CheckoutSurgeDatabase,
+  demoRuns,
+  erpAttempts,
   erpDispatchCalls,
   orderEvents,
   orderRecoveryJobs,
   orders,
+  reservations,
+  terminalDemoRunTransitionLockKey,
 } from "@checkout-surge/db";
-import { and, eq, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type {
   ConfirmedTransitionResult,
   FailedTransitionResult,
@@ -59,6 +67,99 @@ export class PostgresOrderTransitionPersistence implements OrderTransitionPersis
      */
     private readonly controlLeaseMs: number = 30_000,
   ) {}
+
+  /** Settle expired inline work that provably never crossed the ERP boundary. */
+  async expireUndispatched(job: OrderProcessJob): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(job.runId)}))`,
+      );
+      const [run] = await tx
+        .select({ id: demoRuns.id })
+        .from(demoRuns)
+        .where(
+          and(
+            eq(demoRuns.id, job.runId),
+            eq(demoRuns.saleOfferId, job.saleOfferId),
+            eq(demoRuns.executionMode, "without_order_queue"),
+            inArray(demoRuns.status, ["starting", "active", "draining"]),
+          ),
+        )
+        .limit(1);
+      if (!run) return false;
+      // Same lock order as recordDispatchIntent: order, control, then call.
+      const order = await lockAndValidateOrder(tx, job);
+      if (order.status !== "queued" && order.status !== "processing") return false;
+      const [reservation] = await tx
+        .select()
+        .from(reservations)
+        .where(eq(reservations.id, order.reservationId))
+        .limit(1);
+      const occurredAt = this.now();
+      if (
+        !reservation ||
+        reservation.runId !== order.runId ||
+        reservation.saleOfferId !== order.saleOfferId ||
+        reservation.quantity !== order.quantity ||
+        reservation.securedAt.getTime() + inlineConfirmationProcessingWindowMs >
+          occurredAt.getTime()
+      )
+        return false;
+      const [control] = await tx
+        .select()
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, order.id))
+        .for("update")
+        .limit(1);
+      if (
+        control &&
+        ((control.leaseExpiresAt !== null && control.leaseExpiresAt > occurredAt) ||
+          control.unresolvedErpCallId !== null ||
+          control.result !== null)
+      )
+        return false;
+      const [call] = await tx
+        .select({ id: erpDispatchCalls.id })
+        .from(erpDispatchCalls)
+        .where(eq(erpDispatchCalls.orderId, order.id))
+        .limit(1);
+      if (call) return false;
+      const [success] = await tx
+        .select({ id: erpAttempts.id })
+        .from(erpAttempts)
+        .where(and(eq(erpAttempts.orderId, order.id), eq(erpAttempts.status, "succeeded")))
+        .limit(1);
+      if (success) return false;
+      const delivery = {
+        attemptNumber: (control?.attempts ?? 0) + 1,
+        attemptsMade: control?.attempts ?? 0,
+        processingGeneration: control?.processingGeneration ?? 0,
+        deliveryId: `inline-expiry:${order.id}`,
+      };
+      if (!control) await ensureProcessingOwnership(tx, job, delivery, occurredAt, 0);
+      if (order.status === "queued") {
+        await appendTransitionEvent(tx, order, "order.processing", occurredAt, delivery);
+      }
+      const failure = {
+        code: "inline_confirmation_window_expired",
+        message: "The original inline confirmation window expired before ERP dispatch.",
+      };
+      await tx
+        .update(orders)
+        .set({
+          status: "failed",
+          processingAt: order.processingAt ?? occurredAt,
+          failureCode: failure.code,
+          failureMessage: failure.message,
+          failedAt: occurredAt,
+          updatedAt: occurredAt,
+        })
+        .where(eq(orders.id, order.id));
+      await appendTransitionEvent(tx, order, "order.failed", occurredAt, delivery, failure);
+      await closeControlRecordForTerminalOrder(tx, order.id, occurredAt);
+      return true;
+    });
+  }
 
   transitionToProcessing(
     job: OrderProcessJob,
