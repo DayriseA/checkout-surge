@@ -150,6 +150,10 @@ import {
   type InventoryStatusReader,
   InventoryStatusService,
 } from "../src/services/inventory-status-service.js";
+import {
+  type OrderConfirmationReader,
+  OrderConfirmationWaiter,
+} from "../src/services/order-confirmation-waiter.js";
 import type { OrderProcessJobPublisher } from "../src/services/order-process-job-publisher.js";
 import type { OrderStatusController } from "../src/services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "../src/services/pending-persistence-recovery-service.js";
@@ -169,6 +173,7 @@ import {
   type StockReservationGateway,
 } from "../src/services/reserve-order-service.js";
 import type { RunHistoryController } from "../src/services/run-history-service.js";
+import { SynchronousConfirmationBuyService } from "../src/services/synchronous-confirmation-buy-service.js";
 import type { TrafficCompletionController } from "../src/services/traffic-completion-service.js";
 import {
   type TrafficMetricIngestionController,
@@ -279,6 +284,7 @@ async function buildTestServer(options: {
   logger?: CheckoutSurgeLogger;
   reportPersistenceFailure?: (report: ReservationPartialFailureReport) => void;
   pendingPersistenceRecovery?: PendingPersistenceRecovery;
+  confirmationReader?: OrderConfirmationReader;
 }): Promise<ApiFastifyInstance> {
   const inventoryReader =
     options.inventoryReader === undefined
@@ -315,6 +321,23 @@ async function buildTestServer(options: {
     logger,
   );
   const inventoryStatusService = new InventoryStatusService(inventoryReader);
+  const reserveOrderService = new ReserveOrderService({
+    persistence: options.persistence,
+    orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
+      enqueue: async () => undefined,
+    },
+    stockReservations: options.stockReservations ?? new AcceptingStockReservations(),
+    reservationHoldMinutes: 15,
+    idempotencyTtlSeconds: 1800,
+    pendingPersistenceRetryAfterSeconds: 30,
+    pendingPersistenceRecovery: options.pendingPersistenceRecovery ?? {
+      recoverReservation: async () => null,
+    },
+    generateId: options.generateId ?? deterministicIdGenerator(),
+    ...(options.reportPersistenceFailure
+      ? { reportPersistenceFailure: options.reportPersistenceFailure }
+      : {}),
+  });
 
   return buildApiServer({
     config: {
@@ -364,22 +387,13 @@ async function buildTestServer(options: {
     inventoryStatusService,
     orderStatusService: options.orderStatusService ?? { getStatus: async () => null },
     queueStatusService,
-    reserveOrderService: new ReserveOrderService({
-      persistence: options.persistence,
-      orderProcessJobPublisher: options.orderProcessJobPublisher ?? {
-        enqueue: async () => undefined,
-      },
-      stockReservations: options.stockReservations ?? new AcceptingStockReservations(),
-      reservationHoldMinutes: 15,
-      idempotencyTtlSeconds: 1800,
-      pendingPersistenceRetryAfterSeconds: 30,
-      pendingPersistenceRecovery: options.pendingPersistenceRecovery ?? {
-        recoverReservation: async () => null,
-      },
-      generateId: options.generateId ?? deterministicIdGenerator(),
-      ...(options.reportPersistenceFailure
-        ? { reportPersistenceFailure: options.reportPersistenceFailure }
-        : {}),
+    reserveOrderService,
+    synchronousConfirmationBuyService: new SynchronousConfirmationBuyService({
+      reserveOrderService,
+      waiter: new OrderConfirmationWaiter({
+        reader: options.confirmationReader ?? { read: async () => [] },
+        intervalMs: 10,
+      }),
     }),
     presetService: options.presetService ?? demoPresetControllerFixture(),
     runtimePolicyService: options.runtimePolicyService ?? publicRuntimePolicyControllerFixture(),
@@ -793,6 +807,7 @@ function publicRunHistoryDetailResponseFixture(): PublicRunHistoryDetailResponse
     saleOfferId: _saleOfferId,
     failureCategory: _runFailureCategory,
     autoResetAt: _autoResetAt,
+    comparison: _comparison,
     ...run
   } = admin.run;
   const sanitizedInventory = terminalInventorySnapshot
@@ -1010,7 +1025,8 @@ async function readStreamUntil(
 }
 
 class AcceptingPersistence implements BuyPersistence {
-  withRunAdmissionLock: BuyPersistence["withRunAdmissionLock"] = ({ operation }) => operation(this);
+  withRunAdmissionLock: BuyPersistence["withRunAdmissionLock"] = ({ operation }) =>
+    operation(this, { comparisonMode: null });
   withRunPendingPersistenceLock: BuyPersistence["withRunPendingPersistenceLock"] = ({
     operation,
   }) => operation(this, "admissible");
@@ -1095,6 +1111,7 @@ describe("API gateway routes", () => {
     generatedRunTeardown?: GeneratedRunTeardownWorkflow;
     runnerRecreation?: BuildApiServerOptions["runnerRecreation"];
     runHistoryService?: RunHistoryController;
+    confirmationReader?: OrderConfirmationReader;
   }) {
     const server = await buildTestServer(options);
     servers.push(server);
@@ -3285,11 +3302,70 @@ describe("API gateway routes", () => {
     expect(replay.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
   });
 
+  it("answers a winner of a run without the order queue once the worker confirmed its order", async () => {
+    const persistence = new AcceptingPersistence();
+    persistence.withRunAdmissionLock = ({ operation }) =>
+      operation(persistence, { comparisonMode: "synchronous_confirmation" });
+    const read = vi.fn(async (orderIds: readonly string[]) =>
+      orderIds.map((orderId) => ({
+        orderId,
+        confirmedAt: new Date("2026-06-20T00:00:20.000Z"),
+        runOpen: true,
+      })),
+    );
+    const server = await trackedServer({ persistence, confirmationReader: { read } });
+    const payload = { runId: fixtureIds.run, saleOfferId: fixtureIds.saleOffer, quantity: 1 };
+
+    const confirmed = await server.inject({
+      method: "POST",
+      url: "/synchronous-confirmation/buy",
+      payload: { ...payload, idempotencyKey: "waits-for-confirmation" },
+    });
+    expect(confirmed.statusCode).toBe(200);
+    expect(confirmed.headers[buyOutcomeHeaderName]).toBe("order_confirmed");
+    expect(buyResponseSchema.parse(confirmed.json())).toMatchObject({
+      outcome: "order_confirmed",
+      order: { status: "confirmed", confirmedAt: "2026-06-20T00:00:20.000Z" },
+    });
+
+    // The usual route never waits, whatever the run's mode.
+    const queued = await server.inject({
+      method: "POST",
+      url: "/buy",
+      payload: { ...payload, idempotencyKey: "answers-at-once" },
+    });
+    expect(queued.statusCode).toBe(202);
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it("answers the waiting route at once for a run with the order queue", async () => {
+    const read = vi.fn();
+    const server = await trackedServer({
+      persistence: new AcceptingPersistence(),
+      confirmationReader: { read },
+    });
+
+    const response = await server.inject({
+      method: "POST",
+      url: "/synchronous-confirmation/buy",
+      payload: {
+        runId: fixtureIds.run,
+        saleOfferId: fixtureIds.saleOffer,
+        idempotencyKey: "no-wait",
+        quantity: 1,
+      },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.headers[buyOutcomeHeaderName]).toBe("reservation_secured");
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("preserves pending-persistence retry and classification headers", async () => {
     const server = await trackedServer({
       persistence: {
         withRunAdmissionLock({ operation }) {
-          return operation(this);
+          return operation(this, { comparisonMode: null });
         },
         withRunPendingPersistenceLock({ operation }) {
           return operation(this, "admissible");
@@ -3971,7 +4047,7 @@ describe("API buy persistence", () => {
       withRunAdmissionLock: ({ reservation, operation }) =>
         realPersistence.withRunAdmissionLock({
           reservation,
-          operation: (scoped) => operation(coordinateInserts(scoped)),
+          operation: (scoped, run) => operation(coordinateInserts(scoped), run),
         }),
       withRunPendingPersistenceLock: ({ reservation, operation }) =>
         realPersistence.withRunPendingPersistenceLock({

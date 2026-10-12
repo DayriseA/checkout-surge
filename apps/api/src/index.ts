@@ -64,6 +64,10 @@ import { FlyRunnerHost } from "./services/fly-runner-host.js";
 import { GeneratedRunRetentionService } from "./services/generated-run-retention-service.js";
 import { GeneratedRunTeardownService } from "./services/generated-run-teardown-service.js";
 import { InventoryStatusService } from "./services/inventory-status-service.js";
+import {
+  OrderConfirmationWaiter,
+  PostgresOrderConfirmationReader,
+} from "./services/order-confirmation-waiter.js";
 import { DemoRunQueueLimits } from "./services/order-process-queue-limits.js";
 import { OrderStatusService } from "./services/order-status-service.js";
 import { PendingPersistenceRecoveryService } from "./services/pending-persistence-recovery-service.js";
@@ -86,6 +90,7 @@ import { RunHistoryService } from "./services/run-history-service.js";
 import { alwaysOnRunnerHost, type RunnerHost } from "./services/runner-host.js";
 import { PostgresMonitoredRunReader, RunnerLossMonitor } from "./services/runner-loss-monitor.js";
 import { RunnerOperations } from "./services/runner-operations.js";
+import { SynchronousConfirmationBuyService } from "./services/synchronous-confirmation-buy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "./services/terminal-demo-run-transition.js";
 import { TrafficCompletionEnrichmentService } from "./services/traffic-completion-enrichment-service.js";
 import { TrafficCompletionService } from "./services/traffic-completion-service.js";
@@ -433,6 +438,17 @@ export async function startApiServer(): Promise<void> {
     },
   });
 
+  const confirmationWaiter = new OrderConfirmationWaiter({
+    reader: new PostgresOrderConfirmationReader(connection.db),
+    onReadError: (error) => {
+      logger.warn({ err: error }, "Could not read the confirmations of waiting buy requests.");
+    },
+  });
+  const synchronousConfirmationBuyService = new SynchronousConfirmationBuyService({
+    reserveOrderService,
+    waiter: confirmationWaiter,
+  });
+
   const automaticRunReset = new AutomaticRunResetService({
     db: connection.db,
     resetWorkflow: adminDemoReset,
@@ -460,6 +476,7 @@ export async function startApiServer(): Promise<void> {
         closePendingPersistenceRecovery: () => pendingPersistenceRecovery.close(),
         closeReadiness: () => readiness.close(),
         closeServer: async () => {
+          confirmationWaiter.close();
           dashboardProjectionFanout.close();
           await server?.close();
         },
@@ -515,9 +532,16 @@ export async function startApiServer(): Promise<void> {
       void demoRunStartupReconciliationService.reconcileStartingRuns().catch((error: unknown) => {
         logger.error({ err: error }, "Demo run traffic-start reconciliation failed.");
       });
-      void demoRunFinalizationService.finalizeReadyRuns().catch((error: unknown) => {
-        logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
-      });
+      void demoRunFinalizationService
+        .finalizeReadyRuns()
+        .then(() =>
+          demoRunLifecycleService.startDueComparisonPartner().catch((error: unknown) => {
+            logger.error({ err: error }, "The second run of a comparison could not start.");
+          }),
+        )
+        .catch((error: unknown) => {
+          logger.error({ err: error }, "Demo run completion lifecycle poll failed.");
+        });
       void runnerLossMonitor.check().catch((error: unknown) => {
         logger.error({ err: error }, "Runner loss check failed.");
       });
@@ -538,6 +562,7 @@ export async function startApiServer(): Promise<void> {
       orderStatusService,
       queueStatusService,
       reserveOrderService,
+      synchronousConfirmationBuyService,
       presetService,
       runtimePolicyService,
       demoRunLifecycleService,

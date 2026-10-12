@@ -37,6 +37,7 @@ import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
 import type { RunnerOperations } from "./services/runner-operations.js";
+import type { SynchronousConfirmationBuyService } from "./services/synchronous-confirmation-buy-service.js";
 import type { TrafficCompletionController } from "./services/traffic-completion-service.js";
 import type { TrafficMetricIngestionController } from "./services/traffic-metric-ingestion-service.js";
 
@@ -51,6 +52,7 @@ export interface BuildApiServerOptions {
   orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
+  synchronousConfirmationBuyService: SynchronousConfirmationBuyService;
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;
@@ -138,7 +140,10 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
   registerCoreIdleRoutes(app, { coreIdleShutdown: options.coreIdleShutdown });
-  registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
+  registerBuyRoutes(app, {
+    reserveOrderService: options.reserveOrderService,
+    synchronousConfirmationBuyService: options.synchronousConfirmationBuyService,
+  });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });

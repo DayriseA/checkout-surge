@@ -17,6 +17,7 @@ import {
 } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
 import {
+  type AdmittedRun,
   type BuyPersistence,
   type BuyPersistenceOperations,
   DefinitivePersistenceRejectionError,
@@ -158,7 +159,7 @@ export class PostgresBuyPersistence implements BuyPersistence {
 
   async withRunAdmissionLock<T>(input: {
     reservation: SecuredReservationHold;
-    operation: (persistence: BuyPersistenceOperations) => Promise<T>;
+    operation: (persistence: BuyPersistenceOperations, run: AdmittedRun) => Promise<T>;
   }): Promise<T> {
     const runId = input.reservation.runId;
 
@@ -176,7 +177,11 @@ export class PostgresBuyPersistence implements BuyPersistence {
       await operationClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
       locked = true;
       const [run] = await reservedDb
-        .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
+        .select({
+          saleOfferId: demoRuns.saleOfferId,
+          status: demoRuns.status,
+          comparisonMode: demoRuns.comparisonMode,
+        })
         .from(demoRuns)
         .where(eq(demoRuns.id, runId))
         .limit(1);
@@ -190,7 +195,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
       // Each persistence operation commits on the reserved session while this
       // shared session-level advisory lock remains held through BullMQ enqueue.
       // The callback must not check out another connection from the base pool.
-      return await input.operation(this.databaseOperations(reservedDb, operationClient));
+      return await input.operation(this.databaseOperations(reservedDb, operationClient), {
+        comparisonMode: run.comparisonMode,
+      });
     } finally {
       try {
         if (locked) {

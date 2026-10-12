@@ -1,5 +1,6 @@
 import {
   type BuyRequest,
+  type BuyResponse,
   buyOutcomeHeaderName,
   buyRequestSchema,
   buyResponseSchema,
@@ -9,14 +10,27 @@ import {
 import { replaceFastifyCorrelation } from "@checkout-surge/logger/fastify";
 import { ApiHttpError } from "../runtime/errors.js";
 import type { ApiFastifyInstance } from "../runtime/fastify.js";
+import { synchronousConfirmationBuyPathPrefix } from "../services/comparison-runs.js";
 import type { ReserveOrderService } from "../services/reserve-order-service.js";
+import type { SynchronousConfirmationBuyService } from "../services/synchronous-confirmation-buy-service.js";
 
 export interface BuyRouteOptions {
   reserveOrderService: ReserveOrderService;
+  synchronousConfirmationBuyService: SynchronousConfirmationBuyService;
 }
 
+type Buy = (input: { request: BuyRequest; correlationId: string }) => Promise<BuyResponse>;
+
 export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOptions): void {
-  app.post("/buy", async (request, reply) => {
+  registerBuyRoute(app, "/buy", (input) => options.reserveOrderService.reserve(input));
+  // The runner of a run without the order queue targets this route (see buyTargetBaseUrl).
+  registerBuyRoute(app, `${synchronousConfirmationBuyPathPrefix}/buy`, (input) =>
+    options.synchronousConfirmationBuyService.buy(input),
+  );
+}
+
+function registerBuyRoute(app: ApiFastifyInstance, path: string, buy: Buy): void {
+  app.post(path, async (request, reply) => {
     const parsedRequest = buyRequestSchema.parse(request.body);
     assertRunHeaderAgreement(parsedRequest, request.headers[loadRunIdHeaderName]);
     const correlationId = replaceFastifyCorrelation(
@@ -25,12 +39,7 @@ export function registerBuyRoutes(app: ApiFastifyInstance, options: BuyRouteOpti
       parsedRequest.correlationId ?? request.correlationId,
     );
 
-    const response = buyResponseSchema.parse(
-      await options.reserveOrderService.reserve({
-        request: parsedRequest,
-        correlationId,
-      }),
-    );
+    const response = buyResponseSchema.parse(await buy({ request: parsedRequest, correlationId }));
 
     const statusCode = buyStatusCode(response.outcome);
     reply.header(buyOutcomeHeaderName, response.outcome);
@@ -88,6 +97,8 @@ function parseLoadRunIdHeader(headerValue: string | string[] | undefined): strin
 
 function buyStatusCode(outcome: ReturnType<typeof buyResponseSchema.parse>["outcome"]): number {
   switch (outcome) {
+    case "order_confirmed":
+      return 200;
     case "reservation_secured":
     case "reservation_pending_persistence":
       return 202;

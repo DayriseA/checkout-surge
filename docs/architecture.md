@@ -103,6 +103,13 @@ This split is the core architectural bet: callers are never blocked by slow down
 
 `POST /buy` remains an acceptance surface: an idempotent replay returns the original secured reservation and queued order even after durable processing advances. Public callers read current durable progress through `GET /orders/:publicOrderId/status`. That PostgreSQL-backed projection returns the secured reservation fact, current order status, nullable lifecycle and failure fields, confirmation lag only for confirmed orders, and a chronological lifecycle timeline. Its correlation ID always belongs to the lookup request; persisted correlation IDs, the internal order UUID, and event payload/source data are not exposed.
 
+### Comparison runs
+
+A comparison preset (preset-only `comparison` column, written by the seed; a start with a configuration override is refused) runs its two modes as two chained runs. The run carries its mode in `demo_runs.comparison_mode`; the second run names the first in `comparison_first_run_id`.
+
+- **Chaining.** The first run starts like any run. After it completes, the lifecycle poll starts the second run in the same slot, with the same preset, snapshot and operator mode, and no budget charge. Until then, the completed first run holds the slot. Each run keeps its own ceiling and automatic reset.
+- **Without the order queue** (`synchronous_confirmation`). The API hands the runner a base URL that targets `POST /synchronous-confirmation/buy`. That route takes the normal reservation path; then, only when the run read by the admission lock has this mode, the winner's request waits for the worker's confirmation of its order. One process-wide timer reads every waiting order in a single query per interval. The wait ends with `200 order_confirmed`, or, at the deadline (counted from the request's arrival) or when the run is terminal, with the unchanged `202 reservation_secured`. The order itself is never touched by the wait: the worker, its pacing and the ERP calls are the same in both modes.
+
 ---
 
 ## The Four Signals

@@ -2,6 +2,7 @@ import type { TrafficExecutionStartResponse } from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoRuns } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
 import { and, eq } from "drizzle-orm";
+import { buyTargetBaseUrl } from "./comparison-runs.js";
 import type { DemoMaintenanceAuthority } from "./demo-maintenance-authority.js";
 import type { DemoRunLifecycleService } from "./demo-run-service.js";
 import { parsePersistedAcceptedRunConfigSnapshot } from "./persisted-demo-run-state.js";
@@ -133,7 +134,7 @@ export class DemoRunStartupReconciliationService {
         const response = await this.options.trafficExecutionGateway.start({
           runId: run.id,
           saleOfferId: run.saleOfferId,
-          apiBaseUrl: this.options.apiBaseUrl,
+          apiBaseUrl: buyTargetBaseUrl(this.options.apiBaseUrl, run.comparisonMode),
           expectedBootId: run.runnerBootId,
           correlationId,
           configSnapshot: parsePersistedAcceptedRunConfigSnapshot(

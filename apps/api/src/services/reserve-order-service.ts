@@ -5,6 +5,7 @@ import {
   type BuyRequest,
   type BuyResponse,
   buyResponseSchema,
+  type ComparisonMode,
   type OrderProcessJob,
   type ReservationRejectedResponse,
   type SecuredReservationHold,
@@ -71,10 +72,15 @@ export interface PendingPersistenceRecovery {
   }): Promise<PersistedBuyAcceptance | null>;
 }
 
+/** What the admission lock read about the run, at no extra cost. */
+export interface AdmittedRun {
+  comparisonMode: ComparisonMode | null;
+}
+
 export interface BuyPersistence extends BuyPersistenceOperations {
   withRunAdmissionLock<T>(input: {
     reservation: SecuredReservationHold;
-    operation: (persistence: BuyPersistenceOperations) => Promise<T>;
+    operation: (persistence: BuyPersistenceOperations, run: AdmittedRun) => Promise<T>;
   }): Promise<T>;
   withRunPendingPersistenceLock<T>(input: {
     reservation: SecuredReservationHold;
@@ -174,6 +180,16 @@ function safelyReportPartialFailure<Report extends ReservationPartialFailureRepo
 
 type RejectedReservationOutcome = ReservationRejectedResponse["outcome"];
 
+/** A reservation's answer, with its run's comparison mode when the admission lock read the run. */
+export interface RunReservation {
+  response: BuyResponse;
+  comparisonMode: ComparisonMode | null;
+}
+
+function withoutRunContext(response: BuyResponse): RunReservation {
+  return { response, comparisonMode: null };
+}
+
 export class ReserveOrderService {
   private readonly persistence: BuyPersistence;
   private readonly stockReservations: StockReservationGateway;
@@ -260,6 +276,14 @@ export class ReserveOrderService {
     correlationId: string;
     now?: Date;
   }): Promise<BuyResponse> {
+    return (await this.reserveInRun(input)).response;
+  }
+
+  async reserveInRun(input: {
+    request: BuyRequest;
+    correlationId: string;
+    now?: Date;
+  }): Promise<RunReservation> {
     const serviceStartedAt = this.monotonicNow();
     let redisAtomicReservationMs: number | undefined;
     try {
@@ -286,7 +310,7 @@ export class ReserveOrderService {
       now?: Date;
     },
     recordRedisDuration: (durationMs: number) => void,
-  ): Promise<BuyResponse> {
+  ): Promise<RunReservation> {
     const now = input.now ?? new Date();
 
     const reservation = this.createReservationHold(input.request, input.correlationId, now);
@@ -312,7 +336,7 @@ export class ReserveOrderService {
       } catch {
         // Sold-out observability is advisory and cannot alter the rejection.
       }
-      return this.rejectedResponse(decision.outcome, input.correlationId, now);
+      return withoutRunContext(this.rejectedResponse(decision.outcome, input.correlationId, now));
     }
 
     if (
@@ -320,7 +344,7 @@ export class ReserveOrderService {
       decision.outcome === "inventory_not_initialized" ||
       decision.outcome === "idempotency_conflict"
     ) {
-      return this.rejectedResponse(decision.outcome, input.correlationId, now);
+      return withoutRunContext(this.rejectedResponse(decision.outcome, input.correlationId, now));
     }
 
     if (!decision.reservation) {
@@ -351,12 +375,14 @@ export class ReserveOrderService {
     idempotencyKey: string;
     correlationId: string;
     now: Date;
-  }): Promise<BuyResponse> {
+  }): Promise<RunReservation> {
     let persisted: PersistedBuyAcceptance | null;
+    let comparisonMode: ComparisonMode | null = null;
     try {
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
-        async (persistence) => {
+        async (persistence, run) => {
+          comparisonMode = run.comparisonMode;
           let persisted: PersistedBuyAcceptance;
 
           try {
@@ -388,12 +414,14 @@ export class ReserveOrderService {
 
     if (!persisted) {
       await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
-      return this.pendingResponse(input.reservation, input.correlationId, input.now);
+      return withoutRunContext(
+        this.pendingResponse(input.reservation, input.correlationId, input.now),
+      );
     }
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
     this.scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(input.reservation);
-    return this.acceptedResponse(persisted, input.correlationId);
+    return { response: this.acceptedResponse(persisted, input.correlationId), comparisonMode };
   }
 
   private async compensateHold(
@@ -419,7 +447,7 @@ export class ReserveOrderService {
     correlationId: string;
     now: Date;
     outcome: "reservation_pending_persistence" | "idempotent_replay";
-  }): Promise<BuyResponse> {
+  }): Promise<RunReservation> {
     if (input.outcome === "reservation_pending_persistence") {
       let persisted: PersistedBuyAcceptance | null = null;
       try {
@@ -435,16 +463,20 @@ export class ReserveOrderService {
       }
       if (!persisted) {
         await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
-        return this.pendingResponse(input.reservation, input.correlationId, input.now);
+        return withoutRunContext(
+          this.pendingResponse(input.reservation, input.correlationId, input.now),
+        );
       }
-      return this.acceptedResponse(persisted, input.correlationId);
+      return withoutRunContext(this.acceptedResponse(persisted, input.correlationId));
     }
 
     let persisted: PersistedBuyAcceptance | null;
+    let comparisonMode: ComparisonMode | null = null;
     try {
       persisted = await this.withPersistenceAdmissionLock(
         input.reservation,
-        async (persistence) => {
+        async (persistence, run) => {
+          comparisonMode = run.comparisonMode;
           const existing = await persistence.getPersistedBuyByReservationId(input.reservation.id);
           if (existing) {
             await this.enqueuePersistedBuy(existing, input.idempotencyKey, input.reservation);
@@ -466,11 +498,13 @@ export class ReserveOrderService {
 
     if (!persisted) {
       await this.ensurePendingPersistence(input.idempotencyKey, input.reservation);
-      return this.pendingResponse(input.reservation, input.correlationId, input.now);
+      return withoutRunContext(
+        this.pendingResponse(input.reservation, input.correlationId, input.now),
+      );
     }
 
     await this.promoteWithoutHidingDurableSuccess(input.idempotencyKey, input.reservation);
-    return this.acceptedResponse(persisted, input.correlationId);
+    return { response: this.acceptedResponse(persisted, input.correlationId), comparisonMode };
   }
 
   private scheduleBusinessOutcomeUpdateWithoutHidingDurableSuccess(
@@ -517,7 +551,7 @@ export class ReserveOrderService {
 
   private async withPersistenceAdmissionLock<T>(
     reservation: SecuredReservationHold,
-    operation: (persistence: BuyPersistenceOperations) => Promise<T>,
+    operation: (persistence: BuyPersistenceOperations, run: AdmittedRun) => Promise<T>,
   ): Promise<T> {
     return this.persistence.withRunAdmissionLock({ reservation, operation });
   }

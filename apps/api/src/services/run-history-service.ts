@@ -41,6 +41,7 @@ import {
 } from "@checkout-surge/db";
 import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { readComparisonPartnerRunId } from "./comparison-runs.js";
 import { toDemoRunSnapshot } from "./demo-run-projections.js";
 import {
   parsePersistedAcceptedRunConfigSnapshot,
@@ -80,6 +81,7 @@ export class RunHistoryService implements RunHistoryController {
         .select({
           summary: demoRunSummaries,
           configSnapshot: demoRuns.configSnapshot,
+          comparisonMode: demoRuns.comparisonMode,
         })
         .from(demoRunSummaries)
         .innerJoin(demoRuns, eq(demoRuns.id, demoRunSummaries.runId))
@@ -90,8 +92,8 @@ export class RunHistoryService implements RunHistoryController {
     ]);
 
     return runHistoryListResponseSchema.parse({
-      summaries: rows.map(({ configSnapshot, summary }) =>
-        toRunHistoryListItem(summary, configSnapshot),
+      summaries: rows.map(({ configSnapshot, summary, comparisonMode }) =>
+        toRunHistoryListItem(summary, configSnapshot, comparisonMode),
       ),
       page: input.page,
       pageSize: input.pageSize,
@@ -104,7 +106,10 @@ export class RunHistoryService implements RunHistoryController {
     const source = await this.readDetailSource(runId);
     if (!source) return null;
     const summary = toPublicRunHistorySummary(source.summaryRow);
-    const run = toPublicRunHistoryRun(source.runRow);
+    const run = toPublicRunHistoryRun(
+      source.runRow,
+      await readComparisonPartnerRunId(this.options.db, source.runRow),
+    );
     const erpAttempts = await this.readErpAttemptSummary(runId);
     return publicRunHistoryDetailResponseSchema.parse({
       failureDiagnostic: deriveRunFailureDiagnostic(
@@ -318,6 +323,7 @@ function generatorWarningCount(summary: LoadRunDiagnosticsSummary | null): numbe
 function toRunHistoryListItem(
   row: typeof demoRunSummaries.$inferSelect,
   persistedConfigSnapshot: (typeof demoRuns.$inferSelect)["configSnapshot"],
+  comparisonMode: (typeof demoRuns.$inferSelect)["comparisonMode"],
 ): RunHistoryListItem {
   const summary = toPublicRunHistorySummary(row);
   const result = derivePublicRunResult(summary);
@@ -340,6 +346,7 @@ function toRunHistoryListItem(
     convergenceDurationSeconds:
       summary.runSignalTimelineSummary?.convergenceDurationSeconds ?? null,
     dataDiscarded: isDestructiveResetReason(row.failureReason),
+    ...(comparisonMode ? { comparisonMode } : {}),
   });
 }
 
@@ -467,7 +474,10 @@ function parseApiDroppedLiveMetricBatchCount(value: unknown, context: string): n
   );
 }
 
-function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHistoryRun {
+function toPublicRunHistoryRun(
+  row: typeof demoRuns.$inferSelect,
+  partnerRunId: string | null,
+): PublicRunHistoryRun {
   const context = `demo run ${row.id}`;
   return publicRunHistoryRunSchema.parse({
     runId: row.id,
@@ -484,6 +494,7 @@ function toPublicRunHistoryRun(row: typeof demoRuns.$inferSelect): PublicRunHist
       ? { adminResetCompletedAt: row.adminResetCompletedAt.toISOString() }
       : {}),
     ...(row.runnerRegion ? { runnerRegion: row.runnerRegion } : {}),
+    ...(row.comparisonMode ? { comparison: { mode: row.comparisonMode, partnerRunId } } : {}),
   });
 }
 
