@@ -101,10 +101,12 @@ export function OperatorDashboard({
   const [resetRunId, setResetRunId] = useState(incompleteRunId);
   const currentRun = recovery.status === "available" ? recovery.data.currentRun : null;
   const currentRunId = currentRun?.runId;
-  // The second run of a comparison continues the visitor's first run: Watch follows it.
+  // The second run of a comparison continues the visitor's first run: Watch follows it, also
+  // once it ends and only the retained terminal projection still shows it.
+  const shownRun = currentRun ?? retainedTerminalRun?.terminalRecap.currentRun ?? null;
   const followedResult: AcceptedRunResult | undefined =
-    currentRun && acceptedResult && currentRun.comparison?.firstRunId === acceptedResult.runId
-      ? { status: "awaiting", runId: currentRun.runId }
+    shownRun && acceptedResult && shownRun.comparison?.firstRunId === acceptedResult.runId
+      ? { status: "awaiting", runId: shownRun.runId }
       : acceptedResult;
   useEffect(() => {
     if (incompleteRunId) setResetRunId(incompleteRunId);
