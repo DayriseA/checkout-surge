@@ -1,4 +1,4 @@
-import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
+import { comparisonOfMode, runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -49,21 +49,27 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     notFound();
   }
 
-  const comparison =
-    (publicDetail?.status === "available" && publicDetail.data.run.comparison) ||
-    (adminDetail?.status === "available" && adminDetail.data.run.comparison)
-      ? await readComparison(
-          parsedParams.data.runId,
-          null,
-          getRunHistoryDetail,
-          publicDetail ?? undefined,
-        )
-      : null;
-  const comparisonReport = comparison ? (
-    <div className="mb-4 grid">
-      <ComparisonReport first={comparison[0]} second={comparison[1]} />
-    </div>
-  ) : null;
+  const comparisonMode =
+    (publicDetail?.status === "available" && publicDetail.data.run.comparison?.mode) ||
+    (adminDetail?.status === "available" && adminDetail.data.run.comparison?.mode);
+  const comparison = comparisonMode
+    ? await readComparison(
+        parsedParams.data.runId,
+        null,
+        getRunHistoryDetail,
+        publicDetail ?? undefined,
+      )
+    : null;
+  const comparisonReport =
+    comparison && comparisonMode ? (
+      <div className="mb-4 grid">
+        <ComparisonReport
+          comparison={comparisonOfMode(comparisonMode)}
+          first={comparison[0]}
+          second={comparison[1]}
+        />
+      </div>
+    ) : null;
 
   if (publicDetail?.status === "available") {
     if (publicDetail.data.summary.dataDiscarded)

@@ -974,6 +974,47 @@ describe("run history", () => {
     expect(unknown).not.toContain("The queue moves the wait");
   });
 
+  it("shows a Redis comparison's database work, stating its takeaway only when the data shows it", async () => {
+    const firstId = "66666666-6666-4666-8666-666666666663";
+    const secondId = "66666666-6666-4666-8666-666666666664";
+    const first = comparisonDetail("redis", firstId, secondId, {
+      longestWaitMs: 400,
+      confirmed: 0,
+    });
+    const second = comparisonDetail("postgres", secondId, firstId, {
+      longestWaitMs: 400,
+      confirmed: 0,
+    });
+    first.run.storeLoad = { postgresTransactions: 120, postgresBusyMs: 80, redisCpuMs: 900 };
+    second.run.storeLoad = { postgresTransactions: 1_150, postgresBusyMs: 420, redisCpuMs: 150 };
+    getRunHistoryDetail.mockImplementation(async (runId: string) => ({
+      status: "available",
+      data: runId === firstId ? first : second,
+    }));
+    const page = async () =>
+      renderToStaticMarkup(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: firstId }) }),
+      );
+
+    const markup = await page();
+    expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
+      markup.indexOf("Run 2 of 2 · Stock and order queue in PostgreSQL"),
+    );
+    expect(markup).toContain("1.15 / 0.42 ms");
+    expect(markup).toContain(
+      "With PostgreSQL deciding, it ran 1,150, about 1.15 per buyer, and was busy for 420 ms",
+    );
+    expect(markup).toContain("Redis keeps turned-away buyers off the database.");
+
+    // Without the extra work of the turned-away buyers, or without a measurement, no claim.
+    second.run.storeLoad = { postgresTransactions: 400, postgresBusyMs: 420, redisCpuMs: 150 };
+    expect(await page()).not.toContain("Redis keeps turned-away buyers");
+    delete second.run.storeLoad;
+    const unknown = await page();
+    expect(unknown).toContain("Not recorded");
+    expect(unknown).not.toContain("Redis keeps turned-away buyers");
+  });
+
   it("says so when a comparison's second run will never come", async () => {
     const runId = "66666666-6666-4666-8666-666666666661";
     const first = comparisonDetail("demo", runId, null, { longestWaitMs: 2_400, confirmed: 0 });

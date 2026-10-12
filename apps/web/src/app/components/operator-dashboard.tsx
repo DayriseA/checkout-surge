@@ -1,9 +1,12 @@
 "use client";
 
 import {
+  type Comparison,
+  comparisonOfMode,
   type DashboardProjection,
   type DemoRunSnapshot,
   deriveOversoldUnits,
+  isFirstComparisonMode,
   type RunHistoryListItem,
 } from "@checkout-surge/contracts";
 import Link from "next/link";
@@ -237,17 +240,21 @@ export function OperatorDashboard({
 function watchedComparison(
   tracked: AcceptedRunResult | undefined,
   liveRun: DemoRunSnapshot | null,
-): { runId: string; firstRunId: string | null; refreshKey: string } | null {
+): { comparison: Comparison; runId: string; firstRunId: string | null; refreshKey: string } | null {
   if (liveRun?.comparison)
     return {
+      comparison: comparisonOfMode(liveRun.comparison.mode),
       runId: liveRun.runId,
       firstRunId: liveRun.comparison.firstRunId ?? null,
       refreshKey: `${liveRun.runId}:${liveRun.status}`,
     };
   if (tracked?.status === "available" && tracked.comparison)
     return {
+      comparison: comparisonOfMode(tracked.comparison.mode),
       runId: tracked.runId,
-      firstRunId: tracked.comparison.mode === "demo" ? null : tracked.comparison.partnerRunId,
+      firstRunId: isFirstComparisonMode(tracked.comparison.mode)
+        ? null
+        : tracked.comparison.partnerRunId,
       refreshKey: tracked.runId,
     };
   return null;
