@@ -30,6 +30,8 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
+      /** Adds this process's batched answers to the live counters before the sale closes. */
+      flushBatchedCounts?: () => Promise<void>;
       logger: CheckoutSurgeLogger;
       now?: () => Date;
     },
@@ -47,7 +49,8 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
       return "not_found";
     }
 
-    // Re-drive fail-closed admission even when enrichment already completed.
+    // Counts closure would drop. Re-drive fail-closed admission even when enrichment completed.
+    await this.options.flushBatchedCounts?.();
     await this.closeAdmission(row.run.id, row.run.saleOfferId);
 
     if (

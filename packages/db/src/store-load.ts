@@ -44,15 +44,19 @@ export async function readStoreLoadCounters(
   };
 }
 
-/** What the stores did during the window; null until it has an end. */
+/**
+ * What the stores did during the window; null until it has an end, and null when a counter went
+ * backwards (a statistics reset or a restart inside the window), which leaves the work unknown.
+ */
 export function storeLoadOf(window: StoreLoadWindow | null): StoreLoad | null {
   if (!window?.end) return null;
   const { start, end } = window;
-  return {
-    postgresTransactions: Math.max(0, end.postgresTransactions - start.postgresTransactions),
-    postgresBusyMs: Math.max(0, end.postgresBusyMs - start.postgresBusyMs),
-    redisCpuMs: Math.max(0, end.redisCpuMs - start.redisCpuMs),
+  const load = {
+    postgresTransactions: end.postgresTransactions - start.postgresTransactions,
+    postgresBusyMs: end.postgresBusyMs - start.postgresBusyMs,
+    redisCpuMs: end.redisCpuMs - start.redisCpuMs,
   };
+  return Object.values(load).some((delta) => delta < 0) ? null : load;
 }
 
 function redisInfoSeconds(info: string, field: string): number {

@@ -2643,7 +2643,6 @@ describe("comparison runs", () => {
         runId: second?.id,
         saleOfferId: second?.saleOfferId,
         remainingStock: 1,
-        reservedStock: 0,
       },
     ]);
     for (const run of runs) {

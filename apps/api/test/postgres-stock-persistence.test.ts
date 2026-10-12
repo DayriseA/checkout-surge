@@ -47,7 +47,7 @@ const configSnapshot = {
 describe("PostgreSQL stock decision", () => {
   const connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 10 });
   const db = connection.db;
-  const stock = new PostgresStockPersistence(db, new PostgresBuyPersistence(db));
+  const stock = new PostgresStockPersistence(db, connection.sql, new PostgresBuyPersistence(db));
 
   beforeEach(async () => {
     await resetTestDatabase();
@@ -63,7 +63,7 @@ describe("PostgreSQL stock decision", () => {
 
     expect(result).toMatchObject({ outcome: "reservation_secured", fresh: true });
     const [row] = await db.select().from(postgresRunStock);
-    expect(row).toMatchObject({ remainingStock: 4, reservedStock: 1 });
+    expect(row).toMatchObject({ remainingStock: 4 });
     const [reservation] = await db.select().from(reservations);
     expect(reservation?.idempotencyKey).toBe("buyer-1");
     const [order] = await db.select().from(orders);
@@ -87,6 +87,31 @@ describe("PostgreSQL stock decision", () => {
     expect(await db.select().from(orders)).toHaveLength(1);
   });
 
+  it("answers two concurrent requests with one key as one reservation", async () => {
+    const holder = createSqlClient(requireTestDatabaseUrl(), { max: 1 });
+    try {
+      let attempts: Promise<unknown[]> | undefined;
+      await holder.begin(async (tx) => {
+        // Both requests read no reservation for the key, then race to insert it.
+        await tx`select * from postgres_run_stock where run_id = ${ids.run} for update`;
+        attempts = Promise.all([
+          stock.reserve({ hold: hold(), idempotencyKey: "double-click" }),
+          stock.reserve({ hold: hold(), idempotencyKey: "double-click" }),
+        ]);
+        await waitForLockWaiters(2);
+      });
+      const answers = (await attempts) as Array<{ outcome: string; persisted?: unknown }>;
+      expect(answers.map((answer) => answer.outcome)).toEqual([
+        "reservation_secured",
+        "reservation_secured",
+      ]);
+      expect(answers[0]?.persisted).toEqual(answers[1]?.persisted);
+    } finally {
+      await holder.end({ timeout: 5 });
+    }
+    expect(await db.select().from(reservations)).toHaveLength(1);
+  });
+
   it("sells exactly the stock to concurrent buyers", async () => {
     const results = await Promise.all(
       Array.from({ length: 50 }, (_, index) =>
@@ -100,7 +125,7 @@ describe("PostgreSQL stock decision", () => {
     expect(await db.select().from(reservations)).toHaveLength(5);
     expect(await db.select().from(postgresOrderQueue)).toHaveLength(5);
     const [row] = await db.select().from(postgresRunStock);
-    expect(row).toMatchObject({ remainingStock: 0, reservedStock: 5 });
+    expect(row).toMatchObject({ remainingStock: 0 });
   });
 
   it("answers sold-out buyers without waiting on the stock row and without writing", async () => {
@@ -201,6 +226,15 @@ describe("PostgreSQL stock decision", () => {
     await db
       .insert(postgresRunStock)
       .values({ runId: ids.run, saleOfferId: ids.saleOffer, remainingStock: startingStock });
+  }
+
+  async function waitForLockWaiters(count: number): Promise<void> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const waiting = await db.execute(sql`select 1 from pg_locks where not granted`);
+      if (waiting.length >= count) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error("The requests never waited on each other.");
   }
 
   async function waitForAdvisoryLockWaiter(): Promise<void> {

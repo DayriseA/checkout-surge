@@ -319,10 +319,20 @@ export async function startApiServer(): Promise<void> {
     },
   );
   const businessOutcomeReader = new PostgresDashboardBusinessOutcomeReader(connection.db);
+  const inventoryCounts = new BatchedInventoryCounts({
+    apply: (batch) => applyInventoryCountBatch(redis, batch),
+    onError: (error, batch) => {
+      logger.warn(
+        { err: error, runId: batch.runId, saleOfferId: batch.saleOfferId },
+        "Could not add batched inventory counts to the run's live counters.",
+      );
+    },
+  });
   const trafficCompletionEnrichmentService = new TrafficCompletionEnrichmentService({
     db: connection.db,
     redis,
     businessOutcomeReader,
+    flushBatchedCounts: () => inventoryCounts.flush(),
     logger,
   });
   const demoRunFinalizationService = new DemoRunFinalizationService({
@@ -453,17 +463,8 @@ export async function startApiServer(): Promise<void> {
     waiter: confirmationWaiter,
   });
 
-  const inventoryCounts = new BatchedInventoryCounts({
-    apply: (batch) => applyInventoryCountBatch(redis, batch),
-    onError: (error, batch) => {
-      logger.warn(
-        { err: error, runId: batch.runId, saleOfferId: batch.saleOfferId },
-        "Could not add batched inventory counts to the run's live counters.",
-      );
-    },
-  });
   const postgresStockBuyService = new PostgresStockBuyService({
-    stock: new PostgresStockPersistence(connection.db, persistence),
+    stock: new PostgresStockPersistence(connection.db, connection.sql, persistence),
     counts: inventoryCounts,
     reservationHoldMinutes: config.reservationHoldMinutes,
     dashboardSourceDirtyScheduler,

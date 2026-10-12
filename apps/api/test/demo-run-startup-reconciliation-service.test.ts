@@ -70,7 +70,10 @@ describe("DemoRunStartupReconciliationService", () => {
     expect(activateStartingRun).toHaveBeenCalledOnce();
   });
 
-  it("replays a run without the order queue against the waiting route", async () => {
+  it.each([
+    ["synchronous_confirmation", "http://api.test/synchronous-confirmation"],
+    ["postgres", "http://api.test/stock-in-postgres"],
+  ] as const)("replays a %s comparison run against its own buy route", async (mode, target) => {
     const start = vi.fn(async (request) => ({
       runId: request.runId,
       status: "active" as const,
@@ -88,7 +91,7 @@ describe("DemoRunStartupReconciliationService", () => {
             saleOfferId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
             runnerBootId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
             configSnapshot: acceptedRunConfigSnapshot(),
-            comparisonMode: "synchronous_confirmation",
+            comparisonMode: mode,
           } as never,
         ],
         activateStartingRun: async () => true,
@@ -97,9 +100,7 @@ describe("DemoRunStartupReconciliationService", () => {
     });
 
     await expect(service.reconcileStartingRuns()).resolves.toBe(1);
-    expect(start).toHaveBeenCalledWith(
-      expect.objectContaining({ apiBaseUrl: "http://api.test/synchronous-confirmation" }),
-    );
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ apiBaseUrl: target }));
   });
 
   it("fails a starting run whose boot was never recorded instead of replaying it", async () => {

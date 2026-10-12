@@ -5,7 +5,7 @@ import {
   postgresOrderQueue,
   postgresOrderQueueChannel,
   postgresRunStock,
-  reservations,
+  type SqlClient,
 } from "@checkout-surge/db";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { insertSecuredReservationRows } from "./postgres-buy-persistence.js";
@@ -28,14 +28,24 @@ export type PostgresStockOutcome =
 
 class StockTakenError extends Error {}
 
+interface DecisionRow {
+  remainingStock: number | null;
+  runStatus: string;
+  replayId: string | null;
+  replayQuantity: number | null;
+}
+
 /**
  * The stock decision when PostgreSQL holds the stock, with the protections of the Redis path:
  * the run fence, idempotency, and the durable record (with its queue job) before "yes".
- * A buyer turned away costs one read-only statement: no write and no lock.
+ * Once the stock is gone, a buyer turned away costs one read-only statement. The few buyers who
+ * read the last units before the winner committed run the winner's transaction, wait on the
+ * stock row and roll back: bounded, and inherent to a read-then-conditional-update.
  */
 export class PostgresStockPersistence {
   constructor(
     private readonly db: CheckoutSurgeDatabase,
+    private readonly sql: SqlClient,
     private readonly persistedBuys: Pick<
       BuyPersistenceOperations,
       "getPersistedBuyByReservationId"
@@ -62,31 +72,16 @@ export class PostgresStockPersistence {
     hold: SecuredReservationHold;
     idempotencyKey: string;
   }): Promise<PostgresStockOutcome> {
-    // The same order of checks as the Redis script: stock, run, idempotency, then units.
-    const [decision] = await this.db
-      .select({
-        remainingStock: postgresRunStock.remainingStock,
-        runStatus: demoRuns.status,
-        replayId: reservations.id,
-        replayQuantity: reservations.quantity,
-      })
-      .from(demoRuns)
-      .leftJoin(
-        postgresRunStock,
-        and(
-          eq(postgresRunStock.runId, demoRuns.id),
-          eq(postgresRunStock.saleOfferId, hold.saleOfferId),
-        ),
-      )
-      .leftJoin(
-        reservations,
-        and(
-          eq(reservations.saleOfferId, hold.saleOfferId),
-          eq(reservations.idempotencyKey, idempotencyKey),
-        ),
-      )
-      .where(eq(demoRuns.id, hold.runId))
-      .limit(1);
+    // The same order of checks as the Redis script: stock, run, idempotency, then units. A
+    // prepared statement on each connection, like the script Redis caches: parsed and planned once.
+    const [decision] = await this.sql<DecisionRow[]>`
+      select s.remaining_stock as "remainingStock", r.status as "runStatus",
+        res.id as "replayId", res.quantity as "replayQuantity"
+      from demo_runs r
+      left join postgres_run_stock s on s.run_id = r.id and s.sale_offer_id = ${hold.saleOfferId}
+      left join reservations res
+        on res.sale_offer_id = ${hold.saleOfferId} and res.idempotency_key = ${idempotencyKey}
+      where r.id = ${hold.runId}`;
     if (!decision || decision.remainingStock === null) {
       return { outcome: "inventory_not_initialized" };
     }
@@ -125,10 +120,7 @@ export class PostgresStockPersistence {
         // The stock row is locked last, so a concurrent buyer waits for it only until this commit.
         const decremented = await tx
           .update(postgresRunStock)
-          .set({
-            remainingStock: sql`${postgresRunStock.remainingStock} - ${hold.quantity}`,
-            reservedStock: sql`${postgresRunStock.reservedStock} + ${hold.quantity}`,
-          })
+          .set({ remainingStock: sql`${postgresRunStock.remainingStock} - ${hold.quantity}` })
           .where(
             and(
               eq(postgresRunStock.runId, hold.runId),

@@ -180,6 +180,13 @@ describe("run history service", () => {
       redisCpuMs: 400,
     });
     expect((await service.detail(ids.olderRun))?.run.storeLoad).toBeUndefined();
+
+    // A counter that went backwards (a reset inside the window) leaves the work unknown.
+    await db
+      .update(demoRuns)
+      .set({ storeLoad: { start: counters(100, 50, 2000), end: counters(10_350, 3_050, 1_000) } })
+      .where(eq(demoRuns.id, ids.newerRun));
+    expect((await service.detail(ids.newerRun))?.run.storeLoad).toBeUndefined();
   });
 
   it("keeps list payloads headline-only and detail payloads series-bearing", async () => {
