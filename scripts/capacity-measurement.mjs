@@ -70,7 +70,7 @@ export function toStartRequest(run) {
 }
 
 /** One JSON record per run: the evidence the run persisted, read from its admin detail. */
-function toRecord({ label, detail, estimate, host }) {
+function toRecord({ label, detail, storeLoad, estimate, host }) {
   const { run, summary } = detail;
   const delivery = summary.trafficDeliverySummary;
   const diagnostics = detail.loadRunDiagnosticsSummary;
@@ -114,6 +114,7 @@ function toRecord({ label, detail, estimate, host }) {
     business: summary.businessOutcomeSummary,
     comparisonMode: run.comparison?.mode ?? null,
     signals: summary.runSignalTimelineSummary,
+    storeLoad: storeLoad ?? null,
   };
 }
 
@@ -261,10 +262,16 @@ async function main([runListFile, outputFile]) {
       details.push(await waitForTerminalDetail(api, runIds[1]));
     }
     // Both runs of a comparison share the first run's id as their pair.
-    const records = details.map((detail) => ({
-      ...toRecord({ label: run.label, detail, estimate: estimates[index], host }),
-      pairId: firstRunId,
-    }));
+    const records = [];
+    for (const detail of details) {
+      // Store load is measured on the Redis comparison's runs; their public report carries it.
+      const report = await api("GET", `/demo/runs/history/${detail.run.runId}`).catch(() => null);
+      const storeLoad = report?.payload?.run?.storeLoad;
+      records.push({
+        ...toRecord({ label: run.label, detail, storeLoad, estimate: estimates[index], host }),
+        pairId: firstRunId,
+      });
+    }
     for (const record of records) appendFileSync(outputFile, `${JSON.stringify(record)}\n`);
     // The first run goes first: deleted second, it would be due for a second run again.
     for (const [position, runId] of runIds.entries()) {

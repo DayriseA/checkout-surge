@@ -60,3 +60,44 @@ test("pairs every completed pair and reports the spread and whether all pairs ag
     ),
   );
 });
+
+function redisRecord(pairId, comparisonMode, postgresTransactions) {
+  return {
+    label: "redis-comparison",
+    pairId,
+    comparisonMode,
+    status: "completed",
+    droppedIterations: 0,
+    requests: { completedRequests: 10_000 },
+    responses: {
+      acceptedResponses: 1,
+      soldOutResponses: 9_999,
+      buyerWallLatencySummary: {
+        accepted: null,
+        soldOut: { sampleCount: 9_999, averageMs: 3, p95Ms: 8, maxMs: 40 },
+      },
+    },
+    storeLoad: { postgresTransactions, postgresBusyMs: postgresTransactions / 10, redisCpuMs: 500 },
+  };
+}
+
+test("reads a Redis comparison's database work per mode and per buyer", () => {
+  const comparison = {
+    modes: ["redis", "postgres"],
+    titles: ["With Redis", "Stock in PostgreSQL"],
+    secondRun: "with the stock in PostgreSQL",
+  };
+  const records = [
+    redisRecord("pair-1", "redis", 200),
+    redisRecord("pair-1", "postgres", 10_200),
+    redisRecord("pair-2", "redis", 400),
+    redisRecord("pair-2", "postgres", 10_400),
+  ];
+  const table = comparisonTable(pairsOf(records, comparison.modes), comparison);
+  assert.ok(
+    table.includes(
+      "| PostgreSQL transactions | 300 (200–400) | 10300 (10200–10400) | 38.5 (26–51) | all higher with the stock in PostgreSQL |",
+    ),
+  );
+  assert.ok(table.includes("| PostgreSQL transactions per buyer | 0.03 (0.02–0.04) | 1 (1–1) |"));
+});
