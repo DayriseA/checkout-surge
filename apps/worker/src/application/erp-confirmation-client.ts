@@ -81,6 +81,7 @@ export interface ErpAttemptPersistence {
     expectedProcessingGeneration: number;
     supersedesErpCallId?: string;
   }): Promise<ErpCallReference>;
+  discardUnsentDispatchIntent(call: ErpCallReference): Promise<boolean>;
   recordAttempt(record: ErpAttemptRecord): Promise<boolean>;
   findUnresolvedCall?(orderId: string): Promise<ErpCallReference | null>;
 }
@@ -239,8 +240,24 @@ export class HttpErpOrderConfirmation {
         ? { supersedesErpCallId: delivery.supersedesErpCallId }
         : {}),
     });
-    // A cancelled intent stays unresolved: no HTTP outcome exists to resolve it.
-    const timeoutMs = Math.min(requestDeadlineMs, this.remainingProcessingMs(budget, call));
+    let timeoutMs: number;
+    try {
+      timeoutMs = Math.min(requestDeadlineMs, this.remainingProcessingMs(budget, call));
+    } catch (error) {
+      if (error instanceof ErpRequestStoppedBeforeFetchError && !delivery.supersedesErpCallId) {
+        // No fetch has been invoked. Replays retain the earlier call's uncertainty;
+        // only the current owner may discard a fresh, provably unsent intent.
+        try {
+          await this.options.attemptPersistence.discardUnsentDispatchIntent(call);
+        } catch (cause) {
+          throw new ErpAttemptPersistenceError(
+            cause,
+            "The unsent ERP intent could not be discarded.",
+          );
+        }
+      }
+      throw error;
+    }
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     budget?.signal.addEventListener("abort", onAbort, { once: true });

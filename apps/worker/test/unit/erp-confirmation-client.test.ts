@@ -455,6 +455,58 @@ describe("ERP processing budget", () => {
     );
     expect(fetch).not.toHaveBeenCalled();
     expect(persistence.recordAttempt).not.toHaveBeenCalled();
+    expect(persistence.discardUnsentDispatchIntent).toHaveBeenCalledTimes(
+      stage === "during intent" ? 1 : 0,
+    );
+    if (stage === "during intent") {
+      expect(persistence.discardUnsentDispatchIntent).toHaveBeenCalledWith(call);
+    }
+  });
+
+  it("retains superseding replay uncertainty when cancelled before fetch", async () => {
+    const controller = new AbortController();
+    const persistence = attemptPersistence();
+    persistence.recordDispatchIntent = vi.fn(async () => {
+      controller.abort();
+      return call;
+    });
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    await expect(
+      createClient({ persistence, fetch, now: () => new Date(0) }).dispatch(
+        job,
+        { ...delivery, supersedesErpCallId: "earlier-uncertain-call" },
+        deadlineMs,
+        { deadlineAt: new Date("2030-01-01"), signal: controller.signal },
+      ),
+    ).rejects.toBeInstanceOf(ErpRequestStoppedBeforeFetchError);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(persistence.discardUnsentDispatchIntent).not.toHaveBeenCalled();
+  });
+
+  it("surfaces unsent-intent cleanup failure without invoking HTTP", async () => {
+    const controller = new AbortController();
+    const persistence = attemptPersistence();
+    persistence.recordDispatchIntent = vi.fn(async () => {
+      controller.abort();
+      return call;
+    });
+    persistence.discardUnsentDispatchIntent = vi
+      .fn()
+      .mockRejectedValue(new Error("database unavailable"));
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    await expect(
+      createClient({ persistence, fetch, now: () => new Date(0) }).dispatch(
+        job,
+        delivery,
+        deadlineMs,
+        {
+          deadlineAt: new Date("2030-01-01"),
+          signal: controller.signal,
+        },
+      ),
+    ).rejects.toMatchObject({ name: "ErpAttemptPersistenceError" });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(persistence.recordAttempt).not.toHaveBeenCalled();
   });
 
   it("caps POST wait by time remaining after durable intent", async () => {
@@ -510,6 +562,7 @@ describe("ERP processing budget", () => {
         disposition: operation === "dispatch" ? "uncertain_result" : "temporarily_unavailable",
       });
       if (operation === "dispatch") {
+        expect(persistence.discardUnsentDispatchIntent).not.toHaveBeenCalled();
         expect(persistence.recordDispatchIntent).toHaveBeenCalledOnce();
         expect(persistence.recordAttempt).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -616,6 +669,7 @@ function attemptPersistence(): ErpAttemptPersistence {
     findTechnicalFailure: vi.fn().mockResolvedValue(null),
     findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
     recordDispatchIntent: vi.fn().mockResolvedValue(call),
+    discardUnsentDispatchIntent: vi.fn().mockResolvedValue(true),
     recordAttempt: vi.fn().mockResolvedValue(true),
   };
 }

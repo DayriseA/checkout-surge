@@ -218,6 +218,68 @@ export class PostgresErpAttemptPersistence implements ErpAttemptPersistence {
     });
   }
 
+  /** Caller proves this newly recorded intent never reached fetch. */
+  async discardUnsentDispatchIntent(call: ErpCallReference): Promise<boolean> {
+    return this.db.transaction(async (tx) => {
+      const [order] = await tx
+        .select({ status: orders.status })
+        .from(orders)
+        .where(eq(orders.id, call.orderId))
+        .for("update")
+        .limit(1);
+      const [control] = await tx
+        .select()
+        .from(orderRecoveryJobs)
+        .where(eq(orderRecoveryJobs.orderId, call.orderId))
+        .for("update")
+        .limit(1);
+      if (
+        (order?.status !== "queued" && order?.status !== "processing") ||
+        !control ||
+        control.processingGeneration !== call.processingGeneration ||
+        control.unresolvedErpCallId !== call.erpCallId ||
+        (control.status !== "pending" && control.status !== "enqueued") ||
+        control.result !== null
+      )
+        return false;
+      const [storedCall] = await tx
+        .select()
+        .from(erpDispatchCalls)
+        .where(
+          and(
+            eq(erpDispatchCalls.id, call.erpCallId),
+            eq(erpDispatchCalls.orderId, call.orderId),
+            eq(erpDispatchCalls.processingGeneration, call.processingGeneration),
+            eq(erpDispatchCalls.idempotencyKey, call.idempotencyKey),
+            isNull(erpDispatchCalls.resolvedAt),
+          ),
+        )
+        .for("update")
+        .limit(1);
+      if (!storedCall) return false;
+      const [otherCall] = await tx
+        .select({ id: erpDispatchCalls.id })
+        .from(erpDispatchCalls)
+        .where(
+          and(eq(erpDispatchCalls.orderId, call.orderId), ne(erpDispatchCalls.id, call.erpCallId)),
+        )
+        .limit(1);
+      if (otherCall) return false;
+      const [attempt] = await tx
+        .select({ id: erpAttempts.id })
+        .from(erpAttempts)
+        .where(eq(erpAttempts.erpCallId, call.erpCallId))
+        .limit(1);
+      if (attempt) return false;
+      await tx.delete(erpDispatchCalls).where(eq(erpDispatchCalls.id, call.erpCallId));
+      await tx
+        .update(orderRecoveryJobs)
+        .set({ unresolvedErpCallId: null, updatedAt: this.now() })
+        .where(eq(orderRecoveryJobs.id, control.id));
+      return true;
+    });
+  }
+
   async recordAttempt(record: ErpAttemptRecord): Promise<boolean> {
     const deliveryId = record.delivery.deliveryId ?? record.job.orderId;
     const idempotencyKey = successfulIdempotencyKey(record);

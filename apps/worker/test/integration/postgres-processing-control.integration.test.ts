@@ -841,6 +841,86 @@ describe("PostgreSQL durable processing control and dispatch intent", () => {
     });
   });
 
+  it.each([
+    "unsent",
+    "new_owner",
+    "attempted",
+    "replacement",
+  ] as const)("discards only current fresh unsent intent: %s", async (state) => {
+    const seeded = await seedOrder({ createdAt: now });
+    const delivery = {
+      attemptNumber: 1,
+      attemptsMade: 0,
+      deliveryId: "initial-delivery",
+      processingGeneration: 0,
+    };
+    await transitionPersistence.transitionToProcessing(seeded.job, delivery);
+    const intent = {
+      job: seeded.job,
+      idempotencyKey: `erp-confirmation:${seeded.orderId}`,
+      dispatchedAt: now,
+      expectedProcessingGeneration: 0,
+    };
+    const call = await attemptPersistence.recordDispatchIntent(intent);
+    if (state === "new_owner") {
+      now = new Date(baseTime.getTime() + 60_000);
+      await expect(
+        controlPersistence.claimForPublication({
+          recoveryKey: `order:${seeded.orderId}`,
+          now,
+          leaseMs: 30_000,
+        }),
+      ).resolves.toMatchObject({ processingGeneration: 1 });
+    } else if (state === "attempted") {
+      await attemptPersistence.recordAttempt({
+        job: seeded.job,
+        delivery,
+        call,
+        operation: "dispatched_confirmation",
+        disposition: "uncertain_result",
+        status: "timed_out",
+        terminal: false,
+        errorCode: "erp_request_timeout",
+        latencyMs: 1,
+        startedAt: now,
+        finishedAt: new Date(now.getTime() + 1),
+      });
+    } else if (state === "replacement") {
+      await attemptPersistence.recordDispatchIntent({
+        ...intent,
+        supersedesErpCallId: call.erpCallId,
+      });
+    }
+    expect(await attemptPersistence.discardUnsentDispatchIntent(call)).toBe(state === "unsent");
+    const rows = await requireConnection().db.select().from(erpDispatchCalls);
+    expect(rows).toHaveLength(state === "unsent" ? 0 : state === "replacement" ? 2 : 1);
+    const control = await controlPersistence.readControlRecord({ orderId: seeded.orderId });
+    expect(control?.unresolvedErpCallId).toBe(
+      state === "unsent" ? null : rows.find((row) => row.resolvedAt === null)?.id,
+    );
+    if (state === "unsent") {
+      // Queued mode retains its normal deferral/reclaim and fresh dispatch path.
+      await controlPersistence.defer({
+        orderId: seeded.orderId,
+        processingGeneration: 0,
+        waitingReason: "local_admission",
+        nextEligibleAt: now,
+      });
+      const claim = await controlPersistence.claimForPublication({
+        recoveryKey: `order:${seeded.orderId}`,
+        now,
+        leaseMs: 30_000,
+      });
+      expect(claim?.processingGeneration).toBe(1);
+      await expect(
+        attemptPersistence.recordDispatchIntent({
+          ...intent,
+          expectedProcessingGeneration: 1,
+        }),
+      ).resolves.toMatchObject({ processingGeneration: 1 });
+    }
+  });
+
   it("retains uncertainty across lease expiry and resolves it idempotently", async () => {
     const seeded = await seedOrder({ createdAt: now });
     await transitionPersistence.transitionToProcessing(seeded.job, {

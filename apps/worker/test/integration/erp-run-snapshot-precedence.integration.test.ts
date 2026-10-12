@@ -33,6 +33,7 @@ describe("worker and Mock ERP precedence", () => {
       forcedOutage: false,
     };
     const attemptPersistence: ErpAttemptPersistence = {
+      discardUnsentDispatchIntent: vi.fn().mockResolvedValue(true),
       findTechnicalFailure: vi.fn().mockResolvedValue(null),
       findSuccessfulAttempt: vi.fn().mockResolvedValue(null),
       recordDispatchIntent: vi

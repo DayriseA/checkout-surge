@@ -390,6 +390,42 @@ it("expires crash-left queued orders once without dispatch or fabricated ERP evi
   expect(await r.orderQueue.getJob(request.orderId)).toBeUndefined();
 });
 
+it("settles cancelled persisted-but-unsent inline intent through unchanged expiry proof", async () => {
+  const request = await seed();
+  const r = await runtime();
+  const buyer = new AbortController();
+  const recordIntent = r.attempts.recordDispatchIntent.bind(r.attempts);
+  vi.spyOn(r.attempts, "recordDispatchIntent").mockImplementation(async (input) => {
+    const call = await recordIntent(input);
+    buyer.abort();
+    return call;
+  });
+  await r.service.confirm(request, buyer.signal);
+  // Buyer cancellation returns before the owned handler finishes its durable cleanup.
+  await vi.waitFor(async () => {
+    expect(await r.control.readControlRecord({ orderId: request.orderId })).toMatchObject({
+      unresolvedErpCallId: null,
+      leaseExpiresAt: null,
+    });
+  });
+  expect(r.posts()).toBe(0);
+  expect(await db.sql`select * from erp_dispatch_calls`).toHaveLength(0);
+  expect(await db.sql`select * from erp_attempts`).toHaveLength(0);
+  await db.db
+    .update(reservations)
+    .set({ securedAt: new Date(Date.now() - 60_000) })
+    .where(eq(reservations.id, request.reservationId));
+  await expect(r.service.recover(request)).resolves.toMatchObject({
+    outcome: "order_confirmation_failed",
+    order: { failureCode: "inline_confirmation_window_expired" },
+  });
+  expect(await r.control.readControlRecord({ orderId: request.orderId })).toMatchObject({
+    status: "resolved",
+  });
+  expect(r.posts()).toBe(0);
+  expect(r.lookups()).toBe(0);
+});
+
 it("acknowledges authenticated HTTP cancellation while the registered handler is still unsettled", async () => {
   const request = await seed();
   const r = await runtime({ holdConfirmation: true });
