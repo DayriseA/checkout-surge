@@ -172,6 +172,27 @@ These observations come from the hosted deployment on Fly.io, not from the local
 - **Runner loss.** 3.4 s from a SIGKILL of the runner to the terminal `load_generator_lost` run.
 - **Core recovery.** 37 s from the start button to the demo, with a fresh core installed on a new volume.
 
+## Capture-enabled common-runtime comparison — 2026-10-12
+
+This is one fixed public comparison in the isolated proof environment, not a statistical benchmark, repeatability result or capacity calibration. Source `46eaab3ebf52e4471b7bad277ca89250d97a6e46` used the common physical topology: one control and three buyer APIs on a performance-six-CPU / 12 GiB core, PostgreSQL and Redis sharing a private performance-two-CPU / 4 GiB stores Machine and 6 GiB volume in `cdg`, and a performance-sixteen-CPU / 32 GiB runner. Native evidence capture was enabled and `GOMAXPROCS=12` was recorded; twelve is not the core Machine's physical CPU allocation. No simulated store delay was added. Production is unchanged and rollout remains subject to owner review.
+
+Parent `bde2626d-5cbe-4b82-ac8c-944a8a9114b0` was accepted at `02:29:04.462 UTC` and completed at `02:33:57.856 UTC`. All four children reached normal business-settlement certificates. Parent completion means the comparison finished; the inline child correctly retains its failed traffic result, `traffic_outcome_unexpected_responses`, certified at `02:33:57.159 UTC`.
+
+| Fixed child | Planned / completed HTTP | Accepted / sold-out / unexpected replies | Confirmed / failed orders | Named buyer-wall cohort | Samples | Mean ms | p95 ms |
+| :-- | --: | --: | --: | :-- | --: | --: | --: |
+| Redis, `81f2683d-de89-41d2-aef7-fc318e1045ab` | 10,000 / 10,000 | 1 / 9,999 / 0 | 1 / 0 | Sold-out | 9,999 | 16.230723 | 99 |
+| PostgreSQL, `be34001d-e002-4328-9481-0326ce477795` | 10,000 / 10,000 | 1 / 9,999 / 0 | 1 / 0 | Sold-out | 9,999 | 6,824.088309 | 11,124 |
+| Queued, `1a034804-be18-4a32-b098-cfee758d0231` | 5,000 / 5,000 | 500 / 4,500 / 0 | 500 / 0 | Accepted | 500 | 1,919.036 | 2,724 |
+| Inline, `33446c0c-ed08-43cd-9d0d-609d5c803a0c` | 5,000 / 5,000 | 114 / 4,500 / 386 | 119 / 381 | Accepted | 114 | 30,305.850877 | 52,277.65 |
+
+The stock pair used 1,000 arrivals/s for ten seconds and stock one; the order pair used 5,000 finite-spike buyers, stock 500, ERP 100 ms / 20 TPS and concurrency five. Both pairs retained matched settings within the pair. All requests started and completed, with zero interruptions, unstarted requests, transport failures, request timeouts or positive drops. The inline child's 386 unexpected replies remain real failed HTTP outcomes. Each child's durable confirmations matched its notification and ERP-ledger counts, and all outstanding work settled. The 381 inline failures were exactly `inline_confirmation_window_expired`, with no dispatch history, ERP ledger entry or notification for those failed orders. Five more orders confirmed than successful replies were observed; aggregate counts alone do not map individual buyer responses to business outcomes. The 500-versus-114 accepted-reply samples therefore cannot establish a matched all-winner speed ratio or faster ERP processing.
+
+Buyer-wall cohorts include the buyer's full wait and differ from the all-HTTP k6 duration metric. The latter's stock-pair p95 values were 86.572643 ms with Redis and 11,122.878836 ms with PostgreSQL. These end-to-end observations are not intrinsic store timings or a measured throughput ceiling, and they do not replace the earlier feasibility campaign.
+
+Each child passed 117/117 recorded reconciliation comparisons. Capture ACK elapsed times, in stage order, were 33.612, 33.141, 49.042 and 28.593 seconds, within the 120-second window. Whole runner-container cgroup coverage, including initialization and traffic, passed; observed CPU peaks were 71.3937%, 70.3068%, 68.7332% and 69.1306% of sixteen CPUs. This scope includes observer, orchestrator and k6. Supplementary process-census uncertainty remains `UNKNOWN`; no complete per-process CPU claim follows. Capture export/ACK time is not buyer latency, and these resource checks do not establish capacity.
+
+Evidence is retained under `.tmp/common-runtime-v2/public-functional-v4-preparation/receipts/2cd1ec27-5f97-4105-8903-f74c12edf7f4/`: `durable-four-child-binding.json`, each child's `pre-ack-verification.json` and `terminal-verification.json`, and the parent result. Source/deployment readback is `.tmp/common-runtime-v2/deployment-readback-46eaab3e-preparation/deployment-receipt.json`. Independent review accepted this functional packet. Separate actual budget observations showed global count 3→4, delta one, visitor count one and a retained reservation marker through post-parent readback (`public-budget-host-46ea-preparation/receipts/86c17ed9-d762-49a2-85ae-832ac33fd140/`): one charge covered all four children. Earlier failed/unknown parent attempts remain excluded failures/unknowns. Common-runtime capacity warmups and measured cells remain zero at this checkpoint; calibration, a final capture-disabled redeploy and unattended functional validation remain pending.
+
 ## Capacity per connection mode
 
 Measured on 2026-10-08 with the [capacity measurement procedure](capacity_measurement.md), with the same application version on both deployments. Every run used the fastest Mock ERP (0 ms latency, 1,000 TPS, concurrency 10) and no start delay. Constant-arrival runs lasted 10 s with 10,000 explicit VUs unless stated; buyer spikes had a 60 s cutoff. Each figure comes from one to three runs.

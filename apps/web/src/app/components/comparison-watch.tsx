@@ -213,7 +213,8 @@ export function ComparisonReport({ detail }: { detail: ComparisonDetailResponse 
     <div className="grid gap-5">
       <p className="m-0 max-w-[80ch] text-sm leading-6 text-muted-strong">
         Within each pair, the buyer workload, stock, and simulated order processor use the same
-        settings. The two pairs test different workloads.
+        settings. The two pairs test different workloads. Reply timings cover only the recorded
+        replies of the named kind; compare their sample counts alongside the order outcomes.
       </p>
       <ComparisonPair
         title="Stock checks"
@@ -303,6 +304,9 @@ function ComparisonPair({
       {cohort === "accepted" ? (
         <p className="mb-0 mt-3 text-sm text-muted">
           Accepted replies can include repeat requests. Orders reserved counts unique orders.
+          Without the queue, some reserved orders can fail when the confirmation window expires;
+          others can confirm after the buyer receives no successful reply. Accepted-reply timings
+          exclude those unsuccessful replies, so the two samples can differ.
         </p>
       ) : null}
     </section>
