@@ -87,6 +87,9 @@ A first implementation (branch `codex/redis-order-queue-feasibility`, archived, 
 - **Without the order queue, no order is lost or failed because a buyer stopped waiting.** A buyer whose wait reaches the deadline gets an honest "still being confirmed" answer, and the order is confirmed later as usual. The honest message is that the buyer pays for the back office's pace, not that the system breaks.
 - **The queue comparison comes first**, end to end, since its effect is the largest and was confirmed at the checkpoint. The Redis comparison follows.
 - **Owner checkpoints** (README): each is a one-page summary with the decision asked and a recommendation.
+- **The comparison presets are public from the start** (owner, after checkpoint A). The proof environment is a playground; the public site only receives this work when `main` is merged at the end.
+- **"Production"** in this backlog means the hosted demo deployed from `main` (the `checkout-surge-*` apps). The proof environment in `playground-416` is the working environment.
+- **Functionality first.** The presentation is improved in a dedicated interface pass once both comparisons work (task 05).
 
 ## 4. Modes
 
@@ -135,5 +138,4 @@ A first implementation (branch `codex/redis-order-queue-feasibility`, archived, 
 Settled on 2026-10-12 (section 3.1): separate machines or simulated latency (simulated, comparison runs only), production topology (unchanged), what the presets show (database load for Redis; buyer waiting for the queue), how chained runs fit the run slot (two chained runs per preset), and how the mode without the order queue reads (it does not fail by design). Still open:
 
 - **Distance value:** which added round trip stands for "production" (start from the measured private-network round trip on Fly, about 0.8 ms).
-- **Exposure:** the presets stay admin-only until the owner validates each comparison at its checkpoint, then become public.
 - **Redis script:** whether to slim the stock Lua script. Default: leave it unchanged.

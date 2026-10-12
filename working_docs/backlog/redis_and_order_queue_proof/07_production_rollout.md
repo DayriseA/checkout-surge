@@ -1,6 +1,6 @@
-# 06 — Production Rollout
+# 07 — Production Rollout
 
-**Design:** sections 3, 3.1, 6 · **Depends on:** 05
+**Design:** sections 3, 3.1, 6 · **Depends on:** 06
 
 ## Goal
 

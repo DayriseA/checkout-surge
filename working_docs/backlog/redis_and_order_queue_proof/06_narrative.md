@@ -1,6 +1,6 @@
-# 05 — Narrative and Decisions
+# 06 — Narrative and Decisions
 
-**Design:** sections 1, 3.1, 5 · **Depends on:** 04
+**Design:** sections 1, 3.1, 5 · **Depends on:** 05
 
 ## Goal
 
@@ -15,7 +15,7 @@ The demo's texts explain what each comparison shows and why, honestly, and the d
 
 ## Done When
 
-- **Owner checkpoint C:** the owner has reviewed the texts.
+- **Owner checkpoint D:** the owner has reviewed the texts.
 
 ## Open Points
 
