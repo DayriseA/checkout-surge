@@ -117,7 +117,9 @@ export class PostgresStockPersistence {
         }
         const persisted = await insertSecuredReservationRows(tx, hold, idempotencyKey);
         await tx.insert(postgresOrderQueue).values({ orderId: persisted.order.id });
-        // The stock row is locked last, so a concurrent buyer waits for it only until this commit.
+        // Delivered at commit, like the rest of the transaction.
+        await tx.execute(sql`select pg_notify(${postgresOrderQueueChannel}, '')`);
+        // The stock row is locked last: the next buyer waits for it only until this commit.
         const decremented = await tx
           .update(postgresRunStock)
           .set({ remainingStock: sql`${postgresRunStock.remainingStock} - ${hold.quantity}` })
@@ -129,7 +131,6 @@ export class PostgresStockPersistence {
           )
           .returning({ runId: postgresRunStock.runId });
         if (decremented.length === 0) throw new StockTakenError();
-        await tx.execute(sql`select pg_notify(${postgresOrderQueueChannel}, '')`);
         return { outcome: "reservation_secured", persisted, fresh: true } as const;
       });
     } catch (error) {

@@ -22,22 +22,36 @@ const comparisons = [
 
 /** Every metric covers all buyers of the run. Null means not recorded. */
 export function redisRunMetrics(record) {
-  const { responses, requests, storeLoad, droppedIterations } = record;
+  const { responses, requests, storeLoad, droppedIterations, business, arrival, signals } = record;
+  const accepted = responses.buyerWallLatencySummary?.accepted ?? null;
   const soldOut = responses.buyerWallLatencySummary?.soldOut ?? null;
   const perBuyer = (value) =>
     value == null || !requests.completedRequests ? null : value / requests.completedRequests;
+  const convergence = signals?.convergenceDurationSeconds ?? null;
+  const soldOutMax = responses.soldOutResponses === 0 ? 0 : (soldOut?.maxMs ?? null);
+  const acceptedMax = responses.acceptedResponses === 0 ? 0 : (accepted?.maxMs ?? null);
   return {
     "Buyers secured": responses.acceptedResponses,
     "Buyers turned away": responses.soldOutResponses,
+    "Failed requests": responses.failedRequests,
     "Dropped arrivals": droppedIterations,
     "PostgreSQL transactions": storeLoad?.postgresTransactions ?? null,
     "PostgreSQL busy time (ms)": storeLoad?.postgresBusyMs ?? null,
     "PostgreSQL transactions per buyer": perBuyer(storeLoad?.postgresTransactions),
     "PostgreSQL busy time per buyer (ms)": perBuyer(storeLoad?.postgresBusyMs),
     "Redis CPU time (ms)": storeLoad?.redisCpuMs ?? null,
+    "Winners' average wait (ms)": accepted?.averageMs ?? null,
+    "Winners' p95 wait (ms)": accepted?.p95Ms ?? null,
     "Turned-away buyers' average wait (ms)": soldOut?.averageMs ?? null,
     "Turned-away buyers' p95 wait (ms)": soldOut?.p95Ms ?? null,
-    "Turned-away buyers' longest wait (ms)": soldOut?.maxMs ?? null,
+    "Stock sold out after (s)": signals?.inventoryDrain?.timeToDepletionSeconds ?? null,
+    "Every buyer answered within (ms)":
+      acceptedMax === null || soldOutMax === null ? null : Math.max(acceptedMax, soldOutMax),
+    "Orders confirmed": business.confirmedOrders,
+    "ERP pace (orders/s)":
+      convergence === null
+        ? null
+        : business.confirmedOrders / (arrival.dispatchDurationSeconds + convergence),
   };
 }
 
