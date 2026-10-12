@@ -39,4 +39,166 @@ About 900 production lines and 600 test lines. Going beyond is recorded and expl
 
 ## Working Notes
 
-_None yet._
+### Arbitrations (supervisor, 2026-10-12)
+
+- **Plan:** approved.
+- **Deadline:** 45 s from request arrival.
+- **Deadline and reset answer:** the unchanged `202 reservation_secured`.
+- **Run order:** fixed, demo first. Pair 1 is discarded and the order is disclosed (design §5 updated).
+- **Preset:** `queue-comparison`, admin-only until checkpoint A.
+- **Budget:** about 940 production lines, measurement scripts included.
+- **Added requirements:**
+  - The waiting route holds a request only when the run's mode is `synchronous_confirmation`. It learns the mode from the run row that the reservation path already reads, with no extra query.
+  - Watch follows the visitor from run 1 to run 2.
+  - The panel reads as one comparison of two runs.
+
+### Plan (2026-10-12; approved, kept current during implementation)
+
+**Exposure of `/buy` (checked).** It is not public.
+- The gate reaches only the core's Caddy (`infra/caddy/Caddyfile.fly`), which sends `/dashboard/events` to the API and everything else to the web.
+- The web proxies no buy route.
+- The API listens on the private network (6PN) only, where the runner reaches it.
+
+The waiting route still waits only when the run is a `synchronous_confirmation` run. That mode comes from the `demo_runs` row that the winner's admission lock already reads (`PostgresBuyPersistence.withRunAdmissionLock`). Any other request is answered exactly as `/buy` answers it, at once.
+
+**Waiting mechanism.** The waiting route calls `ReserveOrderService.reserveInRun`: the unchanged reservation (the Redis decision, the durable rows and the BullMQ job, with the locks and the reserved connection released), returned with the run's mode as the admission lock read it. Then a winner of a `synchronous_confirmation` run waits in a new per-process `OrderConfirmationWaiter`.
+- Waiters are a map `orderId → {runId, deadlineAt, resolve}`. One timer runs only while waiters exist. Every 250 ms it reads all waiters at once: `orders` joined with `demo_runs`, `id = any($ids)`. The tick is single-flight.
+- A confirmed order resolves with its `confirmed_at`. A missing order (purged), a terminal run (reset, automatic reset or failure) or a passed deadline resolves "not confirmed". `close()` releases every waiter at shutdown. The worker is unchanged.
+- **No existing notification path is reused.** The dashboard dirty signal carries no order ID and is lossy pub/sub. The notification-queue events would tie the API to the worker's queue. Both would still need a deadline sweep and a run check. A durable read cannot miss a confirmation that lands before the waiter registers.
+- **Cost at 500 waiters:**
+  - no pooled connection is held while waiting;
+  - one query of up to 500 IDs every 250 ms, about 160 per run (the archive ran about 10⁴ statements/s);
+  - 500 idle sockets (k6 already holds one per VU) and about 2–5 MB of heap;
+  - at most 250 ms added to waits of 0–35 s (disclosed).
+
+**Answers.**
+- **Confirmed:** `200 order_confirmed`, ported: the reservation, plus the order with `status: "confirmed"` and `confirmedAt`.
+- **Not confirmed in time** (deadline or reset): the unchanged `202 reservation_secured`, which is the queued mode's own answer ("secured; being confirmed"). The order is untouched and completes later. A `failed` order (unreachable on the preset) also gets it at the deadline, as a queued buyer would. Pending-persistence answers and rejections return at once.
+- **k6:**
+  - expected statuses 200, 202 and 409;
+  - accepted = `200 order_confirmed` or the existing 202 outcomes;
+  - a new counter `checkout_order_confirmed`;
+  - one wall-latency Trend per outcome (accepted, sold out) with count, average, p95 and **max**, ported from `94f7ee1d`.
+  - The contract gains optional `httpSummary.buyerWallLatencySummary` and `confirmedResponses`; an unknown value stays null.
+- **Deadline: 45 s from request arrival** (a contracts constant).
+  - The preset needs at least 26.3 s (500 orders at 0.95 × 20/s) and realizes about 30–36 s. 45 s keeps the result set by the ERP's pace, not by this parameter.
+  - A request lasts at most about 45.3 s: 15 s under k6's 60 s timeout, and inside the spike's 80 s `maxDuration`.
+  - If drains come near 45 s, tune the preset's stock, not the deadline.
+
+**Mode selection.**
+- **Preset:** a preset-only column `demo_presets.comparison` (`order_queue`), written by the seed only. Save, duplicate and copy-to-custom write their columns one by one, so none of them copies it. Starting a comparison preset with a `configOverride` is refused (`preset_operation_not_allowed`). No custom run, public or admin, can therefore carry a mode.
+- **Run:** `demo_runs.comparison_mode` (`demo` or `synchronous_confirmation`), plus `comparison_first_run_id` on the second run (unique; on delete set null). Neither is in the config snapshot, so the runner contract, estimator and admission are untouched.
+- **Routing:**
+  - At its two start sites (start, startup replay), the API passes the runner `apiBaseUrl = <api>/synchronous-confirmation` for that mode.
+  - It registers `POST /synchronous-confirmation/buy`, bound to the waiting service. k6 still posts to `${apiBaseUrl}/buy`.
+  - There is no per-request lookup. Task 04 reuses this selector.
+
+**Chaining.**
+- **Run 1:** the normal start path (visitor check, budget, admission), with `comparison_mode = demo`.
+- **Run 2:** on each lifecycle poll tick, after `finalizeReadyRuns`, `startDueComparisonPartner()` runs under the maintenance authority.
+  - **Due when:** the latest run is a `completed` comparison first run, finalized less than 60 s ago, with no partner and no nonterminal run.
+  - **What it does:** it inserts run 2 with the same preset, snapshot and operator mode, the other mode and the link. It then runs the extracted tail of the start path (`launchAcceptedRun`), with no budget and no visitor check.
+- **Slot:** the same predicate holds the slot, so any other start meanwhile gets `run_conflict` / `active_run_exists`.
+- **Failures:** a failed or reset run 1 gets no partner. A failed start of run 2 is an ordinary failed run.
+- **Per-run lifecycle:** each run keeps its own `startedAt`, ceiling and automatic reset. There is no parent and no new state.
+- **Pair fit:** the estimate is 121 s per run (80 + 26.3 + 15), so 242 s for the pair, under 600 s. A test asserts it on the seeded preset.
+- **Order: demo first.** Visitors see the familiar system first. Any warm-up cost falls on the queued mode, which is conservative for the claim.
+- **Exclusions:** there are no cross-run public aggregates (history and ERP summaries are per run). Calibration uses the `custom` preset with overrides, which comparison presets refuse. Nothing else needs excluding.
+
+**Panel.** A `ComparisonPanel` shows on Watch below the run conclusion, and on the history detail of either run.
+- It reads both public run reports (`readComparison`, shared by Watch and history), finding the partner through the new `run.comparison {mode, partnerRunId}`, or through the live run's `comparison.firstRunId`. On Watch it reads again whenever the live run changes status.
+- Watch follows the visitor: when the live run's `firstRunId` is the visitor's run, Watch tracks the live run as the visitor's own. The panel titles itself "One comparison, two runs" and labels its columns "Run 1 of 2" and "Run 2 of 2".
+- Unknown data reads "Not recorded", and a partner not yet run or still running is stated. No winner is computed.
+- History rows show the mode.
+
+| Row (equal cohorts) | Source |
+| :-- | :-- |
+| Winners' time to answer: average and p95, all winners | k6 accepted cohort |
+| Every buyer answered within (longest single wait) | max of the accepted and sold-out cohort maxima |
+| Winners told "confirmed" / "still being confirmed" / no answer | `confirmedResponses`, `accepted − confirmed`, `transportFailures` |
+| Orders confirmed (failed) by the ERP | durable business outcome |
+| ERP pace against the declared limit | confirmed ÷ (arrival window + `convergenceDurationSeconds`); `erpConfig.maxTps` |
+| Slowest order, from secured to confirmed | `confirmationConvergence.maxLagMs` |
+
+The takeaway shows only when both runs completed:
+
+> Same buyers, stock and ERP limit. Both runs confirmed {n} orders at about {pace}/s: the queue does not make the back office faster. With the queue, every winner heard back within {a}; without it, each winner waited for their turn at the ERP, up to {b}. [{k} winners stopped waiting at 45 s and were told their order was still being confirmed; it was confirmed later like the others.] The queue moves the wait from the buyer to the back office.
+
+One line discloses the mechanism: the request stays open while the same worker confirms at the ERP's pace.
+
+**Measurement (design §5).**
+- The capacity script gains `{label, presetSlug}` entries. For each, it starts once, waits for both terminal details, appends two records (mode and pair), and tears both runs down.
+- 5 starts, with pair 1 discarded as warm-up.
+- Per mode, report the median and min–max of:
+  - winners' average and p95;
+  - the longest wait;
+  - the confirmed and deadline answers;
+  - the orders confirmed;
+  - the ERP pace;
+  - the slowest lag.
+- Also report the range of per-pair ratios, and claim the gap only if all 4 pairs agree.
+- One `scripts/comparison-analysis.mjs` turns the JSONL into a markdown table. Machines and sizes are recorded here.
+
+**Changes** (production lines / test lines; tests at boundaries only):
+
+Plan against actual net lines (git diff from `aea8ef8a`, comments and blank lines included, generated Drizzle snapshot excluded):
+
+| Item | Prod plan | Prod actual | Test plan | Test actual |
+| :-- | --: | --: | --: | --: |
+| Contracts: `order_confirmed`, deadline, HTTP cohorts and confirmed count, comparison fields | 80 | 70 | 30 | – |
+| DB: 3 enum columns (`schema.ts`, baseline SQL); seeded `queue-comparison` | 45 | 50 | – | 6 |
+| API waiter and Postgres reader | 100 | 122 | 100 | 88 |
+| API waiting service, route, server; run mode from the admission lock (added requirement: 41) | 50 | 100 | 100 | 76 |
+| API chaining (override refusal, modes, `launchAcceptedRun`, partner start, slot predicate, target URL, poll, shutdown) | 170 | 198 | 145 | 223 |
+| API reads: snapshot, history and preset mapping | 35 | 20 | – | 7 |
+| Runner: k6 script and parser | 85 | 69 | 50 | 15 |
+| Web: panel, presentation, Watch follow and history wiring, labels | 260 | 333 | 70 | 104 |
+| Scripts: capacity entries and analysis | 115 | 131 | 30 | 61 |
+| **Total** | **~940** | **1,093** | **~525** | **580** |
+
+Docs: 9 lines (k6 classification, comparison runs). **The production total is 153 lines (16 %) over the accepted budget; implementation stopped there for the supervisor's decision (see Implementation).**
+
+**Risks.**
+- The proof core's drain may approach 45 s (the archived hosted queued run's last confirmation came at about 47 s). Measure it first, and tune the stock if needed.
+- The baseline SQL is edited: the proof core needs a fresh install, and task 06 a fresh core (HD-48).
+- The 5 s poll plus the runner boot leave a gap of about 10–35 s between the two runs; Watch labels it.
+- An API restart during run 2 drops the waiting connections, as it would for any run.
+
+**Open questions (supervisor or owner).**
+1. Deadline: 45 s (recommended), or 30 s? At 30 s the preset shows "still being confirmed" for roughly the last 20–30 % of winners, but that share is set by the parameter.
+2. Should the deadline answer reuse `202 reservation_secured` (recommended), rather than a new outcome?
+3. A fixed chain order gives AB pairs, not ABBA (design §5). Accept this with pair 1 discarded and the order disclosed (recommended)? The alternative is to alternate the first mode on each start: about 10 lines, true ABBA, but visitors see either order.
+4. Is the `queue-comparison` slug OK, admin-only until checkpoint A (design §7 default)?
+
+### Implementation (2026-10-12)
+
+**Commits** on `claude/redis-queue-comparisons`, pushed:
+- `d6639d37` feat(db): seed a queue comparison preset and record each run's mode
+- `b59d9e74` feat(load): measure each buyer's wait per outcome and count confirmed answers
+- `d59c5f1d` feat(api): chain a comparison's two runs and let winners wait without the queue
+- `483c4bd4` feat(web): show a queue comparison as one report of two runs
+- `fa919e21` feat(scripts): measure comparison pairs with the capacity script
+- `18986caa` test(api): stamp the simulated confirmation after the order's queue time
+- `27d04a99` test(db): count the seeded queue comparison preset
+
+**Validation.**
+- **Dev container:** `pnpm type-check` and `pnpm test:unit` pass.
+- **Fly test runner** (`cs-test-runner`, isolated PostgreSQL and Redis):
+  - Every unit suite passes.
+  - `test:api` passes: 364 tests, including the chaining and waiting integration tests.
+  - `test:integration` passes: db 82, worker 103, mock-erp 7.
+  - Two test-only fixes along the way:
+    - the simulated confirmation is now stamped after the order's queue time, which a check constraint enforces;
+    - the seeded preset count rose to 11.
+
+**Budget stop.** Production lines came to 1,093 against the accepted ~940; the table above has the breakdown. Where it grew:
+- The web panel and its wiring took 73 more lines than planned. A seven-row, two-column report with its unknown states, the shared read, and Watch following the visitor take more lines than the estimate allowed.
+- The added requirement to read the run's mode from the admission lock took 41 lines. The mode goes through `ReserveOrderService`'s return paths and the persistence lock.
+- Chaining, the waiter and the scripts each took 16–28 lines more than planned, mostly doc comments and type declarations.
+
+The proof deployment and the measurement wait for the supervisor's decision: accept the size, or trim. Trimming candidates, about 60–80 lines in total:
+- remove the doc comments;
+- merge `synchronous-confirmation-buy-service.ts` into the waiter file;
+- drop the history-list mode label;
+- shorten the analysis script.
+
