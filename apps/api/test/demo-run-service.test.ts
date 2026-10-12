@@ -2550,6 +2550,14 @@ describe("comparison runs", () => {
     );
     await completeRun(second.id, "failed");
     expect((await resetWait).outcome).toBe("reservation_secured");
+
+    // A second run whose first run was deleted is never taken for a first run.
+    await db
+      .update(demoRuns)
+      .set({ comparisonFirstRunId: null, status: "completed", finalizedAt: finishedAt })
+      .where(eq(demoRuns.id, second.id));
+    await service.startDueComparisonPartner();
+    expect(await db.select().from(demoRuns)).toHaveLength(2);
     expect(
       (await db.select().from(orders).where(eq(orders.runId, second.id)))
         .map((order) => order.status)
@@ -2560,6 +2568,11 @@ describe("comparison runs", () => {
   it("holds the slot for the second run, and starts none after a failed first run", async () => {
     const db = requireConnection(connection).db;
     const service = createStartService(requireConnection(connection), requireRedis(redis));
+    // The admin UI estimates and starts a comparison preset with its slug alone.
+    expect(
+      (await service.previewRun({ presetSlug: "queue-comparison", operatorMode: "admin" })).result
+        .decision,
+    ).toBe("admitted");
     const first = await service.startRun(
       { presetSlug: "queue-comparison", operatorMode: "admin" },
       "comparison",

@@ -1,7 +1,6 @@
 import {
   type BuyRequest,
   type BuyResponse,
-  buyResponseSchema,
   synchronousConfirmationDeadlineMs,
 } from "@checkout-surge/contracts";
 import type { OrderConfirmationWaiter } from "./order-confirmation-waiter.js";
@@ -18,12 +17,11 @@ export class SynchronousConfirmationBuyService {
     private readonly options: {
       reserveOrderService: Pick<ReserveOrderService, "reserveInRun">;
       waiter: Pick<OrderConfirmationWaiter, "wait">;
-      now?: () => number;
     },
   ) {}
 
   async buy(input: { request: BuyRequest; correlationId: string }): Promise<BuyResponse> {
-    const deadlineAt = (this.options.now?.() ?? Date.now()) + synchronousConfirmationDeadlineMs;
+    const deadlineAt = Date.now() + synchronousConfirmationDeadlineMs;
     const { response, comparisonMode } = await this.options.reserveOrderService.reserveInRun(input);
     if (
       response.outcome !== "reservation_secured" ||
@@ -34,10 +32,10 @@ export class SynchronousConfirmationBuyService {
 
     const confirmedAt = await this.options.waiter.wait(response.order.id, deadlineAt);
     if (!confirmedAt) return response;
-    return buyResponseSchema.parse({
+    return {
       ...response,
       outcome: "order_confirmed",
       order: { ...response.order, status: "confirmed", confirmedAt: confirmedAt.toISOString() },
-    });
+    };
   }
 }

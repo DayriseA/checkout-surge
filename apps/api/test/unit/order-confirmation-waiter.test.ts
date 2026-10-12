@@ -63,8 +63,9 @@ describe("order confirmation waiter", () => {
     await expect(reset).resolves.toBeNull();
     await expect(purged).resolves.toBeNull();
 
-    // A failed read keeps the wait, still bounded by its deadline.
+    // A read that fails, or one that never returns, keeps the wait, still bounded by its deadline.
     read.mockRejectedValueOnce(new Error("database unavailable"));
+    read.mockReturnValueOnce(new Promise(() => undefined));
     await vi.advanceTimersByTimeAsync(750);
     await expect(deadline).resolves.toBeNull();
   });
@@ -82,6 +83,8 @@ describe("order confirmation waiter", () => {
     const open = waiter.wait("open", 45_000);
     waiter.close();
     await expect(open).resolves.toBeNull();
+    // A request reaching the wait after shutdown began is answered at once.
+    await expect(waiter.wait("open", 45_000)).resolves.toBeNull();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(read).toHaveBeenCalledOnce();
   });

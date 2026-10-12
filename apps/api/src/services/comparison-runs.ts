@@ -1,13 +1,14 @@
-import type { Comparison, ComparisonMode } from "@checkout-surge/contracts";
+import {
+  type Comparison,
+  type ComparisonMode,
+  comparisonModes,
+  comparisonPartnerStartGraceMs,
+} from "@checkout-surge/contracts";
 import { type CheckoutSurgeDatabase, demoPresets, demoRuns } from "@checkout-surge/db";
-import { and, desc, eq, gte, isNotNull, isNull, notExists } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+import { desc, eq } from "drizzle-orm";
 
 /** Path prefix of the buy route that waits for the order's confirmation. */
 export const synchronousConfirmationBuyPathPrefix = "/synchronous-confirmation";
-
-/** After this long, a first comparison run whose partner never started stops holding the slot. */
-const partnerStartGraceMs = 60_000;
 
 /**
  * The base URL the runner's k6 posts `/buy` to. A run without the order queue targets the waiting
@@ -20,35 +21,28 @@ export function buyTargetBaseUrl(apiBaseUrl: string, mode: ComparisonMode | null
 }
 
 /**
- * A completed first run of a comparison, finalized recently, whose second run has not started.
- * Until the second run starts, it holds the run slot.
+ * The latest run, when it is a completed first run of a comparison, finalized recently: its second
+ * run is due, and until it starts it holds the run slot. Any later run, the second one included,
+ * ends this; a run in another mode never counts as a first run, even if its link was deleted.
  */
 export async function findRunAwaitingComparisonPartner(
   db: Pick<CheckoutSurgeDatabase, "select">,
   now: Date,
 ): Promise<{ run: typeof demoRuns.$inferSelect; comparison: Comparison } | null> {
-  const partners = alias(demoRuns, "comparison_partner");
-  const [row] = await db
+  const [latest] = await db
     .select({ run: demoRuns, comparison: demoPresets.comparison })
     .from(demoRuns)
     .innerJoin(demoPresets, eq(demoPresets.id, demoRuns.presetId))
-    .where(
-      and(
-        eq(demoRuns.status, "completed"),
-        isNotNull(demoRuns.comparisonMode),
-        isNull(demoRuns.comparisonFirstRunId),
-        gte(demoRuns.finalizedAt, new Date(now.getTime() - partnerStartGraceMs)),
-        notExists(
-          db
-            .select({ id: partners.id })
-            .from(partners)
-            .where(eq(partners.comparisonFirstRunId, demoRuns.id)),
-        ),
-      ),
-    )
-    .orderBy(desc(demoRuns.finalizedAt))
+    .orderBy(desc(demoRuns.createdAt))
     .limit(1);
-  return row?.comparison ? { run: row.run, comparison: row.comparison } : null;
+  if (!latest?.comparison) return null;
+  const { run, comparison } = latest;
+  const due =
+    run.status === "completed" &&
+    run.comparisonMode === comparisonModes[comparison][0] &&
+    run.finalizedAt !== null &&
+    run.finalizedAt.getTime() >= now.getTime() - comparisonPartnerStartGraceMs;
+  return due ? { run, comparison } : null;
 }
 
 /** The other run of a comparison: the first run it continues, or the run continuing it. */

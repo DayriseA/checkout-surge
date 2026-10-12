@@ -55,6 +55,7 @@ import {
   internalTrafficCompletionPath,
   inventoryStatusSchema,
   inventoryUpdatedEventPayloadSchema,
+  k6RequestTimeoutSeconds,
   loadExecutionPlanSchema,
   loadMetricIngestRequestSchema,
   loadRunDiagnosticsSummarySchema,
@@ -103,6 +104,7 @@ import {
   startDemoRunPath,
   startDemoRunRequestSchema,
   stockReservationDecisionSchema,
+  synchronousConfirmationDeadlineMs,
   toPublicRunFailureCategory,
   trafficCompletionAcknowledgementSchema,
   trafficCompletionDeliverySummarySchema,
@@ -145,6 +147,12 @@ describe("intrinsic numeric contract bounds", () => {
     expect(percentageSchema.safeParse(percentageMinimum).success).toBe(true);
     expect(percentageSchema.safeParse(percentageMaximum).success).toBe(true);
     expect(percentageSchema.safeParse(percentageMaximum + 0.01).success).toBe(false);
+  });
+
+  it("ends a buyer's wait for confirmation well before k6 gives up on the request", () => {
+    expect(synchronousConfirmationDeadlineMs + 10_000).toBeLessThanOrEqual(
+      k6RequestTimeoutSeconds * 1000,
+    );
   });
 });
 

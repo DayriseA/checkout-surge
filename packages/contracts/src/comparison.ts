@@ -15,6 +15,9 @@ export const comparisonModes = {
   order_queue: ["demo", "synchronous_confirmation"],
 } as const satisfies Record<Comparison, readonly [ComparisonMode, ComparisonMode]>;
 
+/** After this long, a completed first run whose second run never started stops holding the slot. */
+export const comparisonPartnerStartGraceMs = 60_000;
+
 /**
  * Without the order queue, a winner's request stays open until the worker confirms its order.
  * Counted from the request's arrival; past it, the buyer gets the queued mode's own answer and

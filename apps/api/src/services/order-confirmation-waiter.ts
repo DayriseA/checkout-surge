@@ -46,17 +46,18 @@ export class OrderConfirmationWaiter {
   private readonly waiters = new Map<string, Waiter[]>();
   private timer: NodeJS.Timeout | null = null;
   private reading = false;
+  private closed = false;
 
   constructor(
     private readonly options: {
       reader: OrderConfirmationReader;
       intervalMs?: number;
-      now?: () => number;
       onReadError?: (error: unknown) => void;
     },
   ) {}
 
   wait(orderId: string, deadlineAt: number): Promise<Date | null> {
+    if (this.closed) return Promise.resolve(null);
     return new Promise((resolve) => {
       const waiters = this.waiters.get(orderId) ?? [];
       waiters.push({ deadlineAt, resolve });
@@ -65,32 +66,31 @@ export class OrderConfirmationWaiter {
     });
   }
 
-  /** Ends every wait; each request then gets its accepted answer. */
+  /** Ends every wait, and any later one at once; each request then gets its accepted answer. */
   close(): void {
+    this.closed = true;
     for (const orderId of [...this.waiters.keys()]) this.settle(orderId, null);
     this.stopWhenIdle();
   }
 
   async tick(): Promise<void> {
-    if (this.reading || this.waiters.size === 0) return;
+    // Deadlines are kept on every tick, even while a slow read is still in flight.
+    const now = Date.now();
+    for (const orderId of [...this.waiters.keys()]) this.settleExpired(orderId, now);
+    if (this.reading || this.waiters.size === 0) return this.stopWhenIdle();
     this.reading = true;
     try {
       const orderIds = [...this.waiters.keys()];
-      let states: Map<string, OrderConfirmationState> | null = null;
-      try {
-        const rows = await this.options.reader.read(orderIds);
-        states = new Map(rows.map((row) => [row.orderId, row]));
-      } catch (error) {
-        // Deadlines still apply; the next tick reads again.
-        this.options.onReadError?.(error);
-      }
-      const now = this.now();
+      const rows = await this.options.reader.read(orderIds);
+      const states = new Map(rows.map((row) => [row.orderId, row]));
       for (const orderId of orderIds) {
-        const state = states?.get(orderId);
+        const state = states.get(orderId);
         if (state?.confirmedAt) this.settle(orderId, state.confirmedAt);
-        else if (states && !state?.runOpen) this.settle(orderId, null);
-        else this.settleExpired(orderId, now);
+        else if (!state?.runOpen) this.settle(orderId, null);
       }
+    } catch (error) {
+      // The waits stay, bounded by their deadlines; the next tick reads again.
+      this.options.onReadError?.(error);
     } finally {
       this.reading = false;
       this.stopWhenIdle();
@@ -114,9 +114,5 @@ export class OrderConfirmationWaiter {
     if (this.waiters.size > 0 || !this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
-  }
-
-  private now(): number {
-    return this.options.now?.() ?? Date.now();
   }
 }
