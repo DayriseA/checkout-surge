@@ -107,7 +107,7 @@ A first implementation (branch `codex/redis-order-queue-feasibility`, archived, 
 - Same protections, the same durable record before "yes", and the same order lifecycle and teardown.
 - Each comparison is measured repeatedly, with the modes interleaved rather than in blocks, and the spread is reported.
 - Any simulated constraint (latency, a smaller pool) is stated in the visitor-facing text.
-- **Measurement method (2026-10-12):** 4 to 5 pairs per comparison, in ABBA order, the first run discarded as warm-up; report the median and the min–max, and claim a difference only if every pair agrees. Equal cohorts: compare all winners (or all buyers) in both modes, never only those who got a given answer. Tooling stays within the existing capacity script, in-app counters and one small analysis script.
+- **Measurement method (2026-10-12):** 4 to 5 pairs per comparison, the first pair discarded as warm-up. A preset chains its two runs in a fixed order (the demo mode first, so that visitors see the familiar system first); this order is disclosed, and acceptable while the measured gap dwarfs any order effect; report the median and the min–max, and claim a difference only if every pair agrees. Equal cohorts: compare all winners (or all buyers) in both modes, never only those who got a given answer. Tooling stays within the existing capacity script, in-app counters and one small analysis script.
 
 ## 6. Environment and Autonomous Work
 
