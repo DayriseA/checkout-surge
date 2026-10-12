@@ -1,9 +1,4 @@
 import {
-  erpDispatchRateLimit,
-  idleErpDispatchLimits,
-  orderProcessJobName,
-} from "@checkout-surge/contracts";
-import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
   postgresOrderQueueChannel,
@@ -39,10 +34,7 @@ import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
 import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notification-record-consumer.js";
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
-import {
-  createBullMqOrderProcessConsumer,
-  processJob,
-} from "./queue/bullmq-order-process-consumer.js";
+import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
 import { createPostgresOrderQueueConsumer } from "./queue/postgres-order-queue-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
@@ -139,28 +131,10 @@ export async function startWorker(): Promise<void> {
   const postgresOrderQueueConsumer = createPostgresOrderQueueConsumer({
     queue: new PostgresOrderQueuePersistence(database.db),
     listen: (wake) => database.sql.listen(postgresOrderQueueChannel, wake, wake),
-    limits: async (runId) => {
-      const snapshot = await runConfigReader.read(runId);
-      const { max, duration } = erpDispatchRateLimit(
-        snapshot?.erpConfig.maxTps ?? idleErpDispatchLimits.maxTps,
-      );
-      return {
-        intervalMs: duration / max,
-        concurrency:
-          snapshot?.backpressureConfig.orderProcessConcurrency ?? idleErpDispatchLimits.concurrency,
-      };
-    },
-    deliver: (job, deliveries) =>
-      processJob(
-        {
-          name: orderProcessJobName,
-          data: job,
-          id: job.orderId,
-          attemptsMade: deliveries - 1,
-          updateProgress: async () => undefined,
-        },
-        { handler: orderProcessHandler, recovery: orderRecoveryPersistence },
-      ),
+    runConfig: runConfigReader,
+    // The handler is built below, from the admission that pauses this consumer.
+    handler: { handle: (job, delivery) => orderProcessHandler.handle(job, delivery) },
+    recovery: orderRecoveryPersistence,
     logger,
   });
   const orderProcessAdmission = await AdaptiveErpRuntimeAdmission.restore({

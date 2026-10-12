@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type OrderProcessJob, orderProcessJobName } from "@checkout-surge/contracts";
+import type { OrderProcessJob } from "@checkout-surge/contracts";
+import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import {
   createDatabaseConnection,
   demoRuns,
@@ -16,11 +17,15 @@ import { createSilentLogger } from "@checkout-surge/logger";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOrderDispatchScanner } from "../../src/application/order-dispatch-scanner.js";
-import { createOrderProcessJobHandler } from "../../src/application/order-process-job-handler.js";
+import {
+  createOrderProcessJobHandler,
+  type OrderProcessDeliveryMetadata,
+  type OrderProcessJobHandler,
+  type RecoverableOrderHandoff,
+} from "../../src/application/order-process-job-handler.js";
 import { PostgresOrderDispatchPersistence } from "../../src/persistence/postgres-order-dispatch-persistence.js";
 import { PostgresOrderQueuePersistence } from "../../src/persistence/postgres-order-queue-persistence.js";
 import { PostgresOrderTransitionPersistence } from "../../src/persistence/postgres-order-transition-persistence.js";
-import { processJob } from "../../src/queue/bullmq-order-process-consumer.js";
 import { createPostgresOrderQueueConsumer } from "../../src/queue/postgres-order-queue-consumer.js";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -49,16 +54,22 @@ describe("PostgreSQL order queue", () => {
   });
 
   function consumerWith(options: {
-    deliver: (job: OrderProcessJob, deliveries: number) => Promise<void>;
-    intervalMs?: number;
+    handle: OrderProcessJobHandler["handle"];
+    maxTps?: number;
+    recordRecoverable?: (input: RecoverableOrderHandoff) => Promise<void>;
   }) {
+    const snapshot = previewRunConfigSnapshotFixture();
+    snapshot.erpConfig.maxTps = options.maxTps ?? 1000;
     return createPostgresOrderQueueConsumer({
       queue: new PostgresOrderQueuePersistence(connection.db),
       listen: (wake) => connection.sql.listen(postgresOrderQueueChannel, wake, wake),
-      limits: async () => ({ intervalMs: options.intervalMs ?? 0, concurrency: 5 }),
-      deliver: options.deliver,
+      runConfig: { read: async () => snapshot },
+      handler: { handle: options.handle },
+      recovery: {
+        recordRecoverable: options.recordRecoverable ?? (async () => undefined),
+        recordDeadLetter: async () => undefined,
+      },
       logger,
-      retryDelayMs: 50,
     });
   }
 
@@ -71,25 +82,10 @@ describe("PostgreSQL order queue", () => {
       notificationRecordPublisher: { publishForConfirmedOrder: async () => undefined },
       recovery: { handoff: async () => undefined, resolve: async () => undefined },
     });
-    const deliver = vi.fn((job: OrderProcessJob, deliveries: number) =>
-      processJob(
-        {
-          name: orderProcessJobName,
-          data: job,
-          id: job.orderId,
-          attemptsMade: deliveries - 1,
-          updateProgress: async () => undefined,
-        },
-        {
-          handler,
-          recovery: {
-            recordRecoverable: async () => undefined,
-            recordDeadLetter: async () => undefined,
-          },
-        },
-      ),
+    const handle = vi.fn((job: OrderProcessJob, delivery: OrderProcessDeliveryMetadata) =>
+      handler.handle(job, delivery),
     );
-    const consumer = consumerWith({ deliver });
+    const consumer = consumerWith({ handle });
     consumer.start();
     try {
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -108,7 +104,7 @@ describe("PostgreSQL order queue", () => {
       await vi.waitFor(async () =>
         expect(await connection.db.select().from(postgresOrderQueue)).toEqual([]),
       );
-      expect(deliver).toHaveBeenCalledOnce();
+      expect(handle).toHaveBeenCalledOnce();
     } finally {
       await consumer.close();
     }
@@ -120,34 +116,72 @@ describe("PostgreSQL order queue", () => {
 
     const claims = await Promise.all([queue.claim(60_000), queue.claim(60_000)]);
 
-    expect(claims.filter(Boolean).map((claim) => claim?.job.orderId)).toEqual([orderIds[0]]);
+    expect(claims.flatMap((claim) => ("job" in claim ? [claim.job.orderId] : []))).toEqual([
+      orderIds[0],
+    ]);
   });
 
-  it("paces deliveries at the run's rate and delivers a failed job again", async () => {
-    const deliveries: Array<{ orderId: string; at: number }> = [];
-    let failures = 0;
+  it("paces deliveries at the run's rate", async () => {
+    const deliveredAt: number[] = [];
     const consumer = consumerWith({
-      intervalMs: 200,
-      deliver: async (job) => {
-        deliveries.push({ orderId: job.orderId, at: Date.now() });
-        if (job.orderId === orderIds[0] && failures++ === 0) throw new Error("ERP unreachable");
+      maxTps: 5,
+      handle: async () => {
+        deliveredAt.push(Date.now());
       },
     });
     await connection.db.insert(postgresOrderQueue).values(orderIds.map((orderId) => ({ orderId })));
     consumer.start();
     try {
-      await vi.waitFor(() => expect(deliveries).toHaveLength(3), { timeout: 5_000 });
+      await vi.waitFor(() => expect(deliveredAt).toHaveLength(2), { timeout: 5_000 });
+    } finally {
+      await consumer.close();
+    }
+    // At 5 orders per second less the safety margin, one delivery every 211 ms.
+    expect((deliveredAt[1] ?? 0) - (deliveredAt[0] ?? 0)).toBeGreaterThanOrEqual(200);
+  });
+
+  it("delivers a job again once the lease of a delivery that never settled expires", async () => {
+    // A worker that stopped mid-delivery left this job leased.
+    await connection.db.insert(postgresOrderQueue).values({
+      orderId: orderIds[0] as string,
+      lockedUntil: sql`now() + interval '500 milliseconds'`,
+    });
+    const handle = vi.fn(async () => undefined);
+    const consumer = consumerWith({ handle });
+    const startedAt = Date.now();
+    consumer.start();
+    try {
+      await vi.waitFor(() => expect(handle).toHaveBeenCalledOnce(), { timeout: 5_000 });
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(400);
       await vi.waitFor(async () =>
         expect(await connection.db.select().from(postgresOrderQueue)).toEqual([]),
       );
     } finally {
       await consumer.close();
     }
-    const gaps = deliveries
-      .slice(1)
-      .map((delivery, index) => delivery.at - (deliveries[index]?.at ?? 0));
-    expect(gaps.every((gap) => gap >= 190)).toBe(true);
-    expect(deliveries.filter(({ orderId }) => orderId === orderIds[0])).toHaveLength(2);
+  });
+
+  it("settles a failed job once the recovery path took it, and keeps it leased otherwise", async () => {
+    class DeliveryPersistenceError extends Error {
+      override readonly name = "DeliveryPersistenceError";
+    }
+    const consumer = consumerWith({
+      handle: async () => Promise.reject(new DeliveryPersistenceError("database unavailable")),
+      recordRecoverable: async ({ job }) => {
+        if (job.orderId === orderIds[1]) throw new Error("recovery handoff failed");
+      },
+    });
+    await connection.db.insert(postgresOrderQueue).values(orderIds.map((orderId) => ({ orderId })));
+    consumer.start();
+    try {
+      await vi.waitFor(async () => {
+        const rows = await connection.db.select().from(postgresOrderQueue);
+        expect(rows.map((row) => row.orderId)).toEqual([orderIds[1]]);
+        expect(rows[0]?.lockedUntil?.getTime()).toBeGreaterThan(Date.now());
+      });
+    } finally {
+      await consumer.close();
+    }
   });
 
   it("leaves the dispatch repair to BullMQ orders only", async () => {
