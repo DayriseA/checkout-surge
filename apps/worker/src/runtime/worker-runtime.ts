@@ -4,6 +4,7 @@ import type { OrderDispatchScanner } from "../application/order-dispatch-scanner
 import type { OrderRecoveryScanner } from "../application/order-recovery-scanner.js";
 import type { NotificationRecordConsumer } from "../queue/notification-record-consumer.js";
 import type { OrderProcessConsumer } from "../queue/order-process-consumer.js";
+import type { PostgresOrderQueueConsumer } from "../queue/postgres-order-queue-consumer.js";
 import type { WorkerHealthServer } from "../server.js";
 
 export function createWorkerRuntime(options: {
@@ -11,6 +12,7 @@ export function createWorkerRuntime(options: {
   healthHost: string;
   healthPort: number;
   orderProcessConsumer: OrderProcessConsumer;
+  postgresOrderQueueConsumer?: PostgresOrderQueueConsumer;
   notificationRecordConsumer: NotificationRecordConsumer;
   notificationRecoveryScanner?: NotificationRecoveryScanner;
   orderDispatchScanner?: OrderDispatchScanner;
@@ -38,6 +40,7 @@ export function createWorkerRuntime(options: {
       try {
         await options.orderRecoveryScanner?.scanOnce();
         options.orderProcessConsumer.start();
+        options.postgresOrderQueueConsumer?.start();
         options.notificationRecordConsumer.start();
         options.notificationRecoveryScanner?.start();
         options.orderDispatchScanner?.start();
@@ -91,6 +94,10 @@ async function closeResources(options: Parameters<typeof createWorkerRuntime>[0]
 
   await close(() => options.healthServer.close());
   await close(() => options.orderProcessConsumer.close());
+  const postgresOrderQueueConsumer = options.postgresOrderQueueConsumer;
+  if (postgresOrderQueueConsumer) {
+    await close(() => postgresOrderQueueConsumer.close());
+  }
   await close(() => options.notificationRecordConsumer.close());
   const notificationRecoveryScanner = options.notificationRecoveryScanner;
   if (notificationRecoveryScanner) {
