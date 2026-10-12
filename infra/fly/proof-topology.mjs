@@ -91,6 +91,7 @@ export function configureProofTopology(config, environment) {
     ];
   } else if (role === "runner") {
     config.guest = { cpu_kind: "performance", cpus: 16, memory_mb: 32768 };
+    config.env.GOMAXPROCS = "12";
     if (environment.name !== "proof" || environment.proofEvidenceCapture !== true) return config;
     config.env.PROOF_K6_CAPTURE_DIR = "/var/lib/checkout-surge/load-orchestrator/proof-capture";
     config.files = [

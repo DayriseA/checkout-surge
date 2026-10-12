@@ -61,6 +61,7 @@ test("proof moves stores out and installs one authority with three buyers and pr
   const runner = configureMachine(template("runner"), { ...proof, proofEvidenceCapture: true });
   assert.equal(runner.guest.cpus, 16);
   assert.equal(runner.guest.memory_mb, 32768);
+  assert.equal(runner.env.GOMAXPROCS, "12");
   assert.equal(
     runner.env.PROOF_K6_CAPTURE_DIR,
     `${runner.env.LOAD_ORCHESTRATOR_STATE_DIR}/proof-capture`,
@@ -75,7 +76,7 @@ test("proof moves stores out and installs one authority with three buyers and pr
   assert.ok(runner.init.exec[3].endsWith("exec node dist/index.js"));
 });
 
-test("capture off preserves the measured physical topology and production never captures", () => {
+test("capture off preserves the shared physical topology and production never captures", () => {
   for (const role of ["core", "runner", "gate", "guard", "stores"]) {
     const input = () => {
       const config =
@@ -88,6 +89,7 @@ test("capture off preserves the measured physical topology and production never 
     const captured = configureMachine(input(), { ...proof, proofEvidenceCapture: true });
     const normal = configureMachine(input(), { ...proof, proofEvidenceCapture: false });
     if (role === "runner") {
+      assert.equal(normal.env.GOMAXPROCS, "12");
       delete captured.env.PROOF_K6_CAPTURE_DIR;
       delete captured.files;
       delete captured.init;
