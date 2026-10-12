@@ -260,11 +260,14 @@ async function main([runListFile, outputFile]) {
       runIds.push(await waitForComparisonPartner(api, firstRunId));
       details.push(await waitForTerminalDetail(api, runIds[1]));
     }
-    const records = details.map((detail) =>
-      toRecord({ label: run.label, detail, estimate: estimates[index], host }),
-    );
+    // Both runs of a comparison share the first run's id as their pair.
+    const records = details.map((detail) => ({
+      ...toRecord({ label: run.label, detail, estimate: estimates[index], host }),
+      pairId: firstRunId,
+    }));
     for (const record of records) appendFileSync(outputFile, `${JSON.stringify(record)}\n`);
-    for (const [position, runId] of [...runIds.entries()].reverse()) {
+    // The first run goes first: deleted second, it would be due for a second run again.
+    for (const [position, runId] of runIds.entries()) {
       const teardown = await teardownRun(api, runId);
       console.log(`${summaryLine(records[position])} | teardown ${teardown}`);
       // A run left in place would change the state the next run starts from.

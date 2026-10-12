@@ -11,7 +11,8 @@ test("a comparison preset entry starts the preset as defined", () => {
 
 function record(label, comparisonMode, winnerP95Ms, confirmed) {
   return {
-    label,
+    label: "queue-comparison",
+    pairId: label,
     comparisonMode,
     status: "completed",
     responses: {
@@ -44,7 +45,7 @@ test("pairs every completed pair and reports the spread and whether all pairs ag
   ];
   const pairs = pairsOf(records);
   assert.deepEqual(
-    pairs.map((pair) => pair.label),
+    pairs.map((pair) => pair.demo.pairId),
     ["pair-1", "pair-2"],
   );
   const table = comparisonTable(pairs);

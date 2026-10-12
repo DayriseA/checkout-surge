@@ -23,7 +23,9 @@ export function runMetrics(record) {
       accepted && soldOutMax !== null ? Math.max(accepted.maxMs, soldOutMax) : null,
     "Winners told confirmed": confirmed,
     "Winners told still being confirmed":
-      confirmed === null ? null : responses.acceptedResponses - confirmed,
+      confirmed === null || responses.acceptedResponses === null
+        ? null
+        : responses.acceptedResponses - confirmed,
     "Orders confirmed": business.confirmedOrders,
     "ERP pace (orders/s)":
       convergence === null
@@ -33,18 +35,20 @@ export function runMetrics(record) {
   };
 }
 
-/** Pairs in file order: each label holds one run per mode. */
+/** Pairs in file order, one per start: both runs of a start share its `pairId`. */
 export function pairsOf(records) {
-  const byLabel = new Map();
+  const byPair = new Map();
   for (const record of records) {
     if (!modes.includes(record.comparisonMode)) continue;
-    const pair = byLabel.get(record.label) ?? {};
+    // Records written before pairId existed fall back to their label.
+    const key = record.pairId ?? record.label;
+    const pair = byPair.get(key) ?? { label: record.label };
     pair[record.comparisonMode] = record;
-    byLabel.set(record.label, pair);
+    byPair.set(key, pair);
   }
-  return [...byLabel.entries()]
-    .filter(([, pair]) => modes.every((mode) => pair[mode]?.status === "completed"))
-    .map(([label, pair]) => ({ label, ...pair }));
+  return [...byPair.values()].filter((pair) =>
+    modes.every((mode) => pair[mode]?.status === "completed"),
+  );
 }
 
 function median(values) {
@@ -79,7 +83,7 @@ export function comparisonTable(pairs) {
     return `| ${name} | ${spread(queued)} | ${spread(waiting)} | ${ratios.length ? spread(ratios) : "–"} | ${direction} |`;
   });
   return [
-    `Pairs: ${pairs.map((pair) => pair.label).join(", ")}. Median (min–max).`,
+    `${pairs.length} pairs. Median (min–max).`,
     "",
     "| Metric | With the queue | Without the queue | Ratio without/with | Pairs |",
     "| :-- | --: | --: | --: | :-- |",
