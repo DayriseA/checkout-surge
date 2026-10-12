@@ -16,7 +16,7 @@ import {
 } from "@checkout-surge/db";
 import { requireTestDatabaseUrl, resetTestDatabase } from "@checkout-surge/db/testing";
 import { sql } from "drizzle-orm";
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import { PostgresStockPersistence } from "../src/services/postgres-stock-persistence.js";
 import { terminalDemoRunTransitionLockKey } from "../src/services/terminal-demo-run-transition.js";
@@ -45,16 +45,20 @@ const configSnapshot = {
 };
 
 describe("PostgreSQL stock decision", () => {
-  const connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 10 });
-  const db = connection.db;
-  const stock = new PostgresStockPersistence(db, connection.sql, new PostgresBuyPersistence(db));
+  // A pool per test: its prepared statements must not outlive the schema the reset recreates.
+  let connection: ReturnType<typeof createDatabaseConnection>;
+  let db: ReturnType<typeof createDatabaseConnection>["db"];
+  let stock: PostgresStockPersistence;
 
   beforeEach(async () => {
     await resetTestDatabase();
+    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 10 });
+    db = connection.db;
+    stock = new PostgresStockPersistence(db, connection.sql, new PostgresBuyPersistence(db));
     await seedRun(5);
   });
 
-  afterAll(async () => {
+  afterEach(async () => {
     await connection.close();
   });
 
@@ -70,7 +74,7 @@ describe("PostgreSQL stock decision", () => {
     expect(order?.status).toBe("queued");
     expect(await db.select().from(orderEvents)).toHaveLength(2);
     expect(await db.select().from(postgresOrderQueue)).toEqual([
-      expect.objectContaining({ orderId: order?.id, deliveries: 0 }),
+      expect.objectContaining({ orderId: order?.id, lockedUntil: null }),
     ]);
   });
 
