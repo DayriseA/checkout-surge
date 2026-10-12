@@ -46,7 +46,7 @@ Choices waiting for the owner, added with the task, the options and a recommenda
 | 01 | [Proof environment](01_proof_environment.md) | hosted deployment backlog done | done |
 | 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | done |
 | 03 | [Queue comparison](03_queue_comparison.md), owner checkpoint A | 01 | done |
-| 04 | [Redis comparison](04_redis_comparison.md), owner checkpoint B | 03 | todo |
+| 04 | [Redis comparison](04_redis_comparison.md), owner checkpoint B | 03 | in progress |
 | 05 | [Interface pass](05_interface_pass.md), owner checkpoint C | 04 | todo |
 | 06 | [Narrative and decisions](06_narrative.md), owner checkpoint D | 05 | todo |
 | 07 | [Production rollout](07_production_rollout.md) | 06 | todo |
