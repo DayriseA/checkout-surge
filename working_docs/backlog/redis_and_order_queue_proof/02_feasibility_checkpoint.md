@@ -28,4 +28,6 @@ The owner knows, from measurements in the proof environment, whether a configura
 
 ## Working Notes
 
-_None yet._
+### Outcome (2026-10-11, recorded 2026-10-12)
+
+Done on the archived branch `codex/redis-order-queue-feasibility`, where the full report sits in this file's working notes; its lab lives there under `scripts/feasibility/` and `infra/fly/feasibility/`. The owner gave a general GO to continue. The configurations found and their results are summarized in [review_2026-10-12.md](review_2026-10-12.md#findings): Redis cut PostgreSQL CPU by a median 95.4 % (1,000 arrivals/s for 10 s, stock 1), and the queue cut winner p95 from 33.7 s to 2.3 s with every order confirmed in both modes (5,000-buyer spike, stock 500, ERP 100 ms and 20 TPS). The restart decisions are in design section 3.1.

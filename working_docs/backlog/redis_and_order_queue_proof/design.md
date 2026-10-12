@@ -75,15 +75,30 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 - **A feasibility checkpoint.** Before building the feature, prototypes find a configuration that shows the point. The work then stops for the owner's go or no-go.
 - **Autonomous work** (section 6). An AI agent runs the project on the owner's laptop, on its own branches and in its own Fly.io environment. The owner joins near the end for the final review.
 
+## 3.1 Restart Decisions (2026-10-12)
+
+A first implementation (branch `codex/redis-order-queue-feasibility`, archived, PR #7 closed) passed the feasibility checkpoint but then drifted: both of its live comparisons reported artifacts of its own implementation, it changed the default production topology, and it grew about ten times larger than the feature needs. [review_2026-10-12.md](review_2026-10-12.md) records the findings and the traps to avoid. The owner decided:
+
+- **Restart from `dev`** on branch `claude/redis-queue-comparisons`, with a lean design. Sound parts of the archived branch are ported, not merged.
+- **Two fixed presets, one per comparison.** Each preset runs its two modes as two chained runs on the same workload, and the visitor's run budget is charged once. There is no parent run or "one button, four runs" flow.
+- **Ordinary runs and the production topology stay unchanged.** The conditions a comparison needs (several buy-only API processes, a distance to the stores) apply to comparison runs only. No new production app, and no recalibration of the `CAPACITY_*` values: custom runs never carry a comparative mode, so the admission model is unaffected.
+- **Distance is simulated** for comparison runs, with the same added latency to PostgreSQL and Redis, and stated as a simulation in the visitor-facing text.
+- **The Redis comparison's headline is database load.** Redis keeps turned-away buyers off PostgreSQL. Response times are shown only if they are stable across repetitions.
+- **Without the order queue, no order is lost or failed because a buyer stopped waiting.** A buyer whose wait reaches the deadline gets an honest "still being confirmed" answer, and the order is confirmed later as usual. The honest message is that the buyer pays for the back office's pace, not that the system breaks.
+- **The queue comparison comes first**, end to end, since its effect is the largest and was confirmed at the checkpoint. The Redis comparison follows.
+- **Owner checkpoints** (README): each is a one-page summary with the decision asked and a recommendation.
+
 ## 4. Modes
 
 | Mode | Stock decision and sold-out answers | Order queue | ERP call |
 |---|---|---|---|
 | Demo (today) | Redis | Redis (BullMQ) | Worker, after the answer |
 | Without Redis | PostgreSQL | PostgreSQL | Worker, after the answer |
-| Without the order queue | Redis | None | Inside the buyer's request, paced at the ERP's rate |
+| Without the order queue (synchronous confirmation) | Redis | None on the buyer's side: the request waits | Worker, at the ERP's pace, while the buyer's request waits for the confirmation |
 
 - Every mode has the same protections and the same HTTP answers. One exception: without the order queue, the accepted answer is given after the ERP confirms, and must say so.
+- Without the order queue, the request waits for the existing worker's confirmation rather than calling the ERP itself: the buyer's experience is the same as an inline call paced at the ERP's rate, and the ERP client and its pacing stay single. What is compared is answering at reservation (asynchronous) against answering at confirmation (synchronous).
+- Without Redis, Redis still carries notifications and the live dashboard feed; the visitor-facing label is "stock decision and order queue in PostgreSQL".
 - A mode is a property of the run, set only by a comparative preset.
 
 ## 5. Fairness Rules
@@ -92,6 +107,7 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 - Same protections, the same durable record before "yes", and the same order lifecycle and teardown.
 - Each comparison is measured repeatedly, with the modes interleaved rather than in blocks, and the spread is reported.
 - Any simulated constraint (latency, a smaller pool) is stated in the visitor-facing text.
+- **Measurement method (2026-10-12):** 4 to 5 pairs per comparison, in ABBA order, the first run discarded as warm-up; report the median and the min–max, and claim a difference only if every pair agrees. Equal cohorts: compare all winners (or all buyers) in both modes, never only those who got a given answer. Tooling stays within the existing capacity script, in-app counters and one small analysis script.
 
 ## 6. Environment and Autonomous Work
 
@@ -106,6 +122,7 @@ A cloud session measured a throwaway baseline against the demo system. The proto
   - Work on the project's own branches. Never push to `dev` or `main`, and never merge into them.
   - Merge `dev` into the project's branches regularly.
   - The CI deploy runs only on a push to `main`, so these branches never deploy production.
+- **Tests (2026-10-12):** never on the owner's Windows host. Small runs go in the dev container, which mounts the working tree. Heavy suites (`pnpm test` with the isolated PostgreSQL and Redis) run on the dedicated Fly test runner `cs-test-runner` in `playground-416` (`infra/fly/test-runner/`).
 - **Costs:** no spending cap (owner decision, 2026-10-11). The owner supervises the agent and the Fly.io account. Machines serve the work and are stopped or destroyed when not in use. The agent records the Machines it keeps and their sizes in the task notes.
 - **Decisions:** the agent records each choice and its reason in the task notes. A choice that changes the owner's decisions above, the fairness rules, or production is not taken alone: it goes to the owner's review list in the README.
 - **Stop and report:**
@@ -115,14 +132,8 @@ A cloud session measured a throwaway baseline against the demo system. The proto
 
 ## 7. Open Points
 
-- **Distance:**
-  - separate machines for PostgreSQL and Redis, or a simulated latency on the core;
-  - which round-trip time stands for "production" (same data center, or across zones).
-- **Production topology:** whether the production demo moves to several API processes and remote stores for every run, or only for comparative runs, and what that costs per month.
-- **Presets:**
-  - what the presets show: response times, turned-away buyers answered per second, database load, or several of these;
-  - whether they are public or admin-only;
-  - how two chained runs fit the run slot, the 600 s occupancy ceiling and the automatic reset.
-- **Run history:** how runs that fail by design (the mode without the order queue) read, without polluting public aggregates or capacity calibration.
-- **Redis script:** whether to slim the stock Lua script to raise Redis's ceiling.
-- **Load generator:** the runner size needed beyond 2,500 requests per second (it peaked at 90 % CPU there).
+Settled on 2026-10-12 (section 3.1): separate machines or simulated latency (simulated, comparison runs only), production topology (unchanged), what the presets show (database load for Redis; buyer waiting for the queue), how chained runs fit the run slot (two chained runs per preset), and how the mode without the order queue reads (it does not fail by design). Still open:
+
+- **Distance value:** which added round trip stands for "production" (start from the measured private-network round trip on Fly, about 0.8 ms).
+- **Exposure:** the presets stay admin-only until the owner validates each comparison at its checkpoint, then become public.
+- **Redis script:** whether to slim the stock Lua script. Default: leave it unchanged.
