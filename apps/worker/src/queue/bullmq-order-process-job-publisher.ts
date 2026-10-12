@@ -6,7 +6,7 @@ import {
 } from "@checkout-surge/contracts";
 import { type ConnectionOptions, Queue } from "bullmq";
 import type { GeneratedRunPublicationFence } from "../application/generated-run-publication-fence.js";
-import type { OrderJobPublisher } from "../application/order-job-publisher.js";
+import type { OrderJobPresence, OrderJobPublisher } from "../application/order-job-publisher.js";
 import type {
   FailedOrderJobReader,
   OrderDeliveryStateReader,
@@ -18,6 +18,7 @@ import {
 
 export interface WorkerOrderProcessJobPublisher
   extends OrderJobPublisher,
+    OrderJobPresence,
     FailedOrderJobReader,
     OrderDeliveryStateReader {
   pauseDelivery(durationMs: number): Promise<void>;
@@ -61,14 +62,23 @@ export function createBullMqOrderProcessJobPublisher(
     { connection },
   );
 
-  return createOrderProcessJobPublisher(queue, publicationFence);
+  return createOrderProcessJobPublisher(queue, publicationFence, async (jobIds) => {
+    // Whether each job's hash exists, whatever its state; the commands share one round trip.
+    const client = await queue.client;
+    const present = await Promise.all(
+      jobIds.map((jobId) => client.hexists(queue.toKey(jobId), "name")),
+    );
+    return jobIds.filter((_, index) => present[index] !== 1);
+  });
 }
 
 export function createOrderProcessJobPublisher(
   queue: OrderProcessQueue,
   publicationFence?: GeneratedRunPublicationFence,
+  missingJobIds: (jobIds: string[]) => Promise<string[]> = async (jobIds) => jobIds,
 ): WorkerOrderProcessJobPublisher {
   return {
+    missingJobIds,
     pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
     async isDeliveryPending(jobId) {
       if (!queue.getJobState) return false;

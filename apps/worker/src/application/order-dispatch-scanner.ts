@@ -1,6 +1,6 @@
 import type { OrderProcessJob } from "@checkout-surge/contracts";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import type { OrderJobPublisher } from "./order-job-publisher.js";
+import type { OrderJobPresence, OrderJobPublisher } from "./order-job-publisher.js";
 
 export interface OrderDispatchPersistence {
   findQueuedOrdersForDispatch(input: {
@@ -24,11 +24,13 @@ export interface OrderDispatchScanner {
 /**
  * Re-asserts the queue handoff for durable orders that are still queued in
  * PostgreSQL. The order ID is the BullMQ identity, so an API enqueue racing
- * this scanner (or a repeated scan) cannot create a second logical job.
+ * this scanner (or a repeated scan) cannot create a second logical job. Only
+ * orders without a job are published again: re-adding an existing job is a
+ * no-op, and each publication costs a fenced PostgreSQL round of its own.
  */
 export function createOrderDispatchScanner(dependencies: {
   persistence: OrderDispatchPersistence;
-  publisher: OrderJobPublisher;
+  publisher: OrderJobPublisher & OrderJobPresence;
   logger: CheckoutSurgeLogger;
   scanIntervalMs: number;
   batchSize: number;
@@ -48,9 +50,14 @@ export function createOrderDispatchScanner(dependencies: {
     });
     let published = 0;
     let failed = 0;
+    const missing =
+      candidates.length === 0
+        ? new Set<string>()
+        : new Set(await dependencies.publisher.missingJobIds(candidates.map((job) => job.orderId)));
 
     for (const job of candidates) {
       if (closed) break;
+      if (!missing.has(job.orderId)) continue;
       try {
         await dependencies.publisher.enqueue(job);
         published += 1;

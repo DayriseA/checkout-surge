@@ -188,7 +188,7 @@ describe("PostgreSQL order queue", () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderDispatchScanner({
       persistence: new PostgresOrderDispatchPersistence(connection.db),
-      publisher: { enqueue },
+      publisher: { enqueue, missingJobIds: async (jobIds: string[]) => jobIds },
       logger,
       scanIntervalMs: 10_000,
       batchSize: 10,

@@ -102,9 +102,10 @@ describe("queued order dispatch recovery", () => {
         published: 1,
         failed: 0,
       });
+      // The job now exists, so the next scan leaves it alone.
       await expect(scanner.scanOnce()).resolves.toEqual({
         candidates: 1,
-        published: 1,
+        published: 0,
         failed: 0,
       });
       const waitingJobs = await queue.getJobs(["waiting", "delayed", "prioritized"]);
@@ -173,7 +174,7 @@ describe("queued order dispatch recovery", () => {
     const enqueue = vi.fn().mockResolvedValue(undefined);
     const scanner = createOrderDispatchScanner({
       persistence: new PostgresOrderDispatchPersistence(connection.db),
-      publisher: { enqueue },
+      publisher: { enqueue, missingJobIds: async (jobIds: string[]) => jobIds },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 10_000,
       batchSize: 2,
