@@ -326,3 +326,21 @@ The supervisor's arbitration on the independent review (`scratchpad/review/task0
 - Two unrequested runs from the F3 defect (`8e1be680`, `fec42da1`) remain in the proof history.
 - Production needs a fresh core for this schema (task 06).
 
+
+### Owner checkpoint A (2026-10-12)
+
+- **Owner checkpoint A:** validated functionally on 2026-10-12. Presentation and UI polish is a separate later task.
+- **Owner decision:** comparison presets are public from the start, with no admin-only phase. The public site gets this work only when `main` is merged at the very end. `queue-comparison` is now seeded public (`3346c3ff`).
+- **Public start path** (test, plus live check):
+  - Covered by the chaining integration test: a public visitor credential, the budget reserved exactly once for the pair, and the second run started without a second charge.
+  - A fixed public preset takes no override and gets no custom-run capacity admission. The public demo page starts it with `{ presetSlug }` alone.
+- **Live public check** (proof environment, deployed at `1966e922`; no schema change, so no fresh core):
+  - The pair was started twice from "Start Queue comparison" on `https://cs-proof-gate.fly.dev/demo`, with no sign-in. Both runs were `public`.
+  - First pair, `82b0e09d` / `8019c989`: each completed with 500 of 500 orders confirmed.
+  - **Defect found:** once run 2 had ended, Watch went back to run 1 and labelled run 2 as another visitor's run. When the live projection goes idle, the run survives only in the retained terminal projection, which the follow logic did not read. Fixed in `1966e922`.
+  - Second pair, `6e89f0c1` / `0b2ef63a`: each completed with 500 of 500 orders confirmed. Watch followed run 2 to its end, and the panel and takeaway read correctly.
+  - **Spectators:** a spectator who loads Watch while a comparison is live sees the panel. One who loads Watch after it ends sees "Ready when you are", as for any run on `dev`.
+- **Tests:**
+  - Dev container: `pnpm type-check` and `pnpm test:unit` pass.
+  - Fly runner: the full `pnpm test` passes (api 365; integration: db 82, worker 103, mock-erp 7).
+- **Machines:** every proof Machine is stopped.
