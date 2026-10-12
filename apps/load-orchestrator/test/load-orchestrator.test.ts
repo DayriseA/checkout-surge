@@ -966,7 +966,7 @@ describe("load-orchestrator k6 mapping", () => {
     expect(script.contents).toContain('"apiBaseUrl":"http://api.test"');
     expect(script.contents).toContain("config.apiBaseUrl}/buy");
     expect(script.contents).toContain(
-      "const expectedCheckoutStatuses = http.expectedStatuses(202, 409);",
+      "const expectedCheckoutStatuses = http.expectedStatuses(200, 202, 409);",
     );
     expect(script.contents).toContain("responseCallback: expectedCheckoutStatuses");
     expect(script.contents).toContain(`timeout: "${k6RequestTimeoutSeconds}s"`);
@@ -1099,7 +1099,7 @@ describe("load-orchestrator k6 mapping", () => {
       expect(script.contents).toContain('import http from "k6/http";');
       expect(script.contents).toContain('import { check } from "k6";');
       expect(script.contents).toContain('import exec from "k6/execution";');
-      expect(script.contents).toContain('import { Counter } from "k6/metrics";');
+      expect(script.contents).toContain('import { Counter, Trend } from "k6/metrics";');
       expect(script.contents).toContain("exec.scenario.iterationInTest");
       expect(script.contents).toContain('new Counter("checkout_attempts_started")');
       expect(script.contents).toContain('new Counter("checkout_responses_completed")');
@@ -2655,7 +2655,7 @@ describe("SpawnK6Runner completion reporting", () => {
       stdio: ["ignore", "pipe", "pipe"],
     });
     expect(script).toContain(
-      'export const options = {"discardResponseBodies":true,"systemTags":["scenario"],"scenarios":{"checkout":',
+      'export const options = {"discardResponseBodies":true,"systemTags":["scenario"],"summaryTrendStats":["avg","min","med","max","p(90)","p(95)","count"],"scenarios":{"checkout":',
     );
     expect(script).toContain(startRequest.runId);
     expect(apiClient.sendMetrics).toHaveBeenCalledTimes(1);
