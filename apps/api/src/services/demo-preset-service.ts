@@ -280,6 +280,7 @@ function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPres
     inventoryConfig: preset.inventoryConfig,
     erpConfig: preset.erpConfig,
     backpressureConfig: preset.backpressureConfig,
+    ...(preset.comparison ? { comparison: preset.comparison } : {}),
     createdAt: preset.createdAt.toISOString(),
     updatedAt: preset.updatedAt.toISOString(),
   });

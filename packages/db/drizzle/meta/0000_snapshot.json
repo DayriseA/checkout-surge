@@ -85,6 +85,13 @@
           "primaryKey": false,
           "notNull": true
         },
+        "comparison": {
+          "name": "comparison",
+          "type": "comparison",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -768,6 +775,19 @@
           "notNull": true,
           "default": false
         },
+        "comparison_mode": {
+          "name": "comparison_mode",
+          "type": "comparison_mode",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "comparison_first_run_id": {
+          "name": "comparison_first_run_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -849,6 +869,21 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "demo_runs_comparison_first_run_id_unique": {
+          "name": "demo_runs_comparison_first_run_id_unique",
+          "columns": [
+            {
+              "expression": "comparison_first_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -868,6 +903,15 @@
           "columnsFrom": ["sale_offer_id"],
           "columnsTo": ["id"],
           "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "demo_runs_comparison_first_run_id_demo_runs_id_fk": {
+          "name": "demo_runs_comparison_first_run_id_demo_runs_id_fk",
+          "tableFrom": "demo_runs",
+          "tableTo": "demo_runs",
+          "columnsFrom": ["comparison_first_run_id"],
+          "columnsTo": ["id"],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -2354,6 +2398,27 @@
           "method": "btree",
           "with": {}
         },
+        "orders_run_attribution_identity_unique": {
+          "name": "orders_run_attribution_identity_unique",
+          "columns": [
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "orders_sale_offer_id_idx": {
           "name": "orders_sale_offer_id_idx",
           "columns": [
@@ -2458,27 +2523,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "orders_run_attribution_identity_unique": {
-          "name": "orders_run_attribution_identity_unique",
-          "columns": [
-            {
-              "expression": "id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "run_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3360,6 +3404,16 @@
     }
   },
   "enums": {
+    "public.comparison": {
+      "name": "comparison",
+      "schema": "public",
+      "values": ["order_queue"]
+    },
+    "public.comparison_mode": {
+      "name": "comparison_mode",
+      "schema": "public",
+      "values": ["demo", "synchronous_confirmation"]
+    },
     "public.demo_preset_visibility": {
       "name": "demo_preset_visibility",
       "schema": "public",

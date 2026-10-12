@@ -1,4 +1,6 @@
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";--> statement-breakpoint
+CREATE TYPE "public"."comparison" AS ENUM('order_queue');--> statement-breakpoint
+CREATE TYPE "public"."comparison_mode" AS ENUM('demo', 'synchronous_confirmation');--> statement-breakpoint
 CREATE TYPE "public"."demo_preset_visibility" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_operator_mode" AS ENUM('public', 'admin');--> statement-breakpoint
 CREATE TYPE "public"."demo_run_status" AS ENUM('starting', 'active', 'draining', 'completed', 'failed');--> statement-breakpoint
@@ -24,6 +26,7 @@ CREATE TABLE "demo_presets" (
 	"inventory_config" jsonb NOT NULL,
 	"erp_config" jsonb NOT NULL,
 	"backpressure_config" jsonb NOT NULL,
+	"comparison" "comparison",
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "demo_presets_public_read_only" CHECK ("demo_presets"."visibility" <> 'public' OR "demo_presets"."is_editable" = false)
@@ -105,6 +108,8 @@ CREATE TABLE "demo_runs" (
 	"runner_boot_id" uuid,
 	"runner_region" text,
 	"runner_relocating" boolean DEFAULT false NOT NULL,
+	"comparison_mode" "comparison_mode",
+	"comparison_first_run_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -344,6 +349,7 @@ CREATE UNIQUE INDEX "demo_runs_sale_offer_id_unique" ON "demo_runs" USING btree 
 CREATE UNIQUE INDEX "demo_runs_id_sale_offer_id_unique" ON "demo_runs" USING btree ("id","sale_offer_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_preset_id_idx" ON "demo_runs" USING btree ("preset_id");--> statement-breakpoint
 CREATE INDEX "demo_runs_status_idx" ON "demo_runs" USING btree ("status");--> statement-breakpoint
+CREATE UNIQUE INDEX "demo_runs_comparison_first_run_id_unique" ON "demo_runs" USING btree ("comparison_first_run_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "erp_attempts_order_delivery_attempt_unique" ON "erp_attempts" USING btree ("order_id","delivery_id","attempt_number") WHERE "erp_attempts"."erp_call_id" is null;--> statement-breakpoint
 CREATE UNIQUE INDEX "erp_attempts_erp_call_id_unique" ON "erp_attempts" USING btree ("erp_call_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "erp_attempts_success_idempotency_key_unique" ON "erp_attempts" USING btree ("idempotency_key");--> statement-breakpoint
@@ -408,6 +414,7 @@ ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_sale
 ALTER TABLE "demo_run_sale_contexts" ADD CONSTRAINT "demo_run_sale_contexts_run_sale_offer_demo_runs_fk" FOREIGN KEY ("run_id","sale_offer_id") REFERENCES "public"."demo_runs"("id","sale_offer_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_sold_out_counts" ADD CONSTRAINT "demo_run_sold_out_counts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_run_summaries" ADD CONSTRAINT "demo_run_summaries_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_comparison_first_run_id_demo_runs_id_fk" FOREIGN KEY ("comparison_first_run_id") REFERENCES "public"."demo_runs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_preset_id_demo_presets_id_fk" FOREIGN KEY ("preset_id") REFERENCES "public"."demo_presets"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "demo_runs" ADD CONSTRAINT "demo_runs_sale_offer_id_sale_offers_id_fk" FOREIGN KEY ("sale_offer_id") REFERENCES "public"."sale_offers"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "erp_attempts" ADD CONSTRAINT "erp_attempts_run_id_demo_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."demo_runs"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint

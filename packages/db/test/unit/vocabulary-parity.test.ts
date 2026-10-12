@@ -9,6 +9,12 @@ type ExportedPgEnumMetadata = {
 };
 
 const enumInventory = {
+  comparisonEnum: [schema.comparisonEnum, "comparison", contracts.comparisonValues],
+  comparisonModeEnum: [
+    schema.comparisonModeEnum,
+    "comparison_mode",
+    contracts.comparisonModeValues,
+  ],
   demoPresetVisibilityEnum: [
     schema.demoPresetVisibilityEnum,
     "demo_preset_visibility",

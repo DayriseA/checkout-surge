@@ -64,6 +64,7 @@ try {
         inventoryConfig: preset.inventoryConfig,
         erpConfig: preset.erpConfig,
         backpressureConfig: preset.backpressureConfig,
+        comparison: preset.comparison ?? null,
         createdAt: now,
         updatedAt: now,
       };
@@ -84,6 +85,7 @@ try {
               inventoryConfig: preset.inventoryConfig,
               erpConfig: preset.erpConfig,
               backpressureConfig: preset.backpressureConfig,
+              comparison: preset.comparison ?? null,
               updatedAt: now,
             },
           });

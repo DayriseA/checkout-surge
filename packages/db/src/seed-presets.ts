@@ -1,5 +1,6 @@
 import type {
   BackpressureConfig,
+  Comparison,
   DemoPresetDisplay,
   DemoPresetVisibility,
   ErpRunConfig,
@@ -15,6 +16,7 @@ const seedPresetIds = {
   publicCustomPreset: "33333333-3333-4333-8333-333333333335",
   slowErpPreset: "33333333-3333-4333-8333-333333333336",
   laggyErpPreset: "33333333-3333-4333-8333-333333333337",
+  queueComparisonPreset: "33333333-3333-4333-8333-333333333338",
   adminSmokePreset: "44444444-4444-4444-8444-444444444441",
   adminFailurePreset: "44444444-4444-4444-8444-444444444442",
   adminCustomPreset: "44444444-4444-4444-8444-444444444443",
@@ -32,6 +34,7 @@ export interface SeedPreset {
   inventoryConfig: InventoryConfig;
   erpConfig: ErpRunConfig;
   backpressureConfig: BackpressureConfig;
+  comparison?: Comparison;
   overwriteOnConflict: boolean;
 }
 
@@ -134,6 +137,28 @@ export function buildSeedPresets(): SeedPreset[] {
       inventoryConfig: inventoryConfig({ startingStock: 500 }),
       erpConfig: erpConfig({ latencyMs: 1000, maxTps: 20, errorRate: 0 }),
       backpressureConfig: backpressureConfig({ orderProcessConcurrency: 5 }),
+      overwriteOnConflict: true,
+    },
+    {
+      // Admin-only until the owner validates the comparison.
+      id: seedPresetIds.queueComparisonPreset,
+      slug: "queue-comparison",
+      visibility: "admin",
+      isEditable: false,
+      isCustom: false,
+      isSystem: true,
+      display: {
+        name: "Queue comparison",
+        description:
+          "Surge 5k twice on the same workload: first with the order queue, then with each winner waiting for the ERP's confirmation. Same stock, same ERP limit.",
+        sortOrder: 36,
+        outcomeFocus: ["queue_pressure", "downstream_capacity"],
+      },
+      trafficConfig: buyerSpikeTraffic({ buyerCount: 5000, maxDurationSeconds: 80 }),
+      inventoryConfig: inventoryConfig({ startingStock: 500 }),
+      erpConfig: erpConfig({ latencyMs: 100, maxTps: 20, errorRate: 0 }),
+      backpressureConfig: backpressureConfig({ orderProcessConcurrency: 5 }),
+      comparison: "order_queue",
       overwriteOnConflict: true,
     },
     {

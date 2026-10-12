@@ -19,6 +19,8 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
+  comparisonModeValues,
+  comparisonValues,
   demoPresetVisibilityValues,
   demoRunStatusValues,
   emptyServerReservationTimingSummary,
@@ -39,6 +41,7 @@ import { sql } from "drizzle-orm";
 // index appended to the reviewed baseline. Preserve that small custom SQL
 // section when amending the pre-release baseline.
 import {
+  type AnyPgColumn,
   boolean,
   check,
   foreignKey,
@@ -75,6 +78,10 @@ export const demoPresetVisibilityEnum = pgEnum(
   "demo_preset_visibility",
   demoPresetVisibilityValues,
 );
+
+export const comparisonEnum = pgEnum("comparison", comparisonValues);
+
+export const comparisonModeEnum = pgEnum("comparison_mode", comparisonModeValues);
 
 export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", operatorModeValues);
 
@@ -155,6 +162,8 @@ export const demoPresets = pgTable(
     inventoryConfig: jsonObject<InventoryConfig>("inventory_config"),
     erpConfig: jsonObject<ErpRunConfig>("erp_config"),
     backpressureConfig: jsonObject<BackpressureConfig>("backpressure_config"),
+    // Written by the seed only: no preset edit path copies it, so custom runs never carry a mode.
+    comparison: comparisonEnum("comparison"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -195,6 +204,12 @@ export const demoRuns = pgTable(
     runnerBootId: uuid("runner_boot_id"),
     runnerRegion: text("runner_region"),
     runnerRelocating: boolean("runner_relocating").default(false).notNull(),
+    // A comparison preset's run and, on its second run, the first run it continues.
+    comparisonMode: comparisonModeEnum("comparison_mode"),
+    comparisonFirstRunId: uuid("comparison_first_run_id").references(
+      (): AnyPgColumn => demoRuns.id,
+      { onDelete: "set null" },
+    ),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -206,6 +221,7 @@ export const demoRuns = pgTable(
     uniqueIndex("demo_runs_id_sale_offer_id_unique").on(table.id, table.saleOfferId),
     index("demo_runs_preset_id_idx").on(table.presetId),
     index("demo_runs_status_idx").on(table.status),
+    uniqueIndex("demo_runs_comparison_first_run_id_unique").on(table.comparisonFirstRunId),
   ],
 );
 
