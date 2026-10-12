@@ -54,6 +54,7 @@ describe("demo-run projections", () => {
       runnerRelocating: true,
       comparisonMode: null,
       comparisonFirstRunId: null,
+      storeLoad: null,
       createdAt: new Date("2026-07-21T09:59:59.000Z"),
       updatedAt: new Date("2026-07-21T10:00:03.000Z"),
     } satisfies typeof demoRuns.$inferSelect;
@@ -107,6 +108,7 @@ describe("demo-run projections", () => {
       runnerRelocating: true,
       comparisonMode: null,
       comparisonFirstRunId: null,
+      storeLoad: null,
       createdAt: new Date("2026-07-21T09:59:59.000Z"),
       updatedAt: new Date("2026-07-21T10:00:00.000Z"),
     } satisfies typeof demoRuns.$inferSelect;

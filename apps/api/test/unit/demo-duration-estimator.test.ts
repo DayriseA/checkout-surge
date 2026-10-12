@@ -76,7 +76,7 @@ function estimate(value: EstimatorInput, ceiling = 600) {
 describe("pure conservative duration estimator", () => {
   it("admits the real acceptance fixtures and every seeded preset", async () => {
     await import("../../../../packages/db/src/scripts/seed.js");
-    expect(seededPresets.filter((preset) => preset.visibility === "public")).toHaveLength(8);
+    expect(seededPresets.filter((preset) => preset.visibility === "public")).toHaveLength(9);
     for (const preset of seededPresets) {
       const result = estimate(fromConfig(preset));
       expect(result.decision, preset.slug).toBe("admitted");

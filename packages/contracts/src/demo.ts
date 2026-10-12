@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { comparisonModeSchema, comparisonSchema } from "./comparison.js";
+import { comparisonModeSchema, comparisonSchema, storeLoadSchema } from "./comparison.js";
 import {
   demoPresetDisplaySchema,
   demoPresetSchema,
@@ -482,6 +482,8 @@ export const publicRunHistoryRunSchema = z
       .object({ mode: comparisonModeSchema, partnerRunId: uuidSchema.nullable() })
       .strict()
       .optional(),
+    /** Measured on the Redis comparison's runs only; absent when not recorded. */
+    storeLoad: storeLoadSchema.optional(),
   })
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;

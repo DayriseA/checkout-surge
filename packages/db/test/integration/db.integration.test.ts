@@ -884,7 +884,7 @@ describe("database migrations, seed data, and reset behavior", () => {
     expect(counts).toEqual({
       products: 1,
       sale_offers: 0,
-      demo_presets: 11,
+      demo_presets: 12,
       public_runtime_policies: 1,
     });
     expect(

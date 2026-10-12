@@ -788,6 +788,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "store_load": {
+          "name": "store_load",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2584,6 +2590,124 @@
       },
       "isRLSEnabled": false
     },
+    "public.postgres_order_queue": {
+      "name": "postgres_order_queue",
+      "schema": "",
+      "columns": {
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "available_at": {
+          "name": "available_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "locked_until": {
+          "name": "locked_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deliveries": {
+          "name": "deliveries",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "postgres_order_queue_available_at_idx": {
+          "name": "postgres_order_queue_available_at_idx",
+          "columns": [
+            {
+              "expression": "available_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "postgres_order_queue_order_id_orders_id_fk": {
+          "name": "postgres_order_queue_order_id_orders_id_fk",
+          "tableFrom": "postgres_order_queue",
+          "tableTo": "orders",
+          "columnsFrom": ["order_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.postgres_run_stock": {
+      "name": "postgres_run_stock",
+      "schema": "",
+      "columns": {
+        "run_id": {
+          "name": "run_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sale_offer_id": {
+          "name": "sale_offer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "remaining_stock": {
+          "name": "remaining_stock",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reserved_stock": {
+          "name": "reserved_stock",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "postgres_run_stock_run_id_demo_runs_id_fk": {
+          "name": "postgres_run_stock_run_id_demo_runs_id_fk",
+          "tableFrom": "postgres_run_stock",
+          "tableTo": "demo_runs",
+          "columnsFrom": ["run_id"],
+          "columnsTo": ["id"],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "postgres_run_stock_remaining_nonnegative": {
+          "name": "postgres_run_stock_remaining_nonnegative",
+          "value": "\"postgres_run_stock\".\"remaining_stock\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.products": {
       "name": "products",
       "schema": "",
@@ -2928,6 +3052,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2955,6 +3085,28 @@
             }
           ],
           "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "reservations_sale_offer_id_idempotency_key_unique": {
+          "name": "reservations_sale_offer_id_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "sale_offer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"reservations\".\"idempotency_key\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3407,12 +3559,12 @@
     "public.comparison": {
       "name": "comparison",
       "schema": "public",
-      "values": ["order_queue"]
+      "values": ["order_queue", "redis"]
     },
     "public.comparison_mode": {
       "name": "comparison_mode",
       "schema": "public",
-      "values": ["demo", "synchronous_confirmation"]
+      "values": ["demo", "synchronous_confirmation", "redis", "postgres"]
     },
     "public.demo_preset_visibility": {
       "name": "demo_preset_visibility",

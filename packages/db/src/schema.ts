@@ -36,7 +36,6 @@ import {
   trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
 import { sql } from "drizzle-orm";
-
 // Drizzle snapshots cannot represent the pgcrypto extension or the expression
 // index appended to the reviewed baseline. Preserve that small custom SQL
 // section when amending the pre-release baseline.
@@ -55,6 +54,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { StoreLoadWindow } from "./store-load.js";
 
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
@@ -210,6 +210,8 @@ export const demoRuns = pgTable(
       (): AnyPgColumn => demoRuns.id,
       { onDelete: "set null" },
     ),
+    // PostgreSQL and Redis counters around a Redis comparison run's traffic.
+    storeLoad: jsonb("store_load").$type<StoreLoadWindow>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -261,11 +263,16 @@ export const reservations = pgTable(
     reservationToken: text("reservation_token").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     securedAt: timestamp("secured_at", { withTimezone: true }).notNull(),
+    // Set only when PostgreSQL decides the stock; Redis keeps the demo's idempotency records.
+    idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex("reservations_reservation_token_unique").on(table.reservationToken),
+    uniqueIndex("reservations_sale_offer_id_idempotency_key_unique")
+      .on(table.saleOfferId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
     uniqueIndex("reservations_backing_order_identity_unique").on(
       table.id,
       table.saleOfferId,
@@ -688,6 +695,37 @@ export const simulatedNotifications = pgTable(
     ),
     index("simulated_notifications_run_id_correlation_id_idx").on(table.runId, table.correlationId),
   ],
+);
+
+/** A run's stock when PostgreSQL decides it (the Redis comparison's second run). */
+export const postgresRunStock = pgTable(
+  "postgres_run_stock",
+  {
+    runId: uuid("run_id")
+      .primaryKey()
+      .references(() => demoRuns.id, { onDelete: "cascade" }),
+    saleOfferId: uuid("sale_offer_id").notNull(),
+    remainingStock: integer("remaining_stock").notNull(),
+    reservedStock: integer("reserved_stock").default(0).notNull(),
+  },
+  (table) => [check("postgres_run_stock_remaining_nonnegative", sql`${table.remainingStock} >= 0`)],
+);
+
+/** Notified when a job is queued in `postgres_order_queue`, so the worker picks it up at once. */
+export const postgresOrderQueueChannel = "postgres_order_queue";
+
+/** The order queue when PostgreSQL holds it: one row per order awaiting delivery to the worker. */
+export const postgresOrderQueue = pgTable(
+  "postgres_order_queue",
+  {
+    orderId: uuid("order_id")
+      .primaryKey()
+      .references(() => orders.id, { onDelete: "cascade" }),
+    availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    deliveries: integer("deliveries").default(0).notNull(),
+  },
+  (table) => [index("postgres_order_queue_available_at_idx").on(table.availableAt)],
 );
 
 export const demoRunSoldOutCounts = pgTable(
