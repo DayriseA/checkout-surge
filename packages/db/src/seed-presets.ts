@@ -140,10 +140,9 @@ export function buildSeedPresets(): SeedPreset[] {
       overwriteOnConflict: true,
     },
     {
-      // Admin-only until the owner validates the comparison.
       id: seedPresetIds.queueComparisonPreset,
       slug: "queue-comparison",
-      visibility: "admin",
+      visibility: "public",
       isEditable: false,
       isCustom: false,
       isSystem: true,
