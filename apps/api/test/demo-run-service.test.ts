@@ -2532,17 +2532,15 @@ describe("comparison runs", () => {
     await vi.waitFor(async () =>
       expect(await db.select().from(orders).where(eq(orders.runId, second.id))).toHaveLength(1),
     );
+    // The buy path stamps orders with the wall clock, so the confirmation follows it.
+    const confirmedAt = new Date(Date.now() + 1_000);
     await db
       .update(orders)
-      .set({
-        status: "confirmed",
-        processingAt: finishedAt,
-        confirmedAt: new Date("2026-06-20T00:00:40.000Z"),
-      })
+      .set({ status: "confirmed", processingAt: confirmedAt, confirmedAt })
       .where(eq(orders.runId, second.id));
     expect(await confirmedWait).toMatchObject({
       outcome: "order_confirmed",
-      order: { status: "confirmed", confirmedAt: "2026-06-20T00:00:40.000Z" },
+      order: { status: "confirmed", confirmedAt: confirmedAt.toISOString() },
     });
 
     // A reset ends the wait with the accepted answer; the order is left as it was.
