@@ -35,6 +35,13 @@ A visitor understands quickly what the project is and what it shows, and a curio
 
 ## Working Notes
 
+### Owner checkpoint D2 (2026-10-13)
+
+- **Owner checkpoint D2: validated on 2026-10-13, with deep links to repository documents removed.**
+- The site now links the repository only at its root (the nav, the footer, and the home's engineers band). Removed: each known defect's "Details" link and the "Scope and caveats · Decision logs" row on Limits, the "Hosted runtime · Architecture document" row on Under the hood, and `repositoryFileLink` in `site-links.ts`. A new test checks that every github.com link on the content pages and in the layout is the repository root (`80cade96`).
+- Dev container: type-check, web (804) and gate (71) unit tests, and Biome pass. Fly test runner, full `pnpm test` at `80cade96`, first attempt: every unit suite (web 804), `test:api` 382, integration db 82, worker 109, mock-erp 7.
+- Deployed to the proof environment at `80cade96`, with no fresh core. A grep of `/`, `/how-it-works`, `/limits`, `/under-the-hood`, `/demo`, `/watch`, `/run-history` and a run report finds no github.com link other than the repository root. The core and the runner are stopped.
+
 ### Implementation (2026-10-13)
 
 **Pages** (all server-rendered, like the existing pages):
