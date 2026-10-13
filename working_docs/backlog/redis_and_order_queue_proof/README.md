@@ -37,7 +37,7 @@ Design section 6 is binding. In short:
 
 Choices waiting for the owner, added with the task, the options and a recommendation.
 
-- None yet.
+- **Buy-only pool on the production core (task 04, checkpoint B).** The Redis comparison needs 2 buy-only API processes: one process was pinned in both modes on the realistic preset. On merge, the core Machine gains an `api-buy` container: about 3 idle Node processes and 4 Redis connections outside comparison runs, and up to about 2 cores and 20 more PostgreSQL connections during a Redis comparison (total still under 100). Ordinary runs, the queue comparison, boot, the gate, the guard, recovery and idle stop are unaffected; HD-51 is amended for comparison runs (task 06). Options: accept the pool; or drop the Redis comparison's pool and present it with one process, whose waits then mostly measure the API. Recommendation: accept.
 
 ## Tasks
 
