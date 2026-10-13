@@ -122,6 +122,7 @@ import {
 import { loadApiConfig } from "../src/runtime/config.js";
 import { ApiHttpError } from "../src/runtime/errors.js";
 import type { ApiFastifyInstance } from "../src/runtime/fastify.js";
+import { pendingPersistenceFreshHoldGraceMs } from "../src/runtime/pending-persistence-recovery-policy.js";
 import { type BuildApiServerOptions, buildApiServer } from "../src/server.js";
 import type { AdminDemoResetWorkflow } from "../src/services/admin-demo-reset-service.js";
 import {
@@ -4446,7 +4447,9 @@ describe("API buy persistence", () => {
         pendingPersistenceCount: 1,
       });
 
-      recoveryNow = new Date(Date.parse(payload.reservation?.securedAt ?? "") + 1);
+      recoveryNow = new Date(
+        Date.parse(payload.reservation?.securedAt ?? "") + pendingPersistenceFreshHoldGraceMs,
+      );
       await expect(recovery.runOnce()).resolves.toMatchObject({ attempted: 1, deferred: 1 });
       const {
         records: [deferred],

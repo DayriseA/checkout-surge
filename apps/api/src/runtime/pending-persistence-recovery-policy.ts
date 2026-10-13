@@ -8,3 +8,10 @@ export const pendingPersistenceRecoveryDefaults = {
   maxConcurrentDirectAttempts: 3,
   batchSize: 100,
 } as const;
+
+/**
+ * How long the scheduler leaves a newly secured hold to its buy request's own save. It covers
+ * that save under spike load, stays below the 30-second maximum backoff and `Retry-After`,
+ * and uses a small part of the 300-second recovery window.
+ */
+export const pendingPersistenceFreshHoldGraceMs = 10_000;
