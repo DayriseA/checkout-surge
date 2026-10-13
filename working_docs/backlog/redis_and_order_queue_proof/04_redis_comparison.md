@@ -651,3 +651,52 @@ Supervisor decisions after the exploration:
 - **In the comparison,** this work falls in the Redis mode's window, so it understates the difference.
 
 **Left as is, for the supervisor to raise with the owner.** A grace before a hold becomes due would avoid it, but that is a `dev` design choice, unrelated to this task.
+
+### Cold-start diagnosis (2026-10-13, stopped before any change)
+
+**Trigger.** On the owner's first pair after a wake, the Redis run was slower than the PostgreSQL run for every wait. The waits were outside the measured Redis ranges.
+
+**Method.**
+- **Cold pairs:** 3 runs (`C1`–`C3`). Each time the proof core Machine was stopped, then woken through the gate's "Start the demo" and started from the public UI within about 20 s.
+- **Warm pair:** 1 run (`W1`), right after `C3`.
+- **Also read:** the owner's two pairs, and two steady-arrival pairs (`S1` warm, `S2` cold; 500 buyers per second for 20 s, 500 units, preset edited in place).
+- **Samplers:**
+  - container CPU and per-process main-thread CPU;
+  - `pg_stat_database` each second (transactions, `blks_read`, `blks_hit`, backends);
+  - Redis `INFO` every 0.5 s (commands, connections).
+
+**Evidence** (spike preset; averages, in seconds unless stated).
+
+| Run | Turned away | Every buyer answered | Stock sold out after | PG blocks read in the window | PG backends at start | Redis commands, first second |
+| :-- | --: | --: | --: | --: | --: | --: |
+| Redis, cold (`C1`–`C3`, owner) | 6.0–7.1 | 9.4–10.3 | 0.92–1.65 | 1,464–2,468 | 10 → 40 within 1–2 s | 15.3k–17.0k |
+| Redis, warm (`W1`, owner, measurement) | 4.3–5.2 | 6.4–7.8 | 0.36–0.51 | 11 | 45, already open | 32.5k |
+| PostgreSQL, after a cold Redis run | 6.7–8.3 | 8.7–10.6 | 0.37–0.91 | 131–264 | 45 | – |
+| PostgreSQL, warm (measurement) | 4.9–9.4 | 6.1–10.9 | 0.30–0.70 | – | 45 | – |
+
+**What is cold.**
+- **PostgreSQL's buffers.** The first run after a wake reads 1.5–2.5k blocks from outside shared buffers, mostly in its seconds 1–3: the winners' inserts and the worker. The second run reads 0.1–0.3k.
+- **The buy processes' PostgreSQL connections.**
+  - The pools open lazily, so about 30 backends are created during the first run's first second.
+  - Each one costs a SCRAM authentication, on both sides. postgres.js computes its PBKDF2 synchronously, on the buy process's main thread.
+  - The second run finds them open.
+- **The effect.** During the first second, PostgreSQL uses 1.1–1.4 cores against 0.6 warm, while the buy processes get less CPU. The core Machine is saturated from second 1 in both cases (5.3–5.6 of 6 vCPUs). So the slower winners' phase (sold out after 0.9–1.65 s, against 0.4–0.5) drags every answer: Redis decisions run at half the warm rate in the first seconds.
+- **JIT:** minor. In the cold first second, the buy processes spend about 30 % more CPU per Redis command.
+- **Not involved:**
+  - the runner: same boot-to-traffic time, k6 connect times and generator CPU in both runs;
+  - the web container: at most 0.2 core.
+- **The second run inherits the warmth whatever its mode,** so swapping the order would move the cold cost onto the PostgreSQL run. The cold parts (buffers, pool connections, JIT) serve both modes.
+
+**What held even when cold:** transactions were 2.2–2.7 times higher without Redis, and time in queries 3.1–3.5 times, in all 4 cold pairs.
+
+**Steady arrivals (500/s for 20 s).**
+
+| Pair | Waits, both modes | Transactions | Time in queries | PostgreSQL CPU |
+| :-- | :-- | --: | --: | --: |
+| `S1` (warm) | turned away 0.2 s on average | 1.9× | 3.1× | 1.2× |
+| `S2` (cold) | turned away 0.2–0.3 s on average | 1.9× | 2.1× | 1.05× |
+
+- There is no queueing, so the turned-away difference disappears.
+- The CPU ratio collapses because 20 s of order work, shared by both modes, dominates the window.
+- The cold start still shows on the Redis run's winners (2.1 s against 1.5 s warm), but barely on the waits.
+- This preset mostly supports the database-work-only claim.
