@@ -1015,6 +1015,19 @@ describe("public browser starts", () => {
     expect(screen.getByRole("group", { name: "Slow ERP" })).toBeTruthy();
   });
 
+  it("links a comparison preset's card to the section that explains it", () => {
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    surface.presets.data.presets = [
+      { ...demoPresetFixture("preview-1k"), slug: "redis-comparison", comparison: "redis" },
+    ];
+    render(createElement(PublicDemoEntry, { surface }));
+
+    const link = screen.getByRole("link", { name: "What this shows for Preview 1k" });
+    expect(link.getAttribute("href")).toBe("/how-it-works#redis-comparison");
+    expect(document.getElementById("redis-comparison-title")).not.toBeNull();
+  });
+
   it("keeps concise preset facts visible and opens preset details independently", async () => {
     const surface = publicDemoSurfaceFixture();
     if (surface.presets.status !== "available") throw new Error("Expected presets.");

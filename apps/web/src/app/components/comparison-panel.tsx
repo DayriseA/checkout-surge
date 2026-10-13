@@ -20,6 +20,7 @@ import {
   redisComparisonRunFacts,
 } from "../lib/presentation/comparison";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
+import { comparisonExplanationLinks, comparisonLimitsLink } from "../lib/site-links";
 import { textLinkClassName } from "./control-styles";
 
 const notRecorded = "Not recorded";
@@ -160,6 +161,15 @@ export function ComparisonReport({
   return (
     <section aria-label={spec.name} className={`grid gap-3 ${className}`}>
       <h2 className="type-title m-0 text-base leading-tight text-ink">{spec.title}</h2>
+      <p className="m-0 -mt-1 text-sm text-muted">
+        <Link className={textLinkClassName} href={comparisonExplanationLinks[comparison]}>
+          How to read these figures
+        </Link>
+        {" · "}
+        <Link className={textLinkClassName} href={comparisonLimitsLink}>
+          What this comparison does not show
+        </Link>
+      </p>
       <div className="grid gap-4 sm:grid-cols-2">
         <ComparisonColumn label={comparisonRunLabel(firstMode)} member={first} rows={spec.rows} />
         <ComparisonColumn

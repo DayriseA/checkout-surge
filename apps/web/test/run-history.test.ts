@@ -961,6 +961,8 @@ describe("run history", () => {
 
     const markup = await page();
     expect(markup).toContain("With and without the order queue, on the same workload");
+    expect(markup).toContain('href="/how-it-works#queue-comparison"');
+    expect(markup).toContain('href="/limits#comparison-limits"');
     expect(markup.indexOf("Run 1 of 2 · With the order queue")).toBeLessThan(
       markup.indexOf("Run 2 of 2 · Without the order queue"),
     );
@@ -1018,6 +1020,7 @@ describe("run history", () => {
 
     const markup = await page();
     expect(markup).toContain("Stock decided in Redis, then in PostgreSQL, on the same workload");
+    expect(markup).toContain('href="/how-it-works#redis-comparison"');
     expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
       markup.indexOf("Run 2 of 2 · Stock and order queue in PostgreSQL"),
     );
