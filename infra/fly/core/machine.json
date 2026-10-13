@@ -29,7 +29,7 @@
       "cmd": [
         "sh",
         "-c",
-        "export PGDATA=/persistent/postgres && exec sh /fly/delayed-stop.sh INT docker-entrypoint.sh postgres -c listen_addresses=127.0.0.1"
+        "export PGDATA=/persistent/postgres && exec sh /fly/delayed-stop.sh INT docker-entrypoint.sh postgres -c listen_addresses=127.0.0.1 -c shared_preload_libraries=pg_prewarm -c pg_prewarm.autoprewarm=on"
       ],
       "env": {
         "POSTGRES_DB": "checkout_surge",
