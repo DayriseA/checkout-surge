@@ -936,11 +936,9 @@ describe("run history", () => {
       confirmed: 0,
     });
     const second = comparisonDetail("synchronous_confirmation", secondId, firstId, {
-      longestWaitMs: 45_100,
+      longestWaitMs: 12_000,
       confirmed: 228,
     });
-    // Two winners got the pending-persistence answer: they never waited for the deadline.
-    second.summary.httpSummary.pendingPersistenceResponses = 2;
     getRunHistoryDetail.mockImplementation(async (runId: string) => ({
       status: "available",
       data: runId === firstId ? first : second,
@@ -951,30 +949,21 @@ describe("run history", () => {
       );
 
     const markup = await page();
-    expect(markup).toContain("One comparison, two runs");
+    expect(markup).toContain("With and without the order queue, on the same workload");
     expect(markup.indexOf("Run 1 of 2 · With the order queue")).toBeLessThan(
       markup.indexOf("Run 2 of 2 · Without the order queue"),
     );
-    expect(markup).toContain("every buyer had an answer within 2.4 s");
-    expect(markup).toContain(
-      "20 winners stopped waiting after 45 s and were told their order was still being confirmed",
-    );
-    expect(markup).toContain("The queue moves the wait from the buyer to the back office.");
+    // Run 2's waits also read as multiples of run 1's; answer counts are not compared.
+    expect(markup).toContain(">1.2 s / 2.2 s<");
+    expect(markup).toContain(">6 s / 10.8 s<");
+    expect(markup).toContain(">×5.0 / ×5.0 vs run 1<");
+    expect(markup).toContain(">228 / 22</dd>");
 
-    // The takeaway is stated only when the data shows it; otherwise the numbers stand alone.
-    second.summary.businessOutcomeSummary.failedOrders = 1;
-    expect(await page()).not.toContain("The queue moves the wait");
-    second.summary.businessOutcomeSummary.failedOrders = 0;
-    second.summary.httpSummary.transportFailures = 1;
-    expect(await page()).not.toContain("The queue moves the wait");
-    second.summary.httpSummary.transportFailures = 0;
     second.summary.httpSummary.buyerWallLatencySummary = { accepted: null, soldOut: null };
-    const unknown = await page();
-    expect(unknown).toContain("Not recorded");
-    expect(unknown).not.toContain("The queue moves the wait");
+    expect(await page()).toContain(">Not recorded / Not recorded</dd>");
   });
 
-  it("shows a Redis comparison's database work and waits, stating its takeaway only when the data shows it", async () => {
+  it("shows a Redis comparison's database work and waits, with run 2's as multiples of run 1's", async () => {
     const firstId = "66666666-6666-4666-8666-666666666663";
     const secondId = "66666666-6666-4666-8666-666666666664";
     const first = comparisonDetail("redis", firstId, secondId, {
@@ -1015,40 +1004,30 @@ describe("run history", () => {
       renderToStaticMarkup(
         await RunHistoryDetailPage({ params: Promise.resolve({ runId: firstId }) }),
       );
-    const headline = "PostgreSQL ran about 3.0 times the transactions";
 
     const markup = await page();
+    expect(markup).toContain("Stock decided in Redis, then in PostgreSQL, on the same workload");
     expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
       markup.indexOf("Run 2 of 2 · Stock and order queue in PostgreSQL"),
     );
-    expect(markup).toContain("Turned-away buyers&#x27;");
     expect(markup).not.toContain("Redis CPU");
-    expect(markup).toContain(
-      "PostgreSQL ran about 3.0 times the transactions (3,600 against 1,200) and spent about 6.0 times as long in queries, waits for the stock row included (4.8 s against 800 ms).",
-    );
-    expect(markup).toContain("Its CPU time was about 2.2 times as much (4.4 s against 2 s).");
-    expect(markup).toContain(
-      "The turned-away buyers waited longer, 600 ms on average against 300 ms.",
-    );
-    // The winners' waits are shown as numbers, never claimed.
-    expect(markup).not.toContain("not slower");
+    for (const figure of [
+      ">3,600<",
+      ">×3.0 vs run 1<",
+      ">4.8 s<",
+      ">×6.0 vs run 1<",
+      ">4.4 s<",
+      ">×2.2 vs run 1<",
+      // Lower in run 2 reads the same neutral way.
+      ">1.5 s / 2.7 s<",
+      ">×0.8 / ×0.8 vs run 1<",
+      ">600 ms / 900 ms<",
+      ">×2.0 / ×1.0 vs run 1<",
+    ])
+      expect(markup).toContain(figure);
 
-    // A figure that is not higher without Redis is not stated; the rest still is.
-    second.summary.httpSummary.buyerWallLatencySummary.soldOut = turnedAway(300);
-    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: 1_500 };
-    const partial = await page();
-    expect(partial).toContain(headline);
-    expect(partial).not.toContain("Its CPU time");
-    expect(partial).not.toContain("The turned-away buyers waited longer");
-
-    // Without an expected answer for every buyer, or without the load figures, no claim.
-    second.summary.httpSummary.unexpectedResponses = 1;
-    expect(await page()).not.toContain(headline);
-    second.summary.httpSummary.unexpectedResponses = 0;
     delete second.run.storeLoad;
-    const unknown = await page();
-    expect(unknown).toContain("Not recorded");
-    expect(unknown).not.toContain("times the transactions");
+    expect(await page()).toContain(">Not recorded</dd>");
   });
 
   it("says so when a comparison's second run will never come", async () => {

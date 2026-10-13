@@ -4,10 +4,8 @@ import {
   comparisonPartnerStartGraceMs,
   isFirstComparisonMode,
   type PublicRunHistoryDetailResponse,
-  synchronousConfirmationDeadlineMs,
 } from "@checkout-surge/contracts";
 import type { CompletedBackendRead } from "../backend-read";
-import { formatCount, formatDurationMs } from "./format";
 
 export const comparisonModeLabels: Record<ComparisonMode, string> = {
   demo: "With the order queue",
@@ -15,6 +13,11 @@ export const comparisonModeLabels: Record<ComparisonMode, string> = {
   redis: "With Redis",
   postgres: "Stock and order queue in PostgreSQL",
 };
+
+/** A comparison run's place in its pair and its mode: "Run 1 of 2 · With the order queue". */
+export function comparisonRunLabel(mode: ComparisonMode): string {
+  return `Run ${isFirstComparisonMode(mode) ? 1 : 2} of 2 · ${comparisonModeLabels[mode]}`;
+}
 
 type DetailRead = CompletedBackendRead<PublicRunHistoryDetailResponse>;
 
@@ -71,7 +74,6 @@ export function comparisonRunFacts(detail: PublicRunHistoryDetailResponse) {
   const accepted = httpSummary.buyerWallLatencySummary?.accepted ?? null;
   const soldOut = httpSummary.buyerWallLatencySummary?.soldOut ?? null;
   const confirmedAnswers = httpSummary.confirmedResponses ?? null;
-  const pendingAnswers = httpSummary.pendingPersistenceResponses ?? null;
   const acceptedResponses = httpSummary.acceptedResponses;
   const convergenceSeconds =
     detail.summary.runSignalTimelineSummary?.convergenceDurationSeconds ?? null;
@@ -91,16 +93,10 @@ export function comparisonRunFacts(detail: PublicRunHistoryDetailResponse) {
       confirmedAnswers === null || acceptedResponses === null
         ? null
         : acceptedResponses - confirmedAnswers,
-    // Waits that ended unconfirmed (deadline or reset); pending-persistence answers never waited.
-    deadlineAnswers:
-      confirmedAnswers === null || pendingAnswers === null || acceptedResponses === null
-        ? null
-        : acceptedResponses - confirmedAnswers - pendingAnswers,
     withoutExpectedAnswer:
       httpSummary.transportFailures === null || httpSummary.unexpectedResponses === null
         ? null
         : httpSummary.transportFailures + httpSummary.unexpectedResponses,
-    ordersAccepted: businessOutcomeSummary.acceptedReservations,
     ordersConfirmed: businessOutcomeSummary.confirmedOrders,
     ordersFailed: businessOutcomeSummary.failedOrders,
     erpPacePerSecond: paceWindowSeconds
@@ -111,7 +107,6 @@ export function comparisonRunFacts(detail: PublicRunHistoryDetailResponse) {
       detail.summary.runSignalTimelineSummary?.confirmationConvergence.maxLagMs ?? null,
   };
 }
-export type ComparisonRunFacts = ReturnType<typeof comparisonRunFacts>;
 
 /** The longest single wait; unknown when a cohort that has replies has no statistics. */
 function longestWait(cohorts: [BuyerWallLatency | null, number | null][]): number | null {
@@ -128,63 +123,13 @@ export function formatPace(value: number | null): string | null {
   return value === null ? null : `about ${Math.round(value)} per second`;
 }
 
-/** Paces this close count as the same ERP pace. */
-const samePaceTolerance = 0.1;
-
-/** A run whose every buyer got an expected answer and whose every order was confirmed. */
-function settledCleanly(facts: ComparisonRunFacts): boolean {
-  return (
-    facts.withoutExpectedAnswer === 0 &&
-    facts.ordersFailed === 0 &&
-    facts.ordersConfirmed === facts.ordersAccepted
-  );
-}
-
-/**
- * The honest reading of a complete pair. Null unless both runs settled cleanly, at the same ERP
- * pace, with every fact it states known: otherwise the panel shows the numbers alone.
- */
-export function comparisonTakeaway(
-  queued: ComparisonRunFacts,
-  waiting: ComparisonRunFacts,
-): string | null {
-  const queuedWait = formatDurationMs(queued.everyBuyerAnsweredWithinMs);
-  const waitingWait = formatDurationMs(waiting.everyBuyerAnsweredWithinMs);
-  const queuedPace = queued.erpPacePerSecond;
-  const waitingPace = waiting.erpPacePerSecond;
-  if (
-    !queuedWait ||
-    !waitingWait ||
-    queuedPace === null ||
-    waitingPace === null ||
-    waiting.deadlineAnswers === null ||
-    !settledCleanly(queued) ||
-    !settledCleanly(waiting) ||
-    Math.abs(queuedPace - waitingPace) > samePaceTolerance * Math.max(queuedPace, waitingPace)
-  )
-    return null;
-  return [
-    `Same buyers, same stock, same ERP limit of ${waiting.erpLimitPerSecond} orders per second.`,
-    `The ERP confirmed every order in both runs (${formatCount(queued.ordersConfirmed)} and ${formatCount(waiting.ordersConfirmed)}) at the same pace, ${formatPace(queuedPace)} and ${formatPace(waitingPace)}: the queue does not make the back office faster.`,
-    `With the queue, every buyer had an answer within ${queuedWait}. Without it, each winner waited for their turn at the ERP, and the last answer came after ${waitingWait}.`,
-    waiting.deadlineAnswers > 0
-      ? `${formatCount(waiting.deadlineAnswers)} winners stopped waiting after ${synchronousConfirmationDeadlineMs / 1000} s and were told their order was still being confirmed; it was confirmed later like the others.`
-      : null,
-    "The queue moves the wait from the buyer to the back office.",
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
 /** One run of the Redis comparison; every count covers all buyers. Null means not recorded. */
 export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) {
-  const { httpSummary, businessOutcomeSummary, transportAttemptCounts } = detail.summary;
+  const { httpSummary, businessOutcomeSummary } = detail.summary;
   const accepted = httpSummary.buyerWallLatencySummary?.accepted ?? null;
   const soldOut = httpSummary.buyerWallLatencySummary?.soldOut ?? null;
   const load = detail.run.storeLoad ?? null;
   return {
-    completed: detail.run.status === "completed",
-    buyers: transportAttemptCounts.completedRequests,
     secured: httpSummary.acceptedResponses,
     turnedAway: httpSummary.soldOutResponses,
     withoutExpectedAnswer:
@@ -206,51 +151,20 @@ export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) 
     ]),
   };
 }
-export type RedisComparisonRunFacts = ReturnType<typeof redisComparisonRunFacts>;
 
 /**
- * The honest reading of a complete Redis comparison, stating only what this pair shows. Null
- * unless both runs completed, sold the same units, answered every buyer as expected, and have
- * their transactions and query time. PostgreSQL's CPU time and the turned-away buyers' wait are
- * stated only when they are higher without Redis; the winners' waits are never claimed.
+ * Run 2's figures as multiples of run 1's, "×2.7 / ×3.1", whichever run is higher. Null unless
+ * every figure is known in both runs and run 1's is above zero.
  */
-export function redisComparisonTakeaway(
-  withRedis: RedisComparisonRunFacts,
-  withPostgres: RedisComparisonRunFacts,
+export function formatMultiples(
+  base: (number | null)[],
+  amounts: (number | null)[],
 ): string | null {
-  const runs = [withRedis, withPostgres];
-  const transactions = ratio(withPostgres.postgresTransactions, withRedis.postgresTransactions);
-  const queryTime = ratio(withPostgres.postgresBusyMs, withRedis.postgresBusyMs);
-  if (
-    runs.some((facts) => !facts.completed || facts.withoutExpectedAnswer !== 0) ||
-    withRedis.unitsSold !== withPostgres.unitsSold ||
-    transactions === null ||
-    queryTime === null
-  )
-    return null;
-  const cpu = ratio(withPostgres.postgresCpuMs, withRedis.postgresCpuMs);
-  const turnedAwayLonger =
-    withRedis.turnedAwayAverageMs !== null &&
-    withPostgres.turnedAwayAverageMs !== null &&
-    withPostgres.turnedAwayAverageMs > withRedis.turnedAwayAverageMs;
-  return [
-    `Same ${formatCount(withRedis.buyers)} buyers, and the same ${formatCount(withRedis.unitsSold)} units sold in both runs.`,
-    `Without Redis, until every buyer was answered, PostgreSQL ran about ${formatMultiple(transactions)} the transactions (${formatCount(withPostgres.postgresTransactions)} against ${formatCount(withRedis.postgresTransactions)}) and spent about ${formatMultiple(queryTime)} as long in queries, waits for the stock row included (${formatDurationMs(withPostgres.postgresBusyMs)} against ${formatDurationMs(withRedis.postgresBusyMs)}).`,
-    cpu !== null && cpu > 1
-      ? `Its CPU time was about ${formatMultiple(cpu)} as much (${formatDurationMs(withPostgres.postgresCpuMs)} against ${formatDurationMs(withRedis.postgresCpuMs)}).`
-      : null,
-    turnedAwayLonger
-      ? `The turned-away buyers waited longer, ${formatDurationMs(withPostgres.turnedAwayAverageMs)} on average against ${formatDurationMs(withRedis.turnedAwayAverageMs)}.`
-      : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
-}
-
-function ratio(value: number | null, base: number | null): number | null {
-  return value === null || base === null || base <= 0 ? null : value / base;
-}
-
-function formatMultiple(value: number): string {
-  return `${value.toFixed(1)} times`;
+  const multiples = amounts.map((amount, index) => {
+    const baseAmount = base[index] ?? null;
+    return amount === null || baseAmount === null || baseAmount <= 0
+      ? null
+      : `×${(amount / baseAmount).toFixed(1)}`;
+  });
+  return multiples.every((multiple) => multiple !== null) ? multiples.join(" / ") : null;
 }

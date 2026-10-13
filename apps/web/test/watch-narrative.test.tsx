@@ -304,6 +304,11 @@ describe("watch narrative", () => {
 
     expect(output).toContain(`Accepted run ID: <code>${secondRun.runId}</code>`);
     expect(output).not.toContain(firstRunId);
+    // The run's header says which run of the pair is live, ahead of its stage track.
+    expect(output.indexOf("Run 2 of 2 · Without the order queue")).toBeGreaterThan(-1);
+    expect(output.indexOf("Run 2 of 2 · Without the order queue")).toBeLessThan(
+      output.indexOf('aria-label="Run phase"'),
+    );
   });
 
   it("keeps the run story bands ahead of the grouped technical sections", () => {

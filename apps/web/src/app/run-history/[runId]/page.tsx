@@ -62,13 +62,12 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     : null;
   const comparisonReport =
     comparison && comparisonMode ? (
-      <div className="mb-4 grid">
-        <ComparisonReport
-          comparison={comparisonOfMode(comparisonMode)}
-          first={comparison[0]}
-          second={comparison[1]}
-        />
-      </div>
+      <ComparisonReport
+        className="mb-4 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
+        comparison={comparisonOfMode(comparisonMode)}
+        first={comparison[0]}
+        second={comparison[1]}
+      />
     ) : null;
 
   if (publicDetail?.status === "available") {

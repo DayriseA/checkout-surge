@@ -5,143 +5,151 @@ import {
   comparisonModes,
   type PublicRunHistoryDetailResponse,
   publicRunHistoryDetailResponseSchema,
-  synchronousConfirmationDeadlineMs,
 } from "@checkout-surge/contracts";
 import Link from "next/link";
-import { type ReactNode, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { publicRunHistoryDetailProxyPath } from "../lib/control-paths";
 import {
   type ComparisonMember,
-  comparisonModeLabels,
   comparisonRunFacts,
-  comparisonTakeaway,
+  comparisonRunLabel,
+  formatMultiples,
   formatPace,
   readComparison,
   redisComparisonRunFacts,
-  redisComparisonTakeaway,
 } from "../lib/presentation/comparison";
 import { formatCount, formatDurationMs } from "../lib/presentation/format";
 import { textLinkClassName } from "./control-styles";
 
 const notRecorded = "Not recorded";
 
+/** One figure of a run. Run 2's `amounts` are also shown as multiples of run 1's. */
+interface ComparisonRow {
+  label: string;
+  value: string;
+  amounts?: (number | null)[];
+}
+
 interface ComparisonSpec {
   name: string;
   title: string;
-  intro: ReactNode;
-  rows(detail: PublicRunHistoryDetailResponse): [string, string][];
-  takeaway(
-    first: PublicRunHistoryDetailResponse,
-    second: PublicRunHistoryDetailResponse,
-  ): string | null;
+  rows(detail: PublicRunHistoryDetailResponse): ComparisonRow[];
 }
 
-const value = (text: string | null) => text ?? notRecorded;
+type Format = (amount: number | null) => string | null;
+
+/** Figures shown "a / b" and compared across the two runs. */
+function measured(label: string, format: Format, ...amounts: (number | null)[]): ComparisonRow {
+  return {
+    label,
+    value: amounts.map((amount) => format(amount) ?? notRecorded).join(" / "),
+    amounts,
+  };
+}
+
+/** Answer counts shown "a / b", not compared: a multiple of them says nothing. */
+function counted(label: string, ...amounts: (number | null)[]): ComparisonRow {
+  return { label, value: amounts.map((amount) => formatCount(amount) ?? notRecorded).join(" / ") };
+}
 
 const comparisonSpecs: Record<Comparison, ComparisonSpec> = {
   order_queue: {
     name: "Queue comparison",
-    title: "What the order queue buys: the same workload with and without it",
-    intro: (
-      <>
-        Both runs use the same buyers, stock and ERP limit, one after the other. Without the order
-        queue, each winner&apos;s purchase request stays open until the same worker has the order
-        confirmed by the ERP, at the ERP&apos;s pace; after{" "}
-        {synchronousConfirmationDeadlineMs / 1000} s the buyer is told the order is still being
-        confirmed, and it is confirmed later. Run 1 is always the one with the queue.
-      </>
-    ),
+    title: "With and without the order queue, on the same workload",
     rows: (detail) => {
       const facts = comparisonRunFacts(detail);
       return [
-        [
+        measured(
           "Winners' time to an answer, average / 95th percentile (all winners)",
-          `${value(formatDurationMs(facts.winnerAverageMs))} / ${value(formatDurationMs(facts.winnerP95Ms))}`,
-        ],
-        [
+          formatDurationMs,
+          facts.winnerAverageMs,
+          facts.winnerP95Ms,
+        ),
+        measured(
           "Every buyer had an answer within",
-          value(formatDurationMs(facts.everyBuyerAnsweredWithinMs)),
-        ],
-        [
+          formatDurationMs,
+          facts.everyBuyerAnsweredWithinMs,
+        ),
+        counted(
           "Winners told “confirmed” / “secured, not yet confirmed”",
-          `${value(formatCount(facts.confirmedAnswers))} / ${value(formatCount(facts.notYetConfirmedAnswers))}`,
-        ],
-        ["Buyers without an expected answer", value(formatCount(facts.withoutExpectedAnswer))],
-        [
-          "Orders confirmed by the ERP (failed)",
-          `${formatCount(facts.ordersConfirmed)} (${formatCount(facts.ordersFailed)})`,
-        ],
-        [
+          facts.confirmedAnswers,
+          facts.notYetConfirmedAnswers,
+        ),
+        counted("Buyers without an expected answer", facts.withoutExpectedAnswer),
+        {
+          label: "Orders confirmed by the ERP (failed)",
+          value: `${formatCount(facts.ordersConfirmed)} (${formatCount(facts.ordersFailed)})`,
+        },
+        measured(
           `ERP pace, from the first buyer to the last confirmation (limit ${facts.erpLimitPerSecond} per second)`,
-          value(formatPace(facts.erpPacePerSecond)),
-        ],
-        ["Slowest order, from secured to confirmed", value(formatDurationMs(facts.slowestOrderMs))],
+          formatPace,
+          facts.erpPacePerSecond,
+        ),
+        measured(
+          "Slowest order, from secured to confirmed",
+          formatDurationMs,
+          facts.slowestOrderMs,
+        ),
       ];
     },
-    takeaway: (first, second) =>
-      comparisonTakeaway(comparisonRunFacts(first), comparisonRunFacts(second)),
   },
   redis: {
     name: "Redis comparison",
-    title: "What Redis buys: the same workload with the stock decided in Redis, then in PostgreSQL",
-    intro: (
-      <>
-        Both runs use the same buyers, stock and ERP, one after the other. In run 2, PostgreSQL
-        decides the stock and holds the order queue, with the same protections: idempotency, the
-        run&apos;s fence, and the order recorded before the buyer hears &ldquo;yes&rdquo;. Redis
-        still carries the live dashboard&apos;s counters and the notifications. The database figures
-        cover each run from its start until every buyer was answered: PostgreSQL&apos;s own
-        statistics for the whole database, background work included, and its CPU time. On the hosted
-        demo, both runs use the same two buy-only API processes, and PostgreSQL and Redis share the
-        core Machine with them. Run 1 is always the one with Redis.
-      </>
-    ),
+    title: "Stock decided in Redis, then in PostgreSQL, on the same workload",
     rows: (detail) => {
       const facts = redisComparisonRunFacts(detail);
       return [
-        [
+        counted(
           "Buyers secured / turned away / without an expected answer",
-          `${value(formatCount(facts.secured))} / ${value(formatCount(facts.turnedAway))} / ${value(formatCount(facts.withoutExpectedAnswer))}`,
-        ],
-        [
-          "Units sold, of the stock",
-          `${formatCount(facts.unitsSold)} of ${formatCount(facts.stock)}`,
-        ],
-        ["PostgreSQL transactions", value(formatCount(facts.postgresTransactions))],
-        ["PostgreSQL CPU time", value(formatDurationMs(facts.postgresCpuMs))],
-        [
+          facts.secured,
+          facts.turnedAway,
+          facts.withoutExpectedAnswer,
+        ),
+        {
+          label: "Units sold, of the stock",
+          value: `${formatCount(facts.unitsSold)} of ${formatCount(facts.stock)}`,
+        },
+        measured("PostgreSQL transactions", formatCount, facts.postgresTransactions),
+        measured("PostgreSQL CPU time", formatDurationMs, facts.postgresCpuMs),
+        measured(
           "Time spent in PostgreSQL queries, waits for the stock row included",
-          value(formatDurationMs(facts.postgresBusyMs)),
-        ],
-        [
+          formatDurationMs,
+          facts.postgresBusyMs,
+        ),
+        measured(
           "Winners' time to an answer, average / 95th percentile",
-          `${value(formatDurationMs(facts.winnerAverageMs))} / ${value(formatDurationMs(facts.winnerP95Ms))}`,
-        ],
-        [
+          formatDurationMs,
+          facts.winnerAverageMs,
+          facts.winnerP95Ms,
+        ),
+        measured(
           "Turned-away buyers' time to an answer, average / 95th percentile",
-          `${value(formatDurationMs(facts.turnedAwayAverageMs))} / ${value(formatDurationMs(facts.turnedAwayP95Ms))}`,
-        ],
-        [
+          formatDurationMs,
+          facts.turnedAwayAverageMs,
+          facts.turnedAwayP95Ms,
+        ),
+        measured(
           "Every buyer had an answer within",
-          value(formatDurationMs(facts.everyBuyerAnsweredWithinMs)),
-        ],
+          formatDurationMs,
+          facts.everyBuyerAnsweredWithinMs,
+        ),
       ];
     },
-    takeaway: (first, second) =>
-      redisComparisonTakeaway(redisComparisonRunFacts(first), redisComparisonRunFacts(second)),
   },
 };
 
 /**
  * One comparison of two runs on the same workload, in run order. Missing evidence reads "Not
- * recorded"; no winner is declared.
+ * recorded"; run 2's figures are also given as multiples of run 1's, and no winner is declared.
  */
 export function ComparisonReport({
+  className = "",
   comparison,
   first,
   second,
 }: {
+  className?: string;
   comparison: Comparison;
   first: ComparisonMember;
   second: ComparisonMember;
@@ -149,29 +157,18 @@ export function ComparisonReport({
   const spec = comparisonSpecs[comparison];
   const [firstMode, secondMode] = comparisonModes[comparison];
   const firstDetail = completedDetail(first);
-  const secondDetail = completedDetail(second);
-  const takeaway = firstDetail && secondDetail ? spec.takeaway(firstDetail, secondDetail) : null;
   return (
-    <section
-      aria-label={spec.name}
-      className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
-    >
-      <p className="m-0 text-xs font-medium text-muted">One comparison, two runs</p>
-      <h2 className="type-title m-0 mt-1 text-xl text-ink">{spec.title}</h2>
-      <p className="mb-0 mt-2 max-w-[80ch] text-sm leading-6 text-muted-strong">{spec.intro}</p>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+    <section aria-label={spec.name} className={`grid gap-3 ${className}`}>
+      <h2 className="type-title m-0 text-base leading-tight text-ink">{spec.title}</h2>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <ComparisonColumn label={comparisonRunLabel(firstMode)} member={first} rows={spec.rows} />
         <ComparisonColumn
-          label={`Run 1 of 2 · ${comparisonModeLabels[firstMode]}`}
-          member={first}
-          rows={spec.rows}
-        />
-        <ComparisonColumn
-          label={`Run 2 of 2 · ${comparisonModeLabels[secondMode]}`}
+          baseRows={firstDetail ? spec.rows(firstDetail) : null}
+          label={comparisonRunLabel(secondMode)}
           member={second}
           rows={spec.rows}
         />
       </div>
-      {takeaway ? <p className="mb-0 mt-4 max-w-[80ch] leading-6 text-ink">{takeaway}</p> : null}
     </section>
   );
 }
@@ -187,15 +184,17 @@ function completedDetail(member: ComparisonMember) {
 const memberStatus = {
   running: "In progress: results appear when the run ends.",
   unavailable: "Report not available.",
-  not_started: "Starts when run 1 completes.",
+  not_started: "Starts after run 1.",
   never: "No second run was started.",
 } as const;
 
 function ComparisonColumn({
+  baseRows = null,
   label,
   member,
   rows,
 }: {
+  baseRows?: ComparisonRow[] | null;
   label: string;
   member: ComparisonMember;
   rows: ComparisonSpec["rows"];
@@ -215,12 +214,23 @@ function ComparisonColumn({
             </p>
           )}
           <dl className="mt-3 grid gap-3">
-            {shownRows.map(([rowLabel, rowValue]) => (
-              <div key={rowLabel}>
-                <dt className="text-xs text-muted">{rowLabel}</dt>
-                <dd className="m-0 mt-1 font-semibold text-ink">{rowValue}</dd>
-              </div>
-            ))}
+            {shownRows.map((row, index) => {
+              const base = baseRows?.[index]?.amounts;
+              const multiples = base && row.amounts ? formatMultiples(base, row.amounts) : null;
+              return (
+                <div key={row.label}>
+                  <dt className="text-xs text-muted">{row.label}</dt>
+                  <dd className="m-0 mt-1 font-semibold text-ink">
+                    {row.value}
+                    {multiples ? (
+                      <span className="ml-2 text-xs font-medium text-muted">
+                        {`${multiples} vs run 1`}
+                      </span>
+                    ) : null}
+                  </dd>
+                </div>
+              );
+            })}
           </dl>
           <Link className={`${textLinkClassName} text-sm`} href={`/run-history/${member.runId}`}>
             View this run&apos;s report
@@ -231,21 +241,25 @@ function ComparisonColumn({
   );
 }
 
+/** A watched comparison run: its comparison, its ID, and its first run's ID when it is run 2. */
+export interface WatchedComparison {
+  comparison: Comparison;
+  runId: string;
+  firstRunId: string | null;
+  refreshKey: string;
+}
+
 /**
  * The comparison of a run being watched. It reads the saved reports of the run and of its partner
  * again each time `refreshKey` changes (the live run's identity or status).
  */
 export function WatchComparisonPanel({
+  className,
   comparison,
   runId,
   firstRunId,
   refreshKey,
-}: {
-  comparison: Comparison;
-  runId: string;
-  firstRunId: string | null;
-  refreshKey: string;
-}) {
+}: WatchedComparison & { className?: string }) {
   const [members, setMembers] = useState<[ComparisonMember, ComparisonMember] | null>(null);
   // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey triggers the re-read.
   useEffect(() => {
@@ -260,6 +274,11 @@ export function WatchComparisonPanel({
     };
   }, [runId, firstRunId, refreshKey]);
   return members ? (
-    <ComparisonReport comparison={comparison} first={members[0]} second={members[1]} />
+    <ComparisonReport
+      {...(className ? { className } : {})}
+      comparison={comparison}
+      first={members[0]}
+      second={members[1]}
+    />
   ) : null;
 }
