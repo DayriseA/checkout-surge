@@ -23,6 +23,8 @@ out
 *.key
 **/*.key
 .checkout-surge
+# Operator scratch files, old credentials included.
+.tmp
 **/*.log
 **/*.tsbuildinfo
 working_docs

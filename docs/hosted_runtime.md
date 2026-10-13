@@ -125,6 +125,8 @@ The core is one Fly multi-container Machine that reuses the per-service images (
 
 PostgreSQL and Redis keep their data on one Fly volume mounted at `/persistent`, each in its own subdirectory. The data is disposable: a recovery or an incompatible change starts a fresh, empty core, and nothing restores the volume ([HD-05](decisions/hosted_deployment.md#hd-05-core-data-is-disposable-with-no-restore-path)).
 
+PostgreSQL preloads `pg_prewarm` with its autoprewarm worker. That worker saves the list of cached blocks every 300 s (the default interval) and at a clean shutdown, and reloads them at the next start, so the first run after a wake does not read its tables from disk. A fresh core simply starts with an empty cache.
+
 ### Idle stop and countdown
 
 The API stops its own Machine once there is no nonterminal run and no counted activity for the idle period ([HD-20](decisions/hosted_deployment.md#hd-20-the-api-stops-its-own-idle-core)). `CORE_IDLE_STOP_ENABLED=true` turns it on.

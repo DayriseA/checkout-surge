@@ -5,7 +5,7 @@ export const passThroughRunLocks: Pick<
   "withRunAdmissionLock" | "withRunPendingPersistenceLock"
 > = {
   async withRunAdmissionLock({ operation }) {
-    return operation(this as BuyPersistence);
+    return operation(this as BuyPersistence, { comparisonMode: null });
   },
   async withRunPendingPersistenceLock({ operation }) {
     return operation(this as BuyPersistence, "admissible");

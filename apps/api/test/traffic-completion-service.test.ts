@@ -5,6 +5,7 @@ import {
   type TrafficCompletionReport,
 } from "@checkout-surge/contracts";
 import {
+  applyInventoryCountBatch,
   createDatabaseConnection,
   createRedisClient,
   demoPresets,
@@ -105,6 +106,59 @@ describe("TrafficCompletionService", () => {
       false,
     );
     expect(finalizeRun).toHaveBeenCalledWith(runId, "corr-completion");
+  });
+
+  it("closes a measured run's store-load window once every buyer is answered", async () => {
+    const db = requireConnection(connection).db;
+    const start = {
+      postgresTransactions: 0,
+      postgresBusyMs: 0,
+      redisCpuMs: 0,
+      capturedAt: "2026-07-19T00:00:01.000Z",
+    };
+    await db.update(demoRuns).set({ storeLoad: { start } }).where(eq(demoRuns.id, runId));
+    const service = createCompletionService(requireConnection(connection), requireRedis(redis));
+
+    await service.recordTrafficCompletion(completionReport());
+
+    const [run] = await db.select().from(demoRuns).where(eq(demoRuns.id, runId));
+    expect(run?.storeLoad).toMatchObject({
+      start,
+      end: { postgresTransactions: expect.any(Number), capturedAt: "2026-07-19T00:00:11.000Z" },
+    });
+  });
+
+  it("lets every process's last batched counts land before a PostgreSQL-stock run's sale closes", async () => {
+    await requireConnection(connection)
+      .db.update(demoRuns)
+      .set({ comparisonMode: "postgres" })
+      .where(eq(demoRuns.id, runId));
+    // Another API process's timer adds its last batch while the close waits.
+    const settleBatchedCounts = async () => {
+      await applyInventoryCountBatch(requireRedis(redis), {
+        runId,
+        saleOfferId,
+        reservedUnits: 0,
+        latestReservedAt: null,
+        soldOut: 3,
+        latestSoldOutAt: "2026-07-19T00:00:09.000Z",
+        reservationsPerSecond: [],
+      });
+    };
+    const service = createCompletionService(
+      requireConnection(connection),
+      requireRedis(redis),
+      undefined,
+      settleBatchedCounts,
+    );
+
+    await service.recordTrafficCompletion(completionReport());
+
+    const status = await getInventoryStatus(requireRedis(redis), saleOfferId);
+    expect(status.soldOutPressure.rejectionCount).toBe(3);
+    await expect(isRunSaleEligible(requireRedis(redis), { runId, saleOfferId })).resolves.toBe(
+      false,
+    );
   });
 
   it("accepts semantic redelivery and rejects conflicting evidence before side effects", async () => {
@@ -406,11 +460,12 @@ function createCompletionService(
   finalizationService: Pick<DemoRunFinalizationService, "finalizeRun"> = {
     finalizeRun: async () => null,
   },
+  settleBatchedCounts?: () => Promise<void>,
 ): TrafficCompletionService {
   return new TrafficCompletionService({
     db: connection.db,
     redis,
-    completionEnrichmentService: createEnrichmentService(connection, redis),
+    completionEnrichmentService: createEnrichmentService(connection, redis, settleBatchedCounts),
     finalizationService,
     logger: createSilentLogger("api"),
     now: () => new Date("2026-07-19T00:00:11.000Z"),
@@ -442,10 +497,12 @@ function createFinalizationService(
 function createEnrichmentService(
   connection: ReturnType<typeof createDatabaseConnection>,
   redis: ReturnType<typeof createRedisClient>,
+  settleBatchedCounts?: () => Promise<void>,
 ): TrafficCompletionEnrichmentService {
   return new TrafficCompletionEnrichmentService({
     db: connection.db,
     redis,
+    ...(settleBatchedCounts ? { settleBatchedCounts } : {}),
     businessOutcomeReader: { read: async () => emptyBusinessOutcomeSummary() },
     logger: createSilentLogger("api"),
     now: () => new Date("2026-07-19T00:00:11.000Z"),

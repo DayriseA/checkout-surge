@@ -35,6 +35,14 @@ export function toDemoRunSnapshot(run: typeof demoRuns.$inferSelect): DemoRunSna
     ...(run.trafficEndedAt ? { trafficEndedAt: run.trafficEndedAt.toISOString() } : {}),
     ...(run.finalizedAt ? { finalizedAt: run.finalizedAt.toISOString() } : {}),
     ...(run.runnerRegion ? { runnerRegion: run.runnerRegion } : {}),
+    ...(run.comparisonMode
+      ? {
+          comparison: {
+            mode: run.comparisonMode,
+            ...(run.comparisonFirstRunId ? { firstRunId: run.comparisonFirstRunId } : {}),
+          },
+        }
+      : {}),
     ...(run.status === "starting" && run.runnerRelocating ? { runnerRelocating: true } : {}),
     ...(run.adminResetCompletedAt
       ? { adminResetCompletedAt: run.adminResetCompletedAt.toISOString() }

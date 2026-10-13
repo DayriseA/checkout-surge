@@ -3,6 +3,7 @@ import Link from "next/link";
 import { textLinkClassName } from "../components/control-styles";
 import { PublicDemoEntry } from "../components/public-demo-entry";
 import { getPublicDemoSurface } from "../lib/api";
+import { siteLink, sitePages } from "../lib/site-links";
 
 export const metadata: Metadata = { title: "Demo" };
 export const dynamic = "force-dynamic";
@@ -28,19 +29,19 @@ export default async function DemoDashboardPage() {
           How the surge stays safe
         </h2>
         <p className="m-0 max-w-[80ch] text-sm leading-6 text-muted-strong">
-          Simulated buyers, released as if by a waiting room, compete for limited stock. Redis
-          decides each attempt atomically without overselling: buyers turned away are answered from
-          Redis alone, and for each buyer who secures a unit, the reservation and order are written
-          to PostgreSQL before the answer. Orders wait in a BullMQ queue, and workers drain it at a
-          safe rate while calling a deliberately slow simulated ERP. A run succeeds only when every
-          order is confirmed and none failed, and oversold units remain zero. Results depend on the
-          environment and are not universal production evidence.
+          Simulated buyers compete for limited stock: an in-memory store (Redis) decides each
+          attempt in one step, so no unit is sold twice, and orders wait in a queue, so the slow,
+          simulated back office is never flooded. The results describe this demo,{" "}
+          <Link className={textLinkClassName} href={siteLink("limits", "scale")}>
+            at its scale
+          </Link>
+          .
         </p>
         <Link
           className={`${textLinkClassName} text-sm min-[801px]:col-start-2`}
-          href="/#waiting-room"
+          href={sitePages.howItWorks}
         >
-          How this works
+          How it works
         </Link>
       </section>
     </>

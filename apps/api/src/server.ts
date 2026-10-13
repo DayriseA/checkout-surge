@@ -32,11 +32,13 @@ import type { GeneratedRunRetentionWorkflow } from "./services/generated-run-ret
 import type { GeneratedRunTeardownWorkflow } from "./services/generated-run-teardown-service.js";
 import type { InventoryStatusService } from "./services/inventory-status-service.js";
 import type { OrderStatusController } from "./services/order-status-service.js";
+import type { PostgresStockBuyService } from "./services/postgres-stock-buy-service.js";
 import type { PublicRuntimePolicyController } from "./services/public-runtime-policy-service.js";
 import type { QueueStatusService } from "./services/queue-status-service.js";
 import type { ReserveOrderService } from "./services/reserve-order-service.js";
 import type { RunHistoryController } from "./services/run-history-service.js";
 import type { RunnerOperations } from "./services/runner-operations.js";
+import type { SynchronousConfirmationBuyService } from "./services/synchronous-confirmation-buy-service.js";
 import type { TrafficCompletionController } from "./services/traffic-completion-service.js";
 import type { TrafficMetricIngestionController } from "./services/traffic-metric-ingestion-service.js";
 
@@ -51,6 +53,8 @@ export interface BuildApiServerOptions {
   orderStatusService: OrderStatusController;
   queueStatusService: QueueStatusService;
   reserveOrderService: ReserveOrderService;
+  synchronousConfirmationBuyService: SynchronousConfirmationBuyService;
+  postgresStockBuyService: Pick<PostgresStockBuyService, "buy">;
   presetService: DemoPresetController;
   runtimePolicyService: PublicRuntimePolicyController;
   demoRunLifecycleService: DemoRunLifecycleController;
@@ -65,7 +69,12 @@ export interface BuildApiServerOptions {
   startedAt?: Date;
 }
 
-export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
+/** The Fastify app every API process serves from: correlation, CORS and the error contract. */
+async function createApiApp(
+  options: Pick<BuildApiServerOptions, "logger"> & {
+    config: Pick<ApiConfig, "trustedProxyCidrs" | "webOrigins">;
+  },
+): Promise<ApiFastifyInstance> {
   const app = fastify({
     loggerInstance: options.logger,
     // Fastify's two lines per request flood the log under load; failures are logged below.
@@ -133,12 +142,44 @@ export async function buildApiServer(options: BuildApiServerOptions): Promise<Ap
     });
   });
 
+  return app;
+}
+
+/** A buy-only process: the buy routes and health, nothing that owns runs (HD-11). */
+export async function buildBuyServer(
+  options: Pick<
+    BuildApiServerOptions,
+    | "config"
+    | "logger"
+    | "readiness"
+    | "reserveOrderService"
+    | "synchronousConfirmationBuyService"
+    | "postgresStockBuyService"
+    | "startedAt"
+  >,
+): Promise<ApiFastifyInstance> {
+  const app = await createApiApp(options);
+  registerHealthRoutes(app, {
+    readiness: options.readiness,
+    ...(options.startedAt ? { startedAt: options.startedAt } : {}),
+  });
+  registerBuyRoutes(app, options);
+  return app;
+}
+
+export async function buildApiServer(options: BuildApiServerOptions): Promise<ApiFastifyInstance> {
+  const app = await createApiApp(options);
+
   registerHealthRoutes(app, {
     readiness: options.readiness,
     ...(options.startedAt ? { startedAt: options.startedAt } : {}),
   });
   registerCoreIdleRoutes(app, { coreIdleShutdown: options.coreIdleShutdown });
-  registerBuyRoutes(app, { reserveOrderService: options.reserveOrderService });
+  registerBuyRoutes(app, {
+    reserveOrderService: options.reserveOrderService,
+    synchronousConfirmationBuyService: options.synchronousConfirmationBuyService,
+    postgresStockBuyService: options.postgresStockBuyService,
+  });
   registerInventoryRoutes(app, { inventoryStatusService: options.inventoryStatusService });
   registerOrderStatusRoutes(app, { orderStatusService: options.orderStatusService });
   registerQueueRoutes(app, { queueStatusService: options.queueStatusService });

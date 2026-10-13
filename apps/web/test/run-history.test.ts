@@ -2,6 +2,8 @@
 
 import {
   type AdminRunHistoryDetailResponse,
+  type ComparisonMode,
+  confirmationLagBoundary,
   demoRunSnapshotSchema,
   deriveRunResult,
   emptyHttpTimingBreakdownSummary,
@@ -10,8 +12,11 @@ import {
   type PublicRunHistoryDetailResponse,
   publicRunHistoryDetailResponseSchema,
   publicRunHistorySummarySchema,
+  queueBacklogDefinition,
+  queueBacklogDrainDurationBoundary,
   type RunHistoryListResponse,
   runHistorySummarySchema,
+  runSignalBucketCount,
 } from "@checkout-surge/contracts";
 import { previewRunConfigSnapshotFixture } from "@checkout-surge/contracts/testing";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -104,6 +109,17 @@ describe("run history", () => {
     expect(markup).toContain("Recorded k6 output");
     expect(markup).toContain("Insufficient VUs, reached 4000");
   });
+  it("names a comparison run's mode in the list as it is written elsewhere", () => {
+    const history = listFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a run summary fixture.");
+    summary.presetName = "Redis comparison";
+    summary.comparisonMode = "postgres";
+    expect(renderToStaticMarkup(createElement(RunHistoryList, { history }))).toContain(
+      "Redis comparison · Stock and order queue in PostgreSQL",
+    );
+  });
+
   it.each([
     "operator",
     "automatic_reset",
@@ -923,6 +939,122 @@ describe("run history", () => {
     expect(markup).toContain("200 orders were confirmed, 50 failed, and 0 remain pending.");
   });
 
+  it("shows both runs of a queue comparison as one report, keeping unrecorded facts unknown", async () => {
+    const firstId = "66666666-6666-4666-8666-666666666661";
+    const secondId = "66666666-6666-4666-8666-666666666662";
+    const first = comparisonDetail("demo", firstId, secondId, {
+      longestWaitMs: 2_400,
+      confirmed: 0,
+    });
+    const second = comparisonDetail("synchronous_confirmation", secondId, firstId, {
+      longestWaitMs: 12_000,
+      confirmed: 228,
+    });
+    getRunHistoryDetail.mockImplementation(async (runId: string) => ({
+      status: "available",
+      data: runId === firstId ? first : second,
+    }));
+    const page = async () =>
+      renderToStaticMarkup(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: secondId }) }),
+      );
+
+    const markup = await page();
+    expect(markup).toContain("With and without the order queue, on the same workload");
+    expect(markup).toContain('href="/how-it-works#queue-comparison"');
+    expect(markup).toContain('href="/limits#comparison-limits"');
+    expect(markup.indexOf("Run 1 of 2 · With the order queue")).toBeLessThan(
+      markup.indexOf("Run 2 of 2 · Without the order queue"),
+    );
+    // Run 2's waits also read as multiples of run 1's; answer counts are not compared.
+    expect(markup).toContain(">1.2 s / 2.2 s<");
+    expect(markup).toContain(">6 s / 10.8 s<");
+    expect(markup).toContain(">×5.0 / ×5.0 vs run 1<");
+    expect(markup).toContain(">228 / 22</dd>");
+
+    second.summary.httpSummary.buyerWallLatencySummary = { accepted: null, soldOut: null };
+    expect(await page()).toContain(">Not recorded / Not recorded</dd>");
+  });
+
+  it("shows a Redis comparison's database work and waits, with run 2's as multiples of run 1's", async () => {
+    const firstId = "66666666-6666-4666-8666-666666666663";
+    const secondId = "66666666-6666-4666-8666-666666666664";
+    const first = comparisonDetail("redis", firstId, secondId, {
+      longestWaitMs: 4_000,
+      confirmed: 0,
+    });
+    const second = comparisonDetail("postgres", secondId, firstId, {
+      longestWaitMs: 3_000,
+      confirmed: 0,
+    });
+    const turnedAway = (averageMs: number) => ({
+      sampleCount: 750,
+      averageMs,
+      p95Ms: 900,
+      maxMs: 1_000,
+    });
+    second.summary.httpSummary.buyerWallLatencySummary = {
+      accepted: second.summary.httpSummary.buyerWallLatencySummary?.accepted ?? null,
+      soldOut: turnedAway(600),
+    };
+    first.run.storeLoad = {
+      postgresTransactions: 1_200,
+      postgresBusyMs: 800,
+      postgresCpuMs: 2_000,
+      redisCpuMs: 900,
+    };
+    second.run.storeLoad = {
+      postgresTransactions: 3_600,
+      postgresBusyMs: 4_800,
+      postgresCpuMs: 4_400,
+      redisCpuMs: 150,
+    };
+    getRunHistoryDetail.mockImplementation(async (runId: string) => ({
+      status: "available",
+      data: runId === firstId ? first : second,
+    }));
+    const page = async () =>
+      renderToStaticMarkup(
+        await RunHistoryDetailPage({ params: Promise.resolve({ runId: firstId }) }),
+      );
+
+    const markup = await page();
+    expect(markup).toContain("Stock decided in Redis, then in PostgreSQL, on the same workload");
+    expect(markup).toContain('href="/how-it-works#redis-comparison"');
+    expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
+      markup.indexOf("Run 2 of 2 · Stock and order queue in PostgreSQL"),
+    );
+    expect(markup).not.toContain("Redis CPU");
+    for (const figure of [
+      ">3,600<",
+      ">×3.0 vs run 1<",
+      ">4.8 s<",
+      ">×6.0 vs run 1<",
+      ">4.4 s<",
+      ">×2.2 vs run 1<",
+      // Lower in run 2 reads the same neutral way.
+      ">1.5 s / 2.7 s<",
+      ">×0.8 / ×0.8 vs run 1<",
+      ">600 ms / 900 ms<",
+      ">×2.0 / ×1.0 vs run 1<",
+    ])
+      expect(markup).toContain(figure);
+
+    delete second.run.storeLoad;
+    expect(await page()).toContain(">Not recorded</dd>");
+  });
+
+  it("says so when a comparison's second run will never come", async () => {
+    const runId = "66666666-6666-4666-8666-666666666661";
+    const first = comparisonDetail("demo", runId, null, { longestWaitMs: 2_400, confirmed: 0 });
+    getRunHistoryDetail.mockResolvedValue({ status: "available", data: first });
+
+    const markup = renderToStaticMarkup(
+      await RunHistoryDetailPage({ params: Promise.resolve({ runId }) }),
+    );
+    expect(markup).toContain("No second run was started.");
+  });
+
   it("renders the exact indeterminate outcome badge and conclusion on the public route", async () => {
     const detail = detailFixture();
     const { terminalInventorySnapshot: _terminalInventorySnapshot, ...summary } = detail.summary;
@@ -1414,6 +1546,69 @@ function adminDetailFixture(): AdminRunHistoryDetailResponse {
     erpAttemptSummary: detail.erpAttempts,
     runSignalTimelineSummary: null,
     timestamp: "2026-06-20T00:00:10.000Z",
+  };
+}
+
+function comparisonDetail(
+  mode: ComparisonMode,
+  runId: string,
+  partnerRunId: string | null,
+  input: { longestWaitMs: number; confirmed: number },
+): PublicRunHistoryDetailResponse {
+  const detail = detailFixture();
+  return {
+    ...detail,
+    summary: {
+      ...detail.summary,
+      runId,
+      httpSummary: {
+        ...detail.summary.httpSummary,
+        confirmedResponses: input.confirmed,
+        pendingPersistenceResponses: 0,
+        buyerWallLatencySummary: {
+          accepted: {
+            sampleCount: 250,
+            averageMs: input.longestWaitMs / 2,
+            p95Ms: input.longestWaitMs * 0.9,
+            maxMs: input.longestWaitMs,
+          },
+          soldOut: { sampleCount: 750, averageMs: 300, p95Ms: 900, maxMs: 1_000 },
+        },
+      },
+      runSignalTimelineSummary: {
+        window: {
+          anchoredAt: "2026-06-20T00:00:01.000Z",
+          endedAt: "2026-06-20T00:00:40.000Z",
+          bucketCount: runSignalBucketCount,
+          bucketWidthSeconds: 0.325,
+        },
+        inventoryDrain: {
+          startingStock: 250,
+          remainingStock: 0,
+          depletedAt: "2026-06-20T00:00:02.000Z",
+          timeToDepletionSeconds: 1,
+        },
+        queueBacklog: {
+          peakBacklog: 250,
+          peakAtElapsedSeconds: 1,
+          backlogDrainedAt: "2026-06-20T00:00:14.000Z",
+          drainDurationSeconds: 13,
+          drainDurationBoundary: queueBacklogDrainDurationBoundary,
+          definition: queueBacklogDefinition,
+        },
+        confirmationConvergence: {
+          confirmedOrderCount: 250,
+          failedOrderCount: 0,
+          pendingAtCaptureCount: 0,
+          averageLagMs: 7_000,
+          p95LagMs: 12_000,
+          maxLagMs: 13_000,
+          boundary: confirmationLagBoundary,
+        },
+        convergenceDurationSeconds: 13,
+      },
+    },
+    run: { ...detail.run, runId, comparison: { mode, partnerRunId } },
   };
 }
 

@@ -15,7 +15,11 @@ import {
 
 // Capture the actual seed definitions without connecting to PostgreSQL or Redis.
 const { seededPresets } = vi.hoisted(() => ({
-  seededPresets: [] as (AcceptedRunConfigSnapshot & { slug: string; visibility: string })[],
+  seededPresets: [] as (AcceptedRunConfigSnapshot & {
+    slug: string;
+    visibility: string;
+    comparison: string | null;
+  })[],
 }));
 vi.mock("../../../../packages/db/src/scripts/env.js", () => ({
   requireEnv: () => "unused",
@@ -72,12 +76,15 @@ function estimate(value: EstimatorInput, ceiling = 600) {
 describe("pure conservative duration estimator", () => {
   it("admits the real acceptance fixtures and every seeded preset", async () => {
     await import("../../../../packages/db/src/scripts/seed.js");
-    expect(seededPresets.filter((preset) => preset.visibility === "public")).toHaveLength(7);
+    expect(seededPresets.filter((preset) => preset.visibility === "public")).toHaveLength(9);
     for (const preset of seededPresets) {
       const result = estimate(fromConfig(preset));
       expect(result.decision, preset.slug).toBe("admitted");
       if (preset.slug === "slow-erp-5k") expect(result.bottleneck).toBe("erp_capacity");
       if (preset.slug === "laggy-erp-5k") expect(result.bottleneck).toBe("erp_latency");
+      // A comparison runs the preset twice in the same run slot.
+      if (preset.comparison)
+        expect(2 * (result.conservativeDurationSeconds ?? 600)).toBeLessThan(600);
       if (preset.slug === "admin-failure-path") {
         expect(preset.inventoryConfig.startingStock).toBe(200);
         expect(result.conservativeDurationSeconds).toBeCloseTo(179.25, 8);

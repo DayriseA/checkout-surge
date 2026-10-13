@@ -12,7 +12,10 @@ import {
   readPendingPersistenceRecord,
 } from "@checkout-surge/db";
 import type { CheckoutSurgeLogger } from "@checkout-surge/logger";
-import { pendingPersistenceRecoveryDefaults } from "../runtime/pending-persistence-recovery-policy.js";
+import {
+  pendingPersistenceFreshHoldGraceMs,
+  pendingPersistenceRecoveryDefaults,
+} from "../runtime/pending-persistence-recovery-policy.js";
 import type { DashboardSourceDirtySchedulerPort } from "./dashboard-source-dirty-scheduler.js";
 import type { OrderProcessJobPublisher } from "./order-process-job-publisher.js";
 import type {
@@ -292,7 +295,11 @@ export class PendingPersistenceRecoveryService {
         dueAt: pageNow,
       });
       for (const issue of page.issues) this.logReadIssue(issue, scope.saleOfferId);
-      const candidates = page.records.filter((record) => record.runId === scope.runId);
+      const latestDueSecuredAtMs = pageNow.getTime() - pendingPersistenceFreshHoldGraceMs;
+      const candidates = page.records.filter(
+        (record) =>
+          record.runId === scope.runId && Date.parse(record.securedAt) <= latestDueSecuredAtMs,
+      );
       records.push(...candidates);
     }
     return records;

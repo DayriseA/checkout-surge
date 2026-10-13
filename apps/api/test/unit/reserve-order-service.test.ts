@@ -345,13 +345,16 @@ describe("ReserveOrderService queue handoff", () => {
         ...passThroughRunLocks,
         withRunAdmissionLock: async ({ reservation, operation }) => {
           callOrder.push("admission");
-          return operation({
-            persistSecuredReservation: async () => {
-              callOrder.push("persist");
-              return persistedBuy(reservation);
+          return operation(
+            {
+              persistSecuredReservation: async () => {
+                callOrder.push("persist");
+                return persistedBuy(reservation);
+              },
+              getPersistedBuyByReservationId: async () => null,
             },
-            getPersistedBuyByReservationId: async () => null,
-          });
+            { comparisonMode: null },
+          );
         },
         persistSecuredReservation: async () => {
           throw new Error("Expected admission-scoped persistence.");
@@ -928,7 +931,7 @@ describe("ReserveOrderService partial failures", () => {
         ...admissionOperations,
         withRunAdmissionLock: async ({ operation }) => {
           callOrder.push("admission start");
-          const result = await operation(admissionOperations);
+          const result = await operation(admissionOperations, { comparisonMode: null });
           callOrder.push("admission end");
           return result;
         },

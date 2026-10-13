@@ -16,6 +16,7 @@ import {
   startDemoRunRequestSchema,
   startDemoRunResponseSchema,
 } from "@checkout-surge/contracts";
+import Link from "next/link";
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
@@ -45,6 +46,7 @@ import {
   deriveRunPresentationState,
   type PresentationState,
 } from "../lib/presentation/run-presentation-state";
+import { comparisonExplanationLinks, presetCardId } from "../lib/site-links";
 import {
   fieldHelpClassName,
   fieldLabelClassName,
@@ -52,6 +54,7 @@ import {
   primaryButtonClassName,
   settingsFieldsetClassName,
   settingsLegendClassName,
+  textLinkClassName,
 } from "./control-styles";
 import { ErrorNotice } from "./error-notice";
 import { FieldHint } from "./field-hint";
@@ -505,7 +508,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             {curatedPresets.map((preset) => {
               const facts = derivePresetCardFacts(preset);
               const isRecommended = preset.slug === recommendedPresetSlug;
-              const headingId = `${preset.slug}-title`;
+              const headingId = presetCardId(preset.slug);
               return (
                 <article
                   aria-labelledby={headingId}
@@ -530,6 +533,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     <p className="m-0 mt-1 text-sm leading-5 text-muted">
                       {preset.display.description}
                     </p>
+                    {preset.comparison ? (
+                      <Link
+                        className={`${textLinkClassName} mt-1 inline-block text-sm`}
+                        href={comparisonExplanationLinks[preset.comparison]}
+                      >
+                        What this shows <span className="sr-only">for {preset.display.name}</span>
+                      </Link>
+                    ) : null}
                   </div>
                   <DemandGauge
                     demandLabel={facts.demandLabel}

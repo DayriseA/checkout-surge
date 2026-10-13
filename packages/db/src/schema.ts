@@ -19,6 +19,8 @@ import type {
   TransportAttemptCounts,
 } from "@checkout-surge/contracts";
 import {
+  comparisonModeValues,
+  comparisonValues,
   demoPresetVisibilityValues,
   demoRunStatusValues,
   emptyServerReservationTimingSummary,
@@ -34,11 +36,11 @@ import {
   trafficExecutionStatusValues,
 } from "@checkout-surge/contracts";
 import { sql } from "drizzle-orm";
-
 // Drizzle snapshots cannot represent the pgcrypto extension or the expression
 // index appended to the reviewed baseline. Preserve that small custom SQL
 // section when amending the pre-release baseline.
 import {
+  type AnyPgColumn,
   boolean,
   check,
   foreignKey,
@@ -52,6 +54,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { StoreLoadWindow } from "./store-load.js";
 
 export type JsonRecord = Record<string, unknown>;
 export type JsonValue = JsonRecord | JsonValue[] | string | number | boolean | null;
@@ -75,6 +78,10 @@ export const demoPresetVisibilityEnum = pgEnum(
   "demo_preset_visibility",
   demoPresetVisibilityValues,
 );
+
+export const comparisonEnum = pgEnum("comparison", comparisonValues);
+
+export const comparisonModeEnum = pgEnum("comparison_mode", comparisonModeValues);
 
 export const demoRunOperatorModeEnum = pgEnum("demo_run_operator_mode", operatorModeValues);
 
@@ -155,6 +162,8 @@ export const demoPresets = pgTable(
     inventoryConfig: jsonObject<InventoryConfig>("inventory_config"),
     erpConfig: jsonObject<ErpRunConfig>("erp_config"),
     backpressureConfig: jsonObject<BackpressureConfig>("backpressure_config"),
+    // Written by the seed only: no preset edit path copies it, so custom runs never carry a mode.
+    comparison: comparisonEnum("comparison"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -195,6 +204,14 @@ export const demoRuns = pgTable(
     runnerBootId: uuid("runner_boot_id"),
     runnerRegion: text("runner_region"),
     runnerRelocating: boolean("runner_relocating").default(false).notNull(),
+    // A comparison preset's run and, on its second run, the first run it continues.
+    comparisonMode: comparisonModeEnum("comparison_mode"),
+    comparisonFirstRunId: uuid("comparison_first_run_id").references(
+      (): AnyPgColumn => demoRuns.id,
+      { onDelete: "set null" },
+    ),
+    // PostgreSQL and Redis counters around a Redis comparison run's traffic.
+    storeLoad: jsonb("store_load").$type<StoreLoadWindow>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -206,6 +223,7 @@ export const demoRuns = pgTable(
     uniqueIndex("demo_runs_id_sale_offer_id_unique").on(table.id, table.saleOfferId),
     index("demo_runs_preset_id_idx").on(table.presetId),
     index("demo_runs_status_idx").on(table.status),
+    uniqueIndex("demo_runs_comparison_first_run_id_unique").on(table.comparisonFirstRunId),
   ],
 );
 
@@ -245,11 +263,16 @@ export const reservations = pgTable(
     reservationToken: text("reservation_token").notNull(),
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     securedAt: timestamp("secured_at", { withTimezone: true }).notNull(),
+    // Set only when PostgreSQL decides the stock; Redis keeps the demo's idempotency records.
+    idempotencyKey: text("idempotency_key"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   (table) => [
     uniqueIndex("reservations_reservation_token_unique").on(table.reservationToken),
+    uniqueIndex("reservations_sale_offer_id_idempotency_key_unique")
+      .on(table.saleOfferId, table.idempotencyKey)
+      .where(sql`${table.idempotencyKey} IS NOT NULL`),
     uniqueIndex("reservations_backing_order_identity_unique").on(
       table.id,
       table.saleOfferId,
@@ -673,6 +696,32 @@ export const simulatedNotifications = pgTable(
     index("simulated_notifications_run_id_correlation_id_idx").on(table.runId, table.correlationId),
   ],
 );
+
+/** A run's stock when PostgreSQL decides it (the Redis comparison's second run). */
+export const postgresRunStock = pgTable(
+  "postgres_run_stock",
+  {
+    runId: uuid("run_id")
+      .primaryKey()
+      .references(() => demoRuns.id, { onDelete: "cascade" }),
+    saleOfferId: uuid("sale_offer_id").notNull(),
+    remainingStock: integer("remaining_stock").notNull(),
+  },
+  (table) => [check("postgres_run_stock_remaining_nonnegative", sql`${table.remainingStock} >= 0`)],
+);
+
+/** Notified when a job is queued in `postgres_order_queue`, so the worker picks it up at once. */
+export const postgresOrderQueueChannel = "postgres_order_queue";
+
+/** The order queue when PostgreSQL holds it: one row per order awaiting delivery to the worker. */
+export const postgresOrderQueue = pgTable("postgres_order_queue", {
+  orderId: uuid("order_id")
+    .primaryKey()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  queuedAt: timestamp("queued_at", { withTimezone: true }).defaultNow().notNull(),
+  // Set by a claim: until then, no other claim delivers the job.
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+});
 
 export const demoRunSoldOutCounts = pgTable(
   "demo_run_sold_out_counts",

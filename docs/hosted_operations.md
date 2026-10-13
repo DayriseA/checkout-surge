@@ -98,7 +98,24 @@ For a new set of apps:
 1. Create the three apps with `flyctl apps create <app> -o <org>`. The app names are referenced in `infra/fly/`.
 2. Give the gate its public addresses: `flyctl ips allocate-v4 --shared -a checkout-surge-gate` and `flyctl ips allocate-v6 -a checkout-surge-gate`. The core and the runner get none.
 3. Stage each app's [secrets](hosted_runtime.md#secrets-and-tokens) with `flyctl secrets import --stage -a <app>`, fed straight from the command that generates or creates each value, as in the [rotation procedures](#rotating-secrets-and-tokens).
-4. Deploy the gate first (`node infra/fly/deploy.mjs gate`), because a core deploy writes its config into the gate Machine. It ends with `Partial deployment: … undefined` (exit 1), as expected while no core or runner exists; then deploy `all`. The first deploy creates the Machines and the core's volume.
+4. Deploy `all`. The first deploy creates the Machines and the core's volume, the gate first, because a core deploy writes its config into the gate Machine.
+
+---
+
+## Proof Environment
+
+A disposable copy of the hosted demo for experiments, in the organization `playground-416`: apps `cs-proof-core`, `cs-proof-runner` and `cs-proof-gate`, public URL `https://cs-proof-gate.fly.dev`, with the same Machine configs and sizes as production. `infra/fly/proof.json` holds these names.
+
+```bash
+node infra/fly/proof.mjs create    # apps, the gate's public addresses, fresh secrets
+node infra/fly/proof.mjs deploy    # deploy.mjs all on the proof apps; takes deploy.mjs options
+node infra/fly/proof.mjs destroy   # the apps, with their Machines, volumes, tokens and secrets
+```
+
+- **Isolation.** `deploy.mjs --environment <file>` refuses a config outside `playground-416` or naming a production app or origin, then checks that each app belongs to that organization before every build and every Machines API call. `proof.mjs` checks the same before every flyctl call on an existing app. Without `--environment`, the deploy targets production and runs no such check.
+- **Secrets.** `create` generates every value, with one app-scoped deploy token per app, and stages them without printing them. It keeps the core's values, admin passphrase included, in `infra/fly/proof-core.env`, which git and the build context ignore; `destroy` deletes it.
+- **From scratch only.** `create` fails on an existing app. After a failed create, run `destroy`, then `create` again.
+- **Between experiments,** stop the Machines (`flyctl machine stop <id> -a <app>`). The guard still runs hourly in `cs-proof-gate`.
 
 ---
 

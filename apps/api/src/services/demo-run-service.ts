@@ -3,7 +3,10 @@ import {
   type AcceptedRunConfigSnapshot,
   acceptedRunConfigWriteSchema,
   type BusinessOutcomeSummary,
+  type ComparisonMode,
   collectAcceptedRunConfigSnapshotViolations,
+  comparisonModes,
+  comparisonOfMode,
   type DemoPresetContract,
   type DemoRunConfigOverride,
   type DemoRunSnapshot,
@@ -30,7 +33,9 @@ import {
   demoRuns,
   getInventoryStatus,
   initializeInventory,
+  postgresRunStock,
   products,
+  readStoreLoadCounters,
   saleOffers,
   setRunSaleEligibility,
 } from "@checkout-surge/db";
@@ -44,6 +49,7 @@ import {
   requireCapacityAdmission,
   withResolvedConstantArrivalVus,
 } from "./capacity-admission.js";
+import { buyTargetBaseUrl, findRunAwaitingComparisonPartner } from "./comparison-runs.js";
 import type { DashboardBusinessOutcomeReader } from "./dashboard-recovery-service.js";
 import {
   estimateAcceptedDemoRun,
@@ -133,6 +139,8 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       queueLimits: OrderProcessQueueLimits;
       terminalRunWriter: Pick<TerminalDemoRunWriter, "write">;
       apiBaseUrl: string;
+      /** The buy-only processes' base URL, for the Redis comparison's runs; null without them. */
+      buyPoolBaseUrl?: string | null;
       logger: CheckoutSurgeLogger;
       publicClientCookieSecret: string;
       estimatorConstants: DurationEstimatorConstants;
@@ -190,95 +198,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         now,
         reservePublicBudget,
       );
-      const saleOfferId = requireRunSaleOfferId(accepted.run);
-      await this.removePreviousRunInventories();
-
-      try {
-        await this.options.queueLimits.synchronize();
-        await initializeInventory(this.options.redis, {
-          saleOfferId,
-          allocatedStock: accepted.run.configSnapshot.inventoryConfig.startingStock,
-          source: "demo_run_start",
-          initializedAt: now,
-          run: { runId: accepted.run.runId, status: "accepting" },
-        });
-      } catch (error) {
-        await this.failRun(
-          accepted.run.runId,
-          "inventory_initialization_failed",
-          correlationId,
-          "no_traffic_started",
-        );
-        throw error;
-      }
-
-      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
-        run: accepted.run,
-        correlationId,
-      });
-
-      let boot: RunnerBoot;
-      try {
-        boot = await this.options.runnerOperations.bootForRun(accepted.run.runId, {
-          onRelocating: () => this.markRunnerRelocating(accepted.run.runId, correlationId),
-        });
-      } catch (error) {
-        // The runner failed before any start was dispatched: no traffic can have started.
-        await this.failRun(
-          accepted.run.runId,
-          error instanceof RunnerCapacityUnavailableError
-            ? "runner_capacity_unavailable"
-            : "load_generator_not_started",
-          correlationId,
-          "no_traffic_started",
-        );
-        throw error;
-      }
-      // If this write fails, the run stays starting: reconciliation then fails it when the boot
-      // is not recorded, or replays it against the boot when the write did commit.
-      await this.recordRunnerBoot(accepted.run.runId, boot);
-
-      let trafficResponse: TrafficExecutionStartResponse;
-      try {
-        trafficResponse = await this.options.trafficExecutionGateway.start({
-          runId: accepted.run.runId,
-          saleOfferId,
-          apiBaseUrl: this.options.apiBaseUrl,
-          expectedBootId: boot.bootId,
-          correlationId,
-          configSnapshot: accepted.run.configSnapshot,
-        });
-      } catch (error) {
-        if (
-          !(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")
-        ) {
-          const rejected = error instanceof TrafficStartRejectedError;
-          await this.failRun(
-            accepted.run.runId,
-            rejected ? "load_generator_not_started" : "load_orchestrator_unavailable",
-            correlationId,
-            rejected ? "no_traffic_started" : "unavailable",
-          );
-        }
-        throw error;
-      }
-
-      const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
-        accepted.run.runId,
-        trafficResponse,
-        now,
-      );
-      await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
-        run: runAfterTrafficStart,
-        correlationId,
-      });
-
-      return startDemoRunResponseSchema.parse({
-        run: runAfterTrafficStart,
-        recovery: { establishedAt: now.toISOString() },
-        correlationId,
-        timestamp: now.toISOString(),
-      });
+      return await this.launchAcceptedRun(accepted.run, correlationId, now);
     } catch (error) {
       if (reservation) {
         try {
@@ -292,6 +212,128 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       }
       throw error;
     }
+  }
+
+  /**
+   * Starts the second run of a comparison whose first run completed: the same preset, snapshot
+   * and operator mode, with the other mode. The start of the first run paid the budget for both.
+   */
+  startDueComparisonPartner(): Promise<void> {
+    return this.options.maintenanceAuthority.runExclusive(async () => {
+      const now = this.now();
+      const correlationId = `comparison-partner-${randomUUID()}`;
+      const run = await this.createComparisonPartnerRun(correlationId, now);
+      if (run) await this.launchAcceptedRun(run, correlationId, now);
+    });
+  }
+
+  /** Initializes the accepted run's stock, boots its runner and starts its traffic. */
+  private async launchAcceptedRun(
+    run: DemoRunSnapshot,
+    correlationId: string,
+    now: Date,
+  ): Promise<StartDemoRunResponse> {
+    const saleOfferId = requireRunSaleOfferId(run);
+    await this.removePreviousRunInventories();
+
+    try {
+      await this.options.queueLimits.synchronize();
+      await initializeInventory(this.options.redis, {
+        saleOfferId,
+        allocatedStock: run.configSnapshot.inventoryConfig.startingStock,
+        source: "demo_run_start",
+        initializedAt: now,
+        run: { runId: run.runId, status: "accepting" },
+      });
+      // Its live counters stay in Redis; its stock is decided in PostgreSQL.
+      if (run.comparison?.mode === "postgres") {
+        await this.options.db.insert(postgresRunStock).values({
+          runId: run.runId,
+          saleOfferId,
+          remainingStock: run.configSnapshot.inventoryConfig.startingStock,
+        });
+      }
+    } catch (error) {
+      await this.failRun(
+        run.runId,
+        "inventory_initialization_failed",
+        correlationId,
+        "no_traffic_started",
+      );
+      throw error;
+    }
+
+    await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+      run: run,
+      correlationId,
+    });
+
+    let boot: RunnerBoot;
+    try {
+      boot = await this.options.runnerOperations.bootForRun(run.runId, {
+        onRelocating: () => this.markRunnerRelocating(run.runId, correlationId),
+      });
+    } catch (error) {
+      // The runner failed before any start was dispatched: no traffic can have started.
+      await this.failRun(
+        run.runId,
+        error instanceof RunnerCapacityUnavailableError
+          ? "runner_capacity_unavailable"
+          : "load_generator_not_started",
+        correlationId,
+        "no_traffic_started",
+      );
+      throw error;
+    }
+    // If this write fails, the run stays starting: reconciliation then fails it when the boot
+    // is not recorded, or replays it against the boot when the write did commit.
+    await this.recordRunnerBoot(run.runId, boot);
+
+    await this.captureStoreLoadStart(run);
+
+    let trafficResponse: TrafficExecutionStartResponse;
+    try {
+      trafficResponse = await this.options.trafficExecutionGateway.start({
+        runId: run.runId,
+        saleOfferId,
+        apiBaseUrl: buyTargetBaseUrl(
+          this.options.apiBaseUrl,
+          run.comparison?.mode,
+          this.options.buyPoolBaseUrl,
+        ),
+        expectedBootId: boot.bootId,
+        correlationId,
+        configSnapshot: run.configSnapshot,
+      });
+    } catch (error) {
+      if (!(error instanceof ApiHttpError && error.code === "load_orchestrator_start_ambiguous")) {
+        const rejected = error instanceof TrafficStartRejectedError;
+        await this.failRun(
+          run.runId,
+          rejected ? "load_generator_not_started" : "load_orchestrator_unavailable",
+          correlationId,
+          rejected ? "no_traffic_started" : "unavailable",
+        );
+      }
+      throw error;
+    }
+
+    const runAfterTrafficStart = await this.updateRunAfterTrafficStart(
+      run.runId,
+      trafficResponse,
+      now,
+    );
+    await publishDemoRunProjectionDirty(this.options.redis, this.options.logger, {
+      run: runAfterTrafficStart,
+      correlationId,
+    });
+
+    return startDemoRunResponseSchema.parse({
+      run: runAfterTrafficStart,
+      recovery: { establishedAt: now.toISOString() },
+      correlationId,
+      timestamp: now.toISOString(),
+    });
   }
 
   /**
@@ -440,6 +482,14 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
           );
         }
 
+        if (await findRunAwaitingComparisonPartner(tx, now)) {
+          throw new DemoRunValidationError(
+            "run_conflict",
+            "A comparison is about to start its second run.",
+            { conflictReason: "active_run_exists" },
+          );
+        }
+
         const [incompleteReset] = await tx
           .select({ runId: demoRuns.id })
           .from(demoRuns)
@@ -464,62 +514,20 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         }
         await beforeInsert(policy);
 
-        const [product] = await tx
-          .select({ id: products.id })
-          .from(products)
-          .where(eq(products.isActive, true))
-          .orderBy(desc(products.updatedAt))
-          .limit(1);
-
-        if (!product) {
-          throw new DemoRunValidationError(
-            "resource_not_found",
-            "No active product is available for demo runs.",
-          );
-        }
-
-        await tx.insert(saleOffers).values({
-          id: saleOfferId,
-          productId: product.id,
-          name: `${preset.display.name} Generated Run Offer`,
-          allocatedStock: snapshot.inventoryConfig.startingStock,
-          saleStartsAt: now,
-          saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        const [run] = await tx
-          .insert(demoRuns)
-          .values({
-            id: runId,
+        return {
+          run: await this.insertAcceptedRun(tx, {
+            runId,
+            saleOfferId,
             presetId: preset.id,
             presetName: preset.display.name,
             operatorMode: request.operatorMode,
-            status: "starting",
-            trafficStatus: "starting",
             configSnapshot: snapshot,
             correlationId,
-            saleOfferId,
-            startedAt: now,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .returning();
-
-        if (!run) {
-          throw new Error("Failed to create demo run.");
-        }
-
-        await tx.insert(demoRunSaleContexts).values({
-          runId,
-          saleOfferId,
-          createdAt: now,
-          updatedAt: now,
-        });
-
-        return { run: toDemoRunSnapshot(run) };
+            comparisonMode: preset.comparison ? comparisonModes[preset.comparison][0] : null,
+            comparisonFirstRunId: null,
+            now,
+          }),
+        };
       });
     } catch (error) {
       if (isSingleNonTerminalRunViolation(error)) {
@@ -533,6 +541,116 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
     }
   }
 
+  /** Inserts the second run of a due comparison, or returns null when none is due. */
+  private async createComparisonPartnerRun(
+    correlationId: string,
+    now: Date,
+  ): Promise<DemoRunSnapshot | null> {
+    return this.options.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${demoRunStartLockKey}))`);
+      const due = await findRunAwaitingComparisonPartner(tx, now);
+      if (!due) return null;
+      const [nonterminalRun] = await tx
+        .select({ id: demoRuns.id })
+        .from(demoRuns)
+        .where(inArray(demoRuns.status, ["starting", "active", "draining"]))
+        .limit(1);
+      if (nonterminalRun) return null;
+      return this.insertAcceptedRun(tx, {
+        runId: this.generateId(),
+        saleOfferId: this.generateId(),
+        presetId: due.run.presetId,
+        presetName: due.run.presetName,
+        operatorMode: due.run.operatorMode,
+        configSnapshot: parsePersistedAcceptedRunConfigSnapshot(
+          due.run.configSnapshot,
+          `demo run ${due.run.id}`,
+        ),
+        correlationId,
+        comparisonMode: comparisonModes[due.comparison][1],
+        comparisonFirstRunId: due.run.id,
+        now,
+      });
+    });
+  }
+
+  /** Creates the run's sale offer, its row and its sale context, inside the start lock. */
+  private async insertAcceptedRun(
+    tx: Pick<CheckoutSurgeDatabase, "select" | "insert">,
+    input: {
+      runId: string;
+      saleOfferId: string;
+      presetId: string;
+      presetName: string;
+      operatorMode: OperatorMode;
+      configSnapshot: AcceptedRunConfigSnapshot;
+      correlationId: string;
+      comparisonMode: ComparisonMode | null;
+      comparisonFirstRunId: string | null;
+      now: Date;
+    },
+  ): Promise<DemoRunSnapshot> {
+    const { runId, saleOfferId, now } = input;
+    const [product] = await tx
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.isActive, true))
+      .orderBy(desc(products.updatedAt))
+      .limit(1);
+
+    if (!product) {
+      throw new DemoRunValidationError(
+        "resource_not_found",
+        "No active product is available for demo runs.",
+      );
+    }
+
+    await tx.insert(saleOffers).values({
+      id: saleOfferId,
+      productId: product.id,
+      name: `${input.presetName} Generated Run Offer`,
+      allocatedStock: input.configSnapshot.inventoryConfig.startingStock,
+      saleStartsAt: now,
+      saleEndsAt: new Date(now.getTime() + generatedRunSaleDurationMs),
+      isActive: true,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const [run] = await tx
+      .insert(demoRuns)
+      .values({
+        id: runId,
+        presetId: input.presetId,
+        presetName: input.presetName,
+        operatorMode: input.operatorMode,
+        status: "starting",
+        trafficStatus: "starting",
+        configSnapshot: input.configSnapshot,
+        correlationId: input.correlationId,
+        saleOfferId,
+        startedAt: now,
+        comparisonMode: input.comparisonMode,
+        comparisonFirstRunId: input.comparisonFirstRunId,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+
+    if (!run) {
+      throw new Error("Failed to create demo run.");
+    }
+
+    await tx.insert(demoRunSaleContexts).values({
+      runId,
+      saleOfferId,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return toDemoRunSnapshot(run);
+  }
+
   private async resolveAcceptedConfig(
     request: StartDemoRunCommand,
     policy: PublicRuntimePolicy,
@@ -544,6 +662,13 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
       throw new DemoRunValidationError(
         "preset_operation_not_allowed",
         "Public runs can only use public presets.",
+      );
+    }
+
+    if (preset.comparison && request.configOverride) {
+      throw new DemoRunValidationError(
+        "preset_operation_not_allowed",
+        "A comparison preset runs only as defined.",
       );
     }
 
@@ -570,6 +695,23 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
         mergeConfigSnapshot(base, request.configOverride),
       ),
     };
+  }
+
+  /**
+   * Before a Redis comparison run's traffic, records PostgreSQL's and Redis's own counters; its
+   * traffic completion records them again. Advisory: without them, the run's store load reads unknown.
+   */
+  private async captureStoreLoadStart(run: DemoRunSnapshot): Promise<void> {
+    if (!run.comparison || comparisonOfMode(run.comparison.mode) !== "redis") return;
+    try {
+      const start = await readStoreLoadCounters(this.options.db, this.options.redis, this.now());
+      await this.options.db
+        .update(demoRuns)
+        .set({ storeLoad: { start } })
+        .where(eq(demoRuns.id, run.runId));
+    } catch (error) {
+      this.options.logger.warn({ err: error, runId: run.runId }, "Could not record store load.");
+    }
   }
 
   private async recordRunnerBoot(runId: string, boot: RunnerBoot): Promise<void> {

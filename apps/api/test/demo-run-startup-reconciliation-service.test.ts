@@ -70,6 +70,39 @@ describe("DemoRunStartupReconciliationService", () => {
     expect(activateStartingRun).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ["synchronous_confirmation", "http://api.test/synchronous-confirmation"],
+    ["postgres", "http://api.test/stock-in-postgres"],
+  ] as const)("replays a %s comparison run against its own buy route", async (mode, target) => {
+    const start = vi.fn(async (request) => ({
+      runId: request.runId,
+      status: "active" as const,
+      startedAt: "2026-06-20T00:00:11.000Z",
+      correlationId: request.correlationId,
+    }));
+    const service = new DemoRunStartupReconciliationService({
+      maintenanceAuthority: new ProcessLocalDemoMaintenanceAuthority(),
+      ...unusedStartingRunOptions(),
+      logger: createSilentLogger("api"),
+      startingRunStore: {
+        listStartingRuns: async () => [
+          {
+            id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+            saleOfferId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+            runnerBootId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+            configSnapshot: acceptedRunConfigSnapshot(),
+            comparisonMode: mode,
+          } as never,
+        ],
+        activateStartingRun: async () => true,
+      },
+      trafficExecutionGateway: { start },
+    });
+
+    await expect(service.reconcileStartingRuns()).resolves.toBe(1);
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ apiBaseUrl: target }));
+  });
+
   it("fails a starting run whose boot was never recorded instead of replaying it", async () => {
     const start = vi.fn();
     const failUndispatchedRun = vi.fn(async () => undefined);

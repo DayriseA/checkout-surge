@@ -22,10 +22,14 @@ function required(run, name) {
   return run[name];
 }
 
-/** Maps one run-list entry to an admin start request on the custom preset. */
+/**
+ * Maps one run-list entry to an admin start request: a fixed preset by slug (a comparison preset
+ * runs as defined), otherwise the custom preset with the entry's settings.
+ */
 export function toStartRequest(run) {
   const value = (name) => required(run, name);
   value("label");
+  if (run.presetSlug !== undefined) return { presetSlug: run.presetSlug };
   let trafficConfig;
   if (run.mode === "constant-arrival-rate") {
     trafficConfig = {
@@ -66,7 +70,7 @@ export function toStartRequest(run) {
 }
 
 /** One JSON record per run: the evidence the run persisted, read from its admin detail. */
-function toRecord({ label, detail, estimate, host }) {
+function toRecord({ label, detail, storeLoad, estimate, host }) {
   const { run, summary } = detail;
   const delivery = summary.trafficDeliverySummary;
   const diagnostics = detail.loadRunDiagnosticsSummary;
@@ -108,6 +112,9 @@ function toRecord({ label, detail, estimate, host }) {
       k6CompletedAt: diagnostics.completedAt,
     },
     business: summary.businessOutcomeSummary,
+    comparisonMode: run.comparison?.mode ?? null,
+    signals: summary.runSignalTimelineSummary,
+    storeLoad: storeLoad ?? null,
   };
 }
 
@@ -115,7 +122,7 @@ function summaryLine(record) {
   const seconds = (ms) => (ms == null ? "n/a" : `${(ms / 1000).toFixed(2)} s`);
   const { requests, responses } = record;
   return [
-    record.label,
+    record.comparisonMode ? `${record.label} (${record.comparisonMode})` : record.label,
     `${record.status}/${record.deliveryStatus}${record.failureReason ? ` (${record.failureReason})` : ""}`,
     // Completion is judged from these counts: every planned request completed, none failed.
     // A completed request can still have failed (a transport failure or an unexpected response).
@@ -198,6 +205,19 @@ async function teardownRun(api, runId) {
   }
 }
 
+// A comparison's second run starts after its first run completes; the first run's public report
+// names it once it exists.
+async function waitForComparisonPartner(api, runId) {
+  const deadline = Date.now() + runDeadlineMs;
+  while (Date.now() < deadline) {
+    const response = await api("GET", `/demo/runs/history/${runId}`).catch(() => null);
+    const partnerRunId = response?.payload?.run?.comparison?.partnerRunId;
+    if (partnerRunId) return partnerRunId;
+    await delay(pollIntervalMs);
+  }
+  throw new Error(`Run ${runId}: its comparison partner did not start.`);
+}
+
 async function main([runListFile, outputFile]) {
   if (!runListFile || !outputFile)
     throw new Error("Usage: node capacity-measurement.mjs <run-list.json> <results.jsonl>");
@@ -233,15 +253,33 @@ async function main([runListFile, outputFile]) {
   };
   mkdirSync(dirname(resolve(outputFile)), { recursive: true });
   for (const [index, run] of runs.entries()) {
-    const runId = await startRun(api, requests[index], run.label);
-    console.log(`${run.label}: run ${runId} started`);
-    const detail = await waitForTerminalDetail(api, runId);
-    const record = toRecord({ label: run.label, detail, estimate: estimates[index], host });
-    appendFileSync(outputFile, `${JSON.stringify(record)}\n`);
-    const teardown = await teardownRun(api, runId);
-    console.log(`${summaryLine(record)} | teardown ${teardown}`);
-    // A run left in place would change the state the next run starts from.
-    if (teardown.startsWith("failed")) throw new Error(`Run ${runId} was not torn down.`);
+    const firstRunId = await startRun(api, requests[index], run.label);
+    console.log(`${run.label}: run ${firstRunId} started`);
+    const runIds = [firstRunId];
+    const details = [await waitForTerminalDetail(api, firstRunId)];
+    if (details[0].run.comparison && details[0].run.status === "completed") {
+      runIds.push(await waitForComparisonPartner(api, firstRunId));
+      details.push(await waitForTerminalDetail(api, runIds[1]));
+    }
+    // Both runs of a comparison share the first run's id as their pair.
+    const records = [];
+    for (const detail of details) {
+      // Store load is measured on the Redis comparison's runs; their public report carries it.
+      const report = await api("GET", `/demo/runs/history/${detail.run.runId}`).catch(() => null);
+      const storeLoad = report?.payload?.run?.storeLoad;
+      records.push({
+        ...toRecord({ label: run.label, detail, storeLoad, estimate: estimates[index], host }),
+        pairId: firstRunId,
+      });
+    }
+    for (const record of records) appendFileSync(outputFile, `${JSON.stringify(record)}\n`);
+    // The first run goes first: deleted second, it would be due for a second run again.
+    for (const [position, runId] of runIds.entries()) {
+      const teardown = await teardownRun(api, runId);
+      console.log(`${summaryLine(records[position])} | teardown ${teardown}`);
+      // A run left in place would change the state the next run starts from.
+      if (teardown.startsWith("failed")) throw new Error(`Run ${runId} was not torn down.`);
+    }
   }
 }
 

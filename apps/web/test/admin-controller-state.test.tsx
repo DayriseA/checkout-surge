@@ -1465,6 +1465,40 @@ describe("admin feature controllers", () => {
     expect(screen.getByText("Unsaved")).toBeTruthy();
   });
 
+  it("starts a comparison preset as defined, without a configuration override", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      canonicalErrorResponse("Another run started first.", 409, "run_conflict", {
+        conflictReason: "active_run_exists",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const comparisonPreset = {
+      ...presetFixture(),
+      slug: "queue-comparison",
+      isEditable: false,
+      isCustom: false,
+      comparison: "order_queue" as const,
+    };
+    render(
+      <AdminPresetController
+        initialPresets={available({
+          presets: [comparisonPreset],
+          timestamp: "2026-06-20T00:00:11.000Z",
+        })}
+        recovery={available(recoveryFixture(null))}
+      />,
+    );
+    expect((screen.getByLabelText("Starting stock") as HTMLInputElement).disabled).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Run once with these values" }));
+    await user.click(confirmationButton("Start run"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      presetSlug: "queue-comparison",
+    });
+  });
+
   it("cancels a run start after showing the effective snapshot", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

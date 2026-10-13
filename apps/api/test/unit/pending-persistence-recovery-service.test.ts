@@ -2,6 +2,7 @@ import type { SecuredReservationHold } from "@checkout-surge/contracts";
 import { inventoryKeys } from "@checkout-surge/db";
 import { createSilentLogger } from "@checkout-surge/logger";
 import { describe, expect, it, vi } from "vitest";
+import { pendingPersistenceFreshHoldGraceMs } from "../../src/runtime/pending-persistence-recovery-policy.js";
 import {
   PendingPersistenceDiscoveryDeadlineError,
   PendingPersistenceRecoveryService,
@@ -18,6 +19,14 @@ const hold: SecuredReservationHold & { runId: string } = {
   securedAt: "2026-06-20T00:00:00.000Z",
   expiresAt: "2026-06-20T00:15:00.000Z",
 };
+
+/** A time `offsetMs` after the hold's fresh grace, when the scheduler may first take it. */
+function afterGrace(offsetMs = 0): Date {
+  return new Date(Date.parse(hold.securedAt) + pendingPersistenceFreshHoldGraceMs + offsetMs);
+}
+
+/** A recovery window that ends one second after the fresh grace. */
+const windowEndingOneSecondAfterGrace = pendingPersistenceFreshHoldGraceMs / 1_000 + 1;
 
 /** Models the `ZADD key [XX] score member` shape the pending readers use. */
 function parseZaddArguments(...args: (string | number)[]) {
@@ -230,7 +239,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
       idempotencyTtlSeconds: 1_800,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await expect(service.runOnce()).resolves.toMatchObject({
@@ -247,10 +256,38 @@ describe("PendingPersistenceRecoveryService", () => {
     expect(recoveryAudit.markResolved).toHaveBeenCalledOnce();
   });
 
+  it("leaves a newly secured hold to its own save until the fresh grace elapses", async () => {
+    const pending = pendingRedis();
+    const persistSecuredReservation = vi.fn(async () => persisted());
+    let now = afterGrace(-1);
+    const service = new PendingPersistenceRecoveryService({
+      redis: pending.redis as never,
+      persistence: {
+        ...passThroughRunLocks,
+        persistSecuredReservation,
+        getPersistedBuyByReservationId: vi.fn(async () => null),
+      },
+      audit: audit(),
+      stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
+      orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
+      listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
+      idempotencyTtlSeconds: 1_800,
+      logger: createSilentLogger("api"),
+      now: () => now,
+    });
+
+    await expect(service.runOnce()).resolves.toMatchObject({ discovered: 0, attempted: 0 });
+    expect(persistSecuredReservation).not.toHaveBeenCalled();
+
+    now = afterGrace();
+    await expect(service.runOnce()).resolves.toMatchObject({ discovered: 1, resolved: 1 });
+    expect(persistSecuredReservation).toHaveBeenCalledOnce();
+  });
+
   it("uses deterministic bounded backoff and leaves an exhausted hold visible", async () => {
     const pending = pendingRedis();
     const recoveryAudit = audit();
-    let now = new Date(hold.securedAt);
+    let now = afterGrace();
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
@@ -278,15 +315,15 @@ describe("PendingPersistenceRecoveryService", () => {
     expect(pending.record).toMatchObject({
       recoveryAttemptCount: 1,
       recoveryStatus: "pending",
-      nextRecoveryAt: "2026-06-20T00:00:01.000Z",
+      nextRecoveryAt: afterGrace(1_000).toISOString(),
     });
 
-    now = new Date("2026-06-20T00:00:00.500Z");
+    now = afterGrace(500);
     await expect(service.runOnce()).resolves.toMatchObject({ attempted: 0 });
-    now = new Date("2026-06-20T00:00:01.000Z");
+    now = afterGrace(1_000);
     await service.runOnce();
-    expect(pending.record.nextRecoveryAt).toBe("2026-06-20T00:00:03.000Z");
-    now = new Date("2026-06-20T00:00:03.000Z");
+    expect(pending.record.nextRecoveryAt).toBe(afterGrace(3_000).toISOString());
+    now = afterGrace(3_000);
     await service.runOnce();
 
     expect(pending.record).toMatchObject({ recoveryAttemptCount: 3, recoveryStatus: "exhausted" });
@@ -298,7 +335,7 @@ describe("PendingPersistenceRecoveryService", () => {
   it("caps exponential backoff and exhausts exactly at the max-attempt boundary", async () => {
     const pending = pendingRedis();
     const recoveryAudit = audit();
-    let now = new Date(hold.securedAt);
+    let now = afterGrace();
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
@@ -321,12 +358,9 @@ describe("PendingPersistenceRecoveryService", () => {
       now: () => now,
     });
 
-    for (const expectedNext of [
-      "2026-06-20T00:00:01.000Z",
-      "2026-06-20T00:00:02.500Z",
-      "2026-06-20T00:00:04.000Z",
-      "2026-06-20T00:00:05.500Z",
-    ]) {
+    for (const expectedNext of [1_000, 2_500, 4_000, 5_500].map((offsetMs) =>
+      afterGrace(offsetMs).toISOString(),
+    )) {
       await service.runOnce();
       expect(pending.record.nextRecoveryAt).toBe(expectedNext);
       now = new Date(expectedNext);
@@ -457,7 +491,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
       idempotencyTtlSeconds: 1_800,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await service.runOnce();
@@ -510,7 +544,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
       idempotencyTtlSeconds: 1_800,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await service.runOnce();
@@ -527,7 +561,7 @@ describe("PendingPersistenceRecoveryService", () => {
     const pending = pendingRedis();
     const durable = persisted();
     let durableExists = false;
-    let now = new Date(hold.securedAt);
+    let now = afterGrace();
     const persistSecuredReservation = vi.fn(async () => {
       durableExists = true;
       return durable;
@@ -590,7 +624,7 @@ describe("PendingPersistenceRecoveryService", () => {
       listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
       idempotencyTtlSeconds: 1_800,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await expect(service.runOnce()).resolves.toMatchObject({ resolved: 1, deferred: 0 });
@@ -621,7 +655,7 @@ describe("PendingPersistenceRecoveryService", () => {
       idempotencyTtlSeconds: 1_800,
       maxAttempts: 1,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await expect(service.runOnce()).resolves.toMatchObject({ resolved: 1, exhausted: 0 });
@@ -632,14 +666,14 @@ describe("PendingPersistenceRecoveryService", () => {
 
   it("uses fresh time after a slow failed operation when deciding exhaustion", async () => {
     const pending = pendingRedis();
-    let now = new Date(hold.securedAt);
+    let now = afterGrace();
     const recoveryAudit = audit();
     const service = new PendingPersistenceRecoveryService({
       redis: pending.redis as never,
       persistence: {
         ...passThroughRunLocks,
         persistSecuredReservation: vi.fn(async () => {
-          now = new Date("2026-06-20T00:00:01.000Z");
+          now = afterGrace(1_000);
           throw new Error("slow postgres failure");
         }),
         getPersistedBuyByReservationId: vi.fn(async () => null),
@@ -649,7 +683,7 @@ describe("PendingPersistenceRecoveryService", () => {
       orderProcessJobPublisher: { enqueue: vi.fn(async () => undefined) },
       listRunScopes: async () => [{ runId: hold.runId, saleOfferId: hold.saleOfferId }],
       idempotencyTtlSeconds: 1_800,
-      recoveryWindowSeconds: 1,
+      recoveryWindowSeconds: windowEndingOneSecondAfterGrace,
       pollIntervalMs: 10,
       logger: createSilentLogger("api"),
       now: () => now,
@@ -658,7 +692,7 @@ describe("PendingPersistenceRecoveryService", () => {
     await expect(service.runOnce()).resolves.toMatchObject({ exhausted: 1 });
     expect(pending.record.recoveryStatus).toBe("exhausted");
     expect(recoveryAudit.markExhausted).toHaveBeenCalledWith(
-      expect.objectContaining({ exhaustedAt: new Date("2026-06-20T00:00:01.000Z") }),
+      expect.objectContaining({ exhaustedAt: afterGrace(1_000) }),
     );
   });
 
@@ -670,7 +704,7 @@ describe("PendingPersistenceRecoveryService", () => {
       correlationId: "second-recovery-test",
     };
     const pending = pendingRedisFor([hold, secondHold]);
-    let now = new Date(hold.securedAt);
+    let now = afterGrace();
     const recoveryAudit = audit();
     const persistSecuredReservation = vi.fn(
       async ({ reservation }: { reservation: SecuredReservationHold }) => persisted(reservation),
@@ -686,7 +720,7 @@ describe("PendingPersistenceRecoveryService", () => {
       stockReservations: { promoteAccepted: vi.fn(async () => undefined) },
       orderProcessJobPublisher: {
         enqueue: vi.fn(async () => {
-          now = new Date("2026-06-20T00:00:01.000Z");
+          now = afterGrace(1_000);
         }),
       },
       listRunScopes: async () => [
@@ -694,7 +728,7 @@ describe("PendingPersistenceRecoveryService", () => {
         { runId: secondHold.runId, saleOfferId: secondHold.saleOfferId },
       ],
       idempotencyTtlSeconds: 1_800,
-      recoveryWindowSeconds: 1,
+      recoveryWindowSeconds: windowEndingOneSecondAfterGrace,
       pollIntervalMs: 10,
       logger: createSilentLogger("api"),
       now: () => now,
@@ -732,7 +766,7 @@ describe("PendingPersistenceRecoveryService", () => {
       idempotencyTtlSeconds: 1_800,
       recoveryWindowSeconds: 60,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
     await first.runOnce();
     expect(pending.record.recoveryDeadlineAt).toBe("2026-06-20T00:01:00.000Z");
@@ -912,7 +946,7 @@ describe("PendingPersistenceRecoveryService", () => {
       discoveryTimeoutMs: 10,
       maxAttempts: 1,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     await expect(service.runOnce()).rejects.toBeInstanceOf(
@@ -1133,7 +1167,7 @@ describe("PendingPersistenceRecoveryService", () => {
       closeDiscovery,
       idempotencyTtlSeconds: 1_800,
       logger: createSilentLogger("api"),
-      now: () => new Date(hold.securedAt),
+      now: () => afterGrace(),
     });
 
     const pass = service.runOnce();
@@ -1243,10 +1277,10 @@ describe("PendingPersistenceRecoveryService", () => {
           };
         },
         idempotencyTtlSeconds: 1_800,
-        recoveryWindowSeconds: 1,
+        recoveryWindowSeconds: windowEndingOneSecondAfterGrace,
         pollIntervalMs: 10,
         logger: createSilentLogger("api"),
-        now: () => new Date(hold.securedAt),
+        now: () => afterGrace(),
       });
 
       const pass = service.runOnce();

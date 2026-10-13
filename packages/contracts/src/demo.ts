@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { comparisonModeSchema, comparisonSchema, storeLoadSchema } from "./comparison.js";
 import {
   demoPresetDisplaySchema,
   demoPresetSchema,
@@ -94,6 +95,7 @@ export const demoPresetContractSchema = demoPresetSchema
     inventoryConfig: inventoryConfigSchema,
     erpConfig: erpRunConfigSchema,
     backpressureConfig: backpressureConfigSchema,
+    comparison: comparisonSchema.optional(),
   })
   .strict();
 export type DemoPresetContract = z.infer<typeof demoPresetContractSchema>;
@@ -149,6 +151,11 @@ const demoRunSnapshotBaseShape = {
   autoResetAt: isoTimestampSchema,
   /** The Fly region of the runner that served the run. Absent without a Fly runner. */
   runnerRegion: z.string().trim().min(1).optional(),
+  /** Set on comparison runs; the second run names the first. */
+  comparison: z
+    .object({ mode: comparisonModeSchema, firstRunId: uuidSchema.optional() })
+    .strict()
+    .optional(),
 };
 
 const nonterminalDemoRunSnapshotShape = {
@@ -313,6 +320,7 @@ export const runHistoryListItemSchema = z
     failedOrders: nonnegativeIntegerSchema,
     convergenceDurationSeconds: nonnegativeNumberSchema.nullable(),
     dataDiscarded: z.boolean().optional(),
+    comparisonMode: comparisonModeSchema.optional(),
   })
   .strict();
 export type RunHistoryListItem = z.infer<typeof runHistoryListItemSchema>;
@@ -469,6 +477,13 @@ export const publicRunHistoryRunSchema = z
     finalizedAt: isoTimestampSchema.optional(),
     adminResetCompletedAt: isoTimestampSchema.optional(),
     runnerRegion: z.string().trim().min(1).optional(),
+    /** The partner is the other run of the comparison; null until it exists. */
+    comparison: z
+      .object({ mode: comparisonModeSchema, partnerRunId: uuidSchema.nullable() })
+      .strict()
+      .optional(),
+    /** Measured on the Redis comparison's runs only; absent when not recorded. */
+    storeLoad: storeLoadSchema.optional(),
   })
   .strict();
 export type PublicRunHistoryRun = z.infer<typeof publicRunHistoryRunSchema>;

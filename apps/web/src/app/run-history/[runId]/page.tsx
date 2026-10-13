@@ -1,7 +1,8 @@
-import { runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
+import { comparisonOfMode, runHistoryDetailParamsSchema } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ComparisonReport } from "../../components/comparison-panel";
 import { neutralLinkButtonClassName, textLinkClassName } from "../../components/control-styles";
 import { ErrorNotice } from "../../components/error-notice";
 import { RunHistoryAdminControls } from "../../components/run-history-admin-controls";
@@ -13,6 +14,7 @@ import {
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
+import { readComparison } from "../../lib/presentation/comparison";
 import { formatDurationMs, formatInstantUtc } from "../../lib/presentation/format";
 import {
   runResultOutcomeLabel,
@@ -46,6 +48,27 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
   ) {
     notFound();
   }
+
+  const comparisonMode =
+    (publicDetail?.status === "available" && publicDetail.data.run.comparison?.mode) ||
+    (adminDetail?.status === "available" && adminDetail.data.run.comparison?.mode);
+  const comparison = comparisonMode
+    ? await readComparison(
+        parsedParams.data.runId,
+        null,
+        getRunHistoryDetail,
+        publicDetail ?? undefined,
+      )
+    : null;
+  const comparisonReport =
+    comparison && comparisonMode ? (
+      <ComparisonReport
+        className="mb-4 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
+        comparison={comparisonOfMode(comparisonMode)}
+        first={comparison[0]}
+        second={comparison[1]}
+      />
+    ) : null;
 
   if (publicDetail?.status === "available") {
     if (publicDetail.data.summary.dataDiscarded)
@@ -84,6 +107,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
             />
           </div>
         </header>
+        {comparisonReport}
         <PublicRunHistoryDetail detail={publicDetail.data} />
       </>
     );
@@ -91,27 +115,30 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
 
   if (adminDetail?.status === "available") {
     return (
-      <RunHistoryAdminControls
-        showBulkControls={false}
-        showSelectionToolbar={false}
-        visibleRunIds={[adminDetail.data.summary.runId]}
-      >
-        <AdminRunHistoryDetail
-          actions={
-            <RunHistoryRowControls
-              presetName={adminDetail.data.summary.presetName}
-              runId={adminDetail.data.summary.runId}
-              showSelection={false}
-            />
-          }
-          detail={adminDetail.data}
-          navigation={
-            <Link className={`${textLinkClassName} w-fit text-sm`} href="/run-history">
-              Back to run history
-            </Link>
-          }
-        />
-      </RunHistoryAdminControls>
+      <>
+        {comparisonReport}
+        <RunHistoryAdminControls
+          showBulkControls={false}
+          showSelectionToolbar={false}
+          visibleRunIds={[adminDetail.data.summary.runId]}
+        >
+          <AdminRunHistoryDetail
+            actions={
+              <RunHistoryRowControls
+                presetName={adminDetail.data.summary.presetName}
+                runId={adminDetail.data.summary.runId}
+                showSelection={false}
+              />
+            }
+            detail={adminDetail.data}
+            navigation={
+              <Link className={`${textLinkClassName} w-fit text-sm`} href="/run-history">
+                Back to run history
+              </Link>
+            }
+          />
+        </RunHistoryAdminControls>
+      </>
     );
   }
 

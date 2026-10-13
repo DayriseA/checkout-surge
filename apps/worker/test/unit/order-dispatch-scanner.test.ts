@@ -36,6 +36,7 @@ describe("order dispatch scanner", () => {
     };
     const publisher = {
       enqueue: vi.fn().mockRejectedValueOnce(publishError).mockResolvedValue(undefined),
+      missingJobIds: async (jobIds: string[]) => jobIds,
     };
     const logger = createSilentLogger("worker");
     const logError = vi.spyOn(logger, "error").mockImplementation(() => {
@@ -71,6 +72,24 @@ describe("order dispatch scanner", () => {
     );
   });
 
+  it("publishes again only the orders whose job is missing from the queue", async () => {
+    const enqueue = vi.fn().mockResolvedValue(undefined);
+    const missingJobIds = vi.fn(async () => [jobs[1]?.orderId ?? ""]);
+    const scanner = createOrderDispatchScanner({
+      persistence: { findQueuedOrdersForDispatch: vi.fn().mockResolvedValue(jobs) },
+      publisher: { enqueue, missingJobIds },
+      logger: createSilentLogger("worker"),
+      scanIntervalMs: 1000,
+      batchSize: 25,
+      minimumQueuedAgeMs: 0,
+    });
+
+    await expect(scanner.scanOnce()).resolves.toEqual({ candidates: 2, published: 1, failed: 0 });
+    expect(missingJobIds).toHaveBeenCalledWith(jobs.map((job) => job.orderId));
+    expect(enqueue).toHaveBeenCalledOnce();
+    expect(enqueue).toHaveBeenCalledWith(jobs[1]);
+  });
+
   it("does not overlap scheduled scans and waits for in-flight work on close", async () => {
     let resolveScan: (() => void) | undefined;
     const scanFinished = new Promise<void>((resolve) => {
@@ -81,7 +100,7 @@ describe("order dispatch scanner", () => {
     };
     const scanner = createOrderDispatchScanner({
       persistence,
-      publisher: { enqueue: vi.fn() },
+      publisher: { enqueue: vi.fn(), missingJobIds: async (jobIds: string[]) => jobIds },
       logger: createSilentLogger("worker"),
       scanIntervalMs: 1,
       batchSize: 10,
@@ -118,6 +137,7 @@ describe("order dispatch scanner", () => {
             firstStarted();
           }),
       ),
+      missingJobIds: async (jobIds: string[]) => jobIds,
     };
     const scanner = createOrderDispatchScanner({
       persistence: { findQueuedOrdersForDispatch: vi.fn().mockResolvedValue(jobs) },

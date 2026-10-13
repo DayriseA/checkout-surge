@@ -135,6 +135,10 @@ export class DemoPresetService implements DemoPresetController, ActiveDemoPreset
         display: {
           ...source.display,
           name: request.displayName ?? `${source.display.name} Copy`,
+          // The copy runs once, without the comparison its source describes.
+          ...(source.comparison
+            ? { description: `Copy of ${source.display.name}, run once without a comparison.` }
+            : {}),
         },
         trafficConfig: source.trafficConfig,
         inventoryConfig: source.inventoryConfig,
@@ -280,6 +284,7 @@ function toDemoPresetContract(preset: typeof demoPresets.$inferSelect): DemoPres
     inventoryConfig: preset.inventoryConfig,
     erpConfig: preset.erpConfig,
     backpressureConfig: preset.backpressureConfig,
+    ...(preset.comparison ? { comparison: preset.comparison } : {}),
     createdAt: preset.createdAt.toISOString(),
     updatedAt: preset.updatedAt.toISOString(),
   });

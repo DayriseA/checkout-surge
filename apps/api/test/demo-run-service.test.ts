@@ -20,6 +20,7 @@ import {
 import { signPublicVisitorCredential } from "@checkout-surge/contracts/public-visitor-credential";
 import { acceptanceScenarioFixtures } from "@checkout-surge/contracts/testing";
 import {
+  buildSeedPresets,
   createDatabaseConnection,
   createRedisClient,
   dashboardProjectionRevisionKey,
@@ -31,7 +32,11 @@ import {
   InventoryNotInitializedError,
   inventoryKeys,
   isRunSaleEligible,
+  markReservationPendingPersistence,
+  orders,
+  postgresRunStock,
   products,
+  promoteReservationIdempotencyToAccepted,
   publicRuntimePolicies,
   reserveInventoryStock,
   saleOffers,
@@ -63,15 +68,22 @@ import {
 } from "../src/services/demo-run-startup-reconciliation-service.js";
 import { DemoRunValidationError } from "../src/services/demo-run-validation-error.js";
 import {
+  OrderConfirmationWaiter,
+  PostgresOrderConfirmationReader,
+} from "../src/services/order-confirmation-waiter.js";
+import {
   DemoRunQueueLimits,
   type OrderProcessQueueLimits,
 } from "../src/services/order-process-queue-limits.js";
+import { PostgresBuyPersistence } from "../src/services/postgres-buy-persistence.js";
 import { PostgresDemoResetWorkflowFence } from "../src/services/postgres-demo-reset-workflow-fence.js";
 import { RedisPublicRunBudgetStore } from "../src/services/public-run-budget-store.js";
 import { PublicRuntimePolicyService } from "../src/services/public-runtime-policy-service.js";
+import { ReserveOrderService } from "../src/services/reserve-order-service.js";
 import { RunHistoryService } from "../src/services/run-history-service.js";
 import { RunnerCapacityUnavailableError } from "../src/services/runner-host.js";
 import { RunnerVersionMismatchError } from "../src/services/runner-operations.js";
+import { SynchronousConfirmationBuyService } from "../src/services/synchronous-confirmation-buy-service.js";
 import { PostgresTerminalDemoRunSummaryWriter } from "../src/services/terminal-demo-run-transition.js";
 import { TrafficStartRejectedError } from "../src/services/traffic-execution-gateway.js";
 
@@ -2364,6 +2376,285 @@ describe("demo-run lifecycle start gating", () => {
   });
 });
 
+describe("comparison runs", () => {
+  let connection: ReturnType<typeof createDatabaseConnection> | null = null;
+  let redis: ReturnType<typeof createRedisClient> | null = null;
+  const comparisonPresetId = "33333333-3333-4333-8333-333333333338";
+  const finishedAt = new Date("2026-06-20T00:00:10.000Z");
+
+  beforeEach(async () => {
+    await connection?.close();
+    redis?.disconnect();
+    await resetTestDatabase();
+    connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2 });
+    redis = createRedisClient(requireTestRedisUrl(), {
+      lazyConnect: true,
+      maxRetriesPerRequest: 3,
+    });
+    await redis.flushdb();
+    await seedStartFixtures(connection);
+    await connection.db.insert(demoPresets).values({
+      id: comparisonPresetId,
+      slug: "queue-comparison",
+      visibility: "public",
+      isEditable: false,
+      isCustom: false,
+      display: {
+        name: "Queue comparison",
+        description: "Both modes.",
+        sortOrder: 30,
+        outcomeFocus: [],
+      },
+      ...surge10kSnapshot(),
+      comparison: "order_queue",
+      createdAt: finishedAt,
+      updatedAt: finishedAt,
+    });
+  });
+
+  afterAll(async () => {
+    await connection?.close();
+    if (redis) {
+      await redis.flushdb();
+      redis.disconnect();
+    }
+  });
+
+  function completeRun(runId: string, status: "completed" | "failed") {
+    return requireConnection(connection)
+      .db.update(demoRuns)
+      .set({
+        status,
+        trafficStatus: status === "completed" ? "succeeded" : "failed",
+        finalizedAt: finishedAt,
+      })
+      .where(eq(demoRuns.id, runId));
+  }
+
+  function waitingBuyService() {
+    const db = requireConnection(connection).db;
+    const client = requireRedis(redis);
+    return new SynchronousConfirmationBuyService({
+      reserveOrderService: new ReserveOrderService({
+        persistence: new PostgresBuyPersistence(db),
+        stockReservations: {
+          reserve: (input) => reserveInventoryStock(client, input),
+          markPendingPersistence: (input) => markReservationPendingPersistence(client, input),
+          promoteAccepted: async (input) => {
+            await promoteReservationIdempotencyToAccepted(client, input);
+          },
+        },
+        orderProcessJobPublisher: { enqueue: async () => undefined },
+        reservationHoldMinutes: 15,
+        idempotencyTtlSeconds: 60,
+        pendingPersistenceRetryAfterSeconds: 1,
+        pendingPersistenceRecovery: { recoverReservation: async () => null },
+      }),
+      waiter: new OrderConfirmationWaiter({
+        reader: new PostgresOrderConfirmationReader(db),
+        intervalMs: 20,
+      }),
+    });
+  }
+
+  it("chains the second run in the same slot, charges the budget once, and makes its winners wait", async () => {
+    const db = requireConnection(connection).db;
+    const reserve = vi.fn(async () => ({
+      outcome: "allowed" as const,
+      reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+    }));
+    const starts: TrafficExecutionStartRequest[] = [];
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: { reserve, release: vi.fn() },
+      trafficExecutionGateway: {
+        start: async (request) => {
+          starts.push(request);
+          return {
+            runId: request.runId,
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            correlationId: request.correlationId,
+          };
+        },
+      },
+    });
+    const request = {
+      presetSlug: "queue-comparison",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+    await expect(
+      service.startRun(
+        { ...request, configOverride: { inventoryConfig: { startingStock: 1 } } },
+        "override",
+      ),
+    ).rejects.toMatchObject({ code: "preset_operation_not_allowed" });
+
+    const first = await service.startRun(request, "comparison");
+    expect(first.run.comparison).toEqual({ mode: "demo" });
+    const buy = waitingBuyService();
+    const buyIn = (run: { runId: string; saleOfferId?: string | undefined }, key: string) =>
+      buy.buy({
+        request: {
+          runId: run.runId,
+          saleOfferId: run.saleOfferId ?? "",
+          idempotencyKey: key,
+          quantity: 1,
+        },
+        correlationId: `corr-${key}`,
+      });
+    // A winner of the run with the queue is answered at once, even on the waiting route.
+    expect((await buyIn(first.run, "first-winner")).outcome).toBe("reservation_secured");
+    await service.startDueComparisonPartner();
+    expect(starts).toHaveLength(1);
+
+    await completeRun(first.run.runId, "completed");
+    await service.startDueComparisonPartner();
+    await service.startDueComparisonPartner();
+    const [second] = await db
+      .select()
+      .from(demoRuns)
+      .where(eq(demoRuns.comparisonFirstRunId, first.run.runId));
+    if (!second?.saleOfferId) throw new Error("Expected the second run of the comparison");
+    expect(second).toMatchObject({
+      presetId: comparisonPresetId,
+      operatorMode: "public",
+      comparisonMode: "synchronous_confirmation",
+      configSnapshot: first.run.configSnapshot,
+      status: "active",
+    });
+    expect(starts.map((start) => start.apiBaseUrl)).toEqual([
+      "http://api.test",
+      "http://api.test/synchronous-confirmation",
+    ]);
+    expect(reserve).toHaveBeenCalledOnce();
+
+    const secondRun = { runId: second.id, saleOfferId: second.saleOfferId };
+    const confirmedWait = buyIn(secondRun, "confirmed-winner");
+    await vi.waitFor(async () =>
+      expect(await db.select().from(orders).where(eq(orders.runId, second.id))).toHaveLength(1),
+    );
+    // The buy path stamps orders with the wall clock, so the confirmation follows it.
+    const confirmedAt = new Date(Date.now() + 1_000);
+    await db
+      .update(orders)
+      .set({ status: "confirmed", processingAt: confirmedAt, confirmedAt })
+      .where(eq(orders.runId, second.id));
+    expect(await confirmedWait).toMatchObject({
+      outcome: "order_confirmed",
+      order: { status: "confirmed", confirmedAt: confirmedAt.toISOString() },
+    });
+
+    // A reset ends the wait with the accepted answer; the order is left as it was.
+    const resetWait = buyIn(secondRun, "reset-winner");
+    await vi.waitFor(async () =>
+      expect(await db.select().from(orders).where(eq(orders.runId, second.id))).toHaveLength(2),
+    );
+    await completeRun(second.id, "failed");
+    expect((await resetWait).outcome).toBe("reservation_secured");
+
+    // A second run whose first run was deleted is never taken for a first run.
+    await db
+      .update(demoRuns)
+      .set({ comparisonFirstRunId: null, status: "completed", finalizedAt: finishedAt })
+      .where(eq(demoRuns.id, second.id));
+    await service.startDueComparisonPartner();
+    expect(await db.select().from(demoRuns)).toHaveLength(2);
+    expect(
+      (await db.select().from(orders).where(eq(orders.runId, second.id)))
+        .map((order) => order.status)
+        .sort(),
+    ).toEqual(["confirmed", "queued"]);
+  });
+
+  it("holds the slot for the second run, and starts none after a failed first run", async () => {
+    const db = requireConnection(connection).db;
+    const service = createStartService(requireConnection(connection), requireRedis(redis));
+    // The admin UI estimates and starts a comparison preset with its slug alone.
+    expect(
+      (await service.previewRun({ presetSlug: "queue-comparison", operatorMode: "admin" })).result
+        .decision,
+    ).toBe("admitted");
+    const first = await service.startRun(
+      { presetSlug: "queue-comparison", operatorMode: "admin" },
+      "comparison",
+    );
+    await completeRun(first.run.runId, "completed");
+    await expect(
+      service.startRun({ presetSlug: "preview-1k", operatorMode: "admin" }, "other-visitor"),
+    ).rejects.toMatchObject({
+      code: "run_conflict",
+      details: { conflictReason: "active_run_exists" },
+    });
+
+    await completeRun(first.run.runId, "failed");
+    await service.startDueComparisonPartner();
+    expect(await db.select().from(demoRuns)).toHaveLength(1);
+  });
+
+  it("starts the public Redis comparison, its second run on PostgreSQL's stock, measuring both runs", async () => {
+    const db = requireConnection(connection).db;
+    const seeded = buildSeedPresets().find((preset) => preset.slug === "redis-comparison");
+    if (!seeded) throw new Error("Expected the seeded Redis comparison preset.");
+    const { overwriteOnConflict: _overwrite, ...preset } = seeded;
+    await db.insert(demoPresets).values(preset);
+    const starts: TrafficExecutionStartRequest[] = [];
+    const service = createStartService(requireConnection(connection), requireRedis(redis), {
+      publicRunBudgetStore: {
+        reserve: async () => ({
+          outcome: "allowed" as const,
+          reservation: { reservationId: "r", globalKey: "g", visitorKey: "v", reservationKey: "r" },
+        }),
+        release: vi.fn(),
+      },
+      trafficExecutionGateway: {
+        start: async (request) => {
+          starts.push(request);
+          return {
+            runId: request.runId,
+            status: "active",
+            startedAt: "2026-06-20T00:00:11.000Z",
+            correlationId: request.correlationId,
+          };
+        },
+      },
+    });
+    const request = {
+      presetSlug: "redis-comparison",
+      operatorMode: "public" as const,
+      publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+    };
+
+    // A visitor's estimate and start take the fixed buyer-spike preset as defined.
+    expect((await service.previewRun(request)).result.decision).toBe("admitted");
+    const first = await service.startRun(request, "comparison");
+    await completeRun(first.run.runId, "completed");
+    await service.startDueComparisonPartner();
+
+    const runs = await db.select().from(demoRuns);
+    const second = runs.find((run) => run.comparisonFirstRunId === first.run.runId);
+    expect(runs.map((run) => run.comparisonMode).sort()).toEqual(["postgres", "redis"]);
+    expect(starts.map((start) => start.apiBaseUrl)).toEqual([
+      "http://api.test:4001",
+      "http://api.test:4001/stock-in-postgres",
+    ]);
+    expect(await db.select().from(postgresRunStock)).toEqual([
+      {
+        runId: second?.id,
+        saleOfferId: second?.saleOfferId,
+        remainingStock: 500,
+      },
+    ]);
+    for (const run of runs) {
+      expect(run.storeLoad?.start).toMatchObject({
+        postgresTransactions: expect.any(Number),
+        postgresBusyMs: expect.any(Number),
+        redisCpuMs: expect.any(Number),
+      });
+    }
+  });
+});
+
 function surge10kSnapshot(): AcceptedRunConfigSnapshot {
   return {
     trafficConfig: {
@@ -2495,6 +2786,8 @@ function createStartService(
     },
     businessOutcomeReader,
     apiBaseUrl: "http://api.test",
+    // Only the Redis comparison's runs target the buy-only processes.
+    buyPoolBaseUrl: "http://api.test:4001",
     logger,
     publicClientCookieSecret: publicCookieSecret,
     estimatorConstants: conservativeDurationEstimatorConstants,

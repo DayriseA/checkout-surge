@@ -1,9 +1,9 @@
+import { existsSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const publicSurface = vi.hoisted(() => ({ id: "public-surface" }));
-const sessionMock = vi.hoisted(() => vi.fn(async () => false));
 
 vi.mock("../src/app/lib/api.js", () => ({
   getPublicDemoSurface: vi.fn(async () => publicSurface),
@@ -13,146 +13,143 @@ vi.mock("../src/app/components/public-demo-entry.js", () => ({
     createElement("section", { id: "public-start-controls" }, "Preset and start controls"),
 }));
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
-  hasValidAdminPageSession: sessionMock,
-}));
-vi.mock("../src/app/components/admin-nav.js", () => ({
-  AdminSignOut: () => createElement("button", { type: "button" }, "Sign out"),
+  hasValidAdminPageSession: vi.fn(async () => false),
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
 
 import DemoDashboardPage from "../src/app/demo/page.js";
+import HowItWorksPage from "../src/app/how-it-works/page.js";
 import RootLayout from "../src/app/layout.js";
+import {
+  comparisonFiguresNote,
+  formatFigure,
+  queueComparison,
+  redisComparison,
+} from "../src/app/lib/presentation/measured-figures.js";
 import { publicNarrative } from "../src/app/lib/presentation/public-vocabulary.js";
-import OverviewPage from "../src/app/page.js";
+import { siteAnchors, sitePages } from "../src/app/lib/site-links.js";
+import LimitsPage from "../src/app/limits/page.js";
+import HomePage from "../src/app/page.js";
+import UnderTheHoodPage from "../src/app/under-the-hood/page.js";
 
-afterEach(() => {
-  sessionMock.mockResolvedValue(false);
-});
+const contentPages = {
+  [sitePages.home]: renderToStaticMarkup(createElement(HomePage)),
+  [sitePages.howItWorks]: renderToStaticMarkup(createElement(HowItWorksPage)),
+  [sitePages.limits]: renderToStaticMarkup(createElement(LimitsPage)),
+  [sitePages.underTheHood]: renderToStaticMarkup(createElement(UnderTheHoodPage)),
+} as Record<string, string>;
 
-describe("public visitor mental model", () => {
-  it("leads with the chooser and keeps the safety story visible", async () => {
-    const markup = renderToStaticMarkup(await DemoDashboardPage());
-    const capsuleIndex = markup.indexOf('id="demo-mental-model"');
-    const controlsIndex = markup.indexOf('id="public-start-controls"');
+function renderLayout() {
+  return RootLayout({ children: createElement("p", null, "content") }).then((layout) =>
+    renderToStaticMarkup(layout),
+  );
+}
 
-    expect(capsuleIndex).toBeGreaterThan(-1);
-    expect(controlsIndex).toBeGreaterThan(-1);
-    expect(controlsIndex).toBeLessThan(capsuleIndex);
-    expect(markup).toContain(
-      "Choose a simulation, start it, and watch the system handle a release of buyers.",
-    );
-    const safetyStory = markup.slice(capsuleIndex);
-    expect(safetyStory).not.toContain('hidden=""');
-    expect(safetyStory).toContain("compete for limited stock");
-    expect(safetyStory).toContain("buyers turned away are answered from");
-    expect(safetyStory).toContain(
-      "every order is confirmed and none failed, and oversold units remain zero",
-    );
-    expect(safetyStory).toContain("not universal production evidence");
-    expect(safetyStory).toContain('href="/#waiting-room"');
-    expect(markup.match(/not universal production evidence/g)).toHaveLength(1);
+describe("public site", () => {
+  it("every route of the routes module has a page, and every anchor is on its page", () => {
+    for (const route of Object.values(sitePages)) {
+      expect(existsSync(new URL(`../src/app${route}/page.tsx`, import.meta.url))).toBe(true);
+    }
+    for (const [page, anchors] of Object.entries(siteAnchors)) {
+      const markup = contentPages[sitePages[page as keyof typeof siteAnchors]] ?? "";
+      for (const anchor of Object.values(anchors)) {
+        expect(markup, `${page}#${anchor}`).toContain(`id="${anchor}"`);
+      }
+    }
   });
 
-  it("introduces the project and leads visitors to the demo", async () => {
-    const markup = renderToStaticMarkup(await OverviewPage());
-    const heroMarkup = markup.slice(0, markup.indexOf('id="waiting-room"'));
-
-    expect(heroMarkup).toContain("<h1");
-    expect(heroMarkup).toContain("Checkout-Surge");
-    expect(heroMarkup).toContain('href="/demo"');
-    expect(heroMarkup).toContain('href="#waiting-room"');
-    expect(markup.match(/href="\/demo"/g)).toHaveLength(2);
+  it("every in-site link with an anchor, footer included, reaches an element of its page", async () => {
+    const sources = { ...contentPages, footer: await renderLayout() };
+    for (const [source, markup] of Object.entries(sources)) {
+      for (const [, path, anchor] of markup.matchAll(/href="(\/[^"#]*)?#([^"]+)"/g)) {
+        const target = path === undefined ? contentPages[source] : contentPages[path];
+        if (target === undefined) continue; // Pages rendered from live data, such as /demo.
+        expect(target, `${source} links to ${path ?? ""}#${anchor}`).toContain(`id="${anchor}"`);
+      }
+    }
   });
 
-  it("keeps the architecture, technical narrative, and glossary visible", async () => {
-    const markup = renderToStaticMarkup(await OverviewPage());
-    const signalSection = markup.slice(
-      markup.indexOf('id="gold-signals"'),
-      markup.indexOf('id="success"'),
-    );
-    const diagram = markup.slice(markup.indexOf("<svg"), markup.indexOf("</svg>"));
-    const glossaryAnchors = [
-      "erp",
-      "tps",
-      "p95",
-      "vu",
-      "circuit-breaker",
-      "backpressure",
-      "idempotency",
-      "projection",
-      "recovery",
-      "drain",
-      "pending-reservation",
-      "reservation-vs-confirmation",
-    ];
+  it("links the repository only at its root, never to a document inside it", async () => {
+    const sources = [...Object.values(contentPages), await renderLayout()];
+    for (const markup of sources) {
+      for (const [, href] of markup.matchAll(/href="(https:\/\/github\.com[^"]*)"/g)) {
+        expect(href).toBe(publicNarrative.repositoryUrl);
+      }
+    }
+  });
 
-    expect(markup).not.toContain('hidden=""');
-    expect(markup).toContain('id="waiting-room"');
-    expect(markup).toContain('id="redis-fast-path"');
-    expect(markup).toContain('id="queue-protection"');
-    expect(markup).toContain('id="real-and-simulated"');
-    expect(markup).toContain('id="gold-signals"');
-    expect(markup).toContain('id="success"');
-    expect(markup).toContain('id="limits-and-source"');
-    expect(markup).toContain('id="glossary"');
-    expect(markup).toContain("A real API, Redis, PostgreSQL, BullMQ queue, and worker runtime");
-    expect(markup).toContain("buyers are simulated by the load generator (k6)");
-    expect(markup.match(/k6/g)).toHaveLength(1);
-    expect(markup).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
-    expect(markup).toContain("simulated emails recorded");
-    expect(signalSection.indexOf("Request arrival")).toBeGreaterThan(-1);
-    expect(signalSection.indexOf("Inventory drain")).toBeGreaterThan(-1);
-    expect(signalSection.indexOf("Processing backlog")).toBeGreaterThan(-1);
-    expect(signalSection.indexOf("Confirmation convergence")).toBeGreaterThan(-1);
-    expect(signalSection.indexOf("Request arrival")).toBeLessThan(
-      signalSection.indexOf("Inventory drain"),
+  it("introduces the project, quotes both comparisons with their method, and leads to the demo", () => {
+    const home = contentPages[sitePages.home] ?? "";
+    const hero = home.slice(0, home.indexOf('id="in-one-picture"'));
+
+    expect(hero).toContain("<h1");
+    expect(hero).toContain("A live demo of the system behind a flash sale");
+    expect(hero).toContain('href="/demo"');
+    expect(hero).toContain('href="/how-it-works"');
+    expect(home.match(/href="\/demo"/g)).toHaveLength(2);
+    expect(home).toContain('href="/demo#queue-comparison-title"');
+    expect(home).toContain('href="/demo#redis-comparison-title"');
+    for (const figure of [queueComparison.everyBuyerAnswered, redisComparison.cold.transactions]) {
+      expect(home).toContain(formatFigure(figure.first[0], figure.format));
+      expect(home).toContain(formatFigure(figure.second[0], figure.format));
+    }
+    expect(home).toContain(comparisonFiguresNote);
+  });
+
+  it("keeps the overview's technical content on Under the hood and Limits", () => {
+    const underTheHood = contentPages[sitePages.underTheHood] ?? "";
+    const limits = contentPages[sitePages.limits] ?? "";
+    const diagram = underTheHood.slice(
+      underTheHood.indexOf("<svg"),
+      underTheHood.indexOf("</svg>"),
     );
-    expect(signalSection.indexOf("Inventory drain")).toBeLessThan(
-      signalSection.indexOf("Processing backlog"),
+    const signals = ["Request arrival", "Inventory drain", "Processing backlog"].map((signal) =>
+      underTheHood.indexOf(signal),
     );
-    expect(signalSection.indexOf("Processing backlog")).toBeLessThan(
-      signalSection.indexOf("Confirmation convergence"),
-    );
-    expect(signalSection).toContain(
-      "remaining stock falling from the starting amount as reservation quantities are secured",
-    );
-    expect(signalSection).not.toContain("starting stock falling");
+
     expect(diagram).toContain('role="img"');
-    expect(diagram).toContain('aria-labelledby="architecture-diagram-title');
-    expect(markup).toContain("Architecture diagram scrolls sideways.");
-    expect(markup).toContain('aria-label="Scrollable architecture diagram"');
-    expect(markup).toContain('tabindex="0"');
     expect(diagram.match(/<rect/g)).toHaveLength(7);
-    for (const label of [
-      "Simulated buyers",
-      "API",
-      "Redis decision",
-      "BullMQ queue",
-      "Worker",
-      "Simulated ERP",
-      "PostgreSQL",
-    ]) {
-      expect(diagram).toContain(label);
+    expect(signals.every((index, order) => index > (signals[order - 1] ?? 0))).toBe(true);
+    for (const anchor of ["erp", "p95", "vu", "idempotency", "uncertain-result", "drain"]) {
+      expect(underTheHood).toContain(`id="${anchor}"`);
     }
-    for (const anchor of glossaryAnchors) {
-      expect(markup).toContain(`id="${anchor}"`);
-    }
-    expect(markup).toContain(
-      "a reusable load-generator worker that runs scenario iterations and may run multiple checkout attempts",
-    );
-    expect(markup).toContain(
-      "confirmation is the later successful order state after queued processing",
-    );
-    expect(markup).toContain("Failure is a separate durable outcome");
+    expect(underTheHood).toContain("simulated emails recorded");
+    expect(limits).toContain("buyers are simulated by the load generator (k6)");
+    expect(limits).toContain("Legacy-ERP delay, capacity, failures, and outages are simulated");
+    expect(limits).toContain("not a benchmark");
   });
 
-  it("links the repository safely from about and global navigation", async () => {
-    const aboutMarkup = renderToStaticMarkup(await OverviewPage());
-    const layoutMarkup = renderToStaticMarkup(
-      await RootLayout({ children: createElement("p", null, "content") }),
-    );
+  it("states the comparisons' disclosures on the detail pages", () => {
+    const howItWorks = contentPages[sitePages.howItWorks] ?? "";
+    const limits = contentPages[sitePages.limits] ?? "";
+    const coLocated =
+      "PostgreSQL and Redis run on the API&#x27;s machine. In a real deployment they would sit about a millisecond away";
 
-    for (const markup of [aboutMarkup, layoutMarkup]) {
+    expect(howItWorks).toContain(coLocated);
+    expect(limits).toContain(coLocated);
+    expect(howItWorks).toContain("After 45 seconds");
+    expect(howItWorks).toContain("the run with the queue always goes first");
+    expect(howItWorks).toContain("the Redis run always goes first");
+    expect(howItWorks).toContain("Redis still carries the live counters and the notifications");
+    expect(howItWorks).toContain("the same two buy-only API processes serve both");
+    expect(howItWorks).toContain("counted for the whole database");
+    expect(howItWorks).toContain("each winner costs more work, since two stores must be kept");
+  });
+
+  it("keeps the demo page's chooser first and its safety story short, linked to the details", async () => {
+    const markup = renderToStaticMarkup(await DemoDashboardPage());
+    const capsule = markup.slice(markup.indexOf('id="demo-mental-model"'));
+
+    expect(markup.indexOf('id="public-start-controls"')).toBeLessThan(
+      markup.indexOf('id="demo-mental-model"'),
+    );
+    expect(capsule).toContain("compete for limited stock");
+    expect(capsule).toContain('href="/how-it-works"');
+    expect(capsule).toContain('href="/limits#scale"');
+  });
+
+  it("links the repository safely from the home page and the site's header and footer", async () => {
+    for (const markup of [contentPages[sitePages.home] ?? "", await renderLayout()]) {
       expect(markup).toContain(`href="${publicNarrative.repositoryUrl}"`);
       expect(markup).toContain('target="_blank"');
       expect(markup).toContain('rel="noopener noreferrer"');

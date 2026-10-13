@@ -31,6 +31,8 @@ export class PostgresOrderDispatchPersistence implements OrderDispatchPersistenc
               select 1 from demo_runs eligible_run
               where eligible_run.id = ${orders.runId}
                 and eligible_run.status in ('starting', 'active', 'draining')
+                -- The PostgreSQL order queue's job commits with its order: nothing to repair.
+                and eligible_run.comparison_mode is distinct from 'postgres'
             )
           )`,
           sql`not exists (

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AdminSignOut } from "./components/admin-nav";
 import { CoreIdleCountdown } from "./components/core-idle-countdown";
 import { DashboardNav } from "./components/dashboard-nav";
+import { SiteFooter } from "./components/site-footer";
 import { hasValidAdminPageSession } from "./lib/server/admin-page-session";
 import "./globals.css";
 
@@ -47,6 +48,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
           >
             {children}
           </main>
+          <SiteFooter />
         </div>
       </body>
     </html>

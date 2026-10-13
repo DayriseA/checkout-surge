@@ -64,6 +64,8 @@ export function outcomeFocusLabel(focus: string): string {
       return "A slow ERP sets the pace; orders wait in the queue";
     case "downstream_latency":
       return "Slow ERP responses limit orders in flight";
+    case "confirmation_wait":
+      return "Without the queue, each winner waits for the ERP to confirm";
     case "failure_path":
       return "Failed orders and retries";
     default:

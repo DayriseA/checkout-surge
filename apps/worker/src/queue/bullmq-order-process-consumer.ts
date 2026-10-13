@@ -211,9 +211,16 @@ function correlationLogContext(data: unknown): { correlationId?: string } {
   return {};
 }
 
+/** What processing needs from a delivery: a BullMQ job, or a PostgreSQL queue row in its shape. */
+export type OrderProcessDelivery = Pick<
+  Job<OrderProcessJob, void, typeof orderProcessJobName>,
+  "name" | "data" | "id" | "attemptsMade" | "updateProgress"
+>;
+type ProcessJobOptions = Pick<CreateBullMqOrderProcessConsumerOptions, "handler" | "recovery">;
+
 export async function processJob(
-  job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
-  options: CreateBullMqOrderProcessConsumerOptions,
+  job: OrderProcessDelivery,
+  options: ProcessJobOptions,
 ): Promise<void> {
   if (job.name !== orderProcessJobName) {
     await recordDeadLetter(options, job, {
@@ -304,8 +311,8 @@ export async function processJob(
 }
 
 async function recordDeadLetter(
-  options: CreateBullMqOrderProcessConsumerOptions,
-  job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
+  options: ProcessJobOptions,
+  job: OrderProcessDelivery,
   input: Parameters<CreateBullMqOrderProcessConsumerOptions["recovery"]["recordDeadLetter"]>[0],
 ): Promise<void> {
   try {
@@ -335,7 +342,7 @@ function isRecoverableFailure(error: unknown): boolean {
 }
 
 async function markRecoverableDisposition(
-  job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
+  job: OrderProcessDelivery,
   error: unknown,
 ): Promise<void> {
   try {
@@ -359,7 +366,7 @@ async function markRecoverableDisposition(
 }
 
 async function markDeadLetterDisposition(
-  job: Job<OrderProcessJob, void, typeof orderProcessJobName>,
+  job: OrderProcessDelivery,
   input: Parameters<CreateBullMqOrderProcessConsumerOptions["recovery"]["recordDeadLetter"]>[0],
   error: unknown,
 ): Promise<void> {

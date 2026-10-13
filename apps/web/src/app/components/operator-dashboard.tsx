@@ -1,8 +1,11 @@
 "use client";
 
 import {
+  comparisonOfMode,
   type DashboardProjection,
+  type DemoRunSnapshot,
   deriveOversoldUnits,
+  isFirstComparisonMode,
   type RunHistoryListItem,
 } from "@checkout-surge/contracts";
 import Link from "next/link";
@@ -12,6 +15,7 @@ import type {
   AcceptedRunReportEvidence,
   AcceptedRunResult,
 } from "../lib/presentation/accepted-run-result";
+import { comparisonRunLabel } from "../lib/presentation/comparison";
 import {
   formatCount,
   formatDurationMs,
@@ -34,6 +38,7 @@ import {
   deriveWatchComposition,
   type WatchComposition,
 } from "../lib/presentation/watch-composition";
+import { WatchComparisonPanel, type WatchedComparison } from "./comparison-panel";
 import { neutralLinkButtonClassName, primaryButtonClassName } from "./control-styles";
 import {
   ConsistencyLagPanel,
@@ -99,13 +104,20 @@ export function OperatorDashboard({
   const [resetRunId, setResetRunId] = useState(incompleteRunId);
   const currentRun = recovery.status === "available" ? recovery.data.currentRun : null;
   const currentRunId = currentRun?.runId;
+  // The second run of a comparison continues the visitor's first run: Watch follows it, also
+  // once it ends and only the retained terminal projection still shows it.
+  const shownRun = currentRun ?? retainedTerminalRun?.terminalRecap.currentRun ?? null;
+  const followedResult: AcceptedRunResult | undefined =
+    shownRun && acceptedResult && shownRun.comparison?.firstRunId === acceptedResult.runId
+      ? { status: "awaiting", runId: shownRun.runId }
+      : acceptedResult;
   useEffect(() => {
     if (incompleteRunId) setResetRunId(incompleteRunId);
     else if (currentRunId)
       setResetRunId((previous) => (previous === currentRunId ? previous : null));
   }, [incompleteRunId, currentRunId]);
   const resultContext =
-    acceptedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
+    followedResult ?? (resetRunId ? { status: "awaiting" as const, runId: resetRunId } : undefined);
   // The saved report cannot exist while the accepted run is still shown in progress.
   const acceptedRunInProgress =
     recovery.status === "available" &&
@@ -166,6 +178,8 @@ export function OperatorDashboard({
     visibleResult?.status === "available" && visibleResult.runId === liveRun?.runId
       ? (visibleResult.reportEvidence ?? null)
       : null;
+  // A live comparison run shows its comparison in its own card's tab.
+  const savedComparison = liveRun?.comparison ? null : savedRunComparison(trackedResult);
   return (
     <div className="grid grid-cols-12 gap-4">
       {invalidAcceptedRunContext ? <InvalidAcceptedRunContext /> : null}
@@ -174,6 +188,12 @@ export function OperatorDashboard({
           onRetry={() => void accepted.retryNow()}
           result={trackedResult}
           retriesExhausted={accepted.retriesExhausted}
+        />
+      ) : null}
+      {savedComparison ? (
+        <WatchComparisonPanel
+          className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
+          {...savedComparison}
         />
       ) : null}
       <WatchNarrative
@@ -220,6 +240,32 @@ export function OperatorDashboard({
       />
     </div>
   );
+}
+
+/** The comparison of the run shown live, for every viewer. */
+function liveRunComparison(run: DemoRunSnapshot): WatchedComparison | null {
+  return run.comparison
+    ? {
+        comparison: comparisonOfMode(run.comparison.mode),
+        runId: run.runId,
+        firstRunId: run.comparison.firstRunId ?? null,
+        refreshKey: `${run.runId}:${run.status}`,
+      }
+    : null;
+}
+
+/** The comparison of the visitor's saved run. */
+function savedRunComparison(tracked: AcceptedRunResult | undefined): WatchedComparison | null {
+  if (tracked?.status === "available" && tracked.comparison)
+    return {
+      comparison: comparisonOfMode(tracked.comparison.mode),
+      runId: tracked.runId,
+      firstRunId: isFirstComparisonMode(tracked.comparison.mode)
+        ? null
+        : tracked.comparison.partnerRunId,
+      refreshKey: tracked.runId,
+    };
+  return null;
 }
 
 type TrackedAcceptedResult = { retriesExhausted: boolean; result: AcceptedRunResult };
@@ -319,18 +365,21 @@ export function WatchNarrative({
   }
 }
 
-type LiveView = "overview" | "pipeline";
+type RunView = "overview" | "pipeline" | "comparison";
 
-const liveViews: Array<{ description: string; label: string; view: LiveView }> = [
+const runViews: Array<{ description: string; label: string; view: RunView }> = [
   { description: "counts and trends", label: "Overview", view: "overview" },
   { description: "every stage, live", label: "Pipeline", view: "pipeline" },
+  { description: "side by side", label: "Comparison", view: "comparison" },
 ];
 
 /**
  * The five-band compact Watch layout for every run phase: identity line, verdict line, counts row,
  * signal strip, caveat and actions. While a run is live the card also carries the live pipeline
  * board; on a screen too short or narrow for both, a toggle shows the overview or the board.
- * Both views stay mounted so hiding one keeps its state. Technical proof and panels render
+ * A comparison run adds a third view, its two runs side by side, and its views are tabs on every
+ * screen. The comparison opens by itself when run 2 reaches its result, whatever view was open.
+ * Every view stays mounted so hiding one keeps its state. Technical proof and panels render
  * outside this card.
  */
 function RunCard({
@@ -376,9 +425,22 @@ function RunCard({
   };
   const reportState = terminal ? terminalReportState(accepted, composition.run.runId) : null;
   const stripCharts = deriveGoldSignalCharts(goldSignalInput(composition));
-  const [liveView, setLiveView] = useState<LiveView>("overview");
+  const comparison = liveRunComparison(composition.run);
+  const comparisonMode = composition.run.comparison?.mode;
+  const pairEnded =
+    terminal && comparisonMode !== undefined && !isFirstComparisonMode(comparisonMode);
+  const [chosenView, setChosenView] = useState<RunView>(pairEnded ? "comparison" : "overview");
+  // Run 2's result opens the comparison; the next run starts again on the overview.
+  useEffect(() => setChosenView(pairEnded ? "comparison" : "overview"), [pairEnded]);
+  // A view this run does not offer falls back to the overview.
+  const view =
+    (chosenView === "comparison" && !comparison) || (chosenView === "pipeline" && terminal)
+      ? "overview"
+      : chosenView;
+  const hiddenUnless = (shown: boolean) =>
+    shown ? undefined : comparison ? "hidden" : "compact-watch:hidden";
   const revealLiveSignal = (targetId: string) => {
-    setLiveView("pipeline");
+    setChosenView("pipeline");
     focusSection(targetId, "nearest");
   };
   return (
@@ -408,10 +470,19 @@ function RunCard({
         ) : null}
       </div>
       <GracePeriodNotice now={now} run={composition.run} />
-      {terminal ? null : <LiveViewTabs onChange={setLiveView} value={liveView} />}
-      <div
-        className={`grid gap-4 ${!terminal && liveView === "pipeline" ? "compact-watch:hidden" : ""}`}
-      >
+      {comparison || !terminal ? (
+        <RunViewTabs
+          everyScreen={comparison !== null}
+          onChange={setChosenView}
+          value={view}
+          views={runViews.filter(
+            (option) =>
+              (option.view !== "pipeline" || !terminal) &&
+              (option.view !== "comparison" || comparison !== null),
+          )}
+        />
+      ) : null}
+      <div className={`grid gap-4 ${hiddenUnless(view === "overview") ?? ""}`}>
         <CountsRow {...counts} />
         <WatchSignalStrip
           charts={stripCharts.charts}
@@ -422,7 +493,7 @@ function RunCard({
         />
       </div>
       {terminal ? null : (
-        <div className={liveView === "overview" ? "compact-watch:hidden" : undefined}>
+        <div className={hiddenUnless(view === "pipeline")}>
           <LiveTechnicalBoard
             freshness={composition.freshness}
             projection={projection}
@@ -430,6 +501,11 @@ function RunCard({
           />
         </div>
       )}
+      {comparison ? (
+        <div className={view === "comparison" ? undefined : "hidden"}>
+          <WatchComparisonPanel {...comparison} />
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 min-[900px]:flex-nowrap">
         <div className="grid min-w-0 flex-1 gap-2 [&>p]:mt-0">
           {summary && summary.caveats.length > 0 ? (
@@ -464,24 +540,31 @@ function RunCard({
 }
 
 /**
- * The tab bar over the live card's two views, shown only when the screen cannot fit both. The
- * current tab carries the navigation's signal bar; the other tab keeps a filled, clickable look
- * and a signal dot so a first-time visitor notices there is a second view to open.
+ * The tab bar over the run card's views, shown on every screen for a comparison run and otherwise
+ * only when the screen cannot fit the overview and the board together. The current tab carries
+ * the navigation's signal bar; the other tabs keep a filled, clickable look and a signal dot so a
+ * first-time visitor notices there is another view to open.
  */
-function LiveViewTabs({
+function RunViewTabs({
+  everyScreen,
   onChange,
   value,
+  views,
 }: {
-  onChange: (view: LiveView) => void;
-  value: LiveView;
+  everyScreen: boolean;
+  onChange: (view: RunView) => void;
+  value: RunView;
+  views: typeof runViews;
 }) {
   return (
-    <fieldset className="m-0 hidden min-w-0 gap-1.5 border-0 border-b border-border p-0 compact-watch:flex">
-      <legend className="sr-only">Live view</legend>
-      {liveViews.map(({ description, label, view }) => (
+    <fieldset
+      className={`m-0 min-w-0 flex-wrap gap-1.5 border-0 border-b border-border p-0 ${everyScreen ? "flex" : "hidden compact-watch:flex"}`}
+    >
+      <legend className="sr-only">Run view</legend>
+      {views.map(({ description, label, view }) => (
         <button
           aria-pressed={value === view}
-          className={`-mb-px flex cursor-pointer items-center gap-2 rounded-t-lg border-b-[3px] px-4 py-2 text-sm font-semibold transition-colors ${
+          className={`-mb-px flex cursor-pointer items-center gap-2 rounded-t-lg border-b-[3px] px-4 py-2 text-sm font-semibold transition-colors max-[560px]:px-2.5 ${
             value === view
               ? "border-signal bg-signal-soft text-ink"
               : "border-transparent bg-surface-muted text-muted-strong hover:bg-accent-soft hover:text-ink"
@@ -577,6 +660,7 @@ function IdentityLine({
 }) {
   const facts = deriveRunConfigFacts(composition.run.configSnapshot);
   const step = phaseSteps[composition.phase];
+  const comparisonMode = composition.run.comparison?.mode;
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border pb-3">
       <p className="m-0 text-sm font-semibold text-ink">
@@ -584,6 +668,7 @@ function IdentityLine({
         {pluralize(facts.uniqueAttempts, facts.surgeLabel === "Buyers" ? "buyer" : "attempt")} ·{" "}
         {facts.startingStock}{" "}
         {pluralize(composition.run.configSnapshot.inventoryConfig.startingStock, "unit")}
+        {comparisonMode ? ` · ${comparisonRunLabel(comparisonMode)}` : ""}
         {sharedDemo ? " · Now running in the shared demo" : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">

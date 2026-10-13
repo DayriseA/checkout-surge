@@ -1,6 +1,7 @@
 import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
+  postgresOrderQueueChannel,
   publishDashboardProjectionDirtySignal,
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
@@ -27,6 +28,7 @@ import { PostgresGeneratedRunPublicationFence } from "./persistence/postgres-gen
 import { PostgresNotificationRecordPersistence } from "./persistence/postgres-notification-record-persistence.js";
 import { PostgresNotificationRecoveryPersistence } from "./persistence/postgres-notification-recovery-persistence.js";
 import { PostgresOrderDispatchPersistence } from "./persistence/postgres-order-dispatch-persistence.js";
+import { PostgresOrderQueuePersistence } from "./persistence/postgres-order-queue-persistence.js";
 import { PostgresOrderRecoveryPersistence } from "./persistence/postgres-order-recovery-persistence.js";
 import { PostgresOrderTransitionPersistence } from "./persistence/postgres-order-transition-persistence.js";
 import { PostgresRunConfigReader } from "./persistence/postgres-run-config-reader.js";
@@ -34,6 +36,7 @@ import { createBullMqNotificationRecordConsumer } from "./queue/bullmq-notificat
 import { createBullMqNotificationRecordPublisher } from "./queue/bullmq-notification-record-publisher.js";
 import { createBullMqOrderProcessConsumer } from "./queue/bullmq-order-process-consumer.js";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
+import { createPostgresOrderQueueConsumer } from "./queue/postgres-order-queue-consumer.js";
 import { loadWorkerConfig } from "./runtime/config.js";
 import { createWorkerReadiness } from "./runtime/readiness.js";
 import { createWorkerRuntime } from "./runtime/worker-runtime.js";
@@ -124,8 +127,21 @@ export async function startWorker(): Promise<void> {
     batchSize: config.orderDispatchBatchSize,
     minimumQueuedAgeMs: config.orderDispatchMinimumQueuedAgeMs,
   });
+  // The order queue of runs whose stock PostgreSQL decides: the same handler, pacing and limits.
+  const postgresOrderQueueConsumer = createPostgresOrderQueueConsumer({
+    queue: new PostgresOrderQueuePersistence(database.db),
+    listen: (wake) => database.sql.listen(postgresOrderQueueChannel, wake, wake),
+    runConfig: runConfigReader,
+    // The handler is built below, from the admission that pauses this consumer.
+    handler: { handle: (job, delivery) => orderProcessHandler.handle(job, delivery) },
+    recovery: orderRecoveryPersistence,
+    logger,
+  });
   const orderProcessAdmission = await AdaptiveErpRuntimeAdmission.restore({
-    pauseDelivery: (durationMs) => orderProcessJobPublisher.pauseDelivery(durationMs),
+    pauseDelivery: (durationMs) => {
+      postgresOrderQueueConsumer.pause(durationMs);
+      return orderProcessJobPublisher.pauseDelivery(durationMs);
+    },
     persistence: erpScopeState,
     runConfigReader,
     reconciliationConcurrency: config.orderProcessConcurrency,
@@ -222,6 +238,7 @@ export async function startWorker(): Promise<void> {
     healthHost: config.healthHost,
     healthPort: config.healthPort,
     orderProcessConsumer,
+    postgresOrderQueueConsumer,
     notificationRecordConsumer,
     notificationRecoveryScanner,
     orderDispatchScanner,

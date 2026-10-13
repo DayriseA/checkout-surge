@@ -181,6 +181,15 @@ describe("K6RunAccumulator summary precedence", () => {
           checkout_attempts_started: { count: 10 },
           checkout_responses_completed: { count: 10 },
           checkout_reservation_accepted: { count: 10 },
+          checkout_order_confirmed: { count: 4 },
+          checkout_reservation_pending_persistence: { count: 1 },
+          // A cohort counts only when it covers exactly its outcome's replies.
+          checkout_accepted_buyer_wall_latency: {
+            values: { count: 10, avg: 120, "p(95)": 200, max: 250 },
+          },
+          checkout_sold_out_buyer_wall_latency: {
+            values: { count: 3, avg: 5, "p(95)": 8, max: 9 },
+          },
           checkout_sold_out_rejections: { count: 0 },
           checkout_transport_failures: { count: 0 },
           checkout_request_timeouts: { count: 0 },
@@ -201,11 +210,17 @@ describe("K6RunAccumulator summary precedence", () => {
     expect(trafficCompletionReportSchema.parse(report).httpSummary).toEqual({
       failedRequests: 0,
       acceptedResponses: 10,
+      confirmedResponses: 4,
+      pendingPersistenceResponses: 1,
       soldOutResponses: 0,
       transportFailures: 0,
       requestTimeouts: 0,
       unexpectedResponses: 0,
       failureRate: 0,
+      buyerWallLatencySummary: {
+        accepted: { sampleCount: 10, averageMs: 120, p95Ms: 200, maxMs: 250 },
+        soldOut: null,
+      },
     });
     expect(report.trafficDeliverySummary.droppedIterations).toBe(0);
     expect(Object.values(report.loadRunDiagnosticsSummary.terminalMetricSources)).toEqual(
@@ -229,11 +244,14 @@ describe("K6RunAccumulator summary precedence", () => {
     expect(trafficCompletionReportSchema.parse(report).httpSummary).toEqual({
       failedRequests: null,
       acceptedResponses: 3,
+      confirmedResponses: null,
+      pendingPersistenceResponses: null,
       soldOutResponses: null,
       transportFailures: null,
       requestTimeouts: null,
       unexpectedResponses: null,
       failureRate: null,
+      buyerWallLatencySummary: { accepted: null, soldOut: null },
     });
     expect(report.transportAttemptCounts).toEqual({
       plannedRequests: 10,

@@ -414,4 +414,14 @@ describe("API runtime configuration", () => {
     ).toBe("http://api:4000");
     expect(loadApiConfig(env).apiBaseUrl).toBe("http://localhost:4000");
   });
+
+  it("derives the buy-only processes' URL from the API's own, only when they run", () => {
+    const env = { ...baseEnv, CONTROL_SERVICE_TOKEN: "deployment-token", PORT: "4000" };
+
+    expect(
+      loadApiConfig({ ...env, FLY_PRIVATE_IP: "fdaa:0:1:a7b:1::2", API_BUY_POOL_PORT: "4001" })
+        .buyPoolBaseUrl,
+    ).toBe("http://[fdaa:0:1:a7b:1::2]:4001");
+    expect(loadApiConfig(env).buyPoolBaseUrl).toBeNull();
+  });
 });

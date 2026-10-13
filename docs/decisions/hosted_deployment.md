@@ -72,6 +72,7 @@ Every entry in ID order. New entries are added here too.
 | [HD-60](#hd-60-public-custom-runs-are-admitted-only-when-expected-to-complete-admin-runs-are-warned-never-refused) | Public custom runs are admitted only when expected to complete; admin runs are warned, never refused | Platform and Topology |
 | [HD-61](#hd-61-a-finished-runs-redis-working-state-is-removed-at-finalization-and-at-the-next-start) | A finished run's Redis working state is removed at finalization and at the next start | Platform and Topology |
 | [HD-62](#hd-62-a-guard-whose-host-refuses-the-deploy-is-destroyed-then-recreated) | A guard whose host refuses the deploy is destroyed, then recreated | Guard |
+| [HD-63](#hd-63-a-buy-only-api-pool-serves-only-the-redis-comparison-one-process-keeps-every-other-duty) | A buy-only API pool serves only the Redis comparison; one process keeps every other duty | Platform and Topology |
 
 ## Platform and Topology
 
@@ -80,7 +81,7 @@ Every entry in ID order. New entries are added here too.
 - **Status:** accepted
 - **Date:** 2026-10-02
 - **Context:** The load generator must never compete with the system under test for CPU or memory, and stopped infrastructure must cost almost nothing.
-- **Decision:** Host on Fly.io. The core and the runner are separate Machines, both on dedicated (performance) CPUs, each sized from measurement ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput), [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch)).
+- **Decision:** Host on Fly.io. The core and the runner are separate Machines, both on dedicated (performance) CPUs, each sized from measurement ([HD-63](#hd-63-a-buy-only-api-pool-serves-only-the-redis-comparison-one-process-keeps-every-other-duty), [HD-54](#hd-54-the-runner-is-sized-so-k6-never-saturates-its-cpu-during-dispatch)).
 - **Consequences:** Stopped Machines start in seconds and are billed per second.
 - **Rejected alternatives:**
   - AWS EC2 stop/start: slower to start, and not cheaper.
@@ -146,7 +147,7 @@ Every entry in ID order. New entries are added here too.
 
 ### HD-51 One API process stays; the core is sized for headroom and the caps stay above its throughput
 
-- **Status:** accepted
+- **Status:** superseded by [HD-63](#hd-63-a-buy-only-api-pool-serves-only-the-redis-comparison-one-process-keeps-every-other-duty)
 - **Date:** 2026-10-06
 - **Context:** On Fly, the single API process bounds the hosted throughput, while PostgreSQL, the worker and Redis share the rest of the core Machine, which a burst brings close to saturation ([hosted observations](../reference_runtime_measurements.md#hosted-flyio-observations)). A larger core Machine did not measurably change burst latency or throughput.
 - **Decision:**
@@ -160,6 +161,30 @@ Every entry in ID order. New entries are added here too.
   - The smallest core that runs the demo: a burst leaves its VM almost no headroom.
   - Caps at the core's measured throughput: they would hide from the operator what happens past it.
 - **Code:** the core `guest` and the `DEMO_MAX_*` env in `infra/fly/core/machine.json`; `deploymentHardCaps` in `apps/api/src/runtime/config.ts`.
+
+### HD-63 A buy-only API pool serves only the Redis comparison; one process keeps every other duty
+
+- **Status:** accepted
+- **Date:** 2026-10-13
+- **Context:** On Fly, one API process bounds the hosted throughput, while PostgreSQL, the worker and Redis share the rest of the core Machine, which a burst brings close to saturation ([hosted observations](../reference_runtime_measurements.md#hosted-flyio-observations)). A larger core Machine did not measurably change burst latency or throughput. In the Redis comparison ([LC-05](live_comparisons.md#lc-05-the-redis-comparison-claims-the-databases-load-not-speed)), that one process was saturated in both modes, so the comparison measured the API rather than the stores. This entry replaces HD-51, which kept one process for every run.
+- **Decision:**
+  - One control API process keeps every single-owner duty ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)) and serves every run except the Redis comparison's.
+  - The Redis comparison's two runs are served by a pool of stateless buy-only processes, the smallest count that unpinned the API, in an extra container of the core Machine. They serve the buy routes and health only, hold only the database and Redis credentials, and open their connections before they listen.
+  - The core Machine is sized for the other containers' headroom during a burst, not for throughput.
+  - The deployment caps (`DEMO_MAX_*`) stay above what the core sustains, so an operator can push admin runs past it. The buyer cap is the exception: a buyer spike runs one k6 VU per buyer, so `DEMO_MAX_BUYERS` keeps it within the runner's memory.
+- **Consequences:**
+  - Outside a Redis comparison the pool idles, with a few Node processes and Redis connections. During one, it adds CPU load and PostgreSQL connections, within the database's connection limit, and leaves the core about one vCPU, so a larger pool would compete for the same CPUs.
+  - Ordinary runs, the queue comparison, capacity admission and the `CAPACITY_*` values are unaffected.
+  - The core costs more per awake hour than the smallest size that runs the demo, for headroom rather than speed. Single-process optimizations of the API were not explored.
+  - An admin run above the core's throughput degrades or fails its delivery once its backlog outlasts k6's graceful stop, reported as a virtual-user limit or as answers that arrived too late. Under such overload the API answers 202 or 409 without logging each request; a rare restart remains possible when an aborted pool destroys a connection during a type fetch, as HD-51 records.
+- **Rejected alternatives:**
+  - One process for the Redis comparison too: pinned in both modes, it made the comparison measure the API.
+  - The pool for every run: it changes ordinary runs and the capacity calibration, for no visitor benefit.
+  - Several full API processes (a cluster or replicas): they break the single owner of run starts, resets and runner operations ([HD-11](#hd-11-runner-operations-and-run-starts-are-serialized-in-process)).
+  - A larger core as the throughput lever: it gave the API more CPU, but no established gain in latency or throughput.
+  - The smallest core that runs the demo: a burst leaves its VM almost no headroom.
+  - Caps at the core's measured throughput: they would hide from the operator what happens past it.
+- **Code:** the `api-buy` container, the core `guest` and the `DEMO_MAX_*` env in `infra/fly/core/machine.json`; `apps/api/src/buy-server.ts`; `buyTargetBaseUrl` in `apps/api/src/services/comparison-runs.ts`; `deploymentHardCaps` in `apps/api/src/runtime/config.ts`.
 
 ### HD-52 Core healthchecks end on their own, before Fly's check timeout
 
@@ -213,7 +238,7 @@ Every entry in ID order. New entries are added here too.
 
 - **Status:** accepted
 - **Date:** 2026-10-08
-- **Context:** The single API process and its database pool bound what a run can get answered ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput)). A run past them fails its delivery ([HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones)), and an accepted order costs the API far more than a sold-out answer, so the stock a run can sell lowers what it can reach.
+- **Context:** The single API process and its database pool bound what a run can get answered ([HD-63](#hd-63-a-buy-only-api-pool-serves-only-the-redis-comparison-one-process-keeps-every-other-duty)). A run past them fails its delivery ([HD-58](#hd-58-interrupted-requests-count-in-the-delivery-shortfall-like-unstarted-ones)), and an accepted order costs the API far more than a sold-out answer, so the stock a run can sell lowers what it can reach.
 - **Decision:**
   - Each deployment declares its measured capacity per connection mode in the API environment. A model classifies a run as expected to complete, at the limit, or expected to fail.
   - A constant-arrival run is judged by the answers per second it asks of the API, accepted orders weighted by a fitted cost and spread over at most the measured run length, and by whether the database pool answers its orders before k6's graceful stop. A buyer spike is judged by its time to serve against the smaller of its cutoff and k6's request timeout; the graceful stop after the cutoff stays a reserve.
@@ -228,7 +253,7 @@ Every entry in ID order. New entries are added here too.
   - Accepted orders bound by the pool alone, in parallel with sold-out answers: optimistic in both modes.
   - The unfitted cost of an accepted order on the hosted core: it would refuse visitor runs that complete.
   - Counting k6's graceful stop as capacity for a backlog: completion would rest on the generator waiting, not on the server keeping up.
-  - Refusing admin runs: the operator must be able to push past capacity ([HD-51](#hd-51-one-api-process-stays-the-core-is-sized-for-headroom-and-the-caps-stay-above-its-throughput)).
+  - Refusing admin runs: the operator must be able to push past capacity ([HD-63](#hd-63-a-buy-only-api-pool-serves-only-the-redis-comparison-one-process-keeps-every-other-duty)).
 - **Code:** `assessCapacity` and `requireCapacityAdmission` in `apps/api/src/services/capacity-admission.ts`; `CAPACITY_*` in the API env of `infra/fly/core/machine.json` and `docker-compose.yml`.
 
 ### HD-61 A finished run's Redis working state is removed at finalization and at the next start

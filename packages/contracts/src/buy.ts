@@ -96,6 +96,17 @@ export const reservationAcceptedResponseSchema = z
   })
   .strict();
 
+/** Answered only by the waiting route of a run without the order queue, once the order is confirmed. */
+const orderConfirmedResponseSchema = reservationAcceptedResponseSchema
+  .extend({
+    outcome: z.literal("order_confirmed"),
+    order: acceptedOrderSummarySchema.extend({
+      status: z.literal("confirmed"),
+      confirmedAt: isoTimestampSchema,
+    }),
+  })
+  .strict();
+
 export const reservationPendingPersistenceResponseSchema = z
   .object({
     outcome: z.literal("reservation_pending_persistence"),
@@ -157,6 +168,7 @@ export type ReservationRejectedResponse = z.infer<typeof reservationRejectedResp
 
 export const buyResponseSchema = z.discriminatedUnion("outcome", [
   reservationAcceptedResponseSchema,
+  orderConfirmedResponseSchema,
   reservationPendingPersistenceResponseSchema,
   ...rejectedResponseVariants,
 ]);

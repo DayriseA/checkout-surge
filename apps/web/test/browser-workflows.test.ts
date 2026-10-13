@@ -1015,6 +1015,19 @@ describe("public browser starts", () => {
     expect(screen.getByRole("group", { name: "Slow ERP" })).toBeTruthy();
   });
 
+  it("links a comparison preset's card to the section that explains it", () => {
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    surface.presets.data.presets = [
+      { ...demoPresetFixture("preview-1k"), slug: "redis-comparison", comparison: "redis" },
+    ];
+    render(createElement(PublicDemoEntry, { surface }));
+
+    const link = screen.getByRole("link", { name: "What this shows for Preview 1k" });
+    expect(link.getAttribute("href")).toBe("/how-it-works#redis-comparison");
+    expect(document.getElementById("redis-comparison-title")).not.toBeNull();
+  });
+
   it("keeps concise preset facts visible and opens preset details independently", async () => {
     const surface = publicDemoSurfaceFixture();
     if (surface.presets.status !== "available") throw new Error("Expected presets.");
@@ -2790,6 +2803,48 @@ describe("watch composition", () => {
     expect(screen.getByRole("button", { name: /^Pipeline/ }).getAttribute("aria-pressed")).toBe(
       "true",
     );
+  });
+
+  it("opens a comparison's side-by-side tab when run 2 reaches its result, whatever tab was open", async () => {
+    const comparison = {
+      mode: "synchronous_confirmation" as const,
+      firstRunId: "66666666-6666-4666-8666-666666666661",
+    };
+    const terminal = terminalProjectionFixture(sharedRunId);
+    const completedSecondRun = {
+      ...terminal,
+      currentRun: terminal.currentRun && { ...terminal.currentRun, comparison },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(resourceNotFoundResponse(sharedRunId))),
+    );
+    vi.stubGlobal("EventSource", FakeEventSource);
+    const pressed = (tab: string) =>
+      screen.getByRole("button", { name: new RegExp(`^${tab}`) }).getAttribute("aria-pressed");
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun: demoRunFixture({ status: "active", runId: sharedRunId, comparison }),
+          }),
+        ),
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /^Pipeline/ }));
+    expect(pressed("Comparison")).toBe("false");
+
+    await act(async () =>
+      FakeEventSource.instances[0]?.emit(
+        "message",
+        new MessageEvent("message", { data: JSON.stringify(completedSecondRun) }),
+      ),
+    );
+    expect(pressed("Comparison")).toBe("true");
+
+    // The visitor can still go back to the overview.
+    fireEvent.click(screen.getByRole("button", { name: /^Overview/ }));
+    expect(pressed("Overview")).toBe("true");
   });
 
   it("keeps the stream, samples, and report retries intact across repeated details toggles", async () => {

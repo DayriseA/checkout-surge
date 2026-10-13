@@ -317,11 +317,26 @@ export const trafficCompletionAcknowledgementSchema = z
   })
   .strict();
 
+/** Wall time the buyer waited, measured by k6 around the whole HTTP call. */
+const buyerWallLatencySchema = z
+  .object({
+    sampleCount: positiveIntegerSchema,
+    averageMs: nonnegativeNumberSchema,
+    p95Ms: nonnegativeNumberSchema,
+    maxMs: nonnegativeNumberSchema,
+  })
+  .strict();
+export type BuyerWallLatency = z.infer<typeof buyerWallLatencySchema>;
+
 /** HTTP counters stay independently unknown when neither export nor stream supplies evidence. */
 export const trafficHttpSummarySchema = z
   .object({
     failedRequests: nonnegativeIntegerSchema.nullable(),
     acceptedResponses: nonnegativeIntegerSchema.nullable(),
+    /** Accepted responses answered `order_confirmed`; absent from runs recorded before it. */
+    confirmedResponses: nonnegativeIntegerSchema.nullable().optional(),
+    /** Accepted responses answered `reservation_pending_persistence`; absent before it. */
+    pendingPersistenceResponses: nonnegativeIntegerSchema.nullable().optional(),
     soldOutResponses: nonnegativeIntegerSchema.nullable(),
     transportFailures: nonnegativeIntegerSchema.nullable(),
     /** Transport failures that hit k6's request timeout; absent from runs recorded before it. */
@@ -329,6 +344,14 @@ export const trafficHttpSummarySchema = z
     unexpectedResponses: nonnegativeIntegerSchema.nullable(),
     failureRate: percentageSchema.nullable(),
     p95LatencyMs: nonnegativeNumberSchema.optional(),
+    /** Per-outcome cohorts; null when k6 exported no statistics matching the outcome count. */
+    buyerWallLatencySummary: z
+      .object({
+        accepted: buyerWallLatencySchema.nullable(),
+        soldOut: buyerWallLatencySchema.nullable(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .superRefine((summary, context) => {

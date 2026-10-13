@@ -491,6 +491,21 @@ describe("projection dashboard", () => {
     expect(markup).not.toContain("Shared simulated ERP protection");
   });
 
+  it("shows a PostgreSQL-mode run's own queue instead of BullMQ's empty one", () => {
+    const projection = projectionFixture();
+    if (!projection.currentRun || !projection.runtimeProgress)
+      throw new Error("Expected a current run with runtime progress.");
+    projection.currentRun.comparison = { mode: "postgres" };
+    projection.runtimeProgress.outstandingOrders = 270;
+    const markup = renderToStaticMarkup(
+      createElement(SystemStatusPanel, { recovery: available(projection) }),
+    );
+
+    expect(markup).toContain("In this run the order queue is in PostgreSQL");
+    expect(markup).toMatch(/Orders waiting or being confirmed<\/dt><dd[^>]*>270<\/dd>/);
+    expect(markup).not.toContain("Depth (all runs)");
+  });
+
   it("states the lag measurement boundary and keeps draining work visible", () => {
     const projection = projectionFixture();
     const currentRun = projection.currentRun;

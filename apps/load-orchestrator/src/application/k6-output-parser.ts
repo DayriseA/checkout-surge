@@ -1,4 +1,5 @@
 import type {
+  BuyerWallLatency,
   GeneratorUtilisation,
   HttpTimingBreakdownSummary,
   LiveMetricLoss,
@@ -92,6 +93,8 @@ export interface K6SummaryMetrics {
   attemptsStarted?: number;
   responsesCompleted?: number;
   acceptedResponses?: number;
+  confirmedResponses?: number;
+  pendingPersistenceResponses?: number;
   soldOutResponses?: number;
   transportFailures?: number;
   requestTimeouts?: number;
@@ -100,6 +103,8 @@ export interface K6SummaryMetrics {
   completedIterations?: number;
   httpFailureRate?: number;
   requestDuration?: K6TrendSummary;
+  acceptedBuyerWallLatency?: BuyerWallLatency;
+  soldOutBuyerWallLatency?: BuyerWallLatency;
   timingPhases: Partial<Record<K6TimingMetric, K6TrendSummary>>;
 }
 
@@ -128,6 +133,8 @@ export const counterMetricFields = {
   checkout_attempts_started: "attemptsStarted",
   checkout_responses_completed: "responsesCompleted",
   checkout_reservation_accepted: "acceptedResponses",
+  checkout_order_confirmed: "confirmedResponses",
+  checkout_reservation_pending_persistence: "pendingPersistenceResponses",
   checkout_sold_out_rejections: "soldOutResponses",
   checkout_transport_failures: "transportFailures",
   checkout_request_timeouts: "requestTimeouts",
@@ -194,6 +201,14 @@ export class K6RunAccumulator {
     const acceptedResponses = this.selectCount(
       input.summaryMetrics?.acceptedResponses,
       "checkout_reservation_accepted",
+    );
+    const confirmedResponses = this.selectCount(
+      input.summaryMetrics?.confirmedResponses,
+      "checkout_order_confirmed",
+    );
+    const pendingPersistenceResponses = this.selectCount(
+      input.summaryMetrics?.pendingPersistenceResponses,
+      "checkout_reservation_pending_persistence",
     );
     const soldOutResponses = this.selectCount(
       input.summaryMetrics?.soldOutResponses,
@@ -274,12 +289,21 @@ export class K6RunAccumulator {
       httpSummary: {
         failedRequests,
         acceptedResponses: acceptedResponses.valueOrNull,
+        confirmedResponses: confirmedResponses.valueOrNull,
+        pendingPersistenceResponses: pendingPersistenceResponses.valueOrNull,
         soldOutResponses: soldOutResponses.valueOrNull,
         transportFailures: transportFailures.valueOrNull,
         requestTimeouts: requestTimeouts.valueOrNull,
         unexpectedResponses: unexpectedResponses.valueOrNull,
         ...(durationP95 === undefined || durationP95 === null ? {} : { p95LatencyMs: durationP95 }),
         failureRate,
+        buyerWallLatencySummary: {
+          accepted: matchingCohort(
+            input.summaryMetrics?.acceptedBuyerWallLatency,
+            acceptedResponses,
+          ),
+          soldOut: matchingCohort(input.summaryMetrics?.soldOutBuyerWallLatency, soldOutResponses),
+        },
       },
       trafficOutcomeSummary: {
         acceptedResponses: acceptedResponses.valueOrNull,
@@ -433,6 +457,14 @@ type SelectedCount = {
   source: TerminalMetricSource | null;
 };
 
+/** Exported statistics count only when they cover exactly the outcome's recorded replies. */
+function matchingCohort(
+  cohort: BuyerWallLatency | undefined,
+  outcome: SelectedCount,
+): BuyerWallLatency | null {
+  return cohort && cohort.sampleCount === outcome.valueOrNull ? cohort : null;
+}
+
 const supportedPointMetrics = new Set([
   ...Object.keys(counterMetricFields),
   ...Object.keys(timingMetricFields),
@@ -469,6 +501,16 @@ function parseSummaryObject(value: unknown): K6SummaryMetrics | null {
     summary.requestDuration = requestDuration;
     supported = true;
   }
+  for (const [metric, field] of [
+    ["checkout_accepted_buyer_wall_latency", "acceptedBuyerWallLatency"],
+    ["checkout_sold_out_buyer_wall_latency", "soldOutBuyerWallLatency"],
+  ] as const) {
+    const cohort = readBuyerWallLatency(value.metrics[metric]);
+    if (cohort) {
+      summary[field] = cohort;
+      supported = true;
+    }
+  }
   for (const metric of Object.keys(timingMetricFields) as K6TimingMetric[]) {
     const trend = readTrend(value.metrics[metric]);
     if (trend) {
@@ -493,6 +535,25 @@ function readTrend(value: unknown): K6TrendSummary | undefined {
   const averageMs = finiteNonnegative(values.avg) ?? null;
   const p95Ms = finiteNonnegative(values["p(95)"]) ?? null;
   return averageMs === null && p95Ms === null ? undefined : { averageMs, p95Ms };
+}
+
+function readBuyerWallLatency(value: unknown): BuyerWallLatency | undefined {
+  if (!isRecord(value)) return undefined;
+  const values = isRecord(value.values) ? value.values : value;
+  const sampleCount = finiteNonnegative(values.count);
+  const averageMs = finiteNonnegative(values.avg);
+  const p95Ms = finiteNonnegative(values["p(95)"]);
+  const maxMs = finiteNonnegative(values.max);
+  if (
+    sampleCount === undefined ||
+    !Number.isSafeInteger(sampleCount) ||
+    sampleCount === 0 ||
+    averageMs === undefined ||
+    p95Ms === undefined ||
+    maxMs === undefined
+  )
+    return undefined;
+  return { sampleCount, averageMs, p95Ms, maxMs };
 }
 
 function readRate(value: unknown): number | undefined {

@@ -138,6 +138,50 @@ export async function deleteSettledRunInventory(
     : { outcome: "deleted", deletedKeyCount: Number(result) };
 }
 
+/**
+ * Counts batched by an API process while PostgreSQL decides the run's stock: units reserved, buyers
+ * turned away and reservations per second, for the same live counters the reservation script keeps.
+ */
+export interface InventoryCountBatch {
+  runId: string;
+  saleOfferId: string;
+  reservedUnits: number;
+  latestReservedAt: string | null;
+  soldOut: number;
+  latestSoldOutAt: string | null;
+  /** [epoch second, reservations] pairs. */
+  reservationsPerSecond: Array<[number, number]>;
+}
+
+/**
+ * Adds a batch to the run's live counters. Like the reservation script, it counts nothing once the
+ * run's sale is closed, so the counters a closed run's report reads are final.
+ */
+export async function applyInventoryCountBatch(
+  redis: CheckoutSurgeRedis,
+  batch: InventoryCountBatch,
+): Promise<"applied" | "closed"> {
+  const keys = inventoryKeys(uuidSchema.parse(batch.saleOfferId));
+  const result = await redis.eval(
+    applyInventoryCountBatchScript,
+    3,
+    keys.state,
+    keys.soldOut,
+    keys.reservationThroughput,
+    uuidSchema.parse(batch.runId),
+    batch.reservedUnits.toString(),
+    batch.latestReservedAt ?? "",
+    batch.soldOut.toString(),
+    batch.latestSoldOutAt ?? "",
+    reservationThroughputWindowSeconds.toString(),
+    ...batch.reservationsPerSecond.flat().map(String),
+  );
+  if (result !== "applied" && result !== "closed") {
+    throw new Error(`Could not apply inventory counts: ${String(result)}.`);
+  }
+  return result;
+}
+
 export async function setRunSaleEligibility(
   redis: CheckoutSurgeRedis,
   eligibility: RunSaleEligibility,
@@ -408,6 +452,36 @@ elseif redis.call("EXISTS", KEYS[2]) == 1 then
   redis.call("SET", KEYS[2], ARGV[4], "KEEPTTL")
 end
 return "updated"
+`;
+
+const applyInventoryCountBatchScript = `
+if redis.call("TYPE", KEYS[1]).ok ~= "hash"
+  or redis.call("HGET", KEYS[1], "runId") ~= ARGV[1]
+  or redis.call("HGET", KEYS[1], "runSaleStatus") ~= "accepting" then
+  return "closed"
+end
+local reserved = tonumber(ARGV[2])
+if reserved > 0 then
+  redis.call("HINCRBY", KEYS[1], "remainingStock", -reserved)
+  redis.call("HINCRBY", KEYS[1], "reservedStock", reserved)
+  redis.call("HSET", KEYS[1], "lastUpdatedAt", ARGV[3])
+end
+local soldOut = tonumber(ARGV[4])
+if soldOut > 0 then
+  redis.call("HINCRBY", KEYS[2], "count", soldOut)
+  redis.call("HSET", KEYS[2], "latest_observed_at", ARGV[5])
+end
+local windowSeconds = tonumber(ARGV[6])
+for index = 7, #ARGV, 2 do
+  local second = tonumber(ARGV[index])
+  local slot = tostring(second % windowSeconds)
+  if tonumber(redis.call("HGET", KEYS[3], slot .. ":second")) == second then
+    redis.call("HINCRBY", KEYS[3], slot .. ":count", ARGV[index + 1])
+  else
+    redis.call("HSET", KEYS[3], slot .. ":second", second, slot .. ":count", ARGV[index + 1])
+  end
+end
+return "applied"
 `;
 
 const incrementDashboardProjectionRevisionScript = `

@@ -19,10 +19,14 @@
 //   the guard, a scheduled Machine of the gate app that runs the gate image from
 //   infra/fly/gate/guard-machine.json. A guard whose host has no room for the new config is
 //   destroyed, then recreated.
+// - On a new set of apps, `all` deploys the gate first, since the core deploy writes into it.
 // - The script ends by comparing the core's and the runner's versions (version handshake).
 //
 // Usage, from anywhere:
 //   node infra/fly/deploy.mjs <all|core|runner|gate> [--force] [--fresh-core] [--no-depot | --local-build]
+//     [--environment <file>]
+//   --environment  deploy to the proof environment of that config file (environment.mjs) instead
+//                  of production
 //   --force        stop an awake core or a running runner instead of waiting or refusing: the
 //                  session ends, and a run in progress fails
 //   --fresh-core   for incompatible changes: mark the core so that the next visitor wake recreates
@@ -38,11 +42,21 @@ import { readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isCapacityRefusal } from "./capacity-refusal.mjs";
+import {
+  assertInOrganization,
+  flyctl,
+  loadEnvironment,
+  machinesApiRequest,
+  withEnvironmentNames,
+} from "./environment.mjs";
 
+const environmentFlag = process.argv.indexOf("--environment");
+// A flag without its file fails on the read instead of falling back to production.
+const environment = loadEnvironment(
+  environmentFlag === -1 ? undefined : (process.argv[environmentFlag + 1] ?? ""),
+);
 const region = "cdg";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-// biome-ignore lint/suspicious/noUndeclaredEnvVars: operator script, not a Turborepo task.
-const flyctl = process.env.FLYCTL || "flyctl";
 const builder = process.argv.includes("--local-build")
   ? "local"
   : process.argv.includes("--no-depot")
@@ -64,7 +78,7 @@ const unknownImageRetryMs = 10_000;
 // Image fields in machine.json hold an image name from `images`; the script replaces them.
 const targets = {
   core: {
-    app: "checkout-surge-core",
+    app: environment.apps.core,
     volume: { name: "core_data", sizeGb: 3 },
     images: {
       api: { dockerfile: "docker/Dockerfile.node-service", target: "runtime-fly", service: "api" },
@@ -83,7 +97,7 @@ const targets = {
     },
   },
   runner: {
-    app: "checkout-surge-runner",
+    app: environment.apps.runner,
     images: {
       "load-orchestrator": {
         dockerfile: "apps/load-orchestrator/Dockerfile",
@@ -92,7 +106,7 @@ const targets = {
     },
   },
   gate: {
-    app: "checkout-surge-gate",
+    app: environment.apps.gate,
     images: {
       gate: { dockerfile: "docker/Dockerfile.node-service", target: "runtime", service: "gate" },
     },
@@ -102,14 +116,14 @@ const targets = {
 const roles = process.argv[2] === "all" ? ["runner", "core", "gate"] : [process.argv[2]];
 if (!targets[roles[0]] || (freshCore && !roles.includes("core"))) {
   console.error(
-    "Usage: node infra/fly/deploy.mjs <all|core|runner|gate> [--force] [--fresh-core] [--no-depot | --local-build]\n" +
+    "Usage: node infra/fly/deploy.mjs <all|core|runner|gate> [--force] [--fresh-core] [--no-depot | --local-build] [--environment <file>]\n" +
       "--fresh-core needs a deploy that includes the core.",
   );
   process.exit(64);
 }
 
 function readRepoJson(path) {
-  return JSON.parse(readFileSync(`${repoRoot}${path}`, "utf8"));
+  return JSON.parse(withEnvironmentNames(readFileSync(`${repoRoot}${path}`, "utf8"), environment));
 }
 
 // Fly returns no full config for a Machine on a host that is down, so the gate keeps a copy of the
@@ -179,7 +193,7 @@ function buildAndPushLocally(image, ref) {
   run("docker", ["push", ref], { stdio: "inherit" });
 }
 
-function buildAndPushImages(role, version) {
+async function buildAndPushImages(role, version) {
   const refs = {};
   // Uncommitted trees share one version, and Fly keeps a Machine's image when the reference is
   // unchanged, so each dirty build gets its own label.
@@ -189,6 +203,7 @@ function buildAndPushImages(role, version) {
   for (const [name, image] of Object.entries(targets[role].images)) {
     const label = `${name}-${version}${buildStamp}`;
     refs[name] = `registry.fly.io/${targets[role].app}:${label}`;
+    await assertInOrganization(environment, targets[role].app);
     console.log(`Building ${refs[name]} (${builder} builder)`);
     if (builder === "local") buildAndPushLocally(image, refs[name]);
     else buildAndPushRemotely(role, image, label);
@@ -223,24 +238,8 @@ function jsonFile(guestPath, value) {
 
 function createMachinesApi(app) {
   return async (method, path, body, nonce) => {
-    // Read per call: a token read before the builds was refused (403) once they had finished.
-    const token = run(flyctl, ["auth", "token"], { stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const response = await fetch(`https://api.machines.dev/v1/apps/${app}${path}`, {
-      method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        ...(nonce ? { "fly-machine-lease-nonce": nonce } : {}),
-      },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      throw Object.assign(new Error(`${method} ${path} failed with ${response.status}: ${text}`), {
-        status: response.status,
-      });
-    }
-    return text ? JSON.parse(text) : undefined;
+    await assertInOrganization(environment, app);
+    return machinesApiRequest(app, method, path, body, nonce);
   };
 }
 
@@ -658,11 +657,15 @@ async function verifyVersions() {
 async function deploy() {
   const version = commitVersion();
   // Fails before the builds on two Machines of one role (a recovery in progress, or its leftover).
-  for (const role of roles) await findMachine(createMachinesApi(targets[role].app), role);
+  const existing = {};
+  for (const role of roles)
+    existing[role] = await findMachine(createMachinesApi(targets[role].app), role);
   if (builder === "local") run(flyctl, ["auth", "docker"], { stdio: "inherit" });
-  const imageRefs = Object.fromEntries(
-    roles.map((role) => [role, buildAndPushImages(role, version)]),
-  );
+  const imageRefs = {};
+  for (const role of roles) imageRefs[role] = await buildAndPushImages(role, version);
+  // A new set of apps: the core deploy writes its config into the gate Machine.
+  const gateFirst = roles.includes("core") && roles.includes("gate") && !existing.gate;
+  if (gateFirst) await deployGate(imageRefs.gate, version);
   if (roles.includes("core")) {
     await deployCore(imageRefs.core, version, async () => {
       if (roles.includes("runner")) await deployRunner(imageRefs.runner, version);
@@ -670,7 +673,7 @@ async function deploy() {
   } else if (roles.includes("runner")) {
     await deployRunner(imageRefs.runner, version);
   }
-  if (roles.includes("gate")) await deployGate(imageRefs.gate, version);
+  if (roles.includes("gate") && !gateFirst) await deployGate(imageRefs.gate, version);
 }
 
 function fail(error) {

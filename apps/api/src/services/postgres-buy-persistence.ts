@@ -17,6 +17,7 @@ import {
 } from "@checkout-surge/db";
 import { eq } from "drizzle-orm";
 import {
+  type AdmittedRun,
   type BuyPersistence,
   type BuyPersistenceOperations,
   DefinitivePersistenceRejectionError,
@@ -31,7 +32,9 @@ const recoverableReservationConstraints = new Set([
   "reservations_pkey",
   "reservations_reservation_token_unique",
 ]);
-type PostgresTransaction = Parameters<Parameters<CheckoutSurgeDatabase["transaction"]>[0]>[0];
+export type PostgresTransaction = Parameters<
+  Parameters<CheckoutSurgeDatabase["transaction"]>[0]
+>[0];
 type DatabaseWithClient = CheckoutSurgeDatabase & { $client: SqlClient };
 type ReservedClient = Awaited<ReturnType<SqlClient["reserve"]>>;
 
@@ -67,98 +70,12 @@ export class PostgresBuyPersistence implements BuyPersistence {
       }
     }
 
-    const [reservation] = await tx
-      .insert(reservations)
-      .values({
-        id: hold.id,
-        saleOfferId: hold.saleOfferId,
-        runId: hold.runId,
-        quantity: hold.quantity,
-        correlationId: hold.correlationId,
-        reservationToken: hold.reservationToken,
-        securedAt: new Date(hold.securedAt),
-        expiresAt: new Date(hold.expiresAt),
-      })
-      .returning({
-        id: reservations.id,
-        saleOfferId: reservations.saleOfferId,
-        correlationId: reservations.correlationId,
-        runId: reservations.runId,
-        quantity: reservations.quantity,
-        reservationToken: reservations.reservationToken,
-        expiresAt: reservations.expiresAt,
-        securedAt: reservations.securedAt,
-      });
-
-    if (!reservation) {
-      throw new Error("Failed to persist reservation.");
-    }
-
-    const [order] = await tx
-      .insert(orders)
-      .values({
-        publicOrderId: `ord_${randomUUID()}`,
-        saleOfferId: hold.saleOfferId,
-        reservationId: reservation.id,
-        runId: hold.runId,
-        quantity: hold.quantity,
-        correlationId: hold.correlationId,
-        status: "queued",
-        queuedAt: new Date(hold.securedAt),
-      })
-      .returning({
-        id: orders.id,
-        publicOrderId: orders.publicOrderId,
-        saleOfferId: orders.saleOfferId,
-        reservationId: orders.reservationId,
-        correlationId: orders.correlationId,
-        runId: orders.runId,
-        quantity: orders.quantity,
-        queuedAt: orders.queuedAt,
-      });
-
-    if (!order) {
-      throw new Error("Failed to persist order.");
-    }
-
-    await tx.insert(orderEvents).values([
-      {
-        orderId: order.id,
-        reservationId: reservation.id,
-        saleOfferId: hold.saleOfferId,
-        runId: hold.runId,
-        correlationId: hold.correlationId,
-        eventName: "reservation.secured",
-        payload: {
-          quantity: hold.quantity,
-        },
-        source: "api",
-        occurredAt: new Date(hold.securedAt),
-      },
-      {
-        orderId: order.id,
-        reservationId: reservation.id,
-        saleOfferId: hold.saleOfferId,
-        runId: hold.runId,
-        correlationId: hold.correlationId,
-        eventName: "order.queued",
-        payload: {
-          quantity: hold.quantity,
-        },
-        source: "api",
-        occurredAt: new Date(hold.securedAt),
-      },
-    ]);
-
-    return {
-      reservation: toReservationSummary(reservation),
-      order: toOrderSummary(order),
-    };
+    return insertSecuredReservationRows(tx, hold);
   }
 
   async withRunAdmissionLock<T>(input: {
     reservation: SecuredReservationHold;
-    operation: (persistence: BuyPersistenceOperations) => Promise<T>;
+    operation: (persistence: BuyPersistenceOperations, run: AdmittedRun) => Promise<T>;
   }): Promise<T> {
     const runId = input.reservation.runId;
 
@@ -176,7 +93,11 @@ export class PostgresBuyPersistence implements BuyPersistence {
       await operationClient`select pg_advisory_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(runId)}))`;
       locked = true;
       const [run] = await reservedDb
-        .select({ saleOfferId: demoRuns.saleOfferId, status: demoRuns.status })
+        .select({
+          saleOfferId: demoRuns.saleOfferId,
+          status: demoRuns.status,
+          comparisonMode: demoRuns.comparisonMode,
+        })
         .from(demoRuns)
         .where(eq(demoRuns.id, runId))
         .limit(1);
@@ -190,7 +111,9 @@ export class PostgresBuyPersistence implements BuyPersistence {
       // Each persistence operation commits on the reserved session while this
       // shared session-level advisory lock remains held through BullMQ enqueue.
       // The callback must not check out another connection from the base pool.
-      return await input.operation(this.databaseOperations(reservedDb, operationClient));
+      return await input.operation(this.databaseOperations(reservedDb, operationClient), {
+        comparisonMode: run.comparisonMode,
+      });
     } finally {
       try {
         if (locked) {
@@ -469,6 +392,105 @@ export class PostgresBuyPersistence implements BuyPersistence {
       order: toOrderSummary(row.order),
     };
   }
+}
+
+/**
+ * Writes an accepted reservation's durable record: the reservation, its order and their two
+ * events. The idempotency key is stored only when PostgreSQL decides the stock.
+ */
+export async function insertSecuredReservationRows(
+  tx: PostgresTransaction,
+  hold: SecuredReservationHold,
+  idempotencyKey: string | null = null,
+): Promise<PersistedBuyAcceptance> {
+  const [reservation] = await tx
+    .insert(reservations)
+    .values({
+      id: hold.id,
+      saleOfferId: hold.saleOfferId,
+      runId: hold.runId,
+      quantity: hold.quantity,
+      correlationId: hold.correlationId,
+      reservationToken: hold.reservationToken,
+      securedAt: new Date(hold.securedAt),
+      expiresAt: new Date(hold.expiresAt),
+      idempotencyKey,
+    })
+    .returning({
+      id: reservations.id,
+      saleOfferId: reservations.saleOfferId,
+      correlationId: reservations.correlationId,
+      runId: reservations.runId,
+      quantity: reservations.quantity,
+      reservationToken: reservations.reservationToken,
+      expiresAt: reservations.expiresAt,
+      securedAt: reservations.securedAt,
+    });
+
+  if (!reservation) {
+    throw new Error("Failed to persist reservation.");
+  }
+
+  const [order] = await tx
+    .insert(orders)
+    .values({
+      publicOrderId: `ord_${randomUUID()}`,
+      saleOfferId: hold.saleOfferId,
+      reservationId: reservation.id,
+      runId: hold.runId,
+      quantity: hold.quantity,
+      correlationId: hold.correlationId,
+      status: "queued",
+      queuedAt: new Date(hold.securedAt),
+    })
+    .returning({
+      id: orders.id,
+      publicOrderId: orders.publicOrderId,
+      saleOfferId: orders.saleOfferId,
+      reservationId: orders.reservationId,
+      correlationId: orders.correlationId,
+      runId: orders.runId,
+      quantity: orders.quantity,
+      queuedAt: orders.queuedAt,
+    });
+
+  if (!order) {
+    throw new Error("Failed to persist order.");
+  }
+
+  await tx.insert(orderEvents).values([
+    {
+      orderId: order.id,
+      reservationId: reservation.id,
+      saleOfferId: hold.saleOfferId,
+      runId: hold.runId,
+      correlationId: hold.correlationId,
+      eventName: "reservation.secured",
+      payload: {
+        quantity: hold.quantity,
+      },
+      source: "api",
+      occurredAt: new Date(hold.securedAt),
+    },
+    {
+      orderId: order.id,
+      reservationId: reservation.id,
+      saleOfferId: hold.saleOfferId,
+      runId: hold.runId,
+      correlationId: hold.correlationId,
+      eventName: "order.queued",
+      payload: {
+        quantity: hold.quantity,
+      },
+      source: "api",
+      occurredAt: new Date(hold.securedAt),
+    },
+  ]);
+
+  return {
+    reservation: toReservationSummary(reservation),
+    order: toOrderSummary(order),
+  };
 }
 
 function isRecoverableReservationConflict(error: unknown): boolean {
