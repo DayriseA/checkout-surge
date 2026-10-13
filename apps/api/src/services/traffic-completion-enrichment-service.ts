@@ -31,8 +31,11 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
       db: CheckoutSurgeDatabase;
       redis: CheckoutSurgeRedis;
       businessOutcomeReader: DashboardBusinessOutcomeReader;
-      /** Adds this process's batched answers to the live counters before the sale closes. */
-      flushBatchedCounts?: () => Promise<void>;
+      /**
+       * When PostgreSQL decides the stock, every API process adds its answers to the live
+       * counters in timed batches: lets the last ones land before the sale closes.
+       */
+      settleBatchedCounts?: () => Promise<void>;
       logger: CheckoutSurgeLogger;
       now?: () => Date;
     },
@@ -51,7 +54,7 @@ export class TrafficCompletionEnrichmentService implements TrafficCompletionEnri
     }
 
     // Counts closure would drop. Re-drive fail-closed admission even when enrichment completed.
-    await this.options.flushBatchedCounts?.();
+    if (row.run.comparisonMode === "postgres") await this.options.settleBatchedCounts?.();
     await this.closeAdmission(row.run.id, row.run.saleOfferId);
     await this.closeStoreLoadWindow(row.run);
 

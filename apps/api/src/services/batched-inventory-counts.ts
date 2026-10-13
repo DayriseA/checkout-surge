@@ -1,3 +1,4 @@
+import { setTimeout as delay } from "node:timers/promises";
 import type { InventoryCountBatch } from "@checkout-surge/db";
 
 export const inventoryCountFlushIntervalMs = 100;
@@ -47,6 +48,15 @@ export class BatchedInventoryCounts {
         this.options.apply(batch).catch((error: unknown) => this.options.onError(error, batch)),
       ),
     );
+  }
+
+  /**
+   * Before the sale closes: adds this process's counts now, then waits two intervals, by which
+   * every other API process's timer has added its last batch too.
+   */
+  async settle(): Promise<void> {
+    await this.flush();
+    await delay(2 * (this.options.flushIntervalMs ?? inventoryCountFlushIntervalMs));
   }
 
   async close(): Promise<void> {

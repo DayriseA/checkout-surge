@@ -317,7 +317,7 @@ export async function startApiServer(): Promise<void> {
     db: connection.db,
     redis,
     businessOutcomeReader,
-    flushBatchedCounts: () => inventoryCounts.flush(),
+    settleBatchedCounts: () => inventoryCounts.settle(),
     logger,
   });
   const demoRunFinalizationService = new DemoRunFinalizationService({
