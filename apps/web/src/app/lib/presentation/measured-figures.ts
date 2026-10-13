@@ -196,6 +196,10 @@ export const redisComparison = {
   ),
 } as const;
 
+/** The method label of the home page's figures, which quote both comparisons' first figures. */
+export const comparisonFiguresNote =
+  "Medians of 4 measured pairs per comparison on a copy of this demo (October 2026); each Redis pair was the first comparison after the demo woke up. Your run will differ a little.";
+
 /** The PostgreSQL order queue's drain against BullMQ's, over whole Redis comparison runs. */
 export const postgresQueueDrain = { postgres: 15.5, bullmq: 17.7 } as const;
 
