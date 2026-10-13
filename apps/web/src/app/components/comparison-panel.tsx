@@ -17,7 +17,6 @@ import {
   comparisonRunFacts,
   comparisonTakeaway,
   formatPace,
-  formatRatio,
   readComparison,
   redisComparisonRunFacts,
   redisComparisonTakeaway,
@@ -92,13 +91,14 @@ const comparisonSpecs: Record<Comparison, ComparisonSpec> = {
         decides the stock and holds the order queue, with the same protections: idempotency, the
         run&apos;s fence, and the order recorded before the buyer hears &ldquo;yes&rdquo;. Redis
         still carries the live dashboard&apos;s counters and the notifications. The database figures
-        are PostgreSQL&apos;s own statistics for the whole database during each run, background work
-        included. Run 1 is always the one with Redis.
+        cover each run from its start until every buyer was answered: PostgreSQL&apos;s own
+        statistics for the whole database, background work included, and its CPU time. On the hosted
+        demo, both runs use the same two buy-only API processes, and PostgreSQL and Redis share the
+        core Machine with them. Run 1 is always the one with Redis.
       </>
     ),
     rows: (detail) => {
       const facts = redisComparisonRunFacts(detail);
-      const busyPerBuyer = formatRatio(facts.postgresBusyMsPerBuyer);
       return [
         [
           "Buyers secured / turned away / without an expected answer",
@@ -109,18 +109,22 @@ const comparisonSpecs: Record<Comparison, ComparisonSpec> = {
           `${formatCount(facts.unitsSold)} of ${formatCount(facts.stock)}`,
         ],
         ["PostgreSQL transactions", value(formatCount(facts.postgresTransactions))],
+        ["PostgreSQL CPU time", value(formatDurationMs(facts.postgresCpuMs))],
         [
-          "PostgreSQL busy time, executing statements",
+          "Time spent in PostgreSQL queries, waits for the stock row included",
           value(formatDurationMs(facts.postgresBusyMs)),
         ],
         [
-          "PostgreSQL work per buyer: transactions / busy time",
-          `${value(formatRatio(facts.postgresTransactionsPerBuyer))} / ${value(busyPerBuyer && `${busyPerBuyer} ms`)}`,
+          "Winners' time to an answer, average / 95th percentile",
+          `${value(formatDurationMs(facts.winnerAverageMs))} / ${value(formatDurationMs(facts.winnerP95Ms))}`,
         ],
-        ["Redis CPU time", value(formatDurationMs(facts.redisCpuMs))],
         [
-          "Turned-away buyers' time to an answer, 95th percentile / longest",
-          `${value(formatDurationMs(facts.turnedAwayP95Ms))} / ${value(formatDurationMs(facts.turnedAwayLongestMs))}`,
+          "Turned-away buyers' time to an answer, average / 95th percentile",
+          `${value(formatDurationMs(facts.turnedAwayAverageMs))} / ${value(formatDurationMs(facts.turnedAwayP95Ms))}`,
+        ],
+        [
+          "Every buyer had an answer within",
+          value(formatDurationMs(facts.everyBuyerAnsweredWithinMs)),
         ],
       ];
     },

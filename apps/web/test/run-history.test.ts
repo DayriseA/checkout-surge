@@ -974,19 +974,39 @@ describe("run history", () => {
     expect(unknown).not.toContain("The queue moves the wait");
   });
 
-  it("shows a Redis comparison's database work, stating its takeaway only when the data shows it", async () => {
+  it("shows a Redis comparison's database work and waits, stating its takeaway only when the data shows it", async () => {
     const firstId = "66666666-6666-4666-8666-666666666663";
     const secondId = "66666666-6666-4666-8666-666666666664";
     const first = comparisonDetail("redis", firstId, secondId, {
-      longestWaitMs: 400,
+      longestWaitMs: 4_000,
       confirmed: 0,
     });
     const second = comparisonDetail("postgres", secondId, firstId, {
-      longestWaitMs: 400,
+      longestWaitMs: 3_000,
       confirmed: 0,
     });
-    first.run.storeLoad = { postgresTransactions: 120, postgresBusyMs: 80, redisCpuMs: 900 };
-    second.run.storeLoad = { postgresTransactions: 1_150, postgresBusyMs: 420, redisCpuMs: 150 };
+    const turnedAway = (averageMs: number) => ({
+      sampleCount: 750,
+      averageMs,
+      p95Ms: 900,
+      maxMs: 1_000,
+    });
+    second.summary.httpSummary.buyerWallLatencySummary = {
+      accepted: second.summary.httpSummary.buyerWallLatencySummary?.accepted ?? null,
+      soldOut: turnedAway(600),
+    };
+    first.run.storeLoad = {
+      postgresTransactions: 1_200,
+      postgresBusyMs: 800,
+      postgresCpuMs: 2_000,
+      redisCpuMs: 900,
+    };
+    second.run.storeLoad = {
+      postgresTransactions: 3_600,
+      postgresBusyMs: 4_800,
+      postgresCpuMs: 4_400,
+      redisCpuMs: 150,
+    };
     getRunHistoryDetail.mockImplementation(async (runId: string) => ({
       status: "available",
       data: runId === firstId ? first : second,
@@ -995,24 +1015,32 @@ describe("run history", () => {
       renderToStaticMarkup(
         await RunHistoryDetailPage({ params: Promise.resolve({ runId: firstId }) }),
       );
+    const takeaway = "the winners were not slower";
 
     const markup = await page();
     expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
       markup.indexOf("Run 2 of 2 · Stock and order queue in PostgreSQL"),
     );
-    expect(markup).toContain("1.15 / 0.42 ms");
+    expect(markup).toContain("Turned-away buyers&#x27;");
+    expect(markup).not.toContain("Redis CPU");
     expect(markup).toContain(
-      "With PostgreSQL deciding, it ran 1,150, about 1.15 per buyer, and was busy for 420 ms",
+      "PostgreSQL ran about 3.0 times the transactions and used about 2.2 times the CPU time.",
     );
-    expect(markup).toContain("Redis keeps turned-away buyers off the database.");
+    expect(markup).toContain(
+      "The turned-away buyers waited longer, 600 ms on average against 300 ms, while the winners were not slower, 1.5 s against 2 s",
+    );
 
-    // Without the extra work of the turned-away buyers, or without a measurement, no claim.
-    second.run.storeLoad = { postgresTransactions: 400, postgresBusyMs: 420, redisCpuMs: 150 };
-    expect(await page()).not.toContain("Redis keeps turned-away buyers");
-    delete second.run.storeLoad;
+    // Each measured direction must hold, and every figure must be known; otherwise, no claim.
+    second.summary.httpSummary.buyerWallLatencySummary.soldOut = turnedAway(300);
+    expect(await page()).not.toContain(takeaway);
+    second.summary.httpSummary.buyerWallLatencySummary.soldOut = turnedAway(600);
+    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: null };
     const unknown = await page();
     expect(unknown).toContain("Not recorded");
-    expect(unknown).not.toContain("Redis keeps turned-away buyers");
+    expect(unknown).not.toContain(takeaway);
+    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: 4_400 };
+    second.summary.httpSummary.unexpectedResponses = 1;
+    expect(await page()).not.toContain(takeaway);
   });
 
   it("says so when a comparison's second run will never come", async () => {

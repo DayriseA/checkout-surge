@@ -179,13 +179,12 @@ export function comparisonTakeaway(
 /** One run of the Redis comparison; every count covers all buyers. Null means not recorded. */
 export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) {
   const { httpSummary, businessOutcomeSummary, transportAttemptCounts } = detail.summary;
+  const accepted = httpSummary.buyerWallLatencySummary?.accepted ?? null;
   const soldOut = httpSummary.buyerWallLatencySummary?.soldOut ?? null;
   const load = detail.run.storeLoad ?? null;
-  const buyers = transportAttemptCounts.completedRequests;
-  const perBuyer = (value: number | undefined) =>
-    value === undefined || !buyers ? null : value / buyers;
   return {
-    buyers,
+    completed: detail.run.status === "completed",
+    buyers: transportAttemptCounts.completedRequests,
     secured: httpSummary.acceptedResponses,
     turnedAway: httpSummary.soldOutResponses,
     withoutExpectedAnswer:
@@ -195,53 +194,61 @@ export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) 
     unitsSold: businessOutcomeSummary.reservedUnits,
     stock: detail.run.configSnapshot.inventoryConfig.startingStock,
     postgresTransactions: load?.postgresTransactions ?? null,
+    postgresCpuMs: load?.postgresCpuMs ?? null,
     postgresBusyMs: load?.postgresBusyMs ?? null,
-    postgresTransactionsPerBuyer: perBuyer(load?.postgresTransactions),
-    postgresBusyMsPerBuyer: perBuyer(load?.postgresBusyMs),
-    redisCpuMs: load?.redisCpuMs ?? null,
+    winnerAverageMs: accepted?.averageMs ?? null,
+    winnerP95Ms: accepted?.p95Ms ?? null,
+    turnedAwayAverageMs: soldOut?.averageMs ?? null,
     turnedAwayP95Ms: soldOut?.p95Ms ?? null,
-    turnedAwayLongestMs: soldOut?.maxMs ?? null,
+    everyBuyerAnsweredWithinMs: longestWait([
+      [accepted, httpSummary.acceptedResponses],
+      [soldOut, httpSummary.soldOutResponses],
+    ]),
   };
 }
 export type RedisComparisonRunFacts = ReturnType<typeof redisComparisonRunFacts>;
 
 /**
- * The honest reading of a complete Redis comparison. Null unless both runs answered every buyer
- * as expected, with the same answers, their store load known, and PostgreSQL's extra work in the
- * second run accounting for the buyers it turned away.
+ * The honest reading of a complete Redis comparison. Null unless both runs completed, sold the
+ * same units, answered every buyer as expected, have their load figures, and show the measured
+ * directions: more work for PostgreSQL and a longer wait for the turned-away buyers without Redis,
+ * and winners who were not slower.
  */
 export function redisComparisonTakeaway(
   withRedis: RedisComparisonRunFacts,
   withPostgres: RedisComparisonRunFacts,
 ): string | null {
-  const { secured, turnedAway, buyers, stock } = withRedis;
-  const loads = [withRedis, withPostgres].map((facts) => ({
-    transactions: facts.postgresTransactions,
-    busy: formatDurationMs(facts.postgresBusyMs),
-    redisCpu: formatDurationMs(facts.redisCpuMs),
-  }));
-  const [redisLoad, postgresLoad] = loads;
+  const runs = [withRedis, withPostgres];
+  const transactions = ratio(withPostgres.postgresTransactions, withRedis.postgresTransactions);
+  const cpu = ratio(withPostgres.postgresCpuMs, withRedis.postgresCpuMs);
+  const turnedAway = runs.map((facts) => formatDurationMs(facts.turnedAwayAverageMs));
+  const winners = runs.map((facts) => formatDurationMs(facts.winnerAverageMs));
   if (
-    !redisLoad ||
-    !postgresLoad ||
-    secured === null ||
-    turnedAway === null ||
-    withRedis.withoutExpectedAnswer !== 0 ||
-    withPostgres.withoutExpectedAnswer !== 0 ||
-    withPostgres.secured !== secured ||
-    withPostgres.turnedAway !== turnedAway ||
-    loads.some((load) => load.transactions === null || !load.busy || !load.redisCpu) ||
-    (postgresLoad.transactions ?? 0) - (redisLoad.transactions ?? 0) < 0.9 * turnedAway
+    runs.some((facts) => !facts.completed || facts.withoutExpectedAnswer !== 0) ||
+    withRedis.unitsSold !== withPostgres.unitsSold ||
+    transactions === null ||
+    cpu === null ||
+    transactions <= 1 ||
+    cpu <= 1 ||
+    !turnedAway[0] ||
+    !turnedAway[1] ||
+    !winners[0] ||
+    !winners[1] ||
+    (withPostgres.turnedAwayAverageMs ?? 0) <= (withRedis.turnedAwayAverageMs ?? 0) ||
+    (withPostgres.winnerAverageMs ?? 0) > (withRedis.winnerAverageMs ?? 0)
   )
     return null;
   return [
-    `Same ${formatCount(buyers)} buyers for ${formatCount(stock)} ${stock === 1 ? "unit" : "units"}, same answers in both runs: ${formatCount(secured)} secured, ${formatCount(turnedAway)} turned away.`,
-    `With Redis deciding the stock, PostgreSQL ran ${formatCount(redisLoad.transactions)} transactions and was busy for ${redisLoad.busy}.`,
-    `With PostgreSQL deciding, it ran ${formatCount(postgresLoad.transactions)}, about ${formatRatio(withPostgres.postgresTransactionsPerBuyer)} per buyer, and was busy for ${postgresLoad.busy}, while Redis used ${postgresLoad.redisCpu} of CPU against ${redisLoad.redisCpu}.`,
-    "Redis keeps turned-away buyers off the database.",
+    `Same ${formatCount(withRedis.buyers)} buyers, and the same ${formatCount(withRedis.unitsSold)} units sold in both runs.`,
+    `Without Redis, until every buyer was answered, PostgreSQL ran about ${formatMultiple(transactions)} the transactions and used about ${formatMultiple(cpu)} the CPU time.`,
+    `The turned-away buyers waited longer, ${turnedAway[1]} on average against ${turnedAway[0]}, while the winners were not slower, ${winners[1]} against ${winners[0]}: with Redis, a winner goes through two stores and the queue.`,
   ].join(" ");
 }
 
-export function formatRatio(value: number | null): string | null {
-  return value === null ? null : value.toFixed(2);
+function ratio(value: number | null, base: number | null): number | null {
+  return value === null || base === null || base <= 0 ? null : value / base;
+}
+
+function formatMultiple(value: number): string {
+  return `${value.toFixed(1)} times`;
 }
