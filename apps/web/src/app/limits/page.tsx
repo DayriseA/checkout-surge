@@ -258,13 +258,6 @@ const knownDefects = [
     href: repositoryFileLink("docs/architecture.md", "comparison-runs"),
   },
   {
-    text: "During a spike, recovery can try to save a reservation that is still being saved, a few times per run. The second insert is refused and reads the saved row back, so nothing is lost or doubled, but the database does extra work in the runs with Redis.",
-    href: repositoryFileLink(
-      "docs/architecture.md",
-      "3-partial-persistence-failures-redis-succeeds-postgresql-fails",
-    ),
-  },
-  {
     text: "A run started at the very moment the demo goes to sleep is interrupted, then settled at the next wake.",
     href: repositoryFileLink(hostedDecisions, "hd-21-accepted-risk-idle-stop-races-a-run-start"),
   },
