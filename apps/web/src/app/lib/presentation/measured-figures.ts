@@ -16,7 +16,7 @@ export const hostedMeasurements = {
   wakeSeconds: 15,
 } as const;
 
-/** The hosted Machines' sizes, from `infra/fly/*\/machine.json`. */
+/** The hosted Machines' sizes, as configured under `infra/fly/` (core `guest`, runner `RUNNER_*`). */
 export const hostingSizes = {
   core: "6 dedicated vCPUs and 12 GB",
   runner: "8 dedicated vCPUs and 16 GB",
@@ -43,7 +43,7 @@ export interface ComparisonMeasurement {
 }
 
 const queueRuns = ["With the order queue", "Without the order queue"] as const;
-const redisRuns = ["With Redis", "Stock in PostgreSQL"] as const;
+const redisRuns = ["With Redis", "Stock and order queue in PostgreSQL"] as const;
 
 interface QueueFigures extends ComparisonMeasurement {
   ordersConfirmed: number;

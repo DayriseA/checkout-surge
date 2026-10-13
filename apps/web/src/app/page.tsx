@@ -162,11 +162,11 @@ export default function HomePage() {
           </h2>
           <ul className="mb-0 mt-3 grid gap-1 pl-5 leading-7 text-muted-strong">
             <li>
-              One machine, and up to {formatFigure(flashSale.buyers, "count")} buyers in about a
-              second.
+              The whole system runs on one machine, for up to{" "}
+              {formatFigure(flashSale.buyers, "count")} buyers arriving in about a second.
             </li>
             <li>No payment step and no bot protection.</li>
-            <li>The stores share the API&apos;s machine.</li>
+            <li>Its databases sit on the same machine as its code, not across a network.</li>
           </ul>
           <LinkRow links={[{ href: sitePages.limits, label: "Limits and known defects" }]} />
         </section>
