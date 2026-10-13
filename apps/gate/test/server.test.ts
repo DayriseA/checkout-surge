@@ -64,6 +64,7 @@ describe("gate server", () => {
     expect(response.headers["content-type"]).toContain("text/html");
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.body).toContain("The demo is asleep");
+    expect(response.body).toContain("a live demo of the system behind a flash sale");
     expect(response.body).toContain('action="/__gate/start?return=%2Fdemo%2Fwatch%3Frun%3D1"');
     expect(response.body).not.toContain('http-equiv="refresh"');
     expect(wake.wake).not.toHaveBeenCalled();

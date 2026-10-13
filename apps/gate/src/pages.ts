@@ -22,7 +22,7 @@ const pages: Record<GatePageState, PageContent> = {
     status: "Asleep",
     tone: "idle",
     title: "The demo is asleep",
-    text: "Its servers sleep while nobody uses them, to keep hosting costs near zero. Waking them usually takes about 15 seconds, then the demo opens.",
+    text: "Checkout-Surge is a live demo of the system behind a flash sale, where thousands of simulated buyers rush for limited stock. Its servers sleep while nobody uses them, to keep hosting costs near zero. Waking them usually takes about 15 seconds, then the demo opens.",
     action: "start",
   },
   booting: {
