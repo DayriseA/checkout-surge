@@ -62,8 +62,8 @@ The owner's feedback (2026-10-13, after trying both comparisons on a laptop scre
 - **Queue comparison, started as a public visitor** (cold start; runs `5a36eb9f`, `75e6e022`): both runs completed, with 500 orders confirmed each. Both reports show the comparison: winners' wait 3.2 s / 5.1 s against 15.3 s / 27.4 s (×4.7 / ×5.3), every buyer answered within 10 s against 28.9 s (×2.9), ERP pace ×1.1, slowest order ×0.9.
 - **Redis comparison, started as a public visitor** (runs `1fae5d0e`, `3f5b5da7`): both runs completed, with 500 secured and 9,500 turned away each. Both reports show the comparison: transactions 4,746 against 11,217 (×2.4), CPU ×1.9, query time ×6.2, winners ×1.0 / ×1.0, turned-away buyers ×1.2 / ×1.1.
 - **Not verified without a browser:** the header line, the tab bar and the tab's automatic activation on the live page. Watch renders them on the client; the web tests cover them. They are left to the owner's visual review.
-- **Observed in passing, not investigated** (a code path this task did not touch): my 3-second public recovery reads came back three times without a current run while a pair was running. Once with no run during the queue comparison's run 2 traffic, and twice with an error payload during the Redis comparison's run 2 surge.
-- Every proof Machine was stopped at the end: core, runner, gate and guard.
+- **Recovery reads without the live run:** three of my 3-second public reads came back without the run. These are explained under "Supervisor follow-ups" below: no defect.
+- Every proof Machine was stopped at the end: core, runner, gate and guard. The core and the gate were started again afterwards, at 07:05–07:06, not by me (probably the supervisor's visual check), and were left running.
 
 **Left for task 06.**
 - The short "how to read this comparison" link from the comparison to the detail page.
@@ -71,4 +71,16 @@ The owner's feedback (2026-10-13, after trying both comparisons on a laptop scre
   - **Queue comparison:** the 45 s deadline answer, and that run 1 is always the queue run.
   - **Redis comparison:** the same protections in run 2; Redis still carrying the live counters and the notifications; whole-database statistics over the selling window; the two buy-only processes; the shared core Machine; and that run 1 is always the Redis run.
 
-**Not done, for the supervisor.** Task 04's risks said that task 05 would label the technical "Physical order queue" panel. That panel reads BullMQ only, so it shows an empty queue during a PostgreSQL-mode run. It is outside the owner's feedback, so it was left as is. Its caption already says "Live BullMQ counts".
+### Supervisor follow-ups (2026-10-13)
+
+- **"Physical order queue" during the PostgreSQL run.** This panel in the technical details read BullMQ only, so it looked empty while the orders waited in PostgreSQL's queue.
+  - For a `postgres` run, the panel now says "In this run the order queue is in PostgreSQL". In place of BullMQ's figures, it shows the run's orders waiting or being confirmed, their oldest wait and the reading's time.
+  - These figures come from `runtimeProgress`, which already reaches the browser. In this mode, every order not yet confirmed or failed keeps its queue row until it is settled, so the count is the queue's depth.
+  - The change is web only: no new reader and no contract change.
+- **Mode labels.** The run history list lowercased the mode label ("stock and order queue in postgresql"). It now prints the label as written, as Watch's header and the comparison already do. No other place lowercases it.
+- **Recovery reads that came back without the live run: no defect.**
+  - **The errors were my own script's.** The hosted API allows 12 recovery reads per source per minute (`DASHBOARD_RECOVERY_PER_SOURCE_MAX_REQUESTS`). My script read every 3 s, about 20 a minute, so it got 429 `dashboard_recovery_rate_limited` once its budget was spent. Their times match: about 40 s after polling began, and again a minute later. A burst of 13 reads under one visitor cookie confirmed it: 12 × 200, then 429. The script's first version printed any error payload as "no run".
+  - **One read was a genuine "no run".** It came at 07:04:33, 4 s after run 2 was finalized (07:04:29), so it was correctly idle.
+  - **Neither is a timeout under load or the gap between the runs.**
+  - **A visitor's Watch does not flicker.** Live updates come over the SSE stream, and Watch reads the recovery endpoint only when the stream opens or disconnects. A failed read keeps the last-known-good view (`preserveAvailableRecoveryOnFailure`) and retries after `Retry-After`. Once a run ends, the retained terminal run stays on screen.
+- **Size:** production +25/−8 lines, tests +26.
