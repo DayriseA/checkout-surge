@@ -84,3 +84,8 @@ The owner's feedback (2026-10-13, after trying both comparisons on a laptop scre
   - **Neither is a timeout under load or the gap between the runs.**
   - **A visitor's Watch does not flicker.** Live updates come over the SSE stream, and Watch reads the recovery endpoint only when the stream opens or disconnects. A failed read keeps the last-known-good view (`preserveAvailableRecoveryOnFailure`) and retries after `Retry-After`. Once a run ends, the retained terminal run stays on screen.
 - **Size:** production +25/−8 lines, tests +26.
+- **Validation:** the dev container's checks pass (web unit tests: 799). The full Fly suite passes on the first attempt: `test:api` 382; integration db 82, worker 109, mock-erp 7.
+- **Deployed to the proof environment** at `4d28a661`, with no fresh core (the schema is unchanged).
+  - The deploy waited for the core, which someone else had woken, to sleep.
+  - After a gate wake (no run started), `/demo` shows the queue comparison's new "Detailed assumptions", and the run history list prints the mode labels as written ("Redis comparison · Stock and order queue in PostgreSQL").
+  - The core was then stopped; the runner was already stopped. The gate stops itself when idle, and the guard stays scheduled hourly.
