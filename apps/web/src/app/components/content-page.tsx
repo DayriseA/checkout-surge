@@ -66,7 +66,7 @@ export function ContentSection({
   return (
     <section
       aria-labelledby={`${id}-heading`}
-      className="scroll-mt-24 border-t border-border py-8 first:border-t-0 first:pt-0 max-[560px]:py-6"
+      className="scroll-mt-24 border-t border-border py-8 outline-none first:border-t-0 first:pt-0 max-[560px]:py-6"
       id={id}
       tabIndex={-1}
     >

@@ -113,7 +113,7 @@ export function FlowArrow({ back = false }: { back?: boolean }) {
   return (
     <svg
       aria-hidden="true"
-      className={`size-4 shrink-0 self-center text-ink ${
+      className={`size-4 shrink-0 self-center justify-self-center text-ink ${
         back ? "rotate-180 max-[900px]:-rotate-90" : "max-[900px]:rotate-90"
       }`}
       viewBox="0 0 16 16"
