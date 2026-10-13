@@ -37,7 +37,8 @@ Design section 6 is binding. In short:
 
 Choices waiting for the owner, added with the task, the options and a recommendation.
 
-- None pending. Decided: the buy-only pool on the production core (accepted by the owner, design section 3.1).
+- **PostgreSQL buffer cache restored on boot (task 04).** The first comparison after a wake ran its Redis run against cold PostgreSQL buffers (the Redis run always goes first), biasing the waits against Redis. `pg_prewarm`'s autoprewarm reloads the buffers PostgreSQL held before the core stopped. On merge, production's PostgreSQL config gains `shared_preload_libraries = pg_prewarm` and autoprewarm; it also speeds up the first ordinary run after a wake. Options: accept; or keep production's config and accept a cold first comparison after each wake. Recommendation: accept.
+- Decided: the buy-only pool on the production core (accepted by the owner, design section 3.1).
 
 ## Tasks
 
