@@ -101,9 +101,15 @@ export function TextLink({
 }
 
 /** The links a section or page ends with, on one line. */
-export function LinkRow({ links }: { links: readonly { href: string; label: string }[] }) {
+export function LinkRow({
+  className = "m-0 mt-4",
+  links,
+}: {
+  className?: string;
+  links: readonly { href: string; label: string }[];
+}) {
   return (
-    <p className="m-0 mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+    <p className={`flex flex-wrap gap-x-5 gap-y-2 text-sm ${className}`}>
       {links.map((link) => (
         <TextLink href={link.href} key={link.href}>
           {link.label} →
