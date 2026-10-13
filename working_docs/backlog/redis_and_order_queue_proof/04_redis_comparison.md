@@ -700,3 +700,82 @@ Supervisor decisions after the exploration:
 - The CPU ratio collapses because 20 s of order work, shared by both modes, dominates the window.
 - The cold start still shows on the Redis run's winners (2.1 s against 1.5 s warm), but barely on the waits.
 - This preset mostly supports the database-work-only claim.
+
+### Cold-start fixes, cold and warm re-measure, and demanding steady arrivals (2026-10-13)
+
+**Fixes** (supervisor-approved; the owner accepted `pg_prewarm`).
+- **Connections** (`749629da`): each buy process opens its PostgreSQL pool (10 connections) and its Redis connection before it listens. Test: a 3-connection pool has 3 backends once the function returns.
+- **Buffers** (`d79c0a01`): the core's PostgreSQL preloads `pg_prewarm` with `pg_prewarm.autoprewarm=on`.
+  - **Verified on Fly:**
+    - `autoprewarm.blocks` is written at the clean stop that `delayed-stop.sh` triggers (fast shutdown);
+    - at the next wake PostgreSQL logs "autoprewarm successfully prewarmed 6743 of 6743 previously-loaded blocks";
+    - the periodic dump runs every 300 s (the default);
+    - after the deploy, the first boot had no file and simply started cold.
+- **Also in this deployment:** the recovery delay (`44671c7e`, by another agent). The seed restored preset B at every wake.
+
+**Protocol.**
+- **Cold pairs:** 4 cycles. Each time the core was stopped, woken through the gate's "Start the demo", and the comparison started from the public UI within about 20 s.
+- **Warm pairs:** each cold pair was followed by one warm pair (`CB1`–`CB4`, `WB1`–`WB4`).
+- **Priming:** a priming pair after the deploy (`P0`, admin start) gave autoprewarm a block list to save.
+- **`P0` isolates the connections:** connections were pre-opened but the cache was still empty. That Redis run was as slow as before the fixes (turned away 6.4 s, 3,253 blocks read).
+
+**Did the fixes work?**
+
+| | Blocks read during the Redis run | PG connections at its start |
+| :-- | --: | --: |
+| Before the fixes (cold) | 1,464–2,468 | 10 |
+| With the fixes (cold) | 2–345 | 30–31 |
+| Warm | 5–25 | 42–44 |
+
+**Preset B, cold** (4 pairs; median (min–max); ratio per pair, without Redis over with Redis).
+
+| Figure | With Redis | Without Redis | Ratio | Pairs |
+| :-- | --: | --: | --: | :-- |
+| Transactions | 4,541 (4,380–4,735) | 11,913 (11,189–12,692) | 2.58 (2.52–2.80) | all higher |
+| Time in queries | 7.2 s (7.0–7.7) | 36.6 s (32.3–47.7) | 4.90 (4.49–6.85) | all higher |
+| PostgreSQL CPU | 10.7 s (10.3–11.0) | 20.9 s (17.1–26.5) | 1.95 (1.65–2.42) | all higher |
+| Turned-away wait | 6.3 s (6.3–6.4) | 8.7 s (7.4–11.9) | 1.37 (1.17–1.86) | all higher |
+| Winners' wait | 2.6 s (2.5–2.9) | 2.5 s (2.4–3.2) | 1.00 (0.82–1.24) | mixed |
+| Every buyer answered | 9.3 s (8.9–9.4) | 11.5 s (9.8–14.0) | 1.25 (1.08–1.48) | all higher |
+
+**Preset B, warm** (4 pairs).
+
+| Figure | With Redis | Without Redis | Ratio | Pairs |
+| :-- | --: | --: | --: | :-- |
+| Transactions | 3,987 (3,421–4,274) | 11,979 (11,518–12,602) | 3.01 (2.69–3.68) | all higher |
+| Time in queries | 4.2 s (3.7–4.9) | 29.1 s (27.0–30.2) | 7.06 (5.80–7.35) | all higher |
+| PostgreSQL CPU | 7.9 s (7.1–8.2) | 12.9 s (11.8–14.3) | 1.65 (1.59–1.77) | all higher |
+| Turned-away wait | 4.2 s (4.1–4.6) | 5.5 s (5.2–5.8) | 1.27 (1.22–1.38) | all higher |
+| Winners' wait | 2.3 s (2.1–2.7) | 2.3 s (2.2–2.5) | 0.97 (0.85–1.22) | mixed |
+| Every buyer answered | 6.5 s (6.2–6.8) | 7.4 s (6.9–7.7) | 1.13 (1.04–1.18) | all higher |
+
+**Reading.**
+- **The bias against Redis is gone.** In every cold pair, as in every warm one, PostgreSQL did more work without Redis (transactions, time in queries and CPU), the turned-away buyers waited longer, and the last buyer was answered later. Winners stay about equal.
+- **A cold pair is still slower than a warm one, in both runs:** the Redis run's turned-away wait is 6.3 s cold against 4.2 s warm.
+  - With buffers and connections warm, what remains cold is the buy processes' code and heap: JIT and lazy compilation. In the first second, Redis served 16–21k commands per second in a cold run, against 28–49k warm.
+  - Only a warm-up of thousands of requests through the buy paths would remove it. It now affects both runs, and no direction depends on it.
+
+**Demanding steady arrivals** (500 units, same ERP, 2 buy processes; admin starts, because the public per-visitor budget was used up).
+- **Columns:** waits are average / p95. "Runner" is the runner's CPU, peak / mean. "Core" is the measured containers' total CPU, average / peak, in vCPUs.
+
+| Rate, pair | Mode | Dropped | Transactions | Time in queries | PG CPU | Turned away | Runner | Core |
+| :-- | :-- | --: | --: | --: | --: | --: | --: | --: |
+| 1,500/s, cold | Redis | 0 | 8,458 | 11.0 s | 18.1 s | 1.0 / 5.8 s | 89 / 25 % | 4.0 / 5.5 |
+| 1,500/s, cold | PostgreSQL | 2,921 (run failed) | 33,897 | 45.3 s | 32.7 s | 1.4 / 6.3 s | 87 / 22 % | 3.8 / 5.6 |
+| 1,500/s, warm | Redis | 0 | 8,753 | 8.7 s | 17.3 s | 0.7 / 4.0 s | 89 / 27 % | 4.0 / 5.5 |
+| 1,500/s, warm | PostgreSQL | 821 | 36,038 | 43.2 s | 33.6 s | 1.2 / 7.0 s | 88 / 24 % | 3.8 / 5.5 |
+| 2,500/s, cold | Redis | 1,987 | 8,148 | 11.2 s | 19.1 s | 2.1 / 12.3 s | 90 / 41 % | 3.7 / 5.6 |
+| 2,500/s, cold | PostgreSQL | 3,241 (run failed) | 51,667 | 45.5 s | 34.1 s | 1.8 / 10.6 s | 94 / 38 % | 3.7 / 5.5 |
+| 2,500/s, warm | Redis | 0 | 8,400 | 9.5 s | 19.4 s | 1.8 / 12.2 s | 97 / 40 % | 3.6 / 5.5 |
+| 2,500/s, warm | PostgreSQL | 4,945 (run failed) | 51,486 | 48.5 s | 35.7 s | 1.7 / 8.3 s | 95 / 37 % | 3.9 / 5.5 |
+
+- **1,500 buyers per second for 20 s (30,000 buyers):**
+  - With Redis, every buyer was served, cold or warm.
+  - Without Redis, 821–2,921 buyers were never sent: k6 ran out of VUs while the slower answers held them. The cold run failed delivery.
+  - The database ratios are the largest seen: transactions about 4 times, time in queries 4–5 times, CPU about 1.9 times.
+  - The waits compare badly, because the PostgreSQL mode's dropped buyers are missing from them.
+- **2,500 buyers per second:** beyond what the rig delivers cleanly. Both modes dropped buyers when cold, and the runner peaked at 90–97 % CPU.
+- **Which configuration shows the Redis benefit most clearly and fairly:** preset B (the 10,000-buyer spike).
+  - Every run delivers cleanly.
+  - Database work and the turned-away buyers' longer wait hold in all 8 pairs, cold included.
+  - Steady arrivals at 1,500/s show a stronger capacity difference (buyers left unserved without Redis), but the PostgreSQL run fails or drops buyers, so the panel's gate would hide the takeaway and the waits would be biased. It is better kept as a note than as the preset.
