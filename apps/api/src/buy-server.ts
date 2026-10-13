@@ -1,4 +1,5 @@
 import cluster from "node:cluster";
+import { randomBytes } from "node:crypto";
 import {
   BusinessOutcomePublicationScheduler,
   createDatabaseConnection,
@@ -27,7 +28,14 @@ import {
  * recovery stay in the control process (HD-11).
  */
 export async function startBuyServer(): Promise<void> {
-  const config = loadApiConfig(process.env);
+  // The buy routes use neither the control token nor the cookie secret: the container is not
+  // given them, and throwaway values satisfy the shared configuration.
+  const unusedSecret = randomBytes(32).toString("hex");
+  const config = loadApiConfig({
+    ...process.env,
+    CONTROL_SERVICE_TOKEN: unusedSecret,
+    PUBLIC_CLIENT_COOKIE_SECRET: unusedSecret,
+  });
   const logger = createServiceLogger({ service: "api" }).child({ process: "buy-only" });
   const connection = createDatabaseConnection(config.databaseUrl, { max: config.postgresPoolMax });
   const redis = createRedisClient(config.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
@@ -105,13 +113,19 @@ function startPrimary(): void {
   if (!Number.isSafeInteger(processes) || processes < 1) {
     throw new Error("API_BUY_PROCESSES must be a positive integer.");
   }
-  // Each process accepts its own connections. Round-robin hands every connection to a process
-  // over IPC, one at a time per process, which throttled a buyer spike's intake.
-  cluster.schedulingPolicy = cluster.SCHED_NONE;
+  const logger = createServiceLogger({ service: "api" }).child({ process: "buy-only-primary" });
   let stopping = false;
   for (let index = 0; index < processes; index += 1) cluster.fork();
-  cluster.on("exit", () => {
-    if (!stopping) cluster.fork();
+  cluster.on("exit", (worker, code, signal) => {
+    if (stopping) return;
+    logger.error(
+      { pid: worker.process.pid, code, signal },
+      "A buy-only process exited; starting another in 1 s.",
+    );
+    // A delay, so that a process failing at startup cannot spin a fork loop.
+    setTimeout(() => {
+      if (!stopping) cluster.fork();
+    }, 1_000);
   });
   const stop = () => {
     stopping = true;
