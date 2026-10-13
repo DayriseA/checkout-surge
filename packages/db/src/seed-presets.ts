@@ -152,7 +152,7 @@ export function buildSeedPresets(): SeedPreset[] {
         description:
           "Surge 5k twice on the same workload: first with the order queue, then with each winner waiting for the ERP's confirmation. Same stock, same ERP limit.",
         sortOrder: 36,
-        outcomeFocus: ["queue_pressure", "downstream_capacity"],
+        outcomeFocus: ["queue_pressure", "confirmation_wait"],
       },
       trafficConfig: buyerSpikeTraffic({ buyerCount: 5000, maxDurationSeconds: 80 }),
       inventoryConfig: inventoryConfig({ startingStock: 500 }),

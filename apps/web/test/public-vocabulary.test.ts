@@ -56,4 +56,10 @@ describe("public vocabulary", () => {
       "Slow ERP responses limit orders in flight",
     );
   });
+
+  it("explains the queue comparison's run without the queue, with no slow ERP", () => {
+    expect(outcomeFocusLabel("confirmation_wait")).toBe(
+      "Without the queue, each winner waits for the ERP to confirm",
+    );
+  });
 });
