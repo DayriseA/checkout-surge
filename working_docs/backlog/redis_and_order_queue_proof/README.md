@@ -48,6 +48,6 @@ Choices waiting for the owner, added with the task, the options and a recommenda
 | 02 | [Feasibility checkpoint](02_feasibility_checkpoint.md) | 01 | done |
 | 03 | [Queue comparison](03_queue_comparison.md), owner checkpoint A | 01 | done |
 | 04 | [Redis comparison](04_redis_comparison.md), owner checkpoint B | 03 | done |
-| 05 | [Interface pass](05_interface_pass.md), owner checkpoint C | 04 | in progress |
+| 05 | [Interface pass](05_interface_pass.md), owner checkpoint C | 04 | done |
 | 06 | [Narrative, site structure and decisions](06_narrative.md), owner checkpoints D1, D2 | 04 | in progress |
 | 07 | [Production rollout](07_production_rollout.md) | 06 | todo |

@@ -89,3 +89,16 @@ The owner's feedback (2026-10-13, after trying both comparisons on a laptop scre
   - The deploy waited for the core, which someone else had woken, to sleep.
   - After a gate wake (no run started), `/demo` shows the queue comparison's new "Detailed assumptions", and the run history list prints the mode labels as written ("Redis comparison · Stock and order queue in PostgreSQL").
   - The core was then stopped; the runner was already stopped. The gate stops itself when idle, and the guard stays scheduled hourly.
+
+### Owner checkpoint C
+
+**Owner checkpoint C: validated on 2026-10-13, with this change.**
+- **The change.** The Comparison tab had not opened at the end of the owner's pair, because the owner had clicked Pipeline during the run. The rule is now the simplest one: when run 2 reaches its result, the Comparison tab always becomes active, whatever tab was open before. A visitor who arrives after the pair ended still lands on it, and can switch tabs afterwards.
+- **Code.** The per-run choice tracking is gone; one state change on the pair's end remains. The next run starts on the overview again (`2d120b4c`).
+- **Test.** The Watch test now clicks Pipeline during run 2, checks that the Comparison tab opens at the result, and that the visitor can then go back to the overview.
+- **Validation.** In the dev container, type-check, web unit tests (799) and Biome pass. The full Fly suite passes at `2d120b4c`: `test:api` 382; integration db 82, worker 109, mock-erp 7.
+- **Proof environment.**
+  - The core and the runner run `2d120b4c`, with no fresh core; the deploy waited for an awake core to sleep.
+  - The gate step then failed: the gate Machine, woken by traffic, did not stop within the deploy's 60 s wait. A gate-only redeploy (`deploy.mjs gate --environment infra/fly/proof.json`) updated the gate and the guard.
+  - By then another agent had committed `450302c4` and added untracked files, so the gate's version label reads `450302c4-dirty`. Those changes touch `apps/web` only, so the gate image is unchanged in substance, and the version handshake does not compare the gate.
+  - The core and the runner are stopped. The gate stops itself when idle.
