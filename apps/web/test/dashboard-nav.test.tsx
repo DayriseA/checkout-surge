@@ -16,9 +16,9 @@ function renderNavigation(children: React.ReactNode) {
 
 describe("DashboardNav", () => {
   it.each([
-    ["/", "Overview"],
     ["/watch", "Watch"],
     ["/run-history/some-run-id", "Run history"],
+    ["/how-it-works", "How it works"],
   ])("marks the current dashboard route for %s", (currentPathname, expectedName) => {
     pathname.value = currentPathname;
     render(renderNavigation(null));
@@ -47,11 +47,10 @@ describe("DashboardNav", () => {
     expect(panel).not.toBeNull();
     const links = within(panel as HTMLElement).getAllByRole("link");
     expect(links.map((link) => link.textContent?.trim())).toEqual([
-      "Overview",
       "Demo",
       "Watch",
       "Run history",
-      "Admin",
+      "How it works",
       "Repository (opens in a new tab)",
     ]);
     expect(within(panel as HTMLElement).getByRole("button", { name: "Sign out" })).toBeTruthy();

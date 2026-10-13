@@ -4,13 +4,14 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { publicNarrative } from "../lib/presentation/public-vocabulary";
+import { sitePages } from "../lib/site-links";
 
+/** The logo links home; Admin and the detail pages other than How it works are in the footer. */
 const dashboardNavItems = [
-  { href: "/", label: "Overview" },
-  { href: "/demo", label: "Demo" },
-  { href: "/watch", label: "Watch" },
-  { href: "/run-history", label: "Run history" },
-  { href: "/admin", label: "Admin" },
+  { href: sitePages.demo, label: "Demo" },
+  { href: sitePages.watch, label: "Watch" },
+  { href: sitePages.runHistory, label: "Run history" },
+  { href: sitePages.howItWorks, label: "How it works" },
 ] as const;
 
 const linkClassName =
@@ -20,7 +21,7 @@ const currentLinkClassName =
 const otherLinkClassName = "text-white/70 max-[900px]:text-muted-strong";
 
 function isCurrentRoute(pathname: string, href: string) {
-  return pathname === href || (href !== "/" && pathname.startsWith(`${href}/`));
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function DashboardNav({ children }: { children: ReactNode }) {
