@@ -14,11 +14,11 @@ A visitor starts one fixed preset and sees, side by side on the same workload, w
   - The order queue lives in PostgreSQL (a job table claimed with `FOR UPDATE SKIP LOCKED`), with a pickup latency comparable to BullMQ's.
   - The same idempotency, run fence, bookkeeping, live counters and teardown as the demo mode. Redis still carries notifications and the live feed; the label says "stock decision and order queue in PostgreSQL".
 - **Comparison conditions** (owner decision, 2026-10-12, design section 3.1):
-  - The comparison runs on the ordinary topology: one API process, with the stores on the API's Machine. No store distance, simulated or real.
-  - Buy-only API processes only if measured necessary: if the single process saturates in the PostgreSQL mode (k6 dropped iterations, turned-away buyers' latency drifting upward, API CPU pinned), stop and report the evidence before building anything; then try 2 processes, and 3 only if 2 are not enough. One control process would keep every single-owner duty, so HD-11 holds.
-  - Ordinary runs keep their path and topology.
-- **Database load capture** from PostgreSQL's own statistics or in-app counters, shown in the panel built by task 03: database work per turned-away buyer, and response times only if stable.
-- **Preset:** start from the checkpoint's 1,000 arrivals/s for 10 s, stock 1.
+  - The stores stay on the API's Machine. No store distance, simulated or real.
+  - Buy-only API processes only if measured necessary. The single process was measured pinned in both modes (2026-10-13), so both runs of the Redis comparison are now served by 2 buy-only processes (`node:cluster`, same image). One control process keeps every single-owner duty, so HD-11 holds; HD-51 needs an amendment (task 06).
+  - Ordinary runs and the queue comparison keep their path and topology.
+- **Database load capture** from PostgreSQL's own statistics and its container's CPU time, over the selling window (until every buyer is answered), shown in the panel built by task 03, with the winners' and turned-away buyers' waits as separate rows.
+- **Preset** (supervisor decision, 2026-10-13, after the owner rejected stock 1): a 10,000-buyer spike for 500 units with the standard ERP, the Surge 10k shape.
 - **Measurement** in the proof environment as in design section 5, recorded in the working notes.
 
 ## Out of Scope
@@ -329,43 +329,103 @@ The independent review (`scratchpad/review/task04-code-review.md`) found the com
 
 ### Checkpoint B summary
 
+Rewritten on 2026-10-13 after the owner rejected stock 1. The stock-1 measurement is kept above under "Live runs and measurement": 16 times the transactions without Redis, in every pair.
+
 **What was built.**
-- **A public preset,** `redis-comparison`: 1,000 buyers per second for 10 s, one unit, standard ERP. One start runs it twice in the same slot: first with Redis deciding the stock, then with PostgreSQL deciding it and holding the order queue. The budget is charged once.
+- **A public preset,** `redis-comparison`: 10,000 buyers released at once for 500 units, with the standard ERP (the Surge 10k shape). One start runs it twice in the same slot: first with Redis deciding the stock, then with PostgreSQL deciding it and holding the order queue. The budget is charged once.
 - **The PostgreSQL mode keeps the Redis path's protections:** idempotency, the run fence, and the reservation, order and events recorded before "yes".
-  - A turned-away buyer costs one prepared read-only statement and writes nothing.
-  - A winner commits its rows, its queue job and the stock decrement in one transaction.
+  - A turned-away buyer costs one prepared, read-only statement and writes nothing.
+  - A winner commits its rows, its queue job and the stock decrement in one transaction, on a reserved connection, as the Redis mode's persistence does.
   - The worker delivers the PostgreSQL queue with BullMQ's pacing, concurrency and single attempt.
-  - The live counters are batched into the same Redis counters.
-- **Store load:** PostgreSQL's own statistics and Redis CPU, read around each run.
-- **The panel** shows both runs side by side and states the takeaway only when the data supports it.
-- **Topology:** the ordinary one (one API process, the stores on the API's Machine), per the owner's decision. No pool and no distance.
+- **Buy-only pool.** Both runs are served by the same 2 buy-only API processes, and one control process keeps every HD-11 duty. Ordinary runs and the queue comparison are unchanged.
+- **Store load over the selling window,** from the run's start until every buyer is answered:
+  - PostgreSQL's transactions and busy time (`pg_stat_database`);
+  - the CPU time of PostgreSQL's container, which PostgreSQL reads from its own cgroup, exactly;
+  - Redis's CPU, recorded but not shown.
+  - **The window understates the PostgreSQL mode, so it is conservative.** PostgreSQL publishes a busy connection's statistics about once a second, so up to the window's last second of transactions and busy time is left out, mostly the PostgreSQL mode's decision reads.
+- **The panel** has one row each for:
+  - transactions;
+  - CPU time;
+  - time in queries, waits for the stock row included;
+  - winners' wait;
+  - turned-away buyers' wait;
+  - every buyer answered.
 
-**What the measured pairs show** (series 2, 4 pairs, median):
-- **PostgreSQL work:**
-  - Same answers in both runs: 1 secured, 9,999 turned away.
-  - PostgreSQL ran 657 transactions with Redis, against 10,678 without it: 16 times more (15–17), about one per buyer.
-  - Its busy time was 185 ms against 1,804 ms: 10 times more (9–11).
-- **Redis's CPU:** 4.1 s against 1.8 s.
-- **Turned-away buyers' p95 wait:** 82 ms against 440 ms. The direction holds in every pair; the size does not.
-- **Every pair agrees,** in this series and in the earlier series 1.
+  It also discloses the shared Machine and the two buy-only processes.
 
-**Visitor takeaway**, as the panel states it (end-to-end pair):
-> Same 10,000 buyers for 1 unit, same answers in both runs: 1 secured, 9,999 turned away. With Redis deciding the stock, PostgreSQL ran 891 transactions and was busy for 293 ms. With PostgreSQL deciding, it ran 10,971, about 1.10 per buyer, and was busy for 2.6 s, while Redis used 1.8 s of CPU against 3.8 s. Redis keeps turned-away buyers off the database.
+  **The takeaway is stated only when every condition holds:**
+  - both runs completed;
+  - they sold the same units;
+  - every buyer got an expected answer;
+  - the load figures are known;
+  - the measured directions hold: more transactions and CPU, and longer turned-away waits, without Redis, with winners not slower.
 
-**Sizes:** about 1,274 production and 920 test lines. The plan was 915 and 630; 1,263 and 841 were accepted before the review fixes.
+**The exploration that led to the preset.** 2 processes, selling window; ranges across pairs; waits are averages; Redis vs PostgreSQL. Details are in the sections below.
 
-**Decision asked.** Validate the comparison live by starting "Redis comparison" on `https://cs-proof-gate.fly.dev/demo`. **Recommendation:** validate it as is, on the single API process. The headline is large, stable in every pair, and does not depend on the process count.
+| Candidate | Transactions | Busy (s) | PG CPU (core-s) | Winners (s) | Turned away (s) | All answered (s) |
+| :-- | --: | --: | --: | --: | --: | --: |
+| A 5k/500 | 3.3–3.7k vs 5.4–7.7k | 7–8 vs 25–29 | 6.9–8.6 vs 6.4–12.1 | 2.9–3.8 vs 2.0–2.2 | 3.8–5.1 vs 4.1–5.3 | 5.5–6.7 vs 4.7–6.8 |
+| B 10k/500 (chosen) | 3.5–4.4k vs 10.5–12.5k | 5.3–5.6 vs 31–34 | 6.9–8.6 vs 13.7–18.5 | 2.3–3.3 vs 2.2–2.3 | 4.1–4.2 vs 6.2–7.6 | 6.0–6.5 vs 8.2–10.5 |
+| C 10k/100 (informational) | 1.55k vs 10.4–11.3k | 1.4–1.5 vs 11–13 | 2.9–3.1 vs 7.2–11.3 | 1.1–1.5 vs 0.8–0.9 | 1.9–2.3 vs 2.7–4.0 | 3.7 vs 4.6–6.5 |
+
+**What the measured pairs show.**
+- **Method:** proof environment at `af7b77cb`; 5 starts, the first pair dropped as warm-up, so 4 pairs. Median (min–max); the ratio is per pair, without Redis over with Redis.
+- **Same answers in every run:** 500 secured, 9,500 turned away, 0 failed, 0 dropped, 500 orders confirmed.
+
+| Figure | With Redis | Without Redis | Ratio | Pairs |
+| :-- | --: | --: | --: | :-- |
+| PostgreSQL transactions | 4,739 (4,613–4,881) | 12,058 (11,460–12,940) | 2.5 (2.5–2.7) | all higher |
+| PostgreSQL CPU time | 11.1 s (10.6–11.5) | 18.5 s (10.4–22.2) | 1.7 (0.93–2.0) | mixed |
+| Time in queries, stock-row waits included | 5.4 s (5.0–5.8) | 30.2 s (24.1–35.9) | 5.5 (4.8–6.2) | all higher |
+| Winners' average wait | 2.5 s (1.9–2.5) | 2.1 s (2.0–2.5) | 0.84 (0.80–1.3) | mixed |
+| Turned-away buyers' average wait | 4.8 s (4.3–5.2) | 7.3 s (4.9–9.4) | 1.6 (1.1–1.9) | all higher |
+| Every buyer answered within | 7.4 s (6.4–7.8) | 9.8 s (6.1–10.9) | 1.3 (0.84–1.6) | mixed |
+| Whole-run transactions (context) | 12,612 (12,488–12,739) | 23,484 (22,369–24,247) | 1.9 | all higher |
+
+- **The ERP pace** was 17.7 orders per second with Redis, against 15.5 for the PostgreSQL queue. It is about 12 % slower, which affects only the whole run.
+- **The mixed pair is pair 2.**
+  - Its PostgreSQL run answered every buyer in 6.1 s, the fastest of all.
+  - Over that shorter window, PostgreSQL's CPU came to 0.93 times the Redis run's: the order work, about 1.1–1.3 cores in both modes, dominates it.
+  - Its winners waited 2.5 s against 1.9 s.
+- **The panel's takeaway shows for 3 of the 4 pairs** (pair 2 shows the numbers alone). For pair 4, it reads:
+  > Same 10,000 buyers, and the same 500 units sold in both runs. Without Redis, until every buyer was answered, PostgreSQL ran about 2.7 times the transactions and used about 1.5 times the CPU time. The turned-away buyers waited longer, 6.5 s on average against 5 s, while the winners were not slower, 2 s against 2.4 s: with Redis, a winner goes through two stores and the queue.
+
+**The scanner fix and ordinary runs.**
+- **Every run of the demo now publishes again only the queued orders whose job is missing.** The independent review confirmed that the repair guarantee is the same.
+- **On an ordinary `surge-5k` run,** transactions went from 19,799 to 12,844 (−35 %), and orders published again from 2,381 to 0.
+
+**The pool and the core Machine's CPU headroom.**
+- **Each buy process's main thread** ran at 0.6–0.8 of a core, the control process at 0.06–0.27 and the cluster primary at about 0.15.
+- **The measured containers** used 4.7–5.1 of the 6 vCPUs on average while buyers were answered, in both modes, with half-second peaks at 5.2–5.7. **About one vCPU is left,** so a third process would compete for the same CPUs.
+- **The pool's production impact** is on the owner's review list (supervisor). HD-51 needs an amendment in task 06.
+
+**A defect found and fixed before the measurement.**
+- **Symptom:** in the PostgreSQL mode, 4 of 10 runs of the 10,000-buyer spike failed on one `500` answer.
+- **Cause:** postgres.js raised `UNSAFE_TRANSACTION`. It reserves a pooled connection for `sql.begin` only when the `BEGIN` leaves room in the connection's pipeline, and the decision reads fill the pipelines.
+- **Fix** (`d64a9655`): the winner's transaction now runs on a reserved connection, like the Redis mode's.
+- **After the fix:** 0 errors in 8 runs, 3 confirmation pairs plus the measurement.
+
+**Sizes.**
+- **Measured:** about 1,677 net production and 1,115 test lines for task 04.
+- **Accepted earlier:** 1,263 and 841, then the pool (about 270) and the scanner fix.
+- **The rest** comes from the panel rework, the CPU capture, the transaction fix and the review fixes.
+
+**Decision asked.** Validate the comparison live by starting "Redis comparison" on `https://cs-proof-gate.fly.dev/demo`.
+
+**Recommendation:** validate it, with two adjustments to the takeaway gate:
+- **Headline the transactions,** which held in every pair at 2.5–2.7 times, rather than the CPU.
+  - Keep the CPU row, and state CPU in the takeaway only when it is higher. Its direction did not hold in 1 of 4 pairs, because the shared order work dominates a short window.
+- **Drop "winners were not slower" from the gate.** It did not hold in 1 of 4 measured pairs, nor in 2 of 9 earlier pairs. State the winners' waits as numbers only.
+- **As built,** the takeaway would be hidden on about one comparison in four.
 
 **Open points.**
-- **Single API process:** it kept up (no dropped arrivals, no upward drift). But its main thread runs at about 0.85 of a core in the PostgreSQL mode, and in both modes on a slower host. A buyer pool would mainly change the latency row, not the headline.
-- **Latency row:** kept, with neutral wording, out of the takeaway. Its size varies 1.2–9.3 times across pairs.
+- The ERP pace of the PostgreSQL queue is about 12 % lower (whole run only).
+- **Redis-mode duplicate inserts:** a few `reservations_pkey` duplicates appear in PostgreSQL's log during Redis-mode spikes. They take the existing recoverable-conflict path (`isRecoverableReservationConflict`) and change no answer. This is pre-existing and was not investigated.
 - **Fairness points for task 06:**
-  - the prepared hot statement (Drizzle prepares nothing elsewhere, in both modes);
-  - winners' round trips are about even;
-  - Redis also does the turned-away work more cheaply (about 0.23 ms against 0.34 ms of CPU per buyer);
-  - the container-CPU ratio (about 3.5) is smaller than the busy-time ratio (about 10).
-- **The trade-off from Q6:** Redis's extra work per winner does not show at one unit.
-- **Production rollout:** the baseline edit requires `--fresh-core` (task 06/07).
+  - the prepared hot statement;
+  - the reserved connection per winner in both modes;
+  - the shared Machine;
+  - the conservative window.
 
 ### Re-tuning with units left: fairness check and exploration (2026-10-13, stopped before choosing)
 
@@ -525,3 +585,48 @@ With direct accept (all tables from here on):
 - the B1 unexpected response, to be explained first.
 
 Nothing was changed in the seed, the preset or the panel.
+
+### Preset B, the unexpected answer, the review fixes and the full measurement (2026-10-13)
+
+Supervisor decisions after the exploration:
+- **Preset:** B, public, with the 2-process pool for both runs.
+- **Panel:** separate rows for winners' and turned-away buyers' waits; PostgreSQL CPU as the primary load figure; no Redis CPU row.
+- **Takeaway:** gated on the measured directions, with a disclosure line.
+- **Before the full measurement:** explain B1's unexpected answer, then apply the independent review's findings.
+
+**The unexpected answer.**
+- **Reproduction:** six B pairs at `e4f13e0d`, with the core's logs streamed (`R`). The PostgreSQL run failed on one `500` answer in pairs 1, 3 and 6.
+- **The buy process logged the cause:** `UNSAFE_TRANSACTION: Only use sql.begin, sql.reserved or max: 1`.
+- **Mechanism:**
+  - In postgres.js 3.4.9, `execute()` calls the `onexecute` hook that marks a `sql.begin` connection as reserved only if the write succeeded and the pipeline still has room (`connection.js:173-177`).
+  - In the PostgreSQL mode, thousands of prepared decision reads fill every pipeline. Now and then, a winner's `BEGIN` was pipelined onto an unreserved connection, and postgres.js refused the transaction at its `CommandComplete`.
+  - The Redis mode was immune: its persistence already reserves a connection and sends `begin`/`commit` itself.
+- **Fix** (`d64a9655`): the PostgreSQL mode's winner transaction does the same.
+  - It is a defect fix, and also a fairness fix: both modes now pay one `reserve()` per winner.
+  - **Test:** a pool with a one-query pipeline (`max_pipeline: 1`) makes the full-pipeline case certain. 40 concurrent buyers must all get an expected answer.
+- **After the fix:** 3 confirmation pairs (`K`) and the 5 measurement starts had no error, with logs streamed.
+- **What the reproduction pairs also showed** (before the fix):
+  - transactions 2.3–2.9 times without Redis;
+  - turned-away buyers waited longer in every pair;
+  - winners were slower without Redis in 1 of 6 pairs.
+
+**Review fixes** (independent review of `5888c5da..7b12ad05`). The scanner fix was confirmed: the repair guarantee is intact.
+- **F2** (`e0676c9f`): the cluster primary logs a worker's exit and forks a new one after 1 s.
+- **F3:** the `api-buy` health check calls `/health/live`, which opens no database or Redis connection.
+- **F5:** scheduling is back to the default.
+- **Least privilege:** `api-buy` no longer receives the control token and the cookie secret. The buy process fills them with throwaway values for the shared configuration.
+- **F4** (`5f477c9b`):
+  - For a PostgreSQL-stock run, the control process now flushes its own counts before closing the sale, then waits two intervals (200 ms) so every buy process's last batch lands.
+  - **Test:** a batch added during that wait is counted, and the sale then closes.
+- **F8** (`b8ee09e8`): only the BullMQ publisher has the presence check. The generic factory no longer defaults it to "every job missing".
+- **F6** (`af7b77cb`): stale texts corrected.
+- **F1, the pool's production impact:** recorded on the owner's review list by the supervisor.
+
+**PostgreSQL CPU in the store load** (`11f6381e`).
+- PostgreSQL reads its container's `cpu.stat` with `pg_read_file`. The application connects as the `postgres` superuser in the core and locally.
+- It is exact, with no statistics lag, and null where unreadable.
+- In the measurement it includes the window's start: the run's setup before the first buyer.
+
+**Full measurement:** 5 starts at `af7b77cb`, the first pair dropped. Results are in the checkpoint B summary above.
+- Per measured pair (2–5), transactions ratio 2.5 / 2.5 / 2.7 / 2.6; CPU ratio 0.93 / 2.0 / 1.5 / 1.9; turned-away average-wait ratio 1.1 / 1.8 / 1.3 / 1.9.
+- **While buyers were answered,** the five measured containers averaged 4.7–5.1 vCPUs of the core's 6 in every run.
