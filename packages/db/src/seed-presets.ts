@@ -171,12 +171,12 @@ export function buildSeedPresets(): SeedPreset[] {
       display: {
         name: "Redis comparison",
         description:
-          "1,000 buyers per second for 10 s, one unit, twice on the same workload: first with Redis deciding the stock, then with PostgreSQL deciding it and holding the order queue. Same answers; compare the database's work.",
+          "10,000 buyers released at once for 500 units, twice on the same workload: first with Redis deciding the stock, then with PostgreSQL deciding it and holding the order queue. Same units sold; compare the database's work and the waits.",
         sortOrder: 37,
         outcomeFocus: ["sold_out", "run_history"],
       },
-      trafficConfig: constantArrivalTraffic({ ratePerSecond: 1000, durationSeconds: 10 }),
-      inventoryConfig: inventoryConfig({ startingStock: 1 }),
+      trafficConfig: buyerSpikeTraffic({ buyerCount: 10_000, maxDurationSeconds: 120 }),
+      inventoryConfig: inventoryConfig({ startingStock: 500 }),
       erpConfig: erpConfig({ latencyMs: 100, maxTps: 20, errorRate: 0 }),
       backpressureConfig: backpressureConfig({ orderProcessConcurrency: 5 }),
       comparison: "redis",

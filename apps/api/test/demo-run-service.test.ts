@@ -2625,7 +2625,7 @@ describe("comparison runs", () => {
       publicVisitorCredential: signedVisitor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
     };
 
-    // A visitor's estimate and start take the fixed constant-arrival preset as defined.
+    // A visitor's estimate and start take the fixed buyer-spike preset as defined.
     expect((await service.previewRun(request)).result.decision).toBe("admitted");
     const first = await service.startRun(request, "comparison");
     await completeRun(first.run.runId, "completed");
@@ -2642,7 +2642,7 @@ describe("comparison runs", () => {
       {
         runId: second?.id,
         saleOfferId: second?.saleOfferId,
-        remainingStock: 1,
+        remainingStock: 500,
       },
     ]);
     for (const run of runs) {
