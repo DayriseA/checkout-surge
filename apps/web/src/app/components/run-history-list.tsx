@@ -76,9 +76,7 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         <div className="min-w-0 basis-full flex-1 sm:basis-auto">
           <h2 className="type-title m-0 break-words text-base leading-tight text-ink">
             {summary.presetName}
-            {summary.comparisonMode
-              ? ` · ${comparisonModeLabels[summary.comparisonMode].toLowerCase()}`
-              : null}
+            {summary.comparisonMode ? ` · ${comparisonModeLabels[summary.comparisonMode]}` : null}
           </h2>
           <p className="m-0 mt-0.5 flex flex-wrap gap-x-3 text-sm text-muted">
             {!summary.dataDiscarded ? (

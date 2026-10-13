@@ -109,6 +109,17 @@ describe("run history", () => {
     expect(markup).toContain("Recorded k6 output");
     expect(markup).toContain("Insufficient VUs, reached 4000");
   });
+  it("names a comparison run's mode in the list as it is written elsewhere", () => {
+    const history = listFixture();
+    const summary = history.summaries[0];
+    if (!summary) throw new Error("Expected a run summary fixture.");
+    summary.presetName = "Redis comparison";
+    summary.comparisonMode = "postgres";
+    expect(renderToStaticMarkup(createElement(RunHistoryList, { history }))).toContain(
+      "Redis comparison · Stock and order queue in PostgreSQL",
+    );
+  });
+
   it.each([
     "operator",
     "automatic_reset",
