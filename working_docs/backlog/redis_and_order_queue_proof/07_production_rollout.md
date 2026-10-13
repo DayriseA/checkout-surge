@@ -85,3 +85,16 @@ Prepared read-only on 2026-10-13 from `git diff origin/main...HEAD`. `origin/mai
 - **Merge method for `dev` → `main`.** *Recommendation:* fast-forward to the commit deployed in step 3, so the hosted version is exactly `main`.
 - **Measured figures.** Is a production measurement series worth about an hour of core time when production matches the proof ranges? *Recommendation:* refresh only if production falls outside them.
 - **Flyctl version.** CI pins 0.4.111. *Recommendation:* check `flyctl version` on the workstation before step 3 and use the same version.
+
+### Rollout result (2026-10-13)
+
+Owner's go given on 2026-10-13; the owner chose not to refresh the measured figures unless production fell outside the ranges.
+
+- **Merges.** PR #8 (branch into `dev`, merge commit `f17e0998`) and PR #9 (`dev` into `main`, closed by fast-forwarding `main` to `f17e0998`).
+- **Deploy.** The owner ran `node infra/fly/deploy.mjs all --fresh-core` from a clean worktree of `origin/dev` (flyctl 0.4.111, as in CI): runner, core, gate and guard at `f17e0998`, the core marked for recreation. The CI deploy on the push to `main` succeeded and kept the mark. The first wake installed a fresh core in about a minute.
+- **Verification as a visitor, on the fresh (cold) core:**
+  - Redis comparison: 500 / 9,500 in both runs; without Redis, PostgreSQL transactions ×3.5, CPU ×2.4, time in queries ×7.1, turned-away wait ×1.6, every buyer answered ×1.3, winners ×0.8. Within the task 04 ranges. Watch moved from run 1 to run 2 and opened the Comparison tab.
+  - Queue comparison: every buyer answered within 5.3 s against 27.9 s, winners' p95 3.5 s against 26.6 s, 500 of 500 orders confirmed in both runs at about 18 per second. Within the task 03 ranges. The home page's figures stay.
+  - Surge 10k: 500 of 500 confirmed, none oversold, converged in 26.9 s.
+  - Idle stop: the core stopped by itself about ten minutes after the last run. The next wake started normally. The core's config carries `shared_preload_libraries=pg_prewarm` with autoprewarm and the `api-buy` container; the startup "prewarmed" line was out of reach of Fly's 100-line log buffer, and was verified on the proof environment with the same config.
+- **Cleanup.** The proof environment (`cs-proof-*`) is destroyed. `cs-test-runner` stays stopped in `playground-416` for future work (about $3/month for its volume). The branches `claude/redis-queue-comparisons`, `codex/redis-order-queue-feasibility`, `codex/redis_and_order_queue` and `tmp/21-baseline-prototype` are deleted, without a tag (owner).

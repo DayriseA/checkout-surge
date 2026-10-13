@@ -50,4 +50,4 @@ Choices waiting for the owner, added with the task, the options and a recommenda
 | 04 | [Redis comparison](04_redis_comparison.md), owner checkpoint B | 03 | done |
 | 05 | [Interface pass](05_interface_pass.md), owner checkpoint C | 04 | done |
 | 06 | [Narrative, site structure and decisions](06_narrative.md), owner checkpoints D1, D2 | 04 | done |
-| 07 | [Production rollout](07_production_rollout.md) | 06 | todo |
+| 07 | [Production rollout](07_production_rollout.md) | 06 | done |
