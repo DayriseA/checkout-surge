@@ -689,8 +689,11 @@ export function RunErpOutcomesPanel({
 }
 
 export function SystemStatusPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
-  const systemStatus = recoveryData(recovery)?.systemStatus ?? null;
-  const queue = systemStatus?.queue ?? null;
+  const data = recoveryData(recovery);
+  const queue = data?.systemStatus?.queue ?? null;
+  // This mode queues its orders in PostgreSQL, where BullMQ's counts would show none of them.
+  const postgresQueue = data?.currentRun?.comparison?.mode === "postgres";
+  const progress = data?.runtimeProgress ?? null;
 
   return (
     <section className={panelFullClassName}>
@@ -699,12 +702,25 @@ export function SystemStatusPanel({ recovery }: { recovery: BackendRead<Dashboar
           <p className={eyebrowClassName}>Shared demo runtime</p>
           <h2 className={panelTitleClassName}>Physical order queue</h2>
           <p className="m-0 mt-1 text-xs text-muted">
-            Live BullMQ counts for the one shared order queue; global technical context, not
-            evidence for the selected run.
+            {postgresQueue
+              ? "In this run the order queue is in PostgreSQL: each order not yet confirmed waits there, counted from the run's order records."
+              : "Live BullMQ counts for the one shared order queue; global technical context, not evidence for the selected run."}
           </p>
         </div>
       </div>
-      {queue ? (
+      {postgresQueue ? (
+        <dl className={factGridClassName}>
+          <Fact
+            label="Orders waiting or being confirmed"
+            value={formatNumber(progress?.outstandingOrders)}
+          />
+          <Fact
+            label="Oldest wait"
+            value={formatDurationSeconds(progress?.oldestOutstandingAgeSeconds)}
+          />
+          <Fact label="Last updated" value={formatExpectedTime(progress?.observedAt)} small />
+        </dl>
+      ) : queue ? (
         <>
           <h3 className="mb-3 mt-0 text-sm font-bold text-ink">Shared order-processing backlog</h3>
           <dl className={factGridClassName}>
