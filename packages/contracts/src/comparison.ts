@@ -47,12 +47,14 @@ export const synchronousConfirmationDeadlineMs = 45_000;
 /**
  * The work PostgreSQL and Redis did during a measured run's selling window (from the run's start
  * until every buyer is answered), from their own statistics: the whole database's transactions and
- * busy (statement execution) time, and the Redis process's CPU time.
+ * busy time (executing statements, lock waits included), the CPU time of PostgreSQL's container
+ * (null where PostgreSQL cannot read it), and the Redis process's CPU time.
  */
 export const storeLoadSchema = z
   .object({
     postgresTransactions: z.number().int().nonnegative(),
     postgresBusyMs: z.number().nonnegative(),
+    postgresCpuMs: z.number().nonnegative().nullable(),
     redisCpuMs: z.number().nonnegative(),
   })
   .strict();

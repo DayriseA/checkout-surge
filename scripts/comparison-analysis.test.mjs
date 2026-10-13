@@ -77,7 +77,12 @@ function redisRecord(pairId, comparisonMode, postgresTransactions) {
         soldOut: { sampleCount: 9_999, averageMs: 3, p95Ms: 8, maxMs: 40 },
       },
     },
-    storeLoad: { postgresTransactions, postgresBusyMs: postgresTransactions / 10, redisCpuMs: 500 },
+    storeLoad: {
+      postgresTransactions,
+      postgresBusyMs: postgresTransactions / 10,
+      postgresCpuMs: postgresTransactions / 2,
+      redisCpuMs: 500,
+    },
     business: { confirmedOrders: 1 },
     arrival: { dispatchDurationSeconds: 10 },
     signals: { convergenceDurationSeconds: 1, inventoryDrain: { timeToDepletionSeconds: 0.1 } },
@@ -103,4 +108,5 @@ test("reads a Redis comparison's database work per mode and per buyer", () => {
     ),
   );
   assert.ok(table.includes("| PostgreSQL transactions per buyer | 0.03 (0.02–0.04) | 1 (1–1) |"));
+  assert.ok(table.includes("| PostgreSQL CPU time (ms) | 150 (100–200) | 5150 (5100–5200) |"));
 });

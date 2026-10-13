@@ -39,6 +39,7 @@ export function redisRunMetrics(record) {
     "PostgreSQL busy time (ms)": storeLoad?.postgresBusyMs ?? null,
     "PostgreSQL transactions per buyer": perBuyer(storeLoad?.postgresTransactions),
     "PostgreSQL busy time per buyer (ms)": perBuyer(storeLoad?.postgresBusyMs),
+    "PostgreSQL CPU time (ms)": storeLoad?.postgresCpuMs ?? null,
     "Redis CPU time (ms)": storeLoad?.redisCpuMs ?? null,
     "Winners' average wait (ms)": accepted?.averageMs ?? null,
     "Winners' p95 wait (ms)": accepted?.p95Ms ?? null,

@@ -163,21 +163,39 @@ describe("run history service", () => {
       postgresTransactions: number,
       postgresBusyMs: number,
       redisCpuMs: number,
+      postgresCpuMs: number | null = null,
     ) => ({
       postgresTransactions,
       postgresBusyMs,
+      postgresCpuMs,
       redisCpuMs,
       capturedAt: "2026-06-20T00:00:00.000Z",
     });
     await db
       .update(demoRuns)
-      .set({ storeLoad: { start: counters(100, 50, 2000), end: counters(10_350, 3_050, 2_400) } })
+      .set({
+        storeLoad: {
+          start: counters(100, 50, 2000, 7_000),
+          end: counters(10_350, 3_050, 2_400, 19_500),
+        },
+      })
       .where(eq(demoRuns.id, ids.newerRun));
 
     expect((await service.detail(ids.newerRun))?.run.storeLoad).toEqual({
       postgresTransactions: 10_250,
       postgresBusyMs: 3_000,
+      postgresCpuMs: 12_500,
       redisCpuMs: 400,
+    });
+
+    // PostgreSQL's CPU time, unreadable at either end, is unknown; the other figures stand.
+    await db
+      .update(demoRuns)
+      .set({ storeLoad: { start: counters(100, 50, 2000), end: counters(10_350, 3_050, 2_400) } })
+      .where(eq(demoRuns.id, ids.newerRun));
+    expect((await service.detail(ids.newerRun))?.run.storeLoad).toMatchObject({
+      postgresTransactions: 10_250,
+      postgresCpuMs: null,
     });
     expect((await service.detail(ids.olderRun))?.run.storeLoad).toBeUndefined();
 
