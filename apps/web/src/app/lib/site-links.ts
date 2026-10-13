@@ -1,5 +1,4 @@
 import type { Comparison } from "@checkout-surge/contracts";
-import { publicNarrative } from "./presentation/public-vocabulary";
 
 /** Every route of the site that a page links to. */
 export const sitePages = {
@@ -69,9 +68,4 @@ export function presetCardId(slug: string): string {
 
 export function presetCardLink(slug: string): string {
   return `${sitePages.demo}#${presetCardId(slug)}`;
-}
-
-/** A file of the repository on GitHub, optionally at a heading's anchor. */
-export function repositoryFileLink(path: string, anchor?: string): string {
-  return `${publicNarrative.repositoryUrl}/blob/main/${path}${anchor ? `#${anchor}` : ""}`;
 }

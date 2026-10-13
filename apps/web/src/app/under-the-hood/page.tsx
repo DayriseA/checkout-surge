@@ -25,7 +25,7 @@ import {
   redisComparison,
 } from "../lib/presentation/measured-figures";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
-import { repositoryFileLink, siteAnchors, siteLink } from "../lib/site-links";
+import { siteAnchors, siteLink } from "../lib/site-links";
 
 export const metadata: Metadata = { title: "Under the hood" };
 export const dynamic = "force-dynamic";
@@ -297,12 +297,6 @@ export default function UnderTheHoodPage() {
             on the core&apos;s disk with no backup: a reinstall on new servers starts empty.
           </li>
         </ul>
-        <LinkRow
-          links={[
-            { href: repositoryFileLink("docs/hosted_runtime.md"), label: "Hosted runtime" },
-            { href: repositoryFileLink("docs/architecture.md"), label: "Architecture document" },
-          ]}
-        />
       </ContentSection>
 
       <PublicGlossary />

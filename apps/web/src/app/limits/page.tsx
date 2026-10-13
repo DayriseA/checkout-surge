@@ -14,13 +14,12 @@ import {
   queueComparison,
 } from "../lib/presentation/measured-figures";
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
-import { repositoryFileLink, siteAnchors, siteLink } from "../lib/site-links";
+import { siteAnchors, siteLink } from "../lib/site-links";
 
 export const metadata: Metadata = { title: "Limits and known defects" };
 export const dynamic = "force-dynamic";
 
 const anchors = siteAnchors.limits;
-const hostedDecisions = "docs/decisions/hosted_deployment.md";
 const lastWinnerSeconds = Math.round(queueComparison.everyBuyerAnswered.second[0]);
 const slowerDrainPercent = Math.round(
   (1 - postgresQueueDrain.postgres / postgresQueueDrain.bullmq) * 100,
@@ -230,50 +229,18 @@ export default function LimitsPage() {
       <ContentSection id={anchors.knownDefects} title="Known defects">
         <ul className={`${listClassName} list-disc`}>
           {knownDefects.map((defect) => (
-            <li key={defect.text}>
-              {defect.text}{" "}
-              <TextLink external href={defect.href}>
-                Details
-              </TextLink>
-            </li>
+            <li key={defect}>{defect}</li>
           ))}
         </ul>
-        <LinkRow
-          links={[
-            {
-              href: repositoryFileLink("docs/decisions/scope_and_caveats.md"),
-              label: "Scope and caveats",
-            },
-            { href: repositoryFileLink("docs/decisions/README.md"), label: "Decision logs" },
-          ]}
-        />
       </ContentSection>
     </ContentPage>
   );
 }
 
 const knownDefects = [
-  {
-    text: `The PostgreSQL order queue confirms orders about ${slowerDrainPercent} % slower than BullMQ (${postgresQueueDrain.postgres} against ${postgresQueueDrain.bullmq} per second), after the measured window: the Redis comparison's second run takes a little longer to finish.`,
-    href: repositoryFileLink("docs/architecture.md", "comparison-runs"),
-  },
-  {
-    text: "A run started at the very moment the demo goes to sleep is interrupted, then settled at the next wake.",
-    href: repositoryFileLink(hostedDecisions, "hd-21-accepted-risk-idle-stop-races-a-run-start"),
-  },
-  {
-    text: "Right after “stay awake”, the countdown can show the old deadline for a few seconds.",
-    href: repositoryFileLink(
-      hostedDecisions,
-      "hd-23-accepted-risk-stale-countdown-after-stay-awake",
-    ),
-  },
-  {
-    text: "Run history and admin edits are lost when the demo is reinstalled on new servers.",
-    href: repositoryFileLink(hostedDecisions, "hd-05-core-data-is-disposable-with-no-restore-path"),
-  },
-  {
-    text: "The custom-run form's field messages follow the browser's language, while the rest of the site is in English.",
-    href: repositoryFileLink("docs/decisions/scope_and_caveats.md", "deferred-decisions"),
-  },
+  `The PostgreSQL order queue confirms orders about ${slowerDrainPercent} % slower than BullMQ (${postgresQueueDrain.postgres} against ${postgresQueueDrain.bullmq} per second), after the measured window: the Redis comparison's second run takes a little longer to finish.`,
+  "A run started at the very moment the demo goes to sleep is interrupted, then settled at the next wake.",
+  "Right after “stay awake”, the countdown can show the old deadline for a few seconds.",
+  "Run history and admin edits are lost when the demo is reinstalled on new servers.",
+  "The custom-run form's field messages follow the browser's language, while the rest of the site is in English.",
 ] as const;

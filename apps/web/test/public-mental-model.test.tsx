@@ -69,6 +69,15 @@ describe("public site", () => {
     }
   });
 
+  it("links the repository only at its root, never to a document inside it", async () => {
+    const sources = [...Object.values(contentPages), await renderLayout()];
+    for (const markup of sources) {
+      for (const [, href] of markup.matchAll(/href="(https:\/\/github\.com[^"]*)"/g)) {
+        expect(href).toBe(publicNarrative.repositoryUrl);
+      }
+    }
+  });
+
   it("introduces the project, quotes both comparisons with their method, and leads to the demo", () => {
     const home = contentPages[sitePages.home] ?? "";
     const hero = home.slice(0, home.indexOf('id="in-one-picture"'));
