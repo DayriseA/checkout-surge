@@ -2,9 +2,11 @@ import cluster from "node:cluster";
 import { randomBytes } from "node:crypto";
 import {
   BusinessOutcomePublicationScheduler,
+  type CheckoutSurgeRedis,
   createDatabaseConnection,
   createRedisClient,
   publishDashboardProjectionDirtySignal,
+  type SqlClient,
 } from "@checkout-surge/db";
 import { createServiceLogger } from "@checkout-surge/logger";
 import { createBullMqOrderProcessJobPublisher } from "./queue/bullmq-order-process-job-publisher.js";
@@ -105,7 +107,24 @@ export async function startBuyServer(): Promise<void> {
   process.once("SIGTERM", () => void close().finally(() => process.exit(0)));
   process.once("SIGINT", () => void close().finally(() => process.exit(0)));
 
+  await openConnections({ sql: connection.sql, redis, poolSize: config.postgresPoolMax });
   await server.listen({ host: config.host, port: config.port, backlog: config.listenBacklog });
+}
+
+/**
+ * Opens every pooled PostgreSQL connection and the Redis connection before serving: lazily, the
+ * first spike after a wake would pay for them, each with its authentication, mid-run.
+ */
+export async function openConnections(input: {
+  sql: SqlClient;
+  redis: CheckoutSurgeRedis;
+  poolSize: number;
+}): Promise<void> {
+  // Concurrent queries on an idle pool each open a connection, up to the pool's size.
+  await Promise.all([
+    ...Array.from({ length: input.poolSize }, () => input.sql`select 1`),
+    input.redis.ping(),
+  ]);
 }
 
 function startPrimary(): void {
