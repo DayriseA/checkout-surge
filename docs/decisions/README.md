@@ -14,6 +14,7 @@ Domain documents in `docs/` keep explaining how things work, and their existing 
 | Log | Prefix | Covers |
 | :-- | :-- | :-- |
 | [Hosted deployment](hosted_deployment.md) | `HD` | Platform and sizing, gate, core idle stop, core recovery, runner lifecycle, guard, deployment and CI, and hosted-triggered run-evidence rules |
+| [Live comparisons](live_comparisons.md) | `LC` | The comparison presets: their modes, fairness rules, comparison-only conditions and what they claim |
 
 ## What Does Not Belong Here, and Where It Goes
 

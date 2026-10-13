@@ -1,12 +1,25 @@
 # Checkout-Surge
 
-Checkout-Surge is a limited-inventory checkout simulation of the purchase system behind a virtual waiting room: its surge traffic is what the waiting room lets through. The implemented Node.js track uses Redis atomic reservations, BullMQ workers, durable PostgreSQL records, and observable backpressure to show how a checkout system can take a request burst without overselling: Redis keeps turned-away buyers off the database, and the order queue absorbs the burst of orders, so buyers do not wait on a slow downstream business system and that system is not overwhelmed. The same pressure pattern appears in ticket launches, product drops, presales, and other scarcity-driven purchase flows. The mock ERP gives the downstream dependency a concrete back-office shape, but the boundary applies equally to payment, risk, warehouse, fulfillment, tax, accounting, supplier APIs, or other fragile business systems.
+Checkout-Surge is a live, load-tested demo of the system behind a flash sale: 10,000 simulated buyers rush for 500 units, nobody gets a unit that does not exist, and a deliberately slow back office is never flooded. Visitors start a sale on the [hosted demo](https://checkout-surge-gate.fly.dev) and watch it live.
+
+It uses design choices that are standard for this kind of sale:
+
+- **Stock decided in memory.** Redis decides each attempt in one atomic step, so no unit is sold twice, and buyers turned away are answered without touching PostgreSQL.
+- **"Yes" now, confirm later.** A buyer who secures a unit is answered once the order is saved; a BullMQ queue and a paced worker then have the back office confirm it at its own pace.
+- **Safe retries.** Idempotency keys make a double click, a timeout or a retry harmless, from the buy request to the back-office call.
+
+Two comparison presets run the same workload twice with one choice switched, measured live on the same Machines:
+
+- **Queue comparison.** With the order queue, every buyer of a 5,000-buyer spike had an answer within about 5 s; with each winner waiting for the back office, within about 27 s. The back office's pace was the same: the queue moves the wait, it does not remove it.
+- **Redis comparison.** With the stock decided in PostgreSQL instead, the database ran about 2.6 times the transactions and spent about 5 times as long in queries for the same 500 units sold. Winners were not faster with Redis: at this scale, the database is not the bottleneck.
+
+These are medians of a few measured pairs on one environment, not a benchmark. The hosted site's pages How it works, Limits and known defects, and Under the hood explain the practices, the comparisons and what they cannot show ([live comparisons decision log](docs/decisions/live_comparisons.md)). The same pressure appears in ticket launches, product drops and presales, and the mock ERP stands for any fragile back-office system: payment, risk, warehouse, fulfillment, tax or accounting.
 
 The Node.js system runs locally on its containerized reference runtime and as a hosted demo on Fly.io ([hosted runtime](docs/hosted_runtime.md)). The implemented path includes the inventory hot path, durable asynchronous handoffs and recovery scanners, run-scoped worker admission and downstream-protection policy, API-owned conservative duration admission with automatic run reset, realtime dashboard recovery with bounded public reads, durable k6 execution and completion delivery, simulated notifications, API-owned run finalization, immutable public aggregate and protected admin aggregate Run History reads, public runtime policy management, protected admin controls, demo reset/cleanup tools, admin preset management, and the Compose runtime. Neither is evidence of production readiness, a reproducible benchmark, horizontal scaling, or operational hardening. The optional Go comparison track remains future work.
 
 The buyers, mock ERP downstream dependency, and post-confirmation notifications are simulated because this is a systems demonstration, not a commerce business. The local runtime and verification paths are designed to make inventory consistency, API responsiveness, downstream pressure, and delayed processing observable; benchmark claims require separate reproducible evidence from the environment in which they are measured.
 
-The supported local topology is single-instance: one API process is also the sole maintenance authority, one Next.js process serves the web application, one load-orchestrator process owns one journal, and one worker runtime owns background processing. These remain separate containers. The single Caddy dashboard proxy/edge is only the ingress and routing boundary; it is not another web application process or application authority. Horizontally scaled application services are outside the accepted product and verification contract.
+The supported local topology is single-instance: one API process is also the sole maintenance authority (on the hosted demo, the Redis comparison's runs alone are answered by a pool of buy-only processes beside it), one Next.js process serves the web application, one load-orchestrator process owns one journal, and one worker runtime owns background processing. These remain separate containers. The single Caddy dashboard proxy/edge is only the ingress and routing boundary; it is not another web application process or application authority. Horizontally scaled application services are outside the accepted product and verification contract.
 
 ## Behind a Waiting Room
 
@@ -80,6 +93,7 @@ For the deeper design rationale and failure modes, see [docs/architecture.md](do
 - Simulated post-confirmation notification recording
 - Signed anonymous public budget principals and non-burning public run-budget reservations
 - Public demonstration presets plus rate-limited, CSRF-protected admin preset, runtime policy, reset, recovery, and cleanup controls
+- Two comparison presets, each running one workload twice with one choice switched (the order queue; the Redis layer), with a side-by-side report on Watch and in run history
 
 ## Prerequisites
 
