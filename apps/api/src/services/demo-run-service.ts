@@ -699,7 +699,7 @@ export class DemoRunLifecycleService implements DemoRunLifecycleController {
 
   /**
    * Before a Redis comparison run's traffic, records PostgreSQL's and Redis's own counters; its
-   * finalization records them again. Advisory: without them, the run's store load reads unknown.
+   * traffic completion records them again. Advisory: without them, the run's store load reads unknown.
    */
   private async captureStoreLoadStart(run: DemoRunSnapshot): Promise<void> {
     if (!run.comparison || comparisonOfMode(run.comparison.mode) !== "redis") return;

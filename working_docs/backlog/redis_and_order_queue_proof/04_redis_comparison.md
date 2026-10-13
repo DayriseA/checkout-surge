@@ -432,7 +432,7 @@ Supervisor decisions after the stop above: fix the dispatch scanner first, build
 **Dispatch scanner: a defect, fixed** (`5888c5da`).
 - **What it did:** every scan (1 s) published again every queued order older than 1 s. Each publication ran its own fenced round on a reserved connection (lock, run check, unlock: 3 statements). BullMQ ignores a job ID it already holds, so the work bought nothing.
 - **No decision requires it.** `docs/decisions/` has no entry on the scanner. `docs/architecture.md` asks it only to reassert orders whose immediate enqueue was lost.
-- **Fix:** one existence check per scan (`HEXISTS` on each candidate's job hash, sent together), then the usual fenced publication only for the orders whose job is missing. The repair guarantee is unchanged: a lost job, or a failed job removed for redelivery, has no hash and is published again.
+- **Fix:** one existence check per scan (`HEXISTS` on each candidate's job hash, sent together), then the usual fenced publication only for the orders whose job is missing. The repair guarantee is unchanged: BullMQ ignores a job ID whose hash exists, so the old re-publication created a job exactly when the hash was missing, as the new check does. (A failed order goes through `order_recovery_jobs`, which the dispatch query excludes.)
 - **Cost on one ordinary `surge-5k` run** (Redis path), transactions from start to teardown:
 
   | | Transactions | Scans with candidates | Orders published again |

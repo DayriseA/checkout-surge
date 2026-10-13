@@ -134,8 +134,10 @@ describe("PostgreSQL stock decision", () => {
 
   it("starts each winner's transaction on a connection of its own while reads fill the pipelines", async () => {
     // postgres.js reserves a pooled connection for `sql.begin` only when its pipeline has room;
-    // a one-query pipeline makes a full pipeline certain under concurrent buyers.
-    const busy = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2, max_pipeline: 1 });
+    // a one-query pipeline makes a full pipeline certain under concurrent buyers. (postgres.js
+    // reads `max_pipeline` but does not declare it in its types.)
+    const pool = { max: 2, max_pipeline: 1 };
+    const busy = createDatabaseConnection(requireTestDatabaseUrl(), pool);
     try {
       const busyStock = new PostgresStockPersistence(busy.sql, new PostgresBuyPersistence(busy.db));
       const results = await Promise.all(
