@@ -353,12 +353,11 @@ Rewritten on 2026-10-13 after the owner rejected stock 1. The stock-1 measuremen
 
   It also discloses the shared Machine and the two buy-only processes.
 
-  **The takeaway is stated only when every condition holds:**
-  - both runs completed;
-  - they sold the same units;
-  - every buyer got an expected answer;
-  - the load figures are known;
-  - the measured directions hold: more transactions and CPU, and longer turned-away waits, without Redis, with winners not slower.
+  **The takeaway states only what each pair shows** (supervisor decision after the measurement, `882bb1c4`).
+  - **Gate:** both runs completed, they sold the same units, every buyer got an expected answer, and the transactions and query time are known.
+  - **Headline:** the transactions and the time PostgreSQL spent in queries, stock-row waits included. Both held in every measured pair.
+  - **Conditional statements:** PostgreSQL's CPU time, and the turned-away buyers' longer wait, appear only when the pair shows them.
+  - **Never claimed:** the winners' waits and "every buyer answered" stay numbers in the rows.
 
 **The exploration that led to the preset.** 2 processes, selling window; ranges across pairs; waits are averages; Redis vs PostgreSQL. Details are in the sections below.
 
@@ -382,13 +381,14 @@ Rewritten on 2026-10-13 after the owner rejected stock 1. The stock-1 measuremen
 | Every buyer answered within | 7.4 s (6.4–7.8) | 9.8 s (6.1–10.9) | 1.3 (0.84–1.6) | mixed |
 | Whole-run transactions (context) | 12,612 (12,488–12,739) | 23,484 (22,369–24,247) | 1.9 | all higher |
 
-- **The ERP pace** was 17.7 orders per second with Redis, against 15.5 for the PostgreSQL queue. It is about 12 % slower, which affects only the whole run.
+- **A known minor difference against the PostgreSQL mode:** its queue drains orders about 12 % slower, at 15.5 orders per second against 17.7 with BullMQ. It affects only the whole run, not the selling window, and the panel does not show it. The cause was not chased.
 - **The mixed pair is pair 2.**
   - Its PostgreSQL run answered every buyer in 6.1 s, the fastest of all.
   - Over that shorter window, PostgreSQL's CPU came to 0.93 times the Redis run's: the order work, about 1.1–1.3 cores in both modes, dominates it.
   - Its winners waited 2.5 s against 1.9 s.
-- **The panel's takeaway shows for 3 of the 4 pairs** (pair 2 shows the numbers alone). For pair 4, it reads:
-  > Same 10,000 buyers, and the same 500 units sold in both runs. Without Redis, until every buyer was answered, PostgreSQL ran about 2.7 times the transactions and used about 1.5 times the CPU time. The turned-away buyers waited longer, 6.5 s on average against 5 s, while the winners were not slower, 2 s against 2.4 s: with Redis, a winner goes through two stores and the queue.
+- **The takeaway appears for all 4 pairs.** For pair 2, it leaves out the CPU sentence.
+- **End-to-end pair from the public UI** (`882bb1c4`; runs `66c624ae` and `81f50469`). The panel reads:
+  > Same 10,000 buyers, and the same 500 units sold in both runs. Without Redis, until every buyer was answered, PostgreSQL ran about 2.3 times the transactions (11,352 against 4,945) and spent about 3.8 times as long in queries, waits for the stock row included (30 s against 7.9 s). Its CPU time was about 1.6 times as much (19.2 s against 12.1 s). The turned-away buyers waited longer, 8.4 s on average against 6.6 s.
 
 **The scanner fix and ordinary runs.**
 - **Every run of the demo now publishes again only the queued orders whose job is missing.** The independent review confirmed that the repair guarantee is the same.
@@ -405,22 +405,14 @@ Rewritten on 2026-10-13 after the owner rejected stock 1. The stock-1 measuremen
 - **Fix** (`d64a9655`): the winner's transaction now runs on a reserved connection, like the Redis mode's.
 - **After the fix:** 0 errors in 8 runs, 3 confirmation pairs plus the measurement.
 
-**Sizes.**
-- **Measured:** about 1,677 net production and 1,115 test lines for task 04.
-- **Accepted earlier:** 1,263 and 841, then the pool (about 270) and the scanner fix.
-- **The rest** comes from the panel rework, the CPU capture, the transaction fix and the review fixes.
+**Sizes:** about 1,677 net production and 1,115 test lines for task 04, accepted by the supervisor.
 
 **Decision asked.** Validate the comparison live by starting "Redis comparison" on `https://cs-proof-gate.fly.dev/demo`.
 
-**Recommendation:** validate it, with two adjustments to the takeaway gate:
-- **Headline the transactions,** which held in every pair at 2.5–2.7 times, rather than the CPU.
-  - Keep the CPU row, and state CPU in the takeaway only when it is higher. Its direction did not hold in 1 of 4 pairs, because the shared order work dominates a short window.
-- **Drop "winners were not slower" from the gate.** It did not hold in 1 of 4 measured pairs, nor in 2 of 9 earlier pairs. State the winners' waits as numbers only.
-- **As built,** the takeaway would be hidden on about one comparison in four.
+**Recommendation:** validate it as measured. The takeaway gate already follows the supervisor's per-pair decision.
 
 **Open points.**
-- The ERP pace of the PostgreSQL queue is about 12 % lower (whole run only).
-- **Redis-mode duplicate inserts:** a few `reservations_pkey` duplicates appear in PostgreSQL's log during Redis-mode spikes. They take the existing recoverable-conflict path (`isRecoverableReservationConflict`) and change no answer. This is pre-existing and was not investigated.
+- **Redis-mode duplicate inserts:** benign, and pre-existing in `dev`. Details are in the section "Duplicate reservation inserts" below.
 - **Fairness points for task 06:**
   - the prepared hot statement;
   - the reserved connection per winner in both modes;
@@ -630,3 +622,32 @@ Supervisor decisions after the exploration:
 **Full measurement:** 5 starts at `af7b77cb`, the first pair dropped. Results are in the checkpoint B summary above.
 - Per measured pair (2–5), transactions ratio 2.5 / 2.5 / 2.7 / 2.6; CPU ratio 0.93 / 2.0 / 1.5 / 1.9; turned-away average-wait ratio 1.1 / 1.8 / 1.3 / 1.9.
 - **While buyers were answered,** the five measured containers averaged 4.7–5.1 vCPUs of the core's 6 in every run.
+
+### Duplicate reservation inserts during Redis-mode spikes (2026-10-13, bounded investigation)
+
+**What PostgreSQL logs.** During Redis-mode spikes, 0 to 3 `duplicate key value violates unique constraint "reservations_pkey"` errors appear per run (6 over the 5 measurement starts).
+
+**Cause: a race the recovery design allows, present in `dev`.**
+- **Every hold is due for recovery at once.** The Redis reservation script writes each hold's pending-persistence record with `nextRecoveryAt = securedAt` and the same due score (`redis-stock-reservation.ts`, from `060b4845` in `dev` and `main`).
+- **So the control process's `PendingPersistenceRecoveryService` overlaps normal persistence.** On its next poll, it takes up to a page (100) of holds whose normal persistence has not yet promoted them, and "verifies or materializes" each one.
+- **A duplicate appears when both sides insert the same reservation.** Recovery inserts first for a hold whose API insert is still in flight (`materialized` 1–6 in some passes). The API's insert then fails on the primary key.
+
+**Not specific to the pool.**
+- **An ordinary `surge-10k` run on the single control process** (proof environment, `882bb1c4`) also had a recovery pass take 99 in-flight holds (`discovered 99, resolved 99, materialized 0`).
+- **That run had no duplicate,** because every row already existed when recovery checked.
+- **With the pool, the control process is idle during the spike,** so its pass comes earlier and catches a few inserts still in flight.
+
+**Benign.**
+- **The losing insert takes the existing recoverable-conflict path** (`isRecoverableReservationConflict` on `reservations_pkey`). It reads the persisted reservation and order back, checks that they match the hold, and answers with them.
+- **Nothing is lost or duplicated:**
+  - the primary key prevents a second row;
+  - the order job is deduplicated by its ID;
+  - the idempotency promotion is idempotent;
+  - every measured run had 500 secured, 500 confirmed and 0 unexpected answers.
+- **The audit rows recovery writes end resolved,** and the business outcome counts only pending or exhausted ones.
+
+**Cost.**
+- **About 100 recovery attempts per spike,** each several statements (audit, lock, read, job reassertion, resolution). Ordinary runs pay it too.
+- **In the comparison,** this work falls in the Redis mode's window, so it understates the difference.
+
+**Left as is, for the supervisor to raise with the owner.** A grace before a hold becomes due would avoid it, but that is a `dev` design choice, unrelated to this task.
