@@ -140,7 +140,7 @@ export function createBuyPath(deps: {
       waiter: confirmationWaiter,
     }),
     postgresStockBuyService: new PostgresStockBuyService({
-      stock: new PostgresStockPersistence(deps.db, deps.sql, deps.persistence),
+      stock: new PostgresStockPersistence(deps.sql, deps.persistence),
       counts: inventoryCounts,
       reservationHoldMinutes: config.reservationHoldMinutes,
       dashboardSourceDirtyScheduler: deps.dashboardSourceDirtyScheduler,

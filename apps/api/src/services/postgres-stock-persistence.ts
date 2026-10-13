@@ -1,6 +1,6 @@
 import type { SecuredReservationHold } from "@checkout-surge/contracts";
 import {
-  type CheckoutSurgeDatabase,
+  createDatabase,
   demoRuns,
   postgresOrderQueue,
   postgresOrderQueueChannel,
@@ -8,7 +8,10 @@ import {
   type SqlClient,
 } from "@checkout-surge/db";
 import { and, eq, gte, sql } from "drizzle-orm";
-import { insertSecuredReservationRows } from "./postgres-buy-persistence.js";
+import {
+  insertSecuredReservationRows,
+  type PostgresTransaction,
+} from "./postgres-buy-persistence.js";
 import type { BuyPersistenceOperations, PersistedBuyAcceptance } from "./reserve-order-service.js";
 import { terminalDemoRunTransitionLockKey } from "./terminal-demo-run-transition.js";
 
@@ -44,7 +47,6 @@ interface DecisionRow {
  */
 export class PostgresStockPersistence {
   constructor(
-    private readonly db: CheckoutSurgeDatabase,
     private readonly sql: SqlClient,
     private readonly persistedBuys: Pick<
       BuyPersistenceOperations,
@@ -98,46 +100,69 @@ export class PostgresStockPersistence {
     return this.reserveUnits(hold, idempotencyKey);
   }
 
+  /**
+   * The winner's transaction runs on a reserved connection, as the Redis mode's persistence does:
+   * postgres.js reserves a pooled connection for `sql.begin` only when its pipeline has room, and
+   * the decision reads fill the pipelines, so a transaction could start unreserved and fail.
+   */
   private async reserveUnits(
     hold: SecuredReservationHold,
     idempotencyKey: string,
   ): Promise<PostgresStockOutcome> {
+    const client = await this.sql.reserve();
+    // Drizzle reads the parser and serializer maps from the pool's options (see PostgresBuyPersistence).
+    Object.defineProperty(client, "options", { value: this.sql.options });
+    const tx = createDatabase(client as SqlClient) as unknown as PostgresTransaction;
     try {
-      return await this.db.transaction(async (tx) => {
-        // Shared with every other buyer, exclusive with the run's terminal transition.
-        await tx.execute(
-          sql`select pg_advisory_xact_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(hold.runId)}))`,
-        );
-        const [run] = await tx
-          .select({ status: demoRuns.status })
-          .from(demoRuns)
-          .where(eq(demoRuns.id, hold.runId));
-        if (!run || !acceptingRunStatuses.has(run.status)) {
-          return { outcome: "run_not_accepting_traffic" } as const;
-        }
-        const persisted = await insertSecuredReservationRows(tx, hold, idempotencyKey);
-        await tx.insert(postgresOrderQueue).values({ orderId: persisted.order.id });
-        // Delivered at commit, like the rest of the transaction.
-        await tx.execute(sql`select pg_notify(${postgresOrderQueueChannel}, '')`);
-        // The stock row is locked last: the next buyer waits for it only until this commit.
-        const decremented = await tx
-          .update(postgresRunStock)
-          .set({ remainingStock: sql`${postgresRunStock.remainingStock} - ${hold.quantity}` })
-          .where(
-            and(
-              eq(postgresRunStock.runId, hold.runId),
-              gte(postgresRunStock.remainingStock, hold.quantity),
-            ),
-          )
-          .returning({ runId: postgresRunStock.runId });
-        if (decremented.length === 0) throw new StockTakenError();
-        return { outcome: "reservation_secured", persisted, fresh: true } as const;
-      });
-    } catch (error) {
-      // Another buyer took the last units first; this transaction rolled back whole.
-      if (error instanceof StockTakenError) return { outcome: "sold_out" };
-      throw error;
+      await client`begin`;
+      try {
+        const outcome = await this.reserveUnitsIn(tx, hold, idempotencyKey);
+        await client`commit`;
+        return outcome;
+      } catch (error) {
+        await client`rollback`;
+        // Another buyer took the last units first; this transaction rolled back whole.
+        if (error instanceof StockTakenError) return { outcome: "sold_out" };
+        throw error;
+      }
+    } finally {
+      client.release();
     }
+  }
+
+  private async reserveUnitsIn(
+    tx: PostgresTransaction,
+    hold: SecuredReservationHold,
+    idempotencyKey: string,
+  ): Promise<PostgresStockOutcome> {
+    // Shared with every other buyer, exclusive with the run's terminal transition.
+    await tx.execute(
+      sql`select pg_advisory_xact_lock_shared(hashtext(${terminalDemoRunTransitionLockKey(hold.runId)}))`,
+    );
+    const [run] = await tx
+      .select({ status: demoRuns.status })
+      .from(demoRuns)
+      .where(eq(demoRuns.id, hold.runId));
+    if (!run || !acceptingRunStatuses.has(run.status)) {
+      return { outcome: "run_not_accepting_traffic" };
+    }
+    const persisted = await insertSecuredReservationRows(tx, hold, idempotencyKey);
+    await tx.insert(postgresOrderQueue).values({ orderId: persisted.order.id });
+    // Delivered at commit, like the rest of the transaction.
+    await tx.execute(sql`select pg_notify(${postgresOrderQueueChannel}, '')`);
+    // The stock row is locked last: the next buyer waits for it only until this commit.
+    const decremented = await tx
+      .update(postgresRunStock)
+      .set({ remainingStock: sql`${postgresRunStock.remainingStock} - ${hold.quantity}` })
+      .where(
+        and(
+          eq(postgresRunStock.runId, hold.runId),
+          gte(postgresRunStock.remainingStock, hold.quantity),
+        ),
+      )
+      .returning({ runId: postgresRunStock.runId });
+    if (decremented.length === 0) throw new StockTakenError();
+    return { outcome: "reservation_secured", persisted, fresh: true };
   }
 }
 

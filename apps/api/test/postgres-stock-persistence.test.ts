@@ -54,7 +54,7 @@ describe("PostgreSQL stock decision", () => {
     await resetTestDatabase();
     connection = createDatabaseConnection(requireTestDatabaseUrl(), { max: 10 });
     db = connection.db;
-    stock = new PostgresStockPersistence(db, connection.sql, new PostgresBuyPersistence(db));
+    stock = new PostgresStockPersistence(connection.sql, new PostgresBuyPersistence(db));
     await seedRun(5);
   });
 
@@ -130,6 +130,26 @@ describe("PostgreSQL stock decision", () => {
     expect(await db.select().from(postgresOrderQueue)).toHaveLength(5);
     const [row] = await db.select().from(postgresRunStock);
     expect(row).toMatchObject({ remainingStock: 0 });
+  });
+
+  it("starts each winner's transaction on a connection of its own while reads fill the pipelines", async () => {
+    // postgres.js reserves a pooled connection for `sql.begin` only when its pipeline has room;
+    // a one-query pipeline makes a full pipeline certain under concurrent buyers.
+    const busy = createDatabaseConnection(requireTestDatabaseUrl(), { max: 2, max_pipeline: 1 });
+    try {
+      const busyStock = new PostgresStockPersistence(busy.sql, new PostgresBuyPersistence(busy.db));
+      const results = await Promise.all(
+        Array.from({ length: 40 }, (_, index) =>
+          busyStock.reserve({ hold: hold(), idempotencyKey: `buyer-${index}` }),
+        ),
+      );
+
+      const outcomes = results.map((result) => result.outcome);
+      expect(outcomes.filter((outcome) => outcome === "reservation_secured")).toHaveLength(5);
+      expect(outcomes.filter((outcome) => outcome === "sold_out")).toHaveLength(35);
+    } finally {
+      await busy.close();
+    }
   });
 
   it("answers sold-out buyers without waiting on the stock row and without writing", async () => {
