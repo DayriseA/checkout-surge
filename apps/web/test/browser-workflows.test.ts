@@ -2792,7 +2792,7 @@ describe("watch composition", () => {
     );
   });
 
-  it("opens a comparison's side-by-side tab when run 2 reaches its result, unless the visitor chose a tab", async () => {
+  it("opens a comparison's side-by-side tab when run 2 reaches its result, whatever tab was open", async () => {
     const comparison = {
       mode: "synchronous_confirmation" as const,
       firstRunId: "66666666-6666-4666-8666-666666666661",
@@ -2807,40 +2807,31 @@ describe("watch composition", () => {
       vi.fn(() => Promise.resolve(resourceNotFoundResponse(sharedRunId))),
     );
     vi.stubGlobal("EventSource", FakeEventSource);
-    const watchSecondRunEnd = async (choose?: string) => {
-      render(
-        createElement(OperatorDashboard, {
-          initialRecovery: available(
-            dashboardRecoveryFixture({
-              currentRun: demoRunFixture({ status: "active", runId: sharedRunId, comparison }),
-            }),
-          ),
-        }),
-      );
-      expect(screen.getByRole("button", { name: /^Comparison/ })).toBeTruthy();
-      if (choose) fireEvent.click(screen.getByRole("button", { name: new RegExp(`^${choose}`) }));
-      await act(async () =>
-        FakeEventSource.instances
-          .at(-1)
-          ?.emit(
-            "message",
-            new MessageEvent("message", { data: JSON.stringify(completedSecondRun) }),
-          ),
-      );
-    };
-
-    await watchSecondRunEnd();
-    expect(screen.getByRole("button", { name: /^Comparison/ }).getAttribute("aria-pressed")).toBe(
-      "true",
+    const pressed = (tab: string) =>
+      screen.getByRole("button", { name: new RegExp(`^${tab}`) }).getAttribute("aria-pressed");
+    render(
+      createElement(OperatorDashboard, {
+        initialRecovery: available(
+          dashboardRecoveryFixture({
+            currentRun: demoRunFixture({ status: "active", runId: sharedRunId, comparison }),
+          }),
+        ),
+      }),
     );
+    fireEvent.click(screen.getByRole("button", { name: /^Pipeline/ }));
+    expect(pressed("Comparison")).toBe("false");
 
-    cleanup();
-    await watchSecondRunEnd("Pipeline");
-    // The board ends with the run, so the visitor's live choice falls back to the overview.
-    expect(screen.getByRole("button", { name: /^Overview/ }).getAttribute("aria-pressed")).toBe(
-      "true",
+    await act(async () =>
+      FakeEventSource.instances[0]?.emit(
+        "message",
+        new MessageEvent("message", { data: JSON.stringify(completedSecondRun) }),
+      ),
     );
-    expect(screen.queryByRole("button", { name: /^Pipeline/ })).toBeNull();
+    expect(pressed("Comparison")).toBe("true");
+
+    // The visitor can still go back to the overview.
+    fireEvent.click(screen.getByRole("button", { name: /^Overview/ }));
+    expect(pressed("Overview")).toBe("true");
   });
 
   it("keeps the stream, samples, and report retries intact across repeated details toggles", async () => {

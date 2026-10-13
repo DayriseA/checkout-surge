@@ -378,9 +378,9 @@ const runViews: Array<{ description: string; label: string; view: RunView }> = [
  * signal strip, caveat and actions. While a run is live the card also carries the live pipeline
  * board; on a screen too short or narrow for both, a toggle shows the overview or the board.
  * A comparison run adds a third view, its two runs side by side, and its views are tabs on every
- * screen. The comparison opens by itself when run 2 reaches its result, unless the visitor chose a
- * view during run 2. Every view stays mounted so hiding one keeps its state. Technical proof and
- * panels render outside this card.
+ * screen. The comparison opens by itself when run 2 reaches its result, whatever view was open.
+ * Every view stays mounted so hiding one keeps its state. Technical proof and panels render
+ * outside this card.
  */
 function RunCard({
   accepted,
@@ -425,15 +425,13 @@ function RunCard({
   };
   const reportState = terminal ? terminalReportState(accepted, composition.run.runId) : null;
   const stripCharts = deriveGoldSignalCharts(goldSignalInput(composition));
-  const { runId } = composition.run;
   const comparison = liveRunComparison(composition.run);
   const comparisonMode = composition.run.comparison?.mode;
   const pairEnded =
     terminal && comparisonMode !== undefined && !isFirstComparisonMode(comparisonMode);
-  const [choice, setChoice] = useState<{ runId: string; view: RunView } | null>(null);
-  // Run 2's result hands over to the comparison, unless the visitor chose a view during run 2.
-  const chosenView =
-    pairEnded && choice?.runId !== runId ? "comparison" : (choice?.view ?? "overview");
+  const [chosenView, setChosenView] = useState<RunView>(pairEnded ? "comparison" : "overview");
+  // Run 2's result opens the comparison; the next run starts again on the overview.
+  useEffect(() => setChosenView(pairEnded ? "comparison" : "overview"), [pairEnded]);
   // A view this run does not offer falls back to the overview.
   const view =
     (chosenView === "comparison" && !comparison) || (chosenView === "pipeline" && terminal)
@@ -441,9 +439,8 @@ function RunCard({
       : chosenView;
   const hiddenUnless = (shown: boolean) =>
     shown ? undefined : comparison ? "hidden" : "compact-watch:hidden";
-  const chooseView = (next: RunView) => setChoice({ runId, view: next });
   const revealLiveSignal = (targetId: string) => {
-    chooseView("pipeline");
+    setChosenView("pipeline");
     focusSection(targetId, "nearest");
   };
   return (
@@ -476,7 +473,7 @@ function RunCard({
       {comparison || !terminal ? (
         <RunViewTabs
           everyScreen={comparison !== null}
-          onChange={chooseView}
+          onChange={setChosenView}
           value={view}
           views={runViews.filter(
             (option) =>
