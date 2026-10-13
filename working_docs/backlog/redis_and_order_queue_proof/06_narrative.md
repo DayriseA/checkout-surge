@@ -35,6 +35,16 @@ A visitor understands quickly what the project is and what it shows, and a curio
 
 ## Working Notes
 
+### Owner decisions at checkpoint D1 (2026-10-13)
+
+The owner approved the proposal below as broadly aligned, and will review the implemented pages at checkpoint D2 rather than the written outline. Answers to its open questions:
+1. Navigation: drop "Overview" (the logo is the home link); move "Admin" to the footer.
+2. Home figures: static medians from the proof measurements, labelled with the method, refreshed after the production deploy (task 07).
+3. Industry examples stay generic: no vendors or well-known sales.
+4. No author line: visitors arrive from the owner's portfolio, not the other way round.
+5. Yes to one sentence about the project on the gate's "The demo is asleep" page.
+6. Titles "How it works" and "Under the hood" approved.
+
 ### Proposal for checkpoint D1 (2026-10-13)
 
 **Decision asked.** Approve the page structure, the content outlines and the visuals below, or ask for changes, before any implementation. **Recommendation:** approve as proposed. Each open question in section 8 has a default.
