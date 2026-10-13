@@ -1015,7 +1015,7 @@ describe("run history", () => {
       renderToStaticMarkup(
         await RunHistoryDetailPage({ params: Promise.resolve({ runId: firstId }) }),
       );
-    const takeaway = "the winners were not slower";
+    const headline = "PostgreSQL ran about 3.0 times the transactions";
 
     const markup = await page();
     expect(markup.indexOf("Run 1 of 2 · With Redis")).toBeLessThan(
@@ -1024,23 +1024,31 @@ describe("run history", () => {
     expect(markup).toContain("Turned-away buyers&#x27;");
     expect(markup).not.toContain("Redis CPU");
     expect(markup).toContain(
-      "PostgreSQL ran about 3.0 times the transactions and used about 2.2 times the CPU time.",
+      "PostgreSQL ran about 3.0 times the transactions (3,600 against 1,200) and spent about 6.0 times as long in queries, waits for the stock row included (4.8 s against 800 ms).",
     );
+    expect(markup).toContain("Its CPU time was about 2.2 times as much (4.4 s against 2 s).");
     expect(markup).toContain(
-      "The turned-away buyers waited longer, 600 ms on average against 300 ms, while the winners were not slower, 1.5 s against 2 s",
+      "The turned-away buyers waited longer, 600 ms on average against 300 ms.",
     );
+    // The winners' waits are shown as numbers, never claimed.
+    expect(markup).not.toContain("not slower");
 
-    // Each measured direction must hold, and every figure must be known; otherwise, no claim.
+    // A figure that is not higher without Redis is not stated; the rest still is.
     second.summary.httpSummary.buyerWallLatencySummary.soldOut = turnedAway(300);
-    expect(await page()).not.toContain(takeaway);
-    second.summary.httpSummary.buyerWallLatencySummary.soldOut = turnedAway(600);
-    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: null };
+    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: 1_500 };
+    const partial = await page();
+    expect(partial).toContain(headline);
+    expect(partial).not.toContain("Its CPU time");
+    expect(partial).not.toContain("The turned-away buyers waited longer");
+
+    // Without an expected answer for every buyer, or without the load figures, no claim.
+    second.summary.httpSummary.unexpectedResponses = 1;
+    expect(await page()).not.toContain(headline);
+    second.summary.httpSummary.unexpectedResponses = 0;
+    delete second.run.storeLoad;
     const unknown = await page();
     expect(unknown).toContain("Not recorded");
-    expect(unknown).not.toContain(takeaway);
-    second.run.storeLoad = { ...second.run.storeLoad, postgresCpuMs: 4_400 };
-    second.summary.httpSummary.unexpectedResponses = 1;
-    expect(await page()).not.toContain(takeaway);
+    expect(unknown).not.toContain("times the transactions");
   });
 
   it("says so when a comparison's second run will never come", async () => {

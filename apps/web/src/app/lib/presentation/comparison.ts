@@ -209,10 +209,10 @@ export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) 
 export type RedisComparisonRunFacts = ReturnType<typeof redisComparisonRunFacts>;
 
 /**
- * The honest reading of a complete Redis comparison. Null unless both runs completed, sold the
- * same units, answered every buyer as expected, have their load figures, and show the measured
- * directions: more work for PostgreSQL and a longer wait for the turned-away buyers without Redis,
- * and winners who were not slower.
+ * The honest reading of a complete Redis comparison, stating only what this pair shows. Null
+ * unless both runs completed, sold the same units, answered every buyer as expected, and have
+ * their transactions and query time. PostgreSQL's CPU time and the turned-away buyers' wait are
+ * stated only when they are higher without Redis; the winners' waits are never claimed.
  */
 export function redisComparisonTakeaway(
   withRedis: RedisComparisonRunFacts,
@@ -220,29 +220,31 @@ export function redisComparisonTakeaway(
 ): string | null {
   const runs = [withRedis, withPostgres];
   const transactions = ratio(withPostgres.postgresTransactions, withRedis.postgresTransactions);
-  const cpu = ratio(withPostgres.postgresCpuMs, withRedis.postgresCpuMs);
-  const turnedAway = runs.map((facts) => formatDurationMs(facts.turnedAwayAverageMs));
-  const winners = runs.map((facts) => formatDurationMs(facts.winnerAverageMs));
+  const queryTime = ratio(withPostgres.postgresBusyMs, withRedis.postgresBusyMs);
   if (
     runs.some((facts) => !facts.completed || facts.withoutExpectedAnswer !== 0) ||
     withRedis.unitsSold !== withPostgres.unitsSold ||
     transactions === null ||
-    cpu === null ||
-    transactions <= 1 ||
-    cpu <= 1 ||
-    !turnedAway[0] ||
-    !turnedAway[1] ||
-    !winners[0] ||
-    !winners[1] ||
-    (withPostgres.turnedAwayAverageMs ?? 0) <= (withRedis.turnedAwayAverageMs ?? 0) ||
-    (withPostgres.winnerAverageMs ?? 0) > (withRedis.winnerAverageMs ?? 0)
+    queryTime === null
   )
     return null;
+  const cpu = ratio(withPostgres.postgresCpuMs, withRedis.postgresCpuMs);
+  const turnedAwayLonger =
+    withRedis.turnedAwayAverageMs !== null &&
+    withPostgres.turnedAwayAverageMs !== null &&
+    withPostgres.turnedAwayAverageMs > withRedis.turnedAwayAverageMs;
   return [
     `Same ${formatCount(withRedis.buyers)} buyers, and the same ${formatCount(withRedis.unitsSold)} units sold in both runs.`,
-    `Without Redis, until every buyer was answered, PostgreSQL ran about ${formatMultiple(transactions)} the transactions and used about ${formatMultiple(cpu)} the CPU time.`,
-    `The turned-away buyers waited longer, ${turnedAway[1]} on average against ${turnedAway[0]}, while the winners were not slower, ${winners[1]} against ${winners[0]}: with Redis, a winner goes through two stores and the queue.`,
-  ].join(" ");
+    `Without Redis, until every buyer was answered, PostgreSQL ran about ${formatMultiple(transactions)} the transactions (${formatCount(withPostgres.postgresTransactions)} against ${formatCount(withRedis.postgresTransactions)}) and spent about ${formatMultiple(queryTime)} as long in queries, waits for the stock row included (${formatDurationMs(withPostgres.postgresBusyMs)} against ${formatDurationMs(withRedis.postgresBusyMs)}).`,
+    cpu !== null && cpu > 1
+      ? `Its CPU time was about ${formatMultiple(cpu)} as much (${formatDurationMs(withPostgres.postgresCpuMs)} against ${formatDurationMs(withRedis.postgresCpuMs)}).`
+      : null,
+    turnedAwayLonger
+      ? `The turned-away buyers waited longer, ${formatDurationMs(withPostgres.turnedAwayAverageMs)} on average against ${formatDurationMs(withRedis.turnedAwayAverageMs)}.`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function ratio(value: number | null, base: number | null): number | null {
