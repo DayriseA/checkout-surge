@@ -35,6 +35,61 @@ A visitor understands quickly what the project is and what it shows, and a curio
 
 ## Working Notes
 
+### Implementation (2026-10-13)
+
+**Pages** (all server-rendered, like the existing pages):
+- `/`: hero, "How it works, in one picture" (V1 and four practice cards), "What each choice buys" (one measured pair per comparison, with Run it and How to read it), "A demo, at demo scale", "For engineers", the closing band.
+- `/how-it-works` ("How flash-sale checkouts are built"): three numbers (V3) and the journey (V4); the four practices in one frame (problem, standard answer, why it is standard for Redis, brings, costs, an "In this demo" box with its tag); the scale table; one section per comparison (what it runs, V7 with ranges, the reading, how to read each figure, the fair test, Run it and two links).
+- `/limits`: real and simulated, scale, what limits a run, what the comparisons do not show, what a real system would add, known defects.
+- `/under-the-hood`: architecture (moved diagram and the stack), the buy path, safety nets, how a run works, live signals, how the comparisons are measured (modes, fairness rules, selling window, buy-only pool, the queue table and the Redis cold and warm tables), hosting (V8), the glossary with its anchors.
+- **Nav:** Demo · Watch · Run history · How it works · Repository. **Footer** on every page: How it works · Under the hood · Limits and known defects · Glossary · Repository · Admin.
+- **Gate:** "The demo is asleep" opens with one sentence on what Checkout-Surge is.
+
+**Shared parts.**
+- `lib/site-links.ts`: every route and every cross-page anchor, `siteLink`, the comparison sections, the preset card IDs (the demo page uses the same helper), repository links.
+- `lib/presentation/measured-figures.ts`: every quoted figure, each comparison with its method sentence.
+- `components/content-page.tsx` (page frame with the sticky contents list, section, text link, link row) and `components/site-footer.tsx`.
+- `components/diagrams/`: `primitives.tsx` (grown from `DiagramNode`: figure with caption, step, tag, arrow, bar), `purchase-path.tsx` (V1), `measured-pair.tsx` (V2, V7, and the tables), `flash-sale.tsx` (V3, V4), `practice-visuals.tsx` (V5, V6), `hosting-topology.tsx` (V8), `architecture-diagram.tsx` (moved). HTML grids that stack below 900 px, SVG only for arrows and dots, no new dependency.
+
+**Figures quoted** (medians, labelled with the method on every page): the queue comparison's 4 pairs after a warm-up pair (task 03), and the Redis comparison's 4 cold pairs, each the first comparison after a wake (task 04, after the cold-start fixes). The cold pairs are quoted on the home and How it works because a visitor's first comparison is usually cold and they show the smaller gap; Under the hood also shows the warm pairs. The Redis run 2 is labelled "Stock and order queue in PostgreSQL", as on Watch.
+
+**What moved where.** Nothing of the old overview was dropped except what the proposal retired.
+
+| Old home section | Now |
+| :-- | :-- |
+| Hero, "See it under load" band | Home (hero rewritten) |
+| Behind a waiting room (journey, simplification) | How it works: three numbers, V4, practice 1 |
+| The atomic scarcity decision, architecture diagram | How it works: practice 2 (plain); Under the hood: buy path and architecture (technical) |
+| The queue protects the ERP, declared capacity, uncertain result | How it works: practice 3 and 4; Under the hood: buy path, safety nets |
+| Real and simulated | Limits `#real-and-simulated`, plus the payment step and the comparison-only modes |
+| What production should add | Limits `#production`, plus back-office protection across workers and monitoring |
+| Four signals, run finish, success, admission and reset | Under the hood `#signals`, `#runs` |
+| What limits a run | Limits `#run-limits` |
+| Known limits | Limits `#scale` and `#comparison-limits`; "later work will compare" removed |
+| Glossary | Under the hood `#glossary`, same anchors |
+
+**Cross-links as implemented.** Home: the "standard design choices" sentence and the practice cards lead to How it works; "simulated" to `/limits#real-and-simulated`; the comparison cards to their presets and sections; the scale band to `/limits`; the engineers' band to Under the hood. How it works: each "In this demo" box links its comparison or a limit; each comparison links `/limits#comparison-limits` and `/under-the-hood#measurement`. Demo: the capsule is two sentences linking How it works and `/limits#scale`, and each comparison card has "What this shows". Watch's Comparison tab and both run reports: one line under the comparison's title, "How to read these figures · What this comparison does not show" (in `ComparisonReport`, so both surfaces share it). Not done: links from Watch's run caveats, which describe one run's delivery problems rather than a demo limit.
+
+**Choices.**
+- Known defects: the PostgreSQL queue's slower drain, the idle-stop race (HD-21), the stale countdown (HD-23), history lost on a reinstall (HD-05), browser-language form messages. The duplicate reservation inserts of task 04 are left out: the recovery grace (`44671c7e`) fixed them.
+- Decisions: a new log `docs/decisions/live_comparisons.md` (LC-01 fairness, LC-02 the deadline never fails an order, LC-03 fixed presets, chained runs and fixed order, LC-04 no store distance, LC-05 database load as the headline), and HD-63 (the buy-only pool for the Redis comparison only), which supersedes HD-51 and restates its sizing and caps. HD-01, HD-60 and `scope_and_caveats.md` now cite HD-63; `scope_and_caveats.md` gains a sixth caveat on the comparisons.
+- README opens with what the project is, its three practices and both comparisons' results; `docs/architecture.md` Purpose and overview name the comparisons and the new pages.
+
+**Sizes** (against `2d120b4c`): production +2,611 / −622 (of which about 900 lines are moved text), tests +139 / −126, docs +144 / −11. The proposal estimated about 2,300 production lines.
+
+**Tests.** `public-mental-model.test.tsx` is rewritten: every route of `site-links.ts` has a page and every anchor is on its page; every in-site link with an anchor (footer included) reaches an element of its page; the home's calls to action and quoted figures with their method; the moved content; the comparisons' disclosures; the demo capsule; the repository links. Also updated: `dashboard-nav`, `route-metadata`, `run-history` (the comparison report's two links), `browser-workflows` (a comparison card's "What this shows"), and the gate's sleeping page.
+
+**Validation.**
+- Dev container: `pnpm type-check`, web unit tests (803), gate unit tests (71), Biome on every touched file.
+- Fly test runner, full `pnpm test` at `45c87a95`, first attempt: every unit suite (web 803, api 372, gate 71, …), `test:api` 382, integration db 82, worker 109, mock-erp 7. The last commit, `75ac34c2`, changes two class names only; the web unit tests pass on it.
+- No local visual check before the deploy: `next dev` in the dev container cannot write `.next` on the mounted tree.
+
+**Proof environment** (deployed at `75ac34c2`, no fresh core: the schema is unchanged).
+- The gate's sleeping page carries the new sentence. After a gate wake, `/`, `/how-it-works`, `/limits`, `/under-the-hood`, `/demo`, `/watch` and `/run-history` answer 200.
+- Checked in the built-in browser at 1280 px and at phone width (375 px): no horizontal scroll on the four content pages; the demo's comparison cards carry "What this shows"; a Redis comparison report carries its two links. Two layout fixes came from this check (`75ac34c2`): the stacked diagrams' arrows are centered on a phone, and a section reached by an anchor no longer shows a focus frame.
+- Not checked live: Watch's Comparison tab (it shares `ComparisonReport` with the report, so it carries the same line).
+- The core and the runner are stopped; the gate stops itself when idle, and the guard stays scheduled hourly. The test runner Machine is stopped.
+
 ### Owner decisions at checkpoint D1 (2026-10-13)
 
 The owner approved the proposal below as broadly aligned, and will review the implemented pages at checkpoint D2 rather than the written outline. Answers to its open questions:
