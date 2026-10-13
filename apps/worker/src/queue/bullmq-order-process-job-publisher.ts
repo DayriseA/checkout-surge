@@ -62,23 +62,24 @@ export function createBullMqOrderProcessJobPublisher(
     { connection },
   );
 
-  return createOrderProcessJobPublisher(queue, publicationFence, async (jobIds) => {
-    // Whether each job's hash exists, whatever its state; the commands share one round trip.
-    const client = await queue.client;
-    const present = await Promise.all(
-      jobIds.map((jobId) => client.hexists(queue.toKey(jobId), "name")),
-    );
-    return jobIds.filter((_, index) => present[index] !== 1);
-  });
+  return {
+    ...createOrderProcessJobPublisher(queue, publicationFence),
+    async missingJobIds(jobIds) {
+      // Whether each job's hash exists, whatever its state; the commands share one round trip.
+      const client = await queue.client;
+      const present = await Promise.all(
+        jobIds.map((jobId) => client.hexists(queue.toKey(jobId), "name")),
+      );
+      return jobIds.filter((_, index) => present[index] !== 1);
+    },
+  };
 }
 
 export function createOrderProcessJobPublisher(
   queue: OrderProcessQueue,
   publicationFence?: GeneratedRunPublicationFence,
-  missingJobIds: (jobIds: string[]) => Promise<string[]> = async (jobIds) => jobIds,
-): WorkerOrderProcessJobPublisher {
+): Omit<WorkerOrderProcessJobPublisher, keyof OrderJobPresence> {
   return {
-    missingJobIds,
     pauseDelivery: (durationMs) => queue.rateLimit(durationMs),
     async isDeliveryPending(jobId) {
       if (!queue.getJobState) return false;

@@ -4,10 +4,7 @@ import {
   deadLetterFailureMarker,
   recoverableFailureMarker,
 } from "../../src/queue/bullmq-order-process-consumer.js";
-import {
-  createOrderProcessJobPublisher,
-  type WorkerOrderProcessJobPublisher,
-} from "../../src/queue/bullmq-order-process-job-publisher.js";
+import { createOrderProcessJobPublisher } from "../../src/queue/bullmq-order-process-job-publisher.js";
 
 const job = {
   runId: "44444444-4444-4444-8444-444444444444",
@@ -25,7 +22,7 @@ describe("worker order-processing job publisher", () => {
   it("uses the deterministic order ID as the BullMQ job ID", async () => {
     const add = vi.fn().mockResolvedValue(undefined);
     const close = vi.fn().mockResolvedValue(undefined);
-    const publisher: WorkerOrderProcessJobPublisher = createOrderProcessJobPublisher(
+    const publisher = createOrderProcessJobPublisher(
       {
         rateLimit: async () => {},
         add,
