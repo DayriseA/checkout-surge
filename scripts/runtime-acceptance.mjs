@@ -345,6 +345,7 @@ const presetCounts = {
   "preview-1k": [1000, 500, 500],
   "surge-5k": [5000, 500, 4500],
   "surge-10k": [10000, 500, 9500],
+  "steady-stream": [2000, 500, 1500],
   "slow-erp-5k": [5000, 500, 4500],
   "laggy-erp-5k": [5000, 500, 4500],
   "idempotency-check-200": [400, 200, 0],

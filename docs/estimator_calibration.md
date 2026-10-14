@@ -93,7 +93,7 @@ If the numbers suggest values lower than the defaults, keep the defaults unless 
 3. Re-run the incident, the seeded public presets and the transient-error scenario once each; every command previews the estimate through `POST /demo/runs/estimate` and fails if the preview is not `admitted`:
 
    ```bash
-   for scenario in original-incident preview-1k surge-5k surge-10k slow-erp-5k laggy-erp-5k concurrency-saturation-reference idempotency-check-200 public-custom admin-failure-path; do
+   for scenario in original-incident preview-1k surge-5k steady-stream surge-10k slow-erp-5k laggy-erp-5k concurrency-saturation-reference idempotency-check-200 public-custom admin-failure-path; do
      pnpm runtime:acceptance "$scenario" .cache/calibration-recheck || break
    done
    ```
