@@ -163,6 +163,35 @@
   }
 }
 
+/*
+ * The home hero's one load sequence: the crowd drifts in towards the gate, then the steady line
+ * steps out one dot at a time. Each dot's delay is set inline in page.tsx. With no `to` keyframe,
+ * every dot ends exactly where the static layout puts it. No motion when reduced motion is asked.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .surge-arrive {
+    animation: surge-arrive 0.8s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  }
+
+  .surge-step {
+    animation: surge-step 0.25s ease-out backwards;
+  }
+}
+
+@keyframes surge-arrive {
+  from {
+    opacity: 0;
+    transform: translateX(-2rem);
+  }
+}
+
+@keyframes surge-step {
+  from {
+    opacity: 0;
+    transform: translateX(-0.5rem);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .loading-pulse,
   .loading-bar::after {

@@ -131,13 +131,25 @@ describe("dashboard control surface", () => {
         name: "New Public Surge",
       },
     };
+    const recommended = {
+      ...demoPresetFixture("preview-1k", "public", false),
+      id: "99999999-9999-4999-8999-999999999996",
+      slug: "surge-5k",
+      display: {
+        ...demoPresetFixture("preview-1k", "public", false).display,
+        name: "Surge 5k",
+      },
+    };
     surface.presets.data.presets = [
       demoPresetFixture("public-custom", "public", true),
       added,
       demoPresetFixture("preview-1k", "public", false),
+      recommended,
     ];
     const markup = renderToStaticMarkup(createElement(PublicDemoEntry, { surface }));
-    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("New Public Surge"));
+    // The recommended preset comes first; the others keep the response order.
+    expect(markup.indexOf("Surge 5k")).toBeLessThan(markup.indexOf("New Public Surge"));
+    expect(markup.indexOf("New Public Surge")).toBeLessThan(markup.indexOf("Preview 1k"));
   });
 
   it("renders comparable scenario facts and derives duplicate outcomes without extra sellout", () => {
@@ -191,12 +203,14 @@ describe("dashboard control surface", () => {
       steadyPreset,
       {
         ...demoPresetFixture("preview-1k", "public", false),
+        slug: "surge-5k",
         display: {
-          name: "Preview 1k",
-          description: "1,000 buyers rush 250 units.",
+          name: "Surge 5k",
+          description: "5,000 buyers rush 250 units.",
           sortOrder: 10,
           outcomeFocus: ["happy_path", "sold_out"],
         },
+        trafficConfig: { ...configSnapshotFixture().trafficConfig, buyerCount: 5000 },
       },
     ];
 
@@ -204,10 +218,10 @@ describe("dashboard control surface", () => {
     const duplicateFacts = derivePresetCardFacts(duplicatePreset);
     const steadyFacts = derivePresetCardFacts(steadyPreset);
 
-    expect(markup.indexOf("Preview 1k")).toBeLessThan(markup.indexOf("Duplicate-click storm"));
+    expect(markup.indexOf("Surge 5k")).toBeLessThan(markup.indexOf("Duplicate-click storm"));
     expect(markup).toContain("<h3");
     expect(markup).toContain("Recommended: start here");
-    expect(markup).toContain("Start Preview 1k");
+    expect(markup).toContain("Start Surge 5k");
     expect(markup).toContain("Start Duplicate-click storm");
     expect(markup).toContain("Scenario");
     expect(markup).toContain("Everyone at once");

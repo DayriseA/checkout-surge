@@ -80,10 +80,10 @@ describe("public site", () => {
 
   it("introduces the project, quotes both comparisons with their method, and leads to the demo", () => {
     const home = contentPages[sitePages.home] ?? "";
-    const hero = home.slice(0, home.indexOf('id="in-one-picture"'));
+    const hero = home.slice(0, home.indexOf('id="what-goes-wrong"'));
 
     expect(hero).toContain("<h1");
-    expect(hero).toContain("A live demo of the system behind a flash sale");
+    expect(hero).toContain("a live demo of the system behind a flash sale");
     expect(hero).toContain('href="/demo"');
     expect(hero).toContain('href="/how-it-works"');
     expect(home.match(/href="\/demo"/g)).toHaveLength(2);

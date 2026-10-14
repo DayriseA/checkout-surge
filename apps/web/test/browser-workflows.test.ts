@@ -3159,7 +3159,12 @@ describe("web page smoke coverage", () => {
     cleanup();
 
     render(await OverviewPage());
-    expect(screen.getByRole("heading", { name: "Checkout-Surge" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: /a live demo of the system behind a flash sale/,
+      }),
+    ).toBeTruthy();
   });
 
   it("rejects a malformed accepted run query at the Watch page boundary", async () => {

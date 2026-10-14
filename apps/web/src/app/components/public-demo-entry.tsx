@@ -72,7 +72,7 @@ const recoveryPollIntervalMs = 15_000;
 const startingRecoveryPollIntervalMs = 6_000;
 const readinessPollIntervalMs = 60_000;
 const boardClassName = "min-w-0 rounded-2xl border border-border bg-surface";
-const recommendedPresetSlug = "preview-1k";
+const recommendedPresetSlug = "surge-5k";
 const customFieldsetClassName = `${settingsFieldsetClassName} px-5 max-[560px]:px-4`;
 
 type TrafficMode = AcceptedRunConfigSnapshot["trafficConfig"]["mode"];
