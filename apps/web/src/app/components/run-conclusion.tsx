@@ -1,4 +1,8 @@
+"use client";
+
 import type { DemoRunStatus, RunResult, TrafficDeliveryStatus } from "@checkout-surge/contracts";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import {
   derivePublicRunSummary,
   type PublicRunCaveat,
@@ -13,77 +17,95 @@ import type { TransportObservation } from "./transport-observation";
 
 type Reconciliation = RunResult["reconciliations"][number];
 
-function publicPopulationLabel(item: Reconciliation, side: "left" | "right"): string {
+function publicPopulationLabel(
+  item: Reconciliation,
+  side: "left" | "right",
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   switch (item.code) {
     case "pending_persistence":
     case "pending_persistence_evidence_mismatch":
       return side === "left"
-        ? "reservations awaiting durable storage"
-        : "durable pending reservations";
+        ? t("reservations awaiting durable storage")
+        : t("durable pending reservations");
     case "accepted_responses_vs_unique_reservations":
     case "generator_evidence_unavailable":
       return side === "left"
-        ? `${publicVocabulary.acceptedResponses} observed by the load generator`
-        : publicVocabulary.uniqueReservationsSecured;
+        ? t("{value1} observed by the load generator", {
+            value1: t(publicVocabulary.acceptedResponses),
+          })
+        : t(publicVocabulary.uniqueReservationsSecured);
     case "sold_out_decisions_vs_responses":
       return side === "left"
-        ? publicVocabulary.soldOutRejectionsSeen
-        : publicVocabulary.soldOutRejectionsRecorded;
+        ? t(publicVocabulary.soldOutRejectionsSeen)
+        : t(publicVocabulary.soldOutRejectionsRecorded);
     case "partial_generator_coverage":
       return side === "left"
-        ? "planned checkout attempts"
-        : "checkout responses completed by the load generator";
+        ? t("planned checkout attempts")
+        : t("checkout responses completed by the load generator");
     case "sold_out_with_stock_remaining":
-      return side === "left" ? publicVocabulary.soldOutRejectionsRecorded : "remaining stock";
+      return side === "left" ? t(publicVocabulary.soldOutRejectionsRecorded) : t("remaining stock");
     case "notifications_below_confirmations":
-      return side === "left" ? publicVocabulary.notifications : "confirmed orders";
+      return side === "left" ? t(publicVocabulary.notifications) : t("confirmed orders");
   }
 }
 
-function publicReconciliationReason(item: Reconciliation): string | null {
+function publicReconciliationReason(item: Reconciliation, locale: Locale = "en"): string | null {
+  const t = getTranslation(locale);
   switch (item.code) {
     case "pending_persistence":
-      return "Inventory reservations can precede durable checkout records.";
+      return t("Inventory reservations can precede durable checkout records.");
     case "pending_persistence_evidence_mismatch":
-      return "Live reservations and durable pending records differ.";
+      return t("Live reservations and durable pending records differ.");
     case "accepted_responses_vs_unique_reservations":
       if (item.classification === "expected_population_difference") {
         return item.replayPossible
-          ? "Some accepted responses may repeat an existing reservation."
-          : "Accepted checkout responses and unique reservations measure different stages of the run.";
+          ? t("Some accepted responses may repeat an existing reservation.")
+          : t(
+              "Accepted checkout responses and unique reservations measure different stages of the run.",
+            );
       }
       if (
         item.classification === "evidence_incomplete" &&
         item.incompleteReason === "unavailable"
       ) {
-        return "The durable reservation count is not available for comparison.";
+        return t("The durable reservation count is not available for comparison.");
       }
       if (item.classification === "evidence_incomplete" && item.incompleteReason === "partial") {
-        return "The load generator did not record an answer for every planned request, so its count cannot match the server's.";
+        return t(
+          "The load generator did not record an answer for every planned request, so its count cannot match the server's.",
+        );
       }
       return null;
     case "sold_out_decisions_vs_responses":
       if (item.classification === "expected_population_difference") {
-        return "Load-generator reply observations and durable rejection records are separate populations.";
+        return t(
+          "Load-generator reply observations and durable rejection records are separate populations.",
+        );
       }
       if (item.classification === "warning") {
-        return "Sold-out rejections seen by the load generator exceed durable sold-out rejections.";
+        return t(
+          "Sold-out rejections seen by the load generator exceed durable sold-out rejections.",
+        );
       }
       if (
         item.classification === "evidence_incomplete" &&
         item.incompleteReason === "unavailable"
       ) {
-        return "Durable sold-out rejection evidence is unavailable.";
+        return t("Durable sold-out rejection evidence is unavailable.");
       }
       return null;
     case "partial_generator_coverage":
-      return "Only attempts that reached a response are included in the load-generator evidence.";
+      return t(
+        "Only attempts that reached a response are included in the load-generator evidence.",
+      );
     case "generator_evidence_unavailable":
-      return "Load-generator evidence is unavailable.";
+      return t("Load-generator evidence is unavailable.");
     case "sold_out_with_stock_remaining":
-      return "Sold-out rejections while stock remained need investigation.";
+      return t("Sold-out rejections while stock remained need investigation.");
     case "notifications_below_confirmations":
-      return "Not every confirmed order has a recorded simulated email.";
+      return t("Not every confirmed order has a recorded simulated email.");
   }
 }
 
@@ -98,14 +120,15 @@ export function RunConclusion({
   showCanonicalCodes?: boolean;
   showReconciliationStatus?: boolean;
 }) {
+  const t = useTranslation();
   if (runStatus !== "completed" && runStatus !== "failed") return null;
   const hasCorrectnessFailure = result.maximumClassification === "correctness_failure";
   return (
     <section
       className={`col-span-full rounded-2xl border p-5 max-[560px]:p-4 ${hasCorrectnessFailure ? "border-danger bg-danger-soft" : "border-border bg-surface"}`}
-      aria-label="Run conclusion"
+      aria-label={t("Run conclusion")}
     >
-      <p className="m-0 text-xs font-medium text-muted">Final result</p>
+      <p className="m-0 text-xs font-medium text-muted">{t("Final result")}</p>
       <ProofNarration
         className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink"
         result={result}
@@ -141,21 +164,26 @@ export function PublicRunConclusion({
   failureExplanation?: RunFailureExplanationEvidence | null;
   stderrLines?: string[];
 }) {
+  const locale = useLocale();
+  const t = useTranslation();
   if (runStatus !== "completed" && runStatus !== "failed") return null;
-  const summary = derivePublicRunSummary({
-    result,
-    trafficDeliveryStatus,
-    transportObservation,
-    hasFailureExplanation: failureExplanation !== null,
-  });
+  const summary = derivePublicRunSummary(
+    {
+      result,
+      trafficDeliveryStatus,
+      transportObservation,
+      hasFailureExplanation: failureExplanation !== null,
+    },
+    locale,
+  );
   return (
     <section
       className={`col-span-full rounded-2xl border p-5 max-[560px]:p-4 ${failureExplanation ? "border-border bg-surface" : publicConclusionClassName(result, summary)}`}
-      aria-label="Run conclusion"
+      aria-label={t("Run conclusion")}
     >
-      <p className="m-0 text-xs font-medium text-muted">Final result</p>
+      <p className="m-0 text-xs font-medium text-muted">{t("Final result")}</p>
       {failureExplanation ? (
-        <p className="m-0 mt-1 text-sm font-semibold text-danger">Traffic failure</p>
+        <p className="m-0 mt-1 text-sm font-semibold text-danger">{t("Traffic failure")}</p>
       ) : (
         <p className="m-0 mt-1 max-w-[90ch] text-base font-semibold leading-6 text-ink">
           {summary.sentence}
@@ -185,6 +213,7 @@ export function PublicRunConclusion({
 
 /** Every material qualification for the public result. */
 export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] }) {
+  const t = useTranslation();
   return (
     <>
       {caveats.map((caveat) => (
@@ -197,7 +226,7 @@ export function PublicRunCaveatList({ caveats }: { caveats: PublicRunCaveat[] })
           key={caveat.message}
           role="status"
         >
-          {caveat.message}
+          {t(caveat.message)}
         </p>
       ))}
     </>
@@ -218,9 +247,10 @@ export function PublicRunConclusionProof({
   result: RunResult;
   targetId?: string;
 }) {
+  const t = useTranslation();
   const content = (
     <>
-      {targetId ? <h2 className="type-title m-0 text-base text-ink">Consistency</h2> : null}
+      {targetId ? <h2 className="type-title m-0 text-base text-ink">{t("Consistency")}</h2> : null}
       <ProofNarration className="m-0 text-sm leading-6 text-muted-strong" result={result} />
       <ReconciliationStatus result={result} />
       <ConclusionEvidence result={result} showCanonicalCodes={false} />
@@ -248,8 +278,9 @@ export function PublicRunConclusionProof({
  * surface showing the proof already states, so the proof does not repeat it.
  */
 function ProofNarration({ className, result }: { className: string; result: RunResult }) {
+  const locale = useLocale();
   if (result.outcome === "failed") return null;
-  return <p className={className}>{runConclusionSentence(result)}</p>;
+  return <p className={className}>{runConclusionSentence(result, {}, locale)}</p>;
 }
 
 /** Danger tracks oversell, run failure and contradictory evidence; warnings never escalate. */
@@ -277,6 +308,8 @@ function ConclusionEvidence({
   result: RunResult;
   showCanonicalCodes: boolean;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <>
       <div className="mt-4 grid gap-2">
@@ -288,8 +321,8 @@ function ConclusionEvidence({
             <span className="text-muted-strong">
               {invariant.expression}
               <span className="mt-1 block text-xs text-muted">
-                actual: {invariant.actual ?? "unavailable"} · expected:{" "}
-                {invariant.expected ?? "unavailable"}
+                {t("actual:")} {invariant.actual ?? t("unavailable")} {t("· expected:")}{" "}
+                {invariant.expected ?? t("unavailable")}
               </span>
             </span>
             <span
@@ -299,38 +332,40 @@ function ConclusionEvidence({
                   : "font-semibold text-muted-strong"
               }
             >
-              {invariantLabel(invariant.status)}
+              {invariantLabel(invariant.status, locale)}
             </span>
           </div>
         ))}
       </div>
       <details className="mt-4 rounded border border-border px-3 py-2 text-sm">
         <summary className="disclosure font-semibold text-ink">
-          Evidence and reconciliation proof
+          {t("Evidence and reconciliation proof")}
         </summary>
         <div className="mt-3 grid gap-2">
           {result.reconciliations.map((item) => {
-            const reason = publicReconciliationReason(item);
+            const reason = publicReconciliationReason(item, locale);
             return (
               <p className="m-0 text-muted" key={item.code}>
                 <span className="font-semibold text-muted-strong">
-                  {publicPopulationLabel(item, "left")}
+                  {publicPopulationLabel(item, "left", locale)}
                 </span>{" "}
-                ({item.leftValue ?? "unavailable"}) vs {publicPopulationLabel(item, "right")} (
-                {item.rightValue ?? "unavailable"}):{" "}
+                ({item.leftValue ?? t("unavailable")}
+                {t(") vs")} {publicPopulationLabel(item, "right", locale)} (
+                {item.rightValue ?? t("unavailable")}):{" "}
                 {showCanonicalCodes ? (
                   <>
-                    {classificationExplanation(item.classification)} <code>{item.code}</code>
+                    {classificationExplanation(item.classification, locale)}{" "}
+                    <code>{item.code}</code>
                   </>
                 ) : (
-                  item.classification.replaceAll("_", " ")
+                  t(item.classification.replaceAll("_", " "))
                 )}
                 {reason ? ` — ${reason}` : "."}
               </p>
             );
           })}
           {result.reconciliations.length === 0 ? (
-            <p className="m-0 text-muted">No differences require reconciliation.</p>
+            <p className="m-0 text-muted">{t("No differences require reconciliation.")}</p>
           ) : null}
         </div>
       </details>
@@ -338,16 +373,20 @@ function ConclusionEvidence({
   );
 }
 
-function classificationExplanation(classification: Reconciliation["classification"]): string {
+function classificationExplanation(
+  classification: Reconciliation["classification"],
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   switch (classification) {
     case "expected_population_difference":
-      return "Expected population difference.";
+      return t("Expected population difference.");
     case "evidence_incomplete":
-      return "Evidence is incomplete.";
+      return t("Evidence is incomplete.");
     case "warning":
-      return "Evidence needs investigation.";
+      return t("Evidence needs investigation.");
     case "correctness_failure":
-      return "Authoritative evidence is contradictory.";
+      return t("Authoritative evidence is contradictory.");
   }
 }
 
@@ -357,6 +396,8 @@ function inSentence(label: string): string {
 }
 
 function ReconciliationStatus({ result }: { result: RunResult }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (
     result.maximumClassification !== "evidence_incomplete" &&
     result.maximumClassification !== "warning"
@@ -368,12 +409,16 @@ function ReconciliationStatus({ result }: { result: RunResult }) {
     (item) => item.classification === result.maximumClassification,
   );
   const reconciliation =
-    matchingReconciliations.find((item) => publicReconciliationReason(item) !== null) ??
+    matchingReconciliations.find((item) => publicReconciliationReason(item, locale) !== null) ??
     matchingReconciliations[0];
-  const reason = reconciliation ? publicReconciliationReason(reconciliation) : null;
+  const reason = reconciliation ? publicReconciliationReason(reconciliation, locale) : null;
   const explanation = reconciliation
-    ? `${inSentence(publicPopulationLabel(reconciliation, "left"))} and ${inSentence(publicPopulationLabel(reconciliation, "right"))} require reconciliation.${reason ? ` ${reason}` : ""}`
-    : "Some final evidence was unavailable.";
+    ? t("{value1} and {value2} require reconciliation.{value3}", {
+        value1: inSentence(publicPopulationLabel(reconciliation, "left", locale)),
+        value2: inSentence(publicPopulationLabel(reconciliation, "right", locale)),
+        value3: reason ? ` ${reason}` : "",
+      })
+    : t("Some final evidence was unavailable.");
   const incomplete = result.maximumClassification === "evidence_incomplete";
 
   return (
@@ -381,7 +426,7 @@ function ReconciliationStatus({ result }: { result: RunResult }) {
       className="m-0 mt-3 rounded border border-warning bg-warning-soft px-3 py-2 text-sm font-semibold text-muted-strong"
       role="status"
     >
-      {incomplete ? "Evidence incomplete" : "Reconciliation warning"}: {explanation}
+      {incomplete ? t("Evidence incomplete") : t("Reconciliation warning")}: {explanation}
     </p>
   );
 }

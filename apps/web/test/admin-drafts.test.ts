@@ -9,6 +9,7 @@ import {
   buildEffectiveRunConfig,
   buildPolicyFromDraft,
   buildSortOrder,
+  draftErrorMessage,
   draftFromConfigSnapshot,
   draftFromPreset,
   draftFromRuntimePolicy,
@@ -16,6 +17,24 @@ import {
 } from "../src/app/lib/admin-drafts.js";
 
 describe("admin drafts", () => {
+  it("localizes reachable missing-value and bound errors while retaining draft fields", () => {
+    const preset = presetFixture("buyer-spike");
+    const draft = draftFromPreset(preset);
+    draft.buyerCount = "";
+    const missing = buildEffectiveRunConfig(draft, preset, undefined, "fr");
+    expect(missing.fieldErrors.buyerCount?.message).toBe(
+      "Le champ « Nombre d’acheteurs » est obligatoire.",
+    );
+    const error = missing.fieldErrors.buyerCount;
+    if (!error) throw new Error("Expected the missing buyer count error.");
+    expect(draftErrorMessage(error, "en")).toBe("Buyer count is required.");
+    expect(draftErrorMessage(error, "fr")).toBe("Le champ « Nombre d’acheteurs » est obligatoire.");
+    draft.buyerCount = "-1";
+    const invalid = buildEffectiveRunConfig(draft, preset, undefined, "fr");
+    expect(invalid.fieldErrors.buyerCount?.message).toBe(
+      "Le champ « Nombre d’acheteurs » doit être supérieur ou égal à 1.",
+    );
+  });
   it.each([
     "buyer-spike",
     "constant-arrival-rate",
@@ -153,10 +172,12 @@ describe("admin drafts", () => {
     const policy = policyFixture();
     policy.deploymentHardCaps.maxTotalRequests = 90_000;
     mutate(draft);
-    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual({
-      message: `This configuration creates ${computedTotal.toLocaleString("en-US")} requests; the permitted maximum is 90,000 requests.`,
-      fields,
-    });
+    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual(
+      expect.objectContaining({
+        message: `This configuration creates ${computedTotal.toLocaleString("en-US")} requests; the permitted maximum is 90,000 requests.`,
+        fields,
+      }),
+    );
   });
 
   it("groups a displayed 100000 cap while preserving the exact draft and payload number", () => {
@@ -166,11 +187,13 @@ describe("admin drafts", () => {
     draft.buyerCount = "100000";
     draft.duplicateEachBuyerAttempt = true;
 
-    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual({
-      message:
-        "This configuration creates 200,000 requests; the permitted maximum is 100,000 requests.",
-      fields: ["buyerCount", "duplicateEachBuyerAttempt"],
-    });
+    expect(buildEffectiveRunConfig(draft, preset, policy).formErrors).toContainEqual(
+      expect.objectContaining({
+        message:
+          "This configuration creates 200,000 requests; the permitted maximum is 100,000 requests.",
+        fields: ["buyerCount", "duplicateEachBuyerAttempt"],
+      }),
+    );
     expect(draft.buyerCount).toBe("100000");
 
     draft.duplicateEachBuyerAttempt = false;

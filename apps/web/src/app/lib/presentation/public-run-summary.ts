@@ -1,5 +1,6 @@
 import type { RunResult, TrafficDeliveryStatus } from "@checkout-surge/contracts";
 import type { TransportObservation } from "../../components/transport-observation";
+import { getTranslation, type Locale } from "../i18n/translate";
 import { formatCount } from "./format";
 import { publicFailureExplanation, runResultOutcomeLabel } from "./public-vocabulary";
 import { runConclusionSentence } from "./run-result-presentation";
@@ -72,13 +73,16 @@ export interface PublicRunSummary {
   failureAction: string | null;
 }
 
-export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunSummary {
+export function derivePublicRunSummary(
+  input: PublicRunSummaryInput,
+  locale: Locale = "en",
+): PublicRunSummary {
   const { result } = input;
-  const caveatSummary = publicRunCaveats(result, input);
+  const caveatSummary = publicRunCaveats(result, input, locale);
   return {
     outcome: result.outcome,
-    title: runResultOutcomeLabel(result.outcome),
-    sentence: runConclusionSentence(result, { concise: true }),
+    title: runResultOutcomeLabel(result.outcome, locale),
+    sentence: runConclusionSentence(result, { concise: true }, locale),
     counts: {
       startingStock: result.startingStock,
       remainingStock: result.remainingStock,
@@ -92,7 +96,7 @@ export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunS
     },
     ...caveatSummary,
     failureAction: result.failureCategory
-      ? publicFailureExplanation(result.failureCategory).action
+      ? publicFailureExplanation(result.failureCategory, locale).action
       : null,
   };
 }
@@ -100,7 +104,9 @@ export function derivePublicRunSummary(input: PublicRunSummaryInput): PublicRunS
 function publicRunCaveats(
   result: RunResult,
   input: PublicRunSummaryInput,
+  locale: Locale = "en",
 ): Pick<PublicRunSummary, "caveats" | "hasMeasurementCaveat"> {
+  const t = getTranslation(locale);
   const caveats: PublicRunCaveat[] = [];
   const classifications = new Set(result.reconciliations.map((item) => item.classification));
   // Broken and not-evaluable invariants carry the same material meanings as their reconciliation
@@ -120,15 +126,17 @@ function publicRunCaveats(
     result.maximumClassification === "correctness_failure";
   if (classifications.has("correctness_failure") && !sentenceSaysContradictory) {
     caveats.push({
-      message:
+      message: t(
         "Contradictory evidence: the final stock and order records disagree, so this result needs investigation.",
+      ),
       tone: "danger",
     });
   }
   if (classifications.has("warning")) {
     caveats.push({
-      message:
+      message: t(
         "Reconciliation warning: some final evidence populations disagree and need investigation.",
+      ),
       tone: "warning",
     });
   }
@@ -152,15 +160,16 @@ function publicRunCaveats(
     (!input.hasFailureExplanation || hasOtherMissingEvidence)
   ) {
     caveats.push({
-      message:
+      message: t(
         "Evidence incomplete: some final evidence was unavailable, so the result could not be fully verified.",
+      ),
       tone: "warning",
     });
   }
 
   const measurementCaveats = input.hasFailureExplanation
     ? []
-    : measurementCaveatsFor(input.transportObservation, input.trafficDeliveryStatus);
+    : measurementCaveatsFor(input.transportObservation, input.trafficDeliveryStatus, locale);
   return {
     caveats: [...caveats, ...measurementCaveats],
     hasMeasurementCaveat: measurementCaveats.length > 0,
@@ -170,37 +179,66 @@ function publicRunCaveats(
 function measurementCaveatsFor(
   observation: TransportObservation | null,
   deliveryStatus: TrafficDeliveryStatus | null,
+  locale: Locale = "en",
 ): PublicRunCaveat[] {
+  const t = getTranslation(locale);
   // Unknown counts cannot support a delivery verdict; the unavailable-evidence caveat says it all.
   if (observation && hasUnknownTrafficCounts(observation.counts))
-    return [{ message: trafficEvidenceUnavailableText, tone: "warning" }];
-  return [...transportCaveats(observation), ...deliveryCaveats(deliveryStatus)];
+    return [{ message: t(trafficEvidenceUnavailableText), tone: "warning" }];
+  return [...transportCaveats(observation, locale), ...deliveryCaveats(deliveryStatus, locale)];
 }
 
-function transportCaveats(observation: TransportObservation | null): PublicRunCaveat[] {
+function transportCaveats(
+  observation: TransportObservation | null,
+  locale: Locale = "en",
+): PublicRunCaveat[] {
+  const t = getTranslation(locale);
   if (!observation || (!observation.hasUnrecordedReplies && !observation.hasUndispatchedAttempts)) {
     return [];
   }
   return [
     {
       message: observation.hasUndispatchedAttempts
-        ? `${formatCount(observation.counts.unstartedRequests)} planned requests were never sent. ${observation.hasUnrecordedReplies ? `${formatCount(observation.counts.interruptedRequests)} answers arrived too late to be recorded; ${formatCount(observation.transportFailures)} attempts ended in transport failure.` : "All sent requests completed."} Outcomes and latency cover recorded responses only.`
-        : `Reply observation incomplete: outcomes and latency cover ${formatCount(observation.repliesRecorded) ?? "unavailable"} of ${formatCount(observation.counts.plannedRequests) ?? "unavailable"} attempts.`,
+        ? t(
+            "{v0} planned requests were never sent. {v1} Outcomes and latency cover recorded responses only.",
+            {
+              v0: String(formatCount(observation.counts.unstartedRequests, locale)),
+              v1: String(
+                observation.hasUnrecordedReplies
+                  ? t(
+                      "{v0} answers arrived too late to be recorded; {v1} attempts ended in transport failure.",
+                      {
+                        v0: String(formatCount(observation.counts.interruptedRequests, locale)),
+                        v1: String(formatCount(observation.transportFailures, locale)),
+                      },
+                    )
+                  : t("All sent requests completed."),
+              ),
+            },
+          )
+        : t("Reply observation incomplete: outcomes and latency cover {v0} of {v1} attempts.", {
+            v0: String(formatCount(observation.repliesRecorded, locale) ?? "unavailable"),
+            v1: String(formatCount(observation.counts.plannedRequests, locale) ?? "unavailable"),
+          }),
       tone: "warning",
     },
   ];
 }
 
-function deliveryCaveats(status: TrafficDeliveryStatus | null): PublicRunCaveat[] {
+function deliveryCaveats(
+  status: TrafficDeliveryStatus | null,
+  locale: Locale = "en",
+): PublicRunCaveat[] {
+  const t = getTranslation(locale);
   if (status === null || status === "complete") return [];
   return [
     status === "failed"
       ? {
-          message: "Delivery failed: the load generator could not deliver the planned traffic.",
+          message: t("Delivery failed: the load generator could not deliver the planned traffic."),
           tone: "danger" as const,
         }
       : {
-          message: "Partial delivery: not all planned checkout attempts completed.",
+          message: t("Partial delivery: not all planned checkout attempts completed."),
           tone: "warning" as const,
         },
   ];

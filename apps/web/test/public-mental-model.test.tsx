@@ -15,11 +15,19 @@ vi.mock("../src/app/components/public-demo-entry.js", () => ({
 vi.mock("../src/app/lib/server/admin-page-session.js", () => ({
   hasValidAdminPageSession: vi.fn(async () => false),
 }));
-vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+vi.mock("../src/app/lib/i18n/server.js", () => ({
+  getLocale: vi.fn(async () => "en"),
+}));
 
 import DemoDashboardPage from "../src/app/demo/page.js";
 import HowItWorksPage from "../src/app/how-it-works/page.js";
 import RootLayout from "../src/app/layout.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
+import { getLocale } from "../src/app/lib/i18n/server.js";
 import {
   comparisonFiguresNote,
   formatFigure,
@@ -33,10 +41,10 @@ import HomePage from "../src/app/page.js";
 import UnderTheHoodPage from "../src/app/under-the-hood/page.js";
 
 const contentPages = {
-  [sitePages.home]: renderToStaticMarkup(createElement(HomePage)),
-  [sitePages.howItWorks]: renderToStaticMarkup(createElement(HowItWorksPage)),
-  [sitePages.limits]: renderToStaticMarkup(createElement(LimitsPage)),
-  [sitePages.underTheHood]: renderToStaticMarkup(createElement(UnderTheHoodPage)),
+  [sitePages.home]: renderToStaticMarkup(await HomePage()),
+  [sitePages.howItWorks]: renderToStaticMarkup(await HowItWorksPage()),
+  [sitePages.limits]: renderToStaticMarkup(await LimitsPage()),
+  [sitePages.underTheHood]: renderToStaticMarkup(await UnderTheHoodPage()),
 } as Record<string, string>;
 
 function renderLayout() {
@@ -46,6 +54,31 @@ function renderLayout() {
 }
 
 describe("public site", () => {
+  it("renders French pages, diagrams and measured figures in the selected language", async () => {
+    vi.mocked(getLocale).mockResolvedValue("fr");
+    try {
+      const pages = await Promise.all([
+        HomePage(),
+        HowItWorksPage(),
+        LimitsPage(),
+        UnderTheHoodPage(),
+      ]);
+      const markup = pages.map((page) =>
+        renderToStaticMarkup(<LocaleProvider locale="fr">{page}</LocaleProvider>),
+      );
+      expect(markup[0]).toContain("système qui gère une vente flash");
+      expect(markup[0]).toContain("4,8 s");
+      expect(markup[1]).toContain("Comment concevoir le système d’achat d’une vente flash");
+      expect(markup[1]).toContain("Salle d’attente");
+      expect(markup[2]).toContain("Limites et défauts connus");
+      expect(markup[3]).toContain("Sous le capot");
+      expect(markup[3]).toContain("Sur cette page");
+      expect(markup[3]).toContain("Médiane de 4 paires");
+      expect(markup.join("")).not.toContain("Shown live");
+    } finally {
+      vi.mocked(getLocale).mockResolvedValue("en");
+    }
+  });
   it("every route of the routes module has a page, and every anchor is on its page", () => {
     for (const route of Object.values(sitePages)) {
       expect(existsSync(new URL(`../src/app${route}/page.tsx`, import.meta.url))).toBe(true);

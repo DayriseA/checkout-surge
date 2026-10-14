@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslation } from "../lib/i18n/locale-context";
+
 import type { SignalHeadlines } from "../lib/presentation/signal-headlines";
 import { type GoldSignalChart, type GoldSignalKey, SignalSparkline } from "./gold-signals";
 
@@ -31,6 +33,8 @@ export function WatchSignalStrip({
   headlines: SignalHeadlines;
   onReveal: (targetId: string) => void;
 }) {
+  const t = useTranslation();
+
   return (
     <div className="grid grid-cols-4 gap-2 max-[700px]:grid-cols-2" data-watch-signals="">
       {stripSignals.map(({ chart, targetId, title }) => (
@@ -40,18 +44,23 @@ export function WatchSignalStrip({
           onClick={() => onReveal(chartTargetsRendered ? targetId : fallbackTargetId)}
           type="button"
         >
-          <span className="block text-xs font-medium text-muted">{title}</span>
+          <span className="block text-xs font-medium text-muted">{t(title)}</span>
           <SignalSparkline
-            ariaLabel={`${title} sparkline`}
+            ariaLabel={t("{v0} sparkline", { v0: t(title) })}
             area={charts[chart].area}
             points={charts[chart].points}
             secondary={charts[chart].secondary}
             xMax={charts[chart].xMax}
           />
           <span className="mt-1 block text-xs font-semibold leading-5 text-ink">
-            {headlines[chart].summaryValue}
+            {t(headlines[chart].summaryValue)}
           </span>
-          <span className="sr-only">{`${title} over the run: ${headlines[chart].summaryValue}`}</span>
+          <span className="sr-only">
+            {t("{v0} over the run: {v1}", {
+              v0: t(title),
+              v1: String(headlines[chart].summaryValue),
+            })}
+          </span>
         </button>
       ))}
     </div>

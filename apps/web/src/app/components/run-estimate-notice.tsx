@@ -1,4 +1,7 @@
+"use client";
+
 import type { TrafficConfig } from "@checkout-surge/contracts";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import {
   capacityRefusalCopy,
   capacityWarningCopy,
@@ -14,18 +17,20 @@ export function RunEstimateNotice({
   state: RunEstimateState;
   mode: "public" | "admin";
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (state.status === "unavailable")
     return (
       <NoticeLines
         lines={[
-          "Preview unavailable. You can try starting; the server will check admission again.",
+          t("Preview unavailable. You can try starting; the server will check admission again."),
         ]}
       />
     );
   if (state.status === "rejected")
-    return <NoticeLines lines={estimateRejectionCopy(state.result, mode)} />;
+    return <NoticeLines lines={estimateRejectionCopy(state.result, mode, locale)} />;
   if (state.status === "capacity_rejected")
-    return <NoticeLines lines={capacityRefusalCopy(state.capacity)} />;
+    return <NoticeLines lines={capacityRefusalCopy(state.capacity, locale)} />;
   return null;
 }
 
@@ -40,10 +45,11 @@ export function RunCapacityWarning({
   state: RunEstimateState;
   trafficConfig: TrafficConfig;
 }) {
+  const locale = useLocale();
   if (state.status !== "allowed") return null;
-  const vusWarning = explicitVusWarning(trafficConfig, state.automaticVus);
+  const vusWarning = explicitVusWarning(trafficConfig, state.automaticVus, locale);
   const lines = [
-    ...capacityWarningCopy(state.capacity),
+    ...capacityWarningCopy(state.capacity, locale),
     ...(vusWarning === null ? [] : [vusWarning]),
   ];
   return lines.length > 0 ? <NoticeLines lines={lines} /> : null;

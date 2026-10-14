@@ -1,14 +1,19 @@
+"use client";
+
+import { useTranslation } from "../../lib/i18n/locale-context";
 import { DiagramNode } from "./primitives";
 
 /** The buy path and the processing path, for engineers. Dense, so it scrolls sideways. */
 export function ArchitectureDiagram() {
+  const t = useTranslation();
+
   return (
     <figure className="m-0 mt-6 rounded-xl border border-border bg-surface-muted p-5 max-[560px]:p-3">
       <p className="m-0 mb-2 text-sm text-muted min-[1100px]:sr-only">
-        Architecture diagram scrolls sideways.
+        {t("Architecture diagram scrolls sideways.")}
       </p>
       <section
-        aria-label="Scrollable architecture diagram"
+        aria-label={t("Scrollable architecture diagram")}
         className="overflow-x-auto"
         // biome-ignore lint/a11y/noNoninteractiveTabindex: The overflow region must be keyboard-scrollable.
         tabIndex={0}
@@ -19,14 +24,13 @@ export function ArchitectureDiagram() {
           role="img"
           viewBox="0 0 980 230"
         >
-          <title id="architecture-diagram-title">Checkout-Surge request and processing paths</title>
+          <title id="architecture-diagram-title">
+            {t("Checkout-Surge request and processing paths")}
+          </title>
           <desc id="architecture-diagram-description">
-            Simulated buyers send checkout attempts to the API. For every attempt, Redis makes the
-            in-memory atomic stock decision, and a buyer turned away is answered after that step
-            alone. For a buyer who secures a unit, the API first writes the reservation and its
-            order to PostgreSQL in one transaction and publishes the order to the BullMQ queue. The
-            worker takes orders from the queue to the simulated ERP and records their outcomes in
-            PostgreSQL.
+            {t(
+              "Simulated buyers send checkout attempts to the API. For every attempt, Redis makes the in-memory atomic stock decision, and a buyer turned away is answered after that step alone. For a buyer who secures a unit, the API first writes the reservation and its order to PostgreSQL in one transaction and publishes the order to the BullMQ queue. The worker takes orders from the queue to the simulated ERP and records their outcomes in PostgreSQL.",
+            )}
           </desc>
           <defs>
             <marker
@@ -51,37 +55,37 @@ export function ArchitectureDiagram() {
           </g>
           <g fill="currentColor" fontSize="11">
             <text x={460} y={36}>
-              Every attempt: atomic stock decision.
+              {t("Every attempt: atomic stock decision.")}
             </text>
             <text x={460} y={52}>
-              Turned-away buyers are answered after this step alone.
+              {t("Turned-away buyers are answered after this step alone.")}
             </text>
             <text x={300} y={112}>
-              Successful buyer: order job
+              {t("Successful buyer: order job")}
             </text>
             <text x={245} y={168}>
-              Successful buyer:
+              {t("Successful buyer:")}
             </text>
             <text x={245} y={182}>
-              one transaction
+              {t("one transaction")}
             </text>
             <text x={560} y={182}>
-              Order outcomes
+              {t("Order outcomes")}
             </text>
           </g>
-          <DiagramNode label="Simulated buyers" x={10} y={90} />
-          <DiagramNode label="API" x={170} y={90} />
-          <DiagramNode label="Redis decision" tone="fast" x={330} y={10} />
-          <DiagramNode label="BullMQ queue" tone="slow" x={490} y={90} />
-          <DiagramNode label="Worker" tone="slow" x={650} y={90} />
-          <DiagramNode label="Simulated ERP" tone="slow" x={810} y={90} />
-          <DiagramNode label="PostgreSQL" tone="durable" x={410} y={160} />
+          <DiagramNode label={t("Simulated buyers")} x={10} y={90} />
+          <DiagramNode label={t("API")} x={170} y={90} />
+          <DiagramNode label={t("Redis decision")} tone="fast" x={330} y={10} />
+          <DiagramNode label={t("BullMQ queue")} tone="slow" x={490} y={90} />
+          <DiagramNode label={t("Worker")} tone="slow" x={650} y={90} />
+          <DiagramNode label={t("Simulated ERP")} tone="slow" x={810} y={90} />
+          <DiagramNode label={t("PostgreSQL")} tone="durable" x={410} y={160} />
         </svg>
       </section>
       <figcaption className="mt-2 text-sm leading-6 text-muted">
-        Buyers turned away: Redis only. Buyers who secure a unit: the Redis decision, then one
-        PostgreSQL transaction and a queue publish before the answer. Slow path: the worker confirms
-        queued orders with the simulated ERP and records their outcomes in PostgreSQL.
+        {t(
+          "Buyers turned away: Redis only. Buyers who secure a unit: the Redis decision, then one PostgreSQL transaction and a queue publish before the answer. Slow path: the worker confirms queued orders with the simulated ERP and records their outcomes in PostgreSQL.",
+        )}
       </figcaption>
     </figure>
   );

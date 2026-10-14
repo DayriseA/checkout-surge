@@ -7,12 +7,17 @@ import {
   getRunHistoryPage,
   pendingDashboardRecovery,
 } from "../lib/api";
+import { getLocale } from "../lib/i18n/server";
+import { getTranslation } from "../lib/i18n/translate";
 import {
   type AcceptedRunResult,
   acceptedRunResultFromRead,
 } from "../lib/presentation/accepted-run-result";
 
-export const metadata: Metadata = { title: "Live watch" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return { title: t("Live watch") };
+}
 export const dynamic = "force-dynamic";
 
 export default async function WatchPage({
@@ -20,6 +25,9 @@ export default async function WatchPage({
 }: {
   searchParams?: Promise<{ acceptedRunId?: string | string[] }>;
 } = {}) {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+
   const acceptedRunId = (await searchParams)?.acceptedRunId;
   const hasAcceptedContext = acceptedRunId !== undefined;
   const parsedAcceptedRun = runHistoryDetailParamsSchema.safeParse({ runId: acceptedRunId });
@@ -47,11 +55,12 @@ export default async function WatchPage({
     <>
       <header className="mb-4 flex items-baseline gap-5 max-[900px]:block">
         <h1 className="type-display m-0 shrink-0 text-[1.75rem] leading-none text-ink">
-          Live watch
+          {t("Live watch")}
         </h1>
         <p className="m-0 text-sm leading-5 text-muted max-[900px]:mt-1">
-          Follow the run from live activity to the final result; technical details are available
-          below.
+          {t(
+            "Follow the run from live activity to the final result; technical details are available below.",
+          )}
         </p>
       </header>
       <OperatorDashboard

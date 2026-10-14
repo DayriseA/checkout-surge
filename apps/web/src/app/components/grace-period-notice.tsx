@@ -1,7 +1,10 @@
+"use client";
+
 import {
   automaticRunResetGraceNoticeSeconds,
   type DemoRunSnapshot,
 } from "@checkout-surge/contracts";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import { formatDurationMs } from "../lib/presentation/format";
 
 /**
@@ -18,6 +21,8 @@ export function GracePeriodNotice({
   run: DemoRunSnapshot;
   now?: (() => number) | undefined;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (run.status === "completed" || run.status === "failed") return null;
   const startedAtMs = Date.parse(run.startedAt);
   const resetAtMs = Date.parse(run.autoResetAt);
@@ -26,17 +31,18 @@ export function GracePeriodNotice({
   if (nowMs - startedAtMs < automaticRunResetGraceNoticeSeconds * 1000) return null;
   const remainingMs = resetAtMs - nowMs;
   if (remainingMs <= 0) return null;
-  const remaining = formatDurationMs(remainingMs) ?? "under a second";
+  const remaining = formatDurationMs(remainingMs, locale) ?? "under a second";
   return (
     <section
-      aria-label="Grace period notice"
+      aria-label={t("Grace period notice")}
       className="rounded-xl border border-warning-line bg-warning-soft px-4 py-3"
       data-grace-period-notice=""
       role="status"
     >
       <p className="m-0 text-sm font-semibold leading-6 text-ink">
-        This run is in its grace period. It will be reset automatically in {remaining} to free the
-        demo for the next run, and its run data will be discarded.
+        {t("This run is in its grace period. It will be reset automatically in ")}
+        {remaining}
+        {t(" to free the demo for the next run, and its run data will be discarded.")}
       </p>
     </section>
   );

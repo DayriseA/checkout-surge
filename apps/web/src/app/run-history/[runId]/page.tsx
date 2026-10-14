@@ -14,6 +14,8 @@ import {
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
 import { getAdminRunHistoryDetail, getRunHistoryDetail } from "../../lib/api";
+import { getLocale } from "../../lib/i18n/server";
+import { getTranslation } from "../../lib/i18n/translate";
 import { readComparison } from "../../lib/presentation/comparison";
 import { formatDurationMs, formatInstantUtc } from "../../lib/presentation/format";
 import {
@@ -22,7 +24,10 @@ import {
 } from "../../lib/presentation/public-vocabulary";
 import { hasValidAdminPageSession } from "../../lib/server/admin-page-session";
 
-export const metadata: Metadata = { title: "Run report" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return { title: t("Run report") };
+}
 export const dynamic = "force-dynamic";
 
 interface RunHistoryDetailPageProps {
@@ -32,6 +37,9 @@ interface RunHistoryDetailPageProps {
 }
 
 export default async function RunHistoryDetailPage({ params }: RunHistoryDetailPageProps) {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+
   const resolvedParams = await params;
   const runId = resolvedParams?.runId ?? "";
   const parsedParams = runHistoryDetailParamsSchema.safeParse({ runId });
@@ -78,30 +86,31 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
       <>
         <header className="mb-4">
           <Link className={neutralLinkButtonClassName} href="/run-history">
-            Back to run history
+            {t("Back to run history")}
           </Link>
           <h1 className="type-display m-0 mt-4 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
-            {summary.presetName}
+            {t(summary.presetName)}
           </h1>
           <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
-            {scenarioRecap(publicDetail.data)}
+            {scenarioRecap(publicDetail.data, locale)}
           </p>
           <p className="m-0 mt-1 max-w-[66ch] text-sm leading-6 text-muted">
-            This is a simulation of the purchase system behind a waiting room: the buyers it lets
-            through compete for limited stock, and orders reach a simulated order-processing system.
+            {t(
+              "This is a simulation of the purchase system behind a waiting room: the buyers it lets through compete for limited stock, and orders reach a simulated order-processing system.",
+            )}
           </p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <p className="m-0 text-sm text-muted">
               <time dateTime={summary.startedAt ?? summary.endedAt}>
-                {formatInstantUtc(summary.startedAt ?? summary.endedAt)}
+                {formatInstantUtc(summary.startedAt ?? summary.endedAt, { locale })}
               </time>
               {" · "}
-              {"Overall duration: "}
-              {formatDurationMs(overallDurationMs) ?? "duration not recorded"}
+              {t("Overall duration: ")}
+              {formatDurationMs(overallDurationMs, locale) ?? t("duration not recorded")}
             </p>
             <StatusPill
               status={{
-                label: runResultOutcomeLabel(result.outcome),
+                label: t(runResultOutcomeLabel(result.outcome)),
                 tone: runResultOutcomeTone(result.outcome),
               }}
             />
@@ -133,7 +142,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
             detail={adminDetail.data}
             navigation={
               <Link className={`${textLinkClassName} w-fit text-sm`} href="/run-history">
-                Back to run history
+                {t("Back to run history")}
               </Link>
             }
           />
@@ -155,23 +164,25 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
       <header className="mb-4 grid grid-cols-[1fr_auto] items-end gap-4 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div>
           <Link className={neutralLinkButtonClassName} href="/run-history">
-            Back to run history
+            {t("Back to run history")}
           </Link>
           <h1 className="type-display m-0 mt-4 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
-            Run history detail
+            {t("Run history detail")}
           </h1>
           <p className="mt-3 max-w-[66ch] [overflow-wrap:anywhere] leading-6 text-muted">{runId}</p>
         </div>
         <StatusPill
           status={{
-            label: "unavailable",
+            label: t("unavailable"),
             tone: "danger",
           }}
         />
       </header>
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-        <p className="m-0 text-xs font-medium text-muted">Run history detail</p>
-        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">Detail unavailable</h2>
+        <p className="m-0 text-xs font-medium text-muted">{t("Run history detail")}</p>
+        <h2 className="m-0 mt-1 text-base font-bold leading-tight text-ink">
+          {t("Detail unavailable")}
+        </h2>
         <ErrorNotice
           context={{ surface: "history-detail", protected: isAdmin }}
           protectedDetails={isAdmin}
@@ -183,10 +194,10 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
     <>
       <header className="mb-4">
         <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
-          This report is not available
+          {t("This report is not available")}
         </h1>
         <p className="mt-3 max-w-[66ch] leading-6 text-muted">
-          We could not load a saved report from this link.
+          {t("We could not load a saved report from this link.")}
         </p>
       </header>
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
@@ -197,10 +208,10 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
         />
         <div className="mt-4 flex flex-wrap gap-3">
           <Link className={neutralLinkButtonClassName} href="/run-history">
-            Back to run history
+            {t("Back to run history")}
           </Link>
           <Link className={neutralLinkButtonClassName} href="/demo">
-            Choose a simulation
+            {t("Choose a simulation")}
           </Link>
         </div>
       </section>

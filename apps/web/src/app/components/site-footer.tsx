@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useTranslation } from "../lib/i18n/locale-context";
 import { publicNarrative } from "../lib/presentation/public-vocabulary";
 import { siteLink, sitePages } from "../lib/site-links";
 
@@ -13,15 +16,16 @@ const footerLinkClassName =
   "inline-flex min-h-11 items-center rounded-md px-2 text-muted-strong underline-offset-[3px] hover:text-ink hover:underline";
 
 export function SiteFooter() {
+  const t = useTranslation();
   return (
     <footer className="border-t border-border">
       <nav
-        aria-label="Site pages"
+        aria-label={t("Site pages")}
         className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-2 gap-y-1 px-4 py-4 text-sm max-[560px]:px-2"
       >
         {footerLinks.map((link) => (
           <Link className={footerLinkClassName} href={link.href} key={link.href}>
-            {link.label}
+            {t(link.label)}
           </Link>
         ))}
         <a
@@ -30,11 +34,11 @@ export function SiteFooter() {
           rel="noopener noreferrer"
           target="_blank"
         >
-          Repository
-          <span className="sr-only"> (opens in a new tab)</span>
+          {t("Repository")}
+          <span className="sr-only">{t(" (opens in a new tab)")}</span>
         </a>
         <Link className={`${footerLinkClassName} ml-auto`} href={sitePages.admin}>
-          Admin
+          {t("Admin")}
         </Link>
       </nav>
     </footer>

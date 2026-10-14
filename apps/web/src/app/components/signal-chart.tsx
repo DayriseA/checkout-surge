@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, type PointerEvent, type ReactNode, useContext, useState } from "react";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import {
   axisTicks,
   type ChartPoint,
@@ -52,6 +53,8 @@ export function SignalChart({
   unit: string;
   xMax: number;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const cursor = useContext(CursorContext);
   const yMax = Math.max(1, ...series.flatMap((line) => line.points.map((point) => point.value)));
   const percent = (seconds: number) => (scale(seconds, xMax, width) / width) * 100;
@@ -71,7 +74,7 @@ export function SignalChart({
           {series.map((line) => (
             <li className="flex items-center gap-1.5" key={line.label}>
               <span aria-hidden="true" className={`h-0.5 w-4 ${swatchTone[line.tone]}`} />
-              {line.label}
+              {t(line.label)}
             </li>
           ))}
         </ul>
@@ -81,7 +84,7 @@ export function SignalChart({
           aria-hidden="true"
           className="relative h-24 w-12 shrink-0 pr-2 text-right text-[11px] leading-none text-muted"
         >
-          <span className="absolute right-2 top-0">{formatNumber(yMax)}</span>
+          <span className="absolute right-2 top-0">{formatNumber(yMax, locale)}</span>
           <span className="absolute bottom-0 right-2">0</span>
         </div>
         <div className="min-w-0 flex-1">
@@ -142,14 +145,16 @@ export function SignalChart({
                       : { left: `calc(${cursorPercent}% + 6px)` }
                   }
                 >
-                  <span className="block text-muted">{formatSeconds(cursor.seconds ?? 0)}</span>
+                  <span className="block text-muted">
+                    {formatSeconds(cursor.seconds ?? 0, locale)}
+                  </span>
                   {readings.length === 0 ? (
-                    <span className="block">No sample</span>
+                    <span className="block">{t("No sample")}</span>
                   ) : (
                     readings.map((reading) => (
                       <span className="block font-semibold" key={reading.label}>
                         {series.length > 1 ? `${reading.label} ` : ""}
-                        {formatNumber(reading.value)} {unit}
+                        {formatNumber(reading.value, locale)} {t(unit)}
                       </span>
                     ))
                   )}
@@ -164,13 +169,15 @@ export function SignalChart({
                 key={tick}
                 style={{ left: `${percent(tick)}%` }}
               >
-                {formatSeconds(tick)}
+                {formatSeconds(tick, locale)}
               </span>
             ))}
           </div>
         </div>
       </div>
-      <p className="sr-only">{series.map((line) => describeSeries(line, unit)).join(" ")}</p>
+      <p className="sr-only">
+        {series.map((line) => describeSeries(line, unit, locale)).join(" ")}
+      </p>
     </div>
   );
 }

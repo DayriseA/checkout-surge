@@ -3,8 +3,10 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { adminSessionProxyPath } from "../lib/control-paths";
+import { useTranslation } from "../lib/i18n/locale-context";
 
 export function AdminSignOut() {
+  const t = useTranslation();
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -35,11 +37,11 @@ export function AdminSignOut() {
         }}
         type="button"
       >
-        {pending ? "Signing out…" : "Sign out"}
+        {pending ? t("Signing out…") : t("Sign out")}
       </button>
       {failed ? (
         <p className="m-0 text-sm font-semibold text-signal max-[900px]:text-danger" role="alert">
-          Admin sign-out failed.
+          {t("Admin sign-out failed.")}
         </p>
       ) : null}
     </div>

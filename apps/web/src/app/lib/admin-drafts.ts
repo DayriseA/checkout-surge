@@ -12,7 +12,8 @@ import {
   demoPresetDisplaySchema,
   publicRuntimePolicyMutableSchema,
 } from "@checkout-surge/contracts";
-import { formatCount } from "./presentation/format";
+import { getTranslation, type Locale } from "./i18n/translate";
+import { type AdminMessage, adminMessageText } from "./presentation/admin-notice";
 import { percentToRatio, ratioToPercent } from "./presentation/percent";
 
 export type TrafficMode = DemoPresetContract["trafficConfig"]["mode"];
@@ -74,11 +75,11 @@ export type DraftErrorCode =
   | "below_min"
   | "above_max"
   | "server_rejected";
-export interface DraftFieldError {
+export interface DraftFieldError extends Partial<AdminMessage> {
   code: DraftErrorCode;
   message: string;
 }
-export interface DraftFormError {
+export interface DraftFormError extends Partial<AdminMessage> {
   message: string;
   fields: string[];
 }
@@ -86,6 +87,19 @@ export interface DraftValidationResult<T> {
   values?: T;
   fieldErrors: Record<string, DraftFieldError>;
   formErrors: DraftFormError[];
+}
+
+export function draftErrorMessage(error: DraftFieldError | DraftFormError, locale: Locale): string {
+  return error.messageKey
+    ? adminMessageText(
+        { messageKey: error.messageKey, ...(error.values ? { values: error.values } : {}) },
+        locale,
+      )
+    : getTranslation(locale)(error.message);
+}
+
+function draftMessage(message: AdminMessage, locale: Locale) {
+  return { ...message, message: adminMessageText(message, locale) };
 }
 
 interface NumericRule {
@@ -159,7 +173,9 @@ export function draftFromConfigSnapshot(config: RunConfigBase): RunConfigDraft {
 export function buildPolicyFromDraft(
   draft: RuntimePolicyDraft,
   currentPolicy: PublicRuntimePolicy,
+  locale: Locale = "en",
 ): DraftValidationResult<PublicRuntimePolicyMutable> {
+  const t = getTranslation(locale);
   const rules: NumericRule[] = [
     ...runConfigRules(draft.mode, currentPolicy.deploymentHardCaps),
     rule("budgetWindowSeconds", "Budget window"),
@@ -203,7 +219,7 @@ export function buildPolicyFromDraft(
     rule("maxErpMaxTps", "Maximum ERP TPS"),
     rule("maxErpErrorRate", "Maximum ERP error rate", undefined, 100),
   ];
-  const parsed = parseNumericDraft(draft, rules);
+  const parsed = parseNumericDraft(draft, rules, locale);
   if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
   const number = parsed.values;
   const configResult = buildConfigFromParsed(draft, currentPolicy.publicCustomDefaults, number);
@@ -239,20 +255,20 @@ export function buildPolicyFromDraft(
   const policyParse = publicRuntimePolicyMutableSchema.safeParse(policy);
   const contractErrors = policyParse.success
     ? emptyDraftErrors()
-    : contractDraftErrors(policyParse.error.issues, rules, policyDraftField);
+    : contractDraftErrors(policyParse.error.issues, rules, policyDraftField, locale);
   const fieldErrors = mergeBoundErrors(
-    dynamicBoundErrors(number, rules),
+    dynamicBoundErrors(number, rules, locale),
     contractErrors.fieldErrors,
   );
   const formErrors: DraftFormError[] = collectPublicRuntimePolicyMutableViolations(policy).map(
     (violation) => ({
-      message: policyViolationMessage(violation.code),
+      message: policyViolationMessage(violation.code, locale),
       fields: policyViolationFields(violation.code, violation.path, draft.mode),
     }),
   );
   if (!draft.allowBuyerSpike && !draft.allowConstantArrivalRate) {
     formErrors.push({
-      message: "Allow at least one public traffic mode.",
+      message: t("Allow at least one public traffic mode."),
       fields: ["allowBuyerSpike", "allowConstantArrivalRate"],
     });
   }
@@ -262,7 +278,7 @@ export function buildPolicyFromDraft(
     configResult.trafficConfig.k6Vus.maxVus < configResult.trafficConfig.k6Vus.preAllocatedVus
   ) {
     formErrors.push({
-      message: "Maximum VUs must be greater than or equal to preallocated VUs.",
+      message: t("Maximum VUs must be greater than or equal to preallocated VUs."),
       fields: ["preAllocatedVus", "maxVus"],
     });
   }
@@ -276,17 +292,19 @@ export function buildEffectiveRunConfig(
   draft: RunConfigDraft,
   base: RunConfigBase,
   policy?: PublicRuntimePolicy,
+  locale: Locale = "en",
 ): DraftValidationResult<AcceptedRunConfigSnapshot> {
+  const t = getTranslation(locale);
   const rules = runConfigRules(draft.mode, policy?.deploymentHardCaps);
-  const parsed = parseNumericDraft(draft, rules);
+  const parsed = parseNumericDraft(draft, rules, locale);
   if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
   const values = buildConfigFromParsed(draft, base, parsed.values);
   const configParse = acceptedRunConfigSnapshotSchema.safeParse(values);
   const contractErrors = configParse.success
     ? emptyDraftErrors()
-    : contractDraftErrors(configParse.error.issues, rules, configDraftField);
+    : contractDraftErrors(configParse.error.issues, rules, configDraftField, locale);
   const fieldErrors = mergeBoundErrors(
-    dynamicBoundErrors(parsed.values, rules),
+    dynamicBoundErrors(parsed.values, rules, locale),
     contractErrors.fieldErrors,
   );
   const formErrors: DraftFormError[] =
@@ -296,7 +314,7 @@ export function buildEffectiveRunConfig(
     values.trafficConfig.k6Vus.maxVus < values.trafficConfig.k6Vus.preAllocatedVus
       ? [
           {
-            message: "Maximum VUs must be greater than or equal to preallocated VUs.",
+            message: t("Maximum VUs must be greater than or equal to preallocated VUs."),
             fields: ["preAllocatedVus", "maxVus"],
           },
         ]
@@ -310,10 +328,19 @@ export function buildEffectiveRunConfig(
       const computedTotal = violation.details?.value;
       const permittedMaximum = violation.details?.cap;
       formErrors.push({
-        message:
+        ...draftMessage(
           typeof computedTotal === "number" && typeof permittedMaximum === "number"
-            ? `This configuration creates ${formatCount(computedTotal) ?? computedTotal} requests; the permitted maximum is ${formatCount(permittedMaximum) ?? permittedMaximum} requests.`
-            : `Total requests exceed the permitted maximum of ${formatCount(policy.deploymentHardCaps.maxTotalRequests) ?? policy.deploymentHardCaps.maxTotalRequests} requests.`,
+            ? {
+                messageKey:
+                  "This configuration creates {count} requests; the permitted maximum is {maximum} requests.",
+                values: { count: { count: computedTotal }, maximum: { count: permittedMaximum } },
+              }
+            : {
+                messageKey: "Total requests exceed the permitted maximum of {maximum} requests.",
+                values: { maximum: { count: policy.deploymentHardCaps.maxTotalRequests } },
+              },
+          locale,
+        ),
         fields:
           draft.mode === "buyer-spike"
             ? ["buyerCount", "duplicateEachBuyerAttempt"]
@@ -356,9 +383,12 @@ export function isPresetDraftDirty(draft: PresetDraft, preset: DemoPresetContrac
   );
 }
 
-export function buildSortOrder(value: string): DraftValidationResult<number> {
+export function buildSortOrder(
+  value: string,
+  locale: Locale = "en",
+): DraftValidationResult<number> {
   const rules = [rule("sortOrder", "Sort order")];
-  const parsed = parseNumericDraft({ sortOrder: value }, rules);
+  const parsed = parseNumericDraft({ sortOrder: value }, rules, locale);
   if (!parsed.values) return { fieldErrors: parsed.fieldErrors, formErrors: parsed.formErrors };
   const sortOrder = requiredNumber(parsed.values, "sortOrder");
   const displayParse = demoPresetDisplaySchema.safeParse({
@@ -369,7 +399,7 @@ export function buildSortOrder(value: string): DraftValidationResult<number> {
   });
   const contractErrors = displayParse.success
     ? emptyDraftErrors()
-    : contractDraftErrors(displayParse.error.issues, rules, directDraftField);
+    : contractDraftErrors(displayParse.error.issues, rules, directDraftField, locale);
   return Object.keys(contractErrors.fieldErrors).length === 0 &&
     contractErrors.formErrors.length === 0
     ? { values: sortOrder, fieldErrors: {}, formErrors: [] }
@@ -426,6 +456,7 @@ function buildConfigFromParsed(
 function parseNumericDraft(
   draft: object,
   rules: NumericRule[],
+  locale: Locale = "en",
 ): DraftValidationResult<Record<string, number>> {
   const values: Record<string, number> = {};
   const fieldErrors: Record<string, DraftFieldError> = {};
@@ -443,7 +474,10 @@ function parseNumericDraft(
     if (trimmed === "") {
       fieldErrors[numericRule.field] = {
         code: "required",
-        message: `${numericRule.label} is required.`,
+        ...draftMessage(
+          { messageKey: "{label} is required.", values: { label: numericRule.label } },
+          locale,
+        ),
       };
       continue;
     }
@@ -451,7 +485,10 @@ function parseNumericDraft(
     if (!Number.isFinite(parsed)) {
       fieldErrors[numericRule.field] = {
         code: "not_a_number",
-        message: `${numericRule.label} must be a finite number.`,
+        ...draftMessage(
+          { messageKey: "{label} must be a finite number.", values: { label: numericRule.label } },
+          locale,
+        ),
       };
     } else {
       values[numericRule.field] = parsed;
@@ -471,12 +508,16 @@ interface ContractIssue {
 
 type DraftErrors = Pick<DraftValidationResult<unknown>, "fieldErrors" | "formErrors">;
 
-export function presetContractDraftErrors(issues: readonly ContractIssue[]): DraftErrors {
+export function presetContractDraftErrors(
+  issues: readonly ContractIssue[],
+  locale: Locale = "en",
+): DraftErrors {
+  const t = getTranslation(locale);
   const fieldErrors: Record<string, DraftFieldError> = {};
   let hasUnassignedIssue = false;
   for (const issue of issues) {
     if (issue.path.at(-1) === "name" && issue.path.includes("display")) {
-      fieldErrors.displayName = { code: "required", message: "Name is required." };
+      fieldErrors.displayName = { code: "required", message: t("Name is required.") };
     } else {
       hasUnassignedIssue = true;
     }
@@ -484,7 +525,7 @@ export function presetContractDraftErrors(issues: readonly ContractIssue[]): Dra
   return {
     fieldErrors,
     formErrors: hasUnassignedIssue
-      ? [{ message: "Review the preset values and try again.", fields: [] }]
+      ? [{ message: t("Review the preset values and try again."), fields: [] }]
       : [],
   };
 }
@@ -497,14 +538,16 @@ function contractDraftErrors(
   issues: readonly ContractIssue[],
   rules: NumericRule[],
   fieldFromPath: (path: readonly PropertyKey[]) => string | undefined,
+  locale: Locale = "en",
 ): DraftErrors {
+  const t = getTranslation(locale);
   const labels = new Map(rules.map(({ field, label }) => [field, label]));
   const fieldErrors: Record<string, DraftFieldError> = {};
   let hasUnexpectedIssue = false;
   for (const issue of issues) {
     const field = fieldFromPath(issue.path);
     const label = field ? labels.get(field) : undefined;
-    const error = label ? contractIssueError(issue, label) : undefined;
+    const error = label ? contractIssueError(issue, label, locale) : undefined;
     if (field && error) {
       if (!fieldErrors[field] || error.code === "not_an_integer") fieldErrors[field] = error;
     } else if (!isHandledRelationshipIssue(issue)) {
@@ -514,28 +557,53 @@ function contractDraftErrors(
   return {
     fieldErrors,
     formErrors: hasUnexpectedIssue
-      ? [{ message: "Review the configuration values and try again.", fields: [] }]
+      ? [{ message: t("Review the configuration values and try again."), fields: [] }]
       : [],
   };
 }
 
-function contractIssueError(issue: ContractIssue, label: string): DraftFieldError | undefined {
+function contractIssueError(
+  issue: ContractIssue,
+  label: string,
+  locale: Locale = "en",
+): DraftFieldError | undefined {
   if (issue.code === "invalid_type") {
-    return { code: "not_an_integer", message: `${label} must be a whole number.` };
+    return {
+      code: "not_an_integer",
+      ...draftMessage({ messageKey: "{label} must be a whole number.", values: { label } }, locale),
+    };
   }
   if (issue.code === "too_small" && typeof issue.minimum === "number") {
     return {
       code: "below_min",
-      message: `${label} must be at least ${issue.minimum}.`,
+      ...draftMessage(
+        {
+          messageKey: "{label} must be at least {minimum}.",
+          values: { label, minimum: issue.minimum },
+        },
+        locale,
+      ),
     };
   }
   if (issue.code === "too_big" && typeof issue.maximum === "number") {
     if (label.toLowerCase().includes("error rate")) {
-      return { code: "above_max", message: `${label} must be at most 100 percent.` };
+      return {
+        code: "above_max",
+        ...draftMessage(
+          { messageKey: "{label} must be at most 100 percent.", values: { label } },
+          locale,
+        ),
+      };
     }
     return {
       code: "above_max",
-      message: `${label} must be at most ${issue.maximum}.`,
+      ...draftMessage(
+        {
+          messageKey: "{label} must be at most {maximum}.",
+          values: { label, maximum: issue.maximum },
+        },
+        locale,
+      ),
     };
   }
   return undefined;
@@ -552,15 +620,28 @@ function isHandledRelationshipIssue(issue: ContractIssue): boolean {
 function dynamicBoundErrors(
   values: Record<string, number>,
   rules: NumericRule[],
+  locale: Locale = "en",
 ): Record<string, DraftFieldError> {
   const errors: Record<string, DraftFieldError> = {};
   for (const { field, label, min, max } of rules) {
     const value = values[field];
     if (value === undefined) continue;
     if (min !== undefined && value < min) {
-      errors[field] = { code: "below_min", message: `${label} must be at least ${min}.` };
+      errors[field] = {
+        code: "below_min",
+        ...draftMessage(
+          { messageKey: "{label} must be at least {minimum}.", values: { label, minimum: min } },
+          locale,
+        ),
+      };
     } else if (max !== undefined && value > max) {
-      errors[field] = { code: "above_max", message: `${label} must be at most ${max}.` };
+      errors[field] = {
+        code: "above_max",
+        ...draftMessage(
+          { messageKey: "{label} must be at most {maximum}.", values: { label, maximum: max } },
+          locale,
+        ),
+      };
     }
   }
   return errors;
@@ -711,12 +792,13 @@ function policyViolationFields(
   }
 }
 
-function policyViolationMessage(code: string): string {
+function policyViolationMessage(code: string, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   if (code === "public_vus_limit_invalid") {
-    return "Maximum preallocated VUs cannot exceed maximum VUs.";
+    return t("Maximum preallocated VUs cannot exceed maximum VUs.");
   }
   if (code === "public_erp_tps_limit_invalid") {
-    return "Minimum ERP TPS cannot exceed maximum ERP TPS.";
+    return t("Minimum ERP TPS cannot exceed maximum ERP TPS.");
   }
-  return "Public custom defaults must fit within the active public limits and deployment caps.";
+  return t("Public custom defaults must fit within the active public limits and deployment caps.");
 }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminSignIn, parseLoginRetryAfterMs } from "../src/app/components/admin/admin-sign-in.js";
 import { AdminSignOut } from "../src/app/components/admin-nav.js";
 import { adminSessionProxyPath } from "../src/app/lib/control-paths.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
 
 const navigation = vi.hoisted(() => ({ refresh: vi.fn() }));
 
@@ -21,6 +22,45 @@ afterEach(() => {
 });
 
 describe("AdminSignIn", () => {
+  it("uses French form labels and a French failure message without changing the submitted credential", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      jsonResponse({}, 401),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <LocaleProvider locale="fr">
+        <AdminSignIn />
+      </LocaleProvider>,
+    );
+    await user.type(screen.getByLabelText("Phrase secrète administrateur"), "secret-value");
+    await user.click(screen.getByRole("button", { name: "Se connecter" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "La connexion administrateur a échoué.",
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      passphrase: "secret-value",
+    });
+    rerender(
+      <LocaleProvider locale="en">
+        <AdminSignIn />
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole("alert")).toHaveProperty("textContent", "Admin sign-in failed.");
+    expect((screen.getByLabelText("Admin passphrase") as HTMLInputElement).value).toBe(
+      "secret-value",
+    );
+    rerender(
+      <LocaleProvider locale="fr">
+        <AdminSignIn />
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole("alert")).toHaveProperty(
+      "textContent",
+      "La connexion administrateur a échoué.",
+    );
+  });
   it("preserves login Retry-After values above the dashboard retry cap", () => {
     expect(parseLoginRetryAfterMs("301")).toBe(301_000);
     expect(parseLoginRetryAfterMs("600")).toBe(600_000);

@@ -3,7 +3,7 @@ import replyFrom from "@fastify/reply-from";
 import { type FastifyReply, fastify } from "fastify";
 import type { CoreStatus, GatePageState } from "./core-status.js";
 import type { RecoveryPage, WakeOutcome } from "./core-wake.js";
-import { renderGatePage, safeReturnPath, wakePath } from "./pages.js";
+import { type GateLocale, gateLocale, renderGatePage, safeReturnPath, wakePath } from "./pages.js";
 import { relayRequestHeaders } from "./relay-headers.js";
 
 export interface BuildGateServerOptions {
@@ -46,14 +46,15 @@ export async function buildGateServer(options: BuildGateServerOptions) {
     const returnPath = safeReturnPath((request.query as { return?: unknown }).return);
     const outcome = await options.wake.wake();
     if (outcome === "starting" || outcome === "relocating") return reply.redirect(returnPath, 303);
-    return sendPage(reply, outcome, returnPath);
+    return sendPage(reply, outcome, returnPath, gateLocale(request.headers.cookie));
   });
 
   app.all("/*", async (request, reply) => {
+    const locale = gateLocale(request.headers.cookie);
     const recovery = options.wake.recoveryState();
-    if (recovery) return sendPage(reply, recovery, request.url);
+    if (recovery) return sendPage(reply, recovery, request.url, locale);
     const status = await options.status.current();
-    if (status.state !== "ready") return sendPage(reply, status.state, request.url);
+    if (status.state !== "ready") return sendPage(reply, status.state, request.url, locale);
     return reply.from(undefined, {
       getUpstream: () => status.target,
       rewriteRequestHeaders: (original, headers) =>
@@ -64,7 +65,12 @@ export async function buildGateServer(options: BuildGateServerOptions) {
         // The core went away since its status was read, usually because it stopped.
         options.status.invalidate();
         void options.status.current().then((current) => {
-          sendPage(reply, current.state === "ready" ? "unavailable" : current.state, request.url);
+          sendPage(
+            reply,
+            current.state === "ready" ? "unavailable" : current.state,
+            request.url,
+            locale,
+          );
         });
       },
     });
@@ -73,10 +79,15 @@ export async function buildGateServer(options: BuildGateServerOptions) {
   return app;
 }
 
-function sendPage(reply: FastifyReply, state: GatePageState, returnPath: string): FastifyReply {
+function sendPage(
+  reply: FastifyReply,
+  state: GatePageState,
+  returnPath: string,
+  locale: GateLocale,
+): FastifyReply {
   return reply
     .code(503)
     .header("cache-control", "no-store")
     .type("text/html; charset=utf-8")
-    .send(renderGatePage(state, safeReturnPath(returnPath)));
+    .send(renderGatePage(state, safeReturnPath(returnPath), locale));
 }

@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import { AdminAuthenticatedSurface } from "../components/admin/admin-authenticated-surface";
 import { AdminSignIn } from "../components/admin/admin-sign-in";
 import { pendingDashboardRecovery } from "../lib/api";
+import { getLocale } from "../lib/i18n/server";
+import { getTranslation } from "../lib/i18n/translate";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 import {
   readAdminPresets,
@@ -9,10 +11,16 @@ import {
   readAdminRuntimePolicy,
 } from "../lib/server/admin-reads";
 
-export const metadata: Metadata = { title: "Admin" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return { title: t("Admin") };
+}
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+
   const authenticated = await hasValidAdminPageSession();
   const reads = authenticated
     ? await Promise.all([readAdminPresets(), readAdminRuntimePolicy(), readAdminReadiness()])
@@ -21,10 +29,10 @@ export default async function AdminPage() {
     <>
       <header className="mb-5 flex flex-wrap items-end justify-between gap-x-8 gap-y-2">
         <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
-          Admin console
+          {t("Admin console")}
         </h1>
         <p className="m-0 max-w-[52ch] leading-6 text-muted">
-          Protected operator controls and service state for supervised demo runs.
+          {t("Protected operator controls and service state for supervised demo runs.")}
         </p>
       </header>
       {reads ? (

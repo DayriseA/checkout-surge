@@ -4,6 +4,7 @@ import type {
   EstimatorResult,
   EstimatorUnestimableReason,
 } from "@checkout-surge/contracts";
+import { getTranslation, type Locale } from "../i18n/translate";
 
 export const estimateBottleneckLabels = {
   traffic_dispatch: "Traffic dispatch",
@@ -23,32 +24,46 @@ export const estimateUnestimableLabels = {
 export function estimateRejectionCopy(
   result: EstimatorResult | EstimateAdmissionRejectionDetails,
   mode: "public" | "admin",
+  locale: Locale = "en",
 ): string[] {
+  const t = getTranslation(locale);
   const reason = "unestimableReason" in result ? result.unestimableReason : undefined;
   const duration =
     "conservativeDurationSeconds" in result ? result.conservativeDurationSeconds : undefined;
   return [
-    "Configuration not allowed.",
+    t("Configuration not allowed."),
     ...(reason
       ? [
           mode === "admin" && reason === "declared_permanent_outage"
-            ? "The declared permanent ERP outage prevents a finite estimate."
-            : estimateUnestimableLabels[reason],
+            ? t("The declared permanent ERP outage prevents a finite estimate.")
+            : t(estimateUnestimableLabels[reason]),
         ]
       : duration !== undefined
         ? [
-            `Conservative duration: ${duration.toLocaleString("en-US", { maximumFractionDigits: 2 })} seconds.`,
+            t("Conservative duration: {v0} seconds.", {
+              v0: String(
+                duration.toLocaleString(locale === "fr" ? "fr-FR" : "en-US", {
+                  maximumFractionDigits: 2,
+                }),
+              ),
+            }),
           ]
         : []),
-    `Demo limit: ${result.effectiveCeilingSeconds.toLocaleString("en-US", { maximumFractionDigits: 2 })} seconds.`,
-    `Bottleneck: ${estimateBottleneckLabels[result.bottleneck]}.`,
+    t("Demo limit: {v0} seconds.", {
+      v0: String(
+        result.effectiveCeilingSeconds.toLocaleString(locale === "fr" ? "fr-FR" : "en-US", {
+          maximumFractionDigits: 2,
+        }),
+      ),
+    }),
+    t("Bottleneck: {v0}.", { v0: String(t(estimateBottleneckLabels[result.bottleneck])) }),
     // Public visitors cannot change outage or internal policy settings.
     ...(mode === "public" && (reason || result.bottleneck === "declared_outage")
       ? [
           reason === "error_rate_above_policy_maximum"
-            ? "Lower the error rate and try again."
-            : "Choose another scenario or try again when the demo is available.",
+            ? t("Lower the error rate and try again.")
+            : t("Choose another scenario or try again when the demo is available."),
         ]
-      : (result.reasons ?? [])),
+      : (result.reasons ?? []).map((reason) => t(reason))),
   ];
 }

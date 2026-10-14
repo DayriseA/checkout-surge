@@ -30,6 +30,7 @@ import {
   scenarioRecap,
 } from "../src/app/components/run-history-detail.js";
 import { RunHistoryList } from "../src/app/components/run-history-list.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
 import { trafficEvidenceUnavailableText } from "../src/app/lib/presentation/traffic-evidence.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
 import RunHistoryPage from "../src/app/run-history/page.js";
@@ -56,6 +57,19 @@ function publicReport(detail: PublicRunHistoryDetailResponse) {
 }
 
 describe("run history", () => {
+  it("renders report headings, scenario counts, and UTC dates in French", () => {
+    const detail = detailFixture("completed");
+    const markup = renderToStaticMarkup(
+      // biome-ignore lint/correctness/noChildrenProp: The createElement overload requires the provider’s mandatory children prop.
+      createElement(LocaleProvider, { locale: "fr", children: publicReport(detail) }),
+    );
+    expect(markup).toContain("Stock et commandes en fin de simulation");
+    expect(markup).toContain("Commandes confirmées");
+    expect(markup).toContain("Retour à l’historique des simulations");
+    expect(markup).toContain("20/06/2026");
+    expect(scenarioRecap(detail, "fr")).toContain("acheteurs");
+    expect(markup).not.toContain("Final stock and orders");
+  });
   it("puts the failure explanation before metrics and exposes raw evidence only to admins", () => {
     const publicDetail = detailFixture("failed");
     publicDetail.failureDiagnostic = { cause: "virtual_user_limit", maxVus: 4000 };

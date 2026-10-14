@@ -56,6 +56,8 @@ import {
   healthReadyProxyPath,
   publicRunHistoryDetailProxyPath,
 } from "../src/app/lib/control-paths.js";
+import type { Locale } from "../src/app/lib/i18n/locale.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
 import { acceptedRunResultFromRead } from "../src/app/lib/presentation/accepted-run-result.js";
 import OverviewPage from "../src/app/page.js";
 import RunHistoryDetailPage from "../src/app/run-history/[runId]/page.js";
@@ -739,6 +741,54 @@ describe("public browser starts", () => {
     expect(document.body.textContent).not.toContain("Private cap diagnostic");
   });
 
+  it("retains edited custom settings and translates an existing rejection in both directions", async () => {
+    stubInfrastructureLimitRejection("public_buyers_exceeded");
+    const fetchMock = vi.mocked(globalThis.fetch);
+    const surface = publicDemoSurfaceFixture();
+    const user = userEvent.setup();
+    function localizedEntry(locale: Locale) {
+      const props = { locale, children: createElement(PublicDemoEntry, { surface }) };
+      return createElement(LocaleProvider, props);
+    }
+    const view = render(localizedEntry("en"));
+    await user.click(screen.getByText("Customize a scenario"));
+    await replaceInputValue("Starting stock (units)", "321", user);
+    const form = screen.getByRole("form", { name: "Custom run builder" });
+    const stock = screen.getByLabelText("Starting stock (units)") as HTMLInputElement;
+    await user.click(screen.getByRole("button", { name: "Start custom run" }));
+    const englishSummary = await screen.findByRole("alert", { name: "Fix these settings" });
+    expect(
+      within(englishSummary).getByText("This run exceeds an infrastructure limit"),
+    ).toBeTruthy();
+
+    view.rerender(localizedEntry("fr"));
+    const frenchSummary = screen.getByRole("alert", { name: "Corrigez ces paramètres" });
+    expect(
+      within(frenchSummary).getByText("Cette exécution dépasse une limite de l’infrastructure"),
+    ).toBeTruthy();
+    expect(within(frenchSummary).getByRole("link", { name: /Nombre d’acheteurs/ })).toBeTruthy();
+    expect(screen.getByRole("form", { name: "Configuration d’une simulation personnalisée" })).toBe(
+      form,
+    );
+    expect(document.getElementById("custom-stock")).toBe(stock);
+    expect(stock.value).toBe("321");
+    expect(screen.queryByRole("alert", { name: "Fix these settings" })).toBeNull();
+
+    view.rerender(localizedEntry("en"));
+    const restoredSummary = screen.getByRole("alert", { name: "Fix these settings" });
+    expect(
+      within(restoredSummary).getByText("This run exceeds an infrastructure limit"),
+    ).toBeTruthy();
+    expect(within(restoredSummary).getByRole("link", { name: /Buyer count/ })).toBeTruthy();
+    expect(screen.getByRole("form", { name: "Custom run builder" })).toBe(form);
+    expect(document.getElementById("custom-stock")).toBe(stock);
+    expect(stock.value).toBe("321");
+    expect(screen.queryByRole("alert", { name: "Corrigez ces paramètres" })).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input) === demoRunStartProxyPath),
+    ).toHaveLength(1);
+  });
+
   it("starts the surge-5k public preset through the accepted-run path", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (String(input) === demoRunStartProxyPath) {
@@ -775,6 +825,71 @@ describe("public browser starts", () => {
     );
     const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
     expect(jsonRequestBody(init)).toEqual({ presetSlug: "surge-5k" });
+  });
+
+  it("renders and starts the French Steady stream preset with its canonical slug", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      if (String(input) === demoRunStartProxyPath) {
+        return jsonResponse(startDemoRunResponseFixture(), 202);
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const assign = vi.fn();
+    const navigationWindow = Object.create(window) as Window;
+    Object.defineProperty(navigationWindow, "location", { value: { assign } });
+    vi.stubGlobal("window", navigationWindow);
+    const surface = publicDemoSurfaceFixture();
+    if (surface.presets.status !== "available") throw new Error("Expected presets.");
+    const preview = demoPresetFixture("preview-1k");
+    const description =
+      "A waiting room lets 50 buyers through per second for 40 seconds, for 500 units. Same stock and ERP as Surge 5k: only the arrival shape changes. The stock sells out after about 10 seconds while the order backlog builds, then every later buyer is turned away from Redis.";
+    surface.presets.data.presets = [
+      {
+        ...preview,
+        id: "33333333-3333-4333-8333-33333333333a",
+        slug: "steady-stream",
+        display: {
+          ...preview.display,
+          name: "Steady stream",
+          description,
+          sortOrder: 31,
+          outcomeFocus: ["sold_out", "queue_pressure", "run_history"],
+        },
+        trafficConfig: {
+          mode: "constant-arrival-rate",
+          ratePerSecond: 50,
+          durationSeconds: 40,
+          startDelaySeconds: 0,
+          quantityPerAttempt: 1,
+        },
+        inventoryConfig: { startingStock: 500 },
+        erpConfig: { ...preview.erpConfig, latencyMs: 100, maxTps: 20, errorRate: 0 },
+      },
+      demoPresetFixture("public-custom"),
+    ];
+    const providerProps = {
+      locale: "fr" as const,
+      children: createElement(PublicDemoEntry, { surface }),
+    };
+    const user = userEvent.setup();
+    render(createElement(LocaleProvider, providerProps));
+    const card = screen.getByRole("article", { name: "Flux continu" });
+    expect(
+      within(card).getByText(
+        "Une salle d’attente laisse passer 50 acheteurs par seconde pendant 40 secondes, pour 500 unités. Même stock et même ERP que dans Afflux 5k : seul le profil d’arrivée change. Le stock s’épuise après environ 10 secondes pendant que les commandes s’accumulent, puis Redis refuse tous les acheteurs suivants.",
+      ),
+    ).toBeTruthy();
+    expect(within(card).queryByText(description)).toBeNull();
+    await user.click(within(card).getByRole("button", { name: "Lancer Flux continu" }));
+
+    await waitFor(() =>
+      expect(assign).toHaveBeenCalledWith(
+        "/watch?acceptedRunId=55555555-5555-4555-8555-555555555555",
+      ),
+    );
+    const [, init] = findFetchCall(fetchMock, demoRunStartProxyPath, "POST");
+    expect(jsonRequestBody(init)).toEqual({ presetSlug: "steady-stream" });
   });
 
   it("navigates an accepted custom start with the response run ID", async () => {

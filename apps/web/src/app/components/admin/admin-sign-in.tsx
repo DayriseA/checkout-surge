@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { adminSessionProxyPath } from "../../lib/control-paths";
+import { useTranslation } from "../../lib/i18n/locale-context";
 import { adminFieldHints } from "../../lib/presentation/field-hints";
 import { inputClassName, primaryButtonClassName } from "../control-styles";
 import { FieldHint } from "../field-hint";
@@ -101,12 +102,13 @@ export function AdminSignInView({
   onSignIn: () => void;
   passphrase: string;
 }) {
+  const t = useTranslation();
   return (
     <section className="max-w-[440px] rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
       <div className="mb-5">
-        <p className="m-0 text-xs font-medium text-muted">Admin sign-in</p>
+        <p className="m-0 text-xs font-medium text-muted">{t("Admin sign-in")}</p>
         <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
-          Protected operator surface
+          {t("Protected operator surface")}
         </h2>
       </div>
       <form
@@ -119,8 +121,8 @@ export function AdminSignInView({
       >
         <div className="grid gap-1 text-sm font-semibold text-ink">
           <div className="flex items-center gap-1.5">
-            <label htmlFor="admin-passphrase">Admin passphrase</label>
-            <FieldHint label="Admin passphrase" text={adminFieldHints.adminPassphrase} />
+            <label htmlFor="admin-passphrase">{t("Admin passphrase")}</label>
+            <FieldHint label={t("Admin passphrase")} text={adminFieldHints.adminPassphrase} />
           </div>
           <input
             autoComplete="current-password"
@@ -138,16 +140,16 @@ export function AdminSignInView({
           disabled={isPending || retryAfterMs !== null}
           type="submit"
         >
-          {isPending ? "Signing in…" : "Sign in"}
+          {isPending ? t("Signing in…") : t("Sign in")}
         </button>
         {error ? (
           <p className="m-0 text-sm font-semibold text-danger" role="alert">
-            {error}
+            {t(error)}
           </p>
         ) : null}
         {retryAfterMs !== null && retryAfterMs > 0 ? (
           <p aria-live="polite" className="m-0 text-sm text-muted" role="status">
-            Wait {Math.ceil(retryAfterMs / 1_000)} seconds before trying again.
+            {t("Wait")} {Math.ceil(retryAfterMs / 1_000)} {t("seconds before trying again.")}
           </p>
         ) : null}
       </form>

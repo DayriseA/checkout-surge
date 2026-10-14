@@ -1,3 +1,4 @@
+import { getTranslation, type Locale } from "../i18n/translate";
 export type CustomErrorGroup = "traffic" | "stock" | "erp" | "advanced" | "form";
 
 export interface InvalidCustomRunControl {
@@ -74,7 +75,9 @@ const groupErrors: Record<CustomErrorGroup, CustomFormError> = {
 
 export function presentInvalidCustomRunControls(
   controls: readonly InvalidCustomRunControl[],
+  locale: Locale = "en",
 ): CustomRunSummaryEntry[] {
+  const t = getTranslation(locale);
   return controls.flatMap(({ controlId, message }) => {
     const field = fields[controlId as keyof typeof fields];
     return field
@@ -84,7 +87,7 @@ export function presentInvalidCustomRunControls(
             fieldError: message,
             group: field.group,
             key: controlId,
-            message: `${field.label}: ${message}`,
+            message: `${t(field.label)}: ${message}`,
             targetId: controlId,
           },
         ]
@@ -94,23 +97,25 @@ export function presentInvalidCustomRunControls(
 
 export function presentCustomRunIssues(
   paths: ReadonlyArray<readonly unknown[]>,
+  locale: Locale = "en",
 ): CustomRunSummaryEntry[] {
+  const t = getTranslation(locale);
   const entries = paths.map((path) => {
     const fieldId = fieldIdForPath(path);
     if (fieldId) {
       const field = fields[fieldId];
-      const fieldError = `Use an available value for ${field.label}.`;
+      const fieldError = t("Use an available value for {v0}.", { v0: String(t(field.label)) });
       return {
         fieldId,
         fieldError,
         group: field.group,
         key: fieldId,
-        message: `${field.label}: ${fieldError}`,
+        message: `${t(field.label)}: ${fieldError}`,
         targetId: fieldId,
       };
     }
 
-    const error = customValidationError([path]);
+    const error = customValidationError([path], locale);
     return {
       group: error.group,
       key: error.targetId,
@@ -124,9 +129,13 @@ export function presentCustomRunIssues(
   );
 }
 
-export function customValidationError(paths: ReadonlyArray<readonly unknown[]>): CustomFormError {
+export function customValidationError(
+  paths: ReadonlyArray<readonly unknown[]>,
+  locale: Locale = "en",
+): CustomFormError {
+  const t = getTranslation(locale);
   const group = paths.map(customErrorGroup).find((candidate) => candidate !== "form") ?? "form";
-  return groupErrors[group];
+  return { ...groupErrors[group], message: t(groupErrors[group].message) };
 }
 
 export function customErrorGroup(path: readonly unknown[]): CustomErrorGroup {

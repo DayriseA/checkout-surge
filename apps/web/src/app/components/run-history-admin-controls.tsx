@@ -3,7 +3,9 @@
 import { deleteAllRunHistoryConfirmationToken } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import { useMemo } from "react";
-import { formatCount } from "../lib/presentation/format";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
+import { adminMessageText } from "../lib/presentation/admin-notice";
 import { AdminNoticeView } from "./admin/admin-notice";
 import { ConfirmationDialog } from "./confirmation-dialog";
 import { buttonClassName, dangerLinkButtonClassName, inputClassName } from "./control-styles";
@@ -23,6 +25,8 @@ export function RunHistoryAdminControls({
   showBulkControls = true,
   showSelectionToolbar = true,
 }: RunHistoryAdminControlsProps) {
+  const t = useTranslation();
+  const locale = useLocale();
   const deletion = useRunHistoryDeletion(visibleRunIds);
   const selectedCount = deletion.selectedRunIds.size;
   const allVisibleSelected =
@@ -36,7 +40,10 @@ export function RunHistoryAdminControls({
         deletion.openIntent({
           kind: "runs",
           runIds: [runId],
-          description: `run summary “${presetName}” (${runId})`,
+          description: {
+            messageKey: "run summary “{value1}” ({value2})",
+            values: { value1: presetName, value2: runId },
+          },
         }),
       requestDeleteAll: () => deletion.openIntent({ kind: "all" }),
     }),
@@ -49,7 +56,7 @@ export function RunHistoryAdminControls({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <label className="flex min-h-11 items-center gap-2 text-sm font-semibold text-muted-strong">
             <input
-              aria-label="Select all visible runs"
+              aria-label={t("Select all visible runs")}
               checked={allVisibleSelected}
               className="size-4 cursor-pointer accent-danger"
               onChange={deletion.toggleAllVisible}
@@ -58,7 +65,8 @@ export function RunHistoryAdminControls({
               }}
               type="checkbox"
             />
-            Select all visible ({visibleRunIds.length})
+            {t("Select all visible (")}
+            {visibleRunIds.length})
           </label>
           <p aria-live="polite" className="m-0 text-sm text-muted">
             {deletion.statusMessage}
@@ -70,13 +78,15 @@ export function RunHistoryAdminControls({
 
       {showSelectionToolbar && selectedCount > 0 ? (
         <div className="sticky bottom-6 z-40 ml-auto mt-3 w-fit flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xl">
-          <p className="m-0 text-sm font-semibold text-muted-strong">{selectedCount} selected</p>
+          <p className="m-0 text-sm font-semibold text-muted-strong">
+            {selectedCount} {t("selected")}
+          </p>
           <button
             className={`${buttonClassName} px-3 py-2 text-sm`}
             onClick={deletion.clearSelection}
             type="button"
           >
-            Clear
+            {t("Clear")}
           </button>
           <button
             className={dangerLinkButtonClassName}
@@ -84,12 +94,16 @@ export function RunHistoryAdminControls({
               deletion.openIntent({
                 kind: "runs",
                 runIds: Array.from(deletion.selectedRunIds),
-                description: `${formatCount(selectedCount) ?? "an unknown number of"} selected run summaries`,
+                description: {
+                  messageKey: "{value1} selected run summaries",
+                  values: { value1: { count: selectedCount } },
+                },
               })
             }
             type="button"
           >
-            Delete selected ({selectedCount})
+            {t("Delete selected (")}
+            {selectedCount})
           </button>
         </div>
       ) : null}
@@ -99,11 +113,18 @@ export function RunHistoryAdminControls({
           deletion.intent?.kind === "all" &&
           deletion.deleteAllConfirmation !== deleteAllRunHistoryConfirmationToken
         }
-        confirmLabel={confirmLabel(deletion.intent)}
+        confirmLabel={confirmLabel(deletion.intent, locale)}
         description={
           deletion.intent?.kind === "all"
-            ? "Permanently delete every run summary. This cannot be undone."
-            : `Permanently delete ${deletion.intent?.description ?? ""}. This cannot be undone.`
+            ? t("Permanently delete every run summary. This cannot be undone.")
+            : t("Permanently delete {value1}. This cannot be undone.", {
+                value1:
+                  deletion.intent?.kind === "runs"
+                    ? typeof deletion.intent.description === "string"
+                      ? t(deletion.intent.description)
+                      : adminMessageText(deletion.intent.description, locale)
+                    : "",
+              })
         }
         error={deletion.error ? <AdminNoticeView notice={deletion.error} /> : null}
         onCancel={deletion.closeIntent}
@@ -111,12 +132,16 @@ export function RunHistoryAdminControls({
         open={deletion.intent !== null}
         pending={deletion.isSubmitting}
         title={
-          deletion.intent?.kind === "all" ? "Delete all run summaries?" : "Delete run summaries?"
+          deletion.intent?.kind === "all"
+            ? t("Delete all run summaries?")
+            : t("Delete run summaries?")
         }
       >
         {deletion.intent?.kind === "all" ? (
           <label className="grid gap-1 text-sm font-semibold text-muted-strong">
-            <span>Type {deleteAllRunHistoryConfirmationToken} to confirm</span>
+            <span>
+              {t("Type")} {deleteAllRunHistoryConfirmationToken} {t("to confirm")}
+            </span>
             <input
               className={inputClassName}
               onChange={(event) => deletion.setDeleteAllConfirmation(event.target.value)}
@@ -129,7 +154,8 @@ export function RunHistoryAdminControls({
   );
 }
 
-function confirmLabel(intent: DeleteIntent | null): string {
-  if (intent?.kind === "all") return "Delete all summaries";
-  return intent?.runIds.length === 1 ? "Delete run summary" : "Delete selected summaries";
+function confirmLabel(intent: DeleteIntent | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  if (intent?.kind === "all") return t("Delete all summaries");
+  return intent?.runIds.length === 1 ? t("Delete run summary") : t("Delete selected summaries");
 }

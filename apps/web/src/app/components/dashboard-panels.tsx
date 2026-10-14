@@ -1,7 +1,11 @@
+"use client";
+
 import type { DashboardProjection } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { deriveRunErpStory } from "../lib/presentation/erp-story";
 import {
   formatCount,
@@ -14,7 +18,6 @@ import {
   durableCheckoutLens,
   erpAttemptStatusLabel,
   liveTrafficMetricWindowSeconds,
-  liveTrafficWindowLabel,
   publicStatusLabel,
   publicVocabulary,
   queueConnectivityLabel,
@@ -70,31 +73,48 @@ const millisecondUnit = "ms";
 const lagMeasurementBoundaryCaption =
   "Measured from the moment a reservation is secured to final simulated-ERP confirmation.";
 
-export function formatNumber(value: number | null | undefined): string {
-  return formatCount(value) ?? "—";
+export function formatNumber(value: number | null | undefined, locale: Locale = "en"): string {
+  return formatCount(value, locale) ?? "—";
 }
 
 /** Rates are not counts or durations; they keep their own precision rule and unit label. */
-export function formatRate(value: number | null | undefined, unit: string, absent = "—"): string {
+export function formatRate(
+  value: number | null | undefined,
+  unit: string,
+  absent = "—",
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   if (value === null || value === undefined) {
     return absent;
   }
 
-  return `${new Intl.NumberFormat("en-US", {
+  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
     maximumFractionDigits: value < 10 ? 2 : 1,
-  }).format(value)} ${unit}`;
+  }).format(value)} ${t(unit)}`;
 }
 
-function formatExpectedTime(value: string | undefined | null): string {
-  return formatInstantUtc(value) ?? "not yet available";
+function formatExpectedTime(value: string | undefined | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatInstantUtc(value, { locale }) ?? t("not yet available");
 }
 
-export function formatDurationSeconds(value: number | null | undefined, absent = "—"): string {
-  return formatDurationMs(value === null || value === undefined ? null : value * 1000) ?? absent;
+export function formatDurationSeconds(
+  value: number | null | undefined,
+  absent = "—",
+  locale: Locale = "en",
+): string {
+  return (
+    formatDurationMs(value === null || value === undefined ? null : value * 1000, locale) ?? absent
+  );
 }
 
-export function formatMilliseconds(value: number | null | undefined, absent = "—"): string {
-  return formatDurationMs(value) ?? absent;
+export function formatMilliseconds(
+  value: number | null | undefined,
+  absent = "—",
+  locale: Locale = "en",
+): string {
+  return formatDurationMs(value, locale) ?? absent;
 }
 
 /**
@@ -102,24 +122,29 @@ export function formatMilliseconds(value: number | null | undefined, absent = "�
  * follows the one duration policy rather than the sample's raw precision; every other unit is a
  * rate or a ratio and keeps its own precision rule and unit label.
  */
-export function formatMetric(value: number, unit: string, absent = "—"): string {
+export function formatMetric(
+  value: number,
+  unit: string,
+  absent = "—",
+  locale: Locale = "en",
+): string {
   if (unit === millisecondUnit) {
-    return formatDurationMs(value) ?? absent;
+    return formatDurationMs(value, locale) ?? absent;
   }
 
-  return `${new Intl.NumberFormat("en-US", {
+  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
     maximumFractionDigits: value < 10 ? 2 : 1,
   }).format(value)} ${unit}`;
 }
 
-export function formatFailureSample(value: number, unit: string): string {
+export function formatFailureSample(value: number, unit: string, locale: Locale = "en"): string {
   return unit === "ratio"
-    ? `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value * 100)}%`
-    : formatMetric(value, unit);
+    ? `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 2 }).format(value * 100)}%`
+    : formatMetric(value, unit, undefined, locale);
 }
 
-function formatObservedRequestRate(value: number): string {
-  return formatRate(value, "attempts/s");
+function formatObservedRequestRate(value: number, locale: Locale = "en"): string {
+  return formatRate(value, "attempts/s", undefined, locale);
 }
 
 function recoveryData(recovery: BackendRead<DashboardProjection>): DashboardProjection | null {
@@ -136,10 +161,14 @@ function UnavailableState({ read }: { read: BackendRead<unknown> }) {
 }
 
 function Fact({ label, value, small = false }: { label: string; value: string; small?: boolean }) {
+  const t = useTranslation();
+
   return (
     <div className={factItemClassName}>
-      <dt className={factTermClassName}>{label}</dt>
-      <dd className={small ? smallValueClassName : factValueClassName}>{value}</dd>
+      <dt className={factTermClassName}>{t(label)}</dt>
+      <dd className={small ? smallValueClassName : factValueClassName}>
+        {typeof value === "string" ? t(value) : value}
+      </dd>
     </div>
   );
 }
@@ -150,10 +179,12 @@ function Fact({ label, value, small = false }: { label: string; value: string; s
  * has to repeat it.
  */
 function ErpStoryLead({ story, caption }: { story: string; caption?: string }) {
+  const t = useTranslation();
+
   return (
     <>
       <p className={leadSentenceClassName}>{story}</p>
-      {caption ? <p className={leadDetailClassName}>{caption}</p> : null}
+      {caption ? <p className={leadDetailClassName}>{t(caption)}</p> : null}
     </>
   );
 }
@@ -163,31 +194,62 @@ function ErpStoryLead({ story, caption }: { story: string; caption?: string }) {
  * Watch last-known warning: retained readings must never appear without their reading time.
  */
 export function FreshnessLine({ freshness }: { freshness: Freshness }) {
+  const t = useTranslation();
+  const locale = useLocale();
+
   // Retained and stale states can show an observation from an earlier calendar day, so this
   // line always carries the full dated UTC form rather than a bare clock reading. Like both
   // history routes, it keeps the exact ISO value in `<time dateTime>`; the reading and the
   // machine value derive from the same server-supplied string under a fixed zone, so server
   // rendering and hydration cannot disagree.
-  const reading = formatInstantUtc(freshness.observedAt);
+  const reading = formatInstantUtc(freshness.observedAt, { locale });
   const updated: ReactNode =
     reading === null ? (
-      "an unrecorded time"
+      t("an unrecorded time")
     ) : (
       <time dateTime={freshness.observedAt}>{reading}</time>
     );
   const notApplicable = freshness.final ? (
-    <>Final, as of {updated}</>
+    <>
+      {t("Final, as of")} {updated}
+    </>
   ) : (
-    <>As of {updated} · no active run</>
+    <>
+      {t("As of")} {updated} {t("· no active run")}
+    </>
   );
   const copy: Record<Freshness["state"], ReactNode> = {
-    connecting: <>Updated {updated} · connecting to live updates</>,
-    disconnected: <>Updated {updated} · disconnected, showing last known values</>,
-    live: <>Updated {updated} · live</>,
+    connecting: (
+      <>
+        {t("Updated")} {updated} {t("· connecting to live updates")}
+      </>
+    ),
+    disconnected: (
+      <>
+        {t("Updated")} {updated} {t("· disconnected, showing last known values")}
+      </>
+    ),
+    live: (
+      <>
+        {t("Updated")} {updated} {t("· live")}
+      </>
+    ),
     "not-applicable": notApplicable,
-    "retained-fresh": <>Updated {updated} · connected, no update expected</>,
-    stale: <>Updated {updated} · stale, showing last known values</>,
-    unsupported: <>Updated {updated} · live updates unsupported</>,
+    "retained-fresh": (
+      <>
+        {t("Updated")} {updated} {t("· connected, no update expected")}
+      </>
+    ),
+    stale: (
+      <>
+        {t("Updated")} {updated} {t("· stale, showing last known values")}
+      </>
+    ),
+    unsupported: (
+      <>
+        {t("Updated")} {updated} {t("· live updates unsupported")}
+      </>
+    ),
   };
 
   return <p className="m-0 mb-3 text-xs leading-5 text-muted">{copy[freshness.state]}</p>;
@@ -214,12 +276,14 @@ export function RecoveryStatusPanel({
   fullWidth?: boolean;
   onRefresh?: () => void;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const run = data?.currentRun ?? null;
   const noRunValue =
     presentation.state === "reset-recovery-incomplete"
-      ? "Unavailable until operator recovery completes"
-      : "No run has started";
+      ? t("Unavailable until operator recovery completes")
+      : t("No run has started");
   const hasLastKnownGoodSyncIssue = data !== null && hasSyncIssue;
   const retryWaitActive =
     (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0) ||
@@ -229,8 +293,8 @@ export function RecoveryStatusPanel({
     <section className={fullWidth ? panelFullClassName : panelNarrowClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Current state</p>
-          <h2 className={panelTitleClassName}>Run availability and updates</h2>
+          <p className={eyebrowClassName}>{t("Current state")}</p>
+          <h2 className={panelTitleClassName}>{t("Run availability and updates")}</h2>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
           {onRefresh &&
@@ -243,17 +307,20 @@ export function RecoveryStatusPanel({
               onClick={onRefresh}
               type="button"
             >
-              {isRefreshing ? "Refreshing" : "Refresh"}
+              {isRefreshing ? t("Refreshing") : t("Refresh")}
             </button>
           ) : null}
           <StatusPill
             status={{
               ...presentation,
-              label: publicStatusLabel({
-                family: "run",
-                status: run?.status ?? "starting",
-                displayLabel: presentation.label,
-              }),
+              label: publicStatusLabel(
+                {
+                  family: "run",
+                  status: run?.status ?? "starting",
+                  displayLabel: presentation.label,
+                },
+                locale,
+              ),
             }}
           />
         </div>
@@ -267,14 +334,19 @@ export function RecoveryStatusPanel({
         <>
           {freshness ? <FreshnessLine freshness={freshness} /> : null}
           <dl className={stackedFactGridClassName}>
-            <Fact label="Current scenario" value={run ? run.presetName : noRunValue} />
-            <Fact label="Run" value={run ? runLifecycleStatusLabel(run.status) : noRunValue} />
+            <Fact label={t("Current scenario")} value={run ? run.presetName : noRunValue} />
             <Fact
-              label="Load generator"
-              value={run ? trafficExecutionStatusLabel(run.trafficStatus) : noRunValue}
+              label={t("Run")}
+              value={run ? runLifecycleStatusLabel(run.status, locale) : noRunValue}
+            />
+            <Fact
+              label={t("Load generator")}
+              value={run ? trafficExecutionStatusLabel(run.trafficStatus, locale) : noRunValue}
             />
           </dl>
-          <p className="m-0 mt-3 text-xs leading-5 text-muted">Updates {realtimeStatus}</p>
+          <p className="m-0 mt-3 text-xs leading-5 text-muted">
+            {t("Updates")} {t(realtimeStatus)}
+          </p>
         </>
       ) : (
         <UnavailableState read={recovery} />
@@ -298,6 +370,8 @@ export function RealtimeRecoveryNotice({
   realtimeStatus: RealtimeConnectionStatus;
   reconnectExhausted: boolean;
 }) {
+  const t = useTranslation();
+
   if (realtimeStatus !== "disconnected") return null;
   return (
     <section
@@ -306,16 +380,17 @@ export function RealtimeRecoveryNotice({
       {reconnectExhausted ? (
         <>
           <p className="m-0 leading-6 text-muted-strong">
-            Unable to restore live updates. Reload the page. If the problem persists, try again
-            later.
+            {t(
+              "Unable to restore live updates. Reload the page. If the problem persists, try again later.",
+            )}
           </p>
           <button className={`${buttonClassName} mt-3`} onClick={reloadPage} type="button">
-            Reload page
+            {t("Reload page")}
           </button>
         </>
       ) : (
         <p className="m-0 leading-6 text-muted-strong">
-          Live updates interrupted. Trying to reconnect...
+          {t("Live updates interrupted. Trying to reconnect...")}
         </p>
       )}
     </section>
@@ -335,34 +410,44 @@ export function RequestSurgePanel({
   recovery: BackendRead<DashboardProjection>;
   freshness: Freshness;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   if (data && data.currentRun === null) {
     return (
       <section className={panelWideClassName}>
         <div className={panelHeaderClassName}>
           <div>
-            <p className={eyebrowClassName}>Request surge</p>
-            <h2 className={panelTitleClassName}>Traffic arrival and responses</h2>
+            <p className={eyebrowClassName}>{t("Request surge")}</p>
+            <h2 className={panelTitleClassName}>{t("Traffic arrival and responses")}</h2>
           </div>
-          <StatusPill status={deriveFreshnessPresentationState(freshness)} />
+          <StatusPill status={deriveFreshnessPresentationState(freshness, locale)} />
         </div>
-        <EmptyState>No run has started.</EmptyState>
+        <EmptyState>{t("No run has started.")}</EmptyState>
       </section>
     );
   }
   const inventory = data?.inventory ?? null;
   const runStatus = data?.currentRun?.status ?? null;
   // Every fact in this panel is load-generator evidence, so all of it is final once traffic ends.
-  const loadGeneratorEvidenceAbsence = runEvidenceAbsence(runStatus, {
-    source: "load-generator",
-    pending: "Waiting for the load generator",
-    settled: "Not recorded for this run",
-  });
-  const timingEvidenceAbsence = runEvidenceAbsence(runStatus, {
-    source: "load-generator",
-    pending: "not yet available",
-    settled: "Not recorded for this run",
-  });
+  const loadGeneratorEvidenceAbsence = runEvidenceAbsence(
+    runStatus,
+    {
+      source: "load-generator",
+      pending: t("Waiting for the load generator"),
+      settled: t("Not recorded for this run"),
+    },
+    locale,
+  );
+  const timingEvidenceAbsence = runEvidenceAbsence(
+    runStatus,
+    {
+      source: "load-generator",
+      pending: t("not yet available"),
+      settled: t("Not recorded for this run"),
+    },
+    locale,
+  );
   const reservationThroughput = inventory?.reservationThroughput ?? null;
   const transportAttemptCounts = data?.transportAttemptCounts ?? null;
   const httpSummary = data?.httpSummary ?? null;
@@ -385,10 +470,10 @@ export function RequestSurgePanel({
     <section className={panelWideClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Request surge</p>
-          <h2 className={panelTitleClassName}>Traffic arrival and responses</h2>
+          <p className={eyebrowClassName}>{t("Request surge")}</p>
+          <h2 className={panelTitleClassName}>{t("Traffic arrival and responses")}</h2>
         </div>
-        <StatusPill status={deriveFreshnessPresentationState(freshness)} />
+        <StatusPill status={deriveFreshnessPresentationState(freshness, locale)} />
       </div>
       {data ? (
         <>
@@ -397,116 +482,166 @@ export function RequestSurgePanel({
             <Fact
               label={
                 requestSurge?.arrivalRateIsPeak
-                  ? `Peak request arrival rate (${rateWindowLabel(requestSurge.arrivalWindowSeconds)})`
-                  : `Request arrival rate (${rateWindowLabel(requestSurge?.arrivalWindowSeconds ?? liveTrafficMetricWindowSeconds)})`
+                  ? t("Peak request arrival rate ({v0})", {
+                      v0: String(rateWindowLabel(requestSurge.arrivalWindowSeconds, locale)),
+                    })
+                  : t("Request arrival rate ({v0})", {
+                      v0: String(
+                        rateWindowLabel(
+                          requestSurge?.arrivalWindowSeconds ?? liveTrafficMetricWindowSeconds,
+                          locale,
+                        ),
+                      ),
+                    })
               }
               value={
                 requestSurge?.arrivalRatePerSecond !== null &&
                 requestSurge?.arrivalRatePerSecond !== undefined
-                  ? formatObservedRequestRate(requestSurge.arrivalRatePerSecond)
+                  ? formatObservedRequestRate(requestSurge.arrivalRatePerSecond, locale)
                   : loadGeneratorEvidenceAbsence
               }
             />
             <Fact
-              label="Attempts dispatched"
+              label={t("Attempts dispatched")}
               value={
                 requestSurge?.attemptsDispatched === null ||
                 requestSurge?.attemptsDispatched === undefined
                   ? loadGeneratorEvidenceAbsence
-                  : formatNumber(requestSurge.attemptsDispatched)
+                  : formatNumber(requestSurge.attemptsDispatched, locale)
               }
             />
             <Fact
-              label="Dispatch duration"
+              label={t("Dispatch duration")}
               value={formatDurationSeconds(
                 requestSurge?.dispatchDurationSeconds,
                 timingEvidenceAbsence,
+                locale,
               )}
             />
             <Fact
-              label={`Response completion rate (${liveTrafficWindowLabel})`}
+              label={t("Response completion rate ({v0})", {
+                v0: rateWindowLabel(liveTrafficMetricWindowSeconds, locale),
+              })}
               value={formatRate(
                 requestSurge?.responseCompletionRatePerSecond,
                 "responses/s",
                 timingEvidenceAbsence,
+                locale,
               )}
             />
             <Fact
-              label="Configured start delay"
+              label={t("Configured start delay")}
               value={formatDurationSeconds(
                 preparation?.configuredDelaySeconds,
                 timingEvidenceAbsence,
+                locale,
               )}
             />
             <Fact
-              label="Startup overhead beyond configured delay"
+              label={t("Startup overhead beyond configured delay")}
               value={formatDurationSeconds(
                 preparation?.startupOverheadSeconds,
                 timingEvidenceAbsence,
+                locale,
               )}
             />
             <Fact
-              label="Time until checkout attempts begin"
+              label={t("Time until checkout attempts begin")}
               value={formatDurationSeconds(
                 preparation?.totalPreparationSeconds,
                 timingEvidenceAbsence,
+                locale,
               )}
             />
             <Fact
-              label={`Response latency (${liveTrafficWindowLabel}; mean)`}
+              label={t("Response latency ({v0}; mean)", {
+                v0: rateWindowLabel(liveTrafficMetricWindowSeconds, locale),
+              })}
               value={
                 latencyMetric
-                  ? formatMetric(latencyMetric.value, latencyMetric.unit, "not measurable")
+                  ? formatMetric(
+                      latencyMetric.value,
+                      latencyMetric.unit,
+                      t("not measurable"),
+                      locale,
+                    )
                   : loadGeneratorEvidenceAbsence
               }
             />
             <Fact
-              label={`HTTP failure rate (${liveTrafficWindowLabel}; ${publicVocabulary.httpFailurePopulation})`}
+              label={t("HTTP failure rate ({v0}; {v1})", {
+                v0: rateWindowLabel(liveTrafficMetricWindowSeconds, locale),
+                v1: String(t(publicVocabulary.httpFailurePopulation)),
+              })}
               value={
                 failureRateMetric
-                  ? formatFailureSample(failureRateMetric.value, failureRateMetric.unit)
+                  ? formatFailureSample(failureRateMetric.value, failureRateMetric.unit, locale)
                   : loadGeneratorEvidenceAbsence
               }
             />
             {reservationThroughput ? (
               <>
                 <Fact
-                  label={`Peak reservation rate (${rateWindowLabel(reservationThroughput.peakWindowSeconds)}; ${trailingRateWindowLabel(reservationThroughput.windowSeconds)})`}
-                  value={formatRate(reservationThroughput.peakRatePerSecond, "reservations/s")}
+                  label={t("Peak reservation rate ({v0}; {v1})", {
+                    v0: String(rateWindowLabel(reservationThroughput.peakWindowSeconds, locale)),
+                    v1: String(
+                      trailingRateWindowLabel(reservationThroughput.windowSeconds, locale),
+                    ),
+                  })}
+                  value={formatRate(
+                    reservationThroughput.peakRatePerSecond,
+                    "reservations/s",
+                    undefined,
+                    locale,
+                  )}
                 />
                 <Fact
-                  label={`Reservations in ${trailingRateWindowLabel(reservationThroughput.windowSeconds)}`}
-                  value={formatNumber(reservationThroughput.successfulReservationCount)}
+                  label={t("Reservations in {v0}", {
+                    v0: String(
+                      trailingRateWindowLabel(reservationThroughput.windowSeconds, locale),
+                    ),
+                  })}
+                  value={formatNumber(reservationThroughput.successfulReservationCount, locale)}
                 />
               </>
             ) : null}
             <Fact
-              label={publicVocabulary.soldOutRejectionsRecorded}
+              label={t(publicVocabulary.soldOutRejectionsRecorded)}
               value={
                 inventory
-                  ? formatNumber(inventory.soldOutPressure.rejectionCount)
-                  : runEvidenceAbsence(runStatus, {
-                      source: "durable-processing",
-                      pending: "Waiting for inventory evidence",
-                      settled: "Not recorded for this run",
-                    })
+                  ? formatNumber(inventory.soldOutPressure.rejectionCount, locale)
+                  : runEvidenceAbsence(
+                      runStatus,
+                      {
+                        source: "durable-processing",
+                        pending: t("Waiting for inventory evidence"),
+                        settled: t("Not recorded for this run"),
+                      },
+                      locale,
+                    )
               }
             />
           </dl>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Arrival counts checkout attempts when the load generator starts them. Response
-            completion and latency are separate HTTP observations aggregated per{" "}
-            {liveTrafficWindowLabel}; failure observations use the same window over{" "}
-            {publicVocabulary.httpFailurePopulation}.
+            {t(
+              "Arrival counts checkout attempts when the load generator starts them. Response completion and latency are separate HTTP observations aggregated per",
+            )}{" "}
+            {rateWindowLabel(liveTrafficMetricWindowSeconds, locale)}
+            {t("; failure observations use the same window over")}{" "}
+            {t(publicVocabulary.httpFailurePopulation)}.
           </p>
           {requestSurge &&
           (data.requestArrivalSummary !== null || requestSurge.arrivalRateSeries.length > 0) ? (
             <RequestArrivalRateSeries
-              emptyText={runEvidenceAbsence(runStatus, {
-                source: "load-generator",
-                pending: "No completed arrival windows yet.",
-                settled: "No arrival windows were recorded for this run.",
-              })}
+              emptyText={runEvidenceAbsence(
+                runStatus,
+                {
+                  source: "load-generator",
+                  pending: t("No completed arrival windows yet."),
+                  settled: t("No arrival windows were recorded for this run."),
+                },
+                locale,
+              )}
               samples={requestSurge.arrivalRateSeries}
             />
           ) : null}
@@ -517,12 +652,17 @@ export function RequestSurgePanel({
             />
           ) : (
             <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-              {runEvidenceAbsence(runStatus, {
-                source: "load-generator",
-                pending:
-                  "Final request totals appear here once all planned attempts have been dispatched.",
-                settled: "Final request totals were not recorded for this run.",
-              })}
+              {runEvidenceAbsence(
+                runStatus,
+                {
+                  source: "load-generator",
+                  pending: t(
+                    "Final request totals appear here once all planned attempts have been dispatched.",
+                  ),
+                  settled: t("Final request totals were not recorded for this run."),
+                },
+                locale,
+              )}
             </p>
           )}
         </>
@@ -557,6 +697,8 @@ export function InventoryDrainPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const inventory = data?.inventory ?? null;
   const percentRemaining =
@@ -568,8 +710,8 @@ export function InventoryDrainPanel({
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Inventory drain</p>
-          <h2 className={panelTitleClassName}>Inventory</h2>
+          <p className={eyebrowClassName}>{t("Inventory drain")}</p>
+          <h2 className={panelTitleClassName}>{t("Inventory")}</h2>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -577,43 +719,58 @@ export function InventoryDrainPanel({
         <>
           <FreshnessLine freshness={freshness} />
           <meter
-            aria-label="Remaining inventory"
+            aria-label={t("Remaining inventory")}
             className="meter mb-4 block h-2 w-full rounded-full border-0 bg-surface-muted"
             max={100}
             min={0}
             value={percentRemaining}
           />
           <dl className={factGridClassName}>
-            <Fact label="Starting stock" value={formatNumber(inventory.allocatedStock)} />
-            <Fact label="Remaining" value={formatNumber(inventory.remainingStock)} />
-            <Fact label="Reserved" value={formatNumber(inventory.reservedStock)} />
             <Fact
-              label={publicVocabulary.pendingReservations}
-              value={formatNumber(inventory.pendingPersistenceCount)}
+              label={t("Starting stock")}
+              value={formatNumber(inventory.allocatedStock, locale)}
+            />
+            <Fact label={t("Remaining")} value={formatNumber(inventory.remainingStock, locale)} />
+            <Fact label={t("Reserved")} value={formatNumber(inventory.reservedStock, locale)} />
+            <Fact
+              label={t(publicVocabulary.pendingReservations)}
+              value={formatNumber(inventory.pendingPersistenceCount, locale)}
             />
             <Fact
-              label={publicVocabulary.expiredReservations}
-              value={formatNumber(inventory.expiredReservationCount)}
+              label={t(publicVocabulary.expiredReservations)}
+              value={formatNumber(inventory.expiredReservationCount, locale)}
             />
             <Fact
-              label="Oldest pending"
-              value={formatDurationSeconds(inventory.oldestPendingPersistenceAgeSeconds)}
+              label={t("Oldest pending")}
+              value={formatDurationSeconds(
+                inventory.oldestPendingPersistenceAgeSeconds,
+                undefined,
+                locale,
+              )}
             />
             <Fact
-              label="Stock last changed"
-              value={formatExpectedTime(inventory.lastUpdatedAt)}
+              label={t("Stock last changed")}
+              value={formatExpectedTime(inventory.lastUpdatedAt, locale)}
               small
             />
-            <Fact label="Stock observed" value={formatExpectedTime(inventory.observedAt)} small />
+            <Fact
+              label={t("Stock observed")}
+              value={formatExpectedTime(inventory.observedAt, locale)}
+              small
+            />
           </dl>
         </>
       ) : (
         <EmptyState>
-          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
-            source: "durable-processing",
-            pending: "No inventory evidence yet.",
-            settled: "Inventory evidence is unavailable for this run.",
-          })}
+          {runEvidenceAbsence(
+            data?.currentRun?.status ?? null,
+            {
+              source: "durable-processing",
+              pending: t("No inventory evidence yet."),
+              settled: t("Inventory evidence is unavailable for this run."),
+            },
+            locale,
+          )}
         </EmptyState>
       )}
     </section>
@@ -629,6 +786,8 @@ export function RunErpOutcomesPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const erp = data?.erp ?? null;
   const runStatus = data?.currentRun?.status ?? null;
@@ -637,8 +796,8 @@ export function RunErpOutcomesPanel({
     <section className={panelHalfClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>This run</p>
-          <h2 className={panelTitleClassName}>Simulated ERP outcomes</h2>
+          <p className={eyebrowClassName}>{t("This run")}</p>
+          <h2 className={panelTitleClassName}>{t("Simulated ERP outcomes")}</h2>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -646,30 +805,44 @@ export function RunErpOutcomesPanel({
         <>
           <FreshnessLine freshness={freshness} />
           <ErpStoryLead
-            caption={`Attempts, failures, and timeouts over the last ${formatWindowSeconds(erp.recentAttemptWindowSeconds)}s.`}
-            story={deriveRunErpStory(erp)}
+            caption={t("Attempts, failures, and timeouts over the last {v0}s.", {
+              v0: String(formatWindowSeconds(erp.recentAttemptWindowSeconds, locale)),
+            })}
+            story={deriveRunErpStory(erp, locale)}
           />
           <dl className={factGridClassName}>
-            <Fact label="Recent attempts" value={formatNumber(erp.recentAttemptCount)} />
             <Fact
-              label="Failures"
+              label={t("Recent attempts")}
+              value={formatNumber(erp.recentAttemptCount, locale)}
+            />
+            <Fact
+              label={t("Failures")}
               value={
                 erp.recentFailureCount > 0 && data?.businessOutcome?.failedOrders === 0
-                  ? `${formatNumber(erp.recentFailureCount)} (retried; no order failed)`
-                  : formatNumber(erp.recentFailureCount)
+                  ? t("{v0} (retried; no order failed)", {
+                      v0: String(formatNumber(erp.recentFailureCount, locale)),
+                    })
+                  : formatNumber(erp.recentFailureCount, locale)
               }
             />
-            <Fact label="Timeouts" value={formatNumber(erp.recentTimeoutCount)} />
+            <Fact label={t("Timeouts")} value={formatNumber(erp.recentTimeoutCount, locale)} />
             <Fact
-              label="Latest attempt"
+              label={t("Latest attempt")}
               value={
                 erp.latestAttempt
-                  ? `${erpAttemptStatusLabel(erp.latestAttempt.status)} at ${formatExpectedTime(erp.latestAttempt.finishedAt)}`
-                  : runEvidenceAbsence(runStatus, {
-                      source: "durable-processing",
-                      pending: "not yet available",
-                      settled: "No attempt was recorded for this run",
+                  ? t("{v0} at {v1}", {
+                      v0: String(erpAttemptStatusLabel(erp.latestAttempt.status, locale)),
+                      v1: String(formatExpectedTime(erp.latestAttempt.finishedAt, locale)),
                     })
+                  : runEvidenceAbsence(
+                      runStatus,
+                      {
+                        source: "durable-processing",
+                        pending: t("not yet available"),
+                        settled: t("No attempt was recorded for this run"),
+                      },
+                      locale,
+                    )
               }
               small
             />
@@ -677,11 +850,15 @@ export function RunErpOutcomesPanel({
         </>
       ) : (
         <EmptyState>
-          {runEvidenceAbsence(runStatus, {
-            source: "durable-processing",
-            pending: "No simulated ERP evidence yet.",
-            settled: "Simulated ERP evidence is unavailable for this run.",
-          })}
+          {runEvidenceAbsence(
+            runStatus,
+            {
+              source: "durable-processing",
+              pending: t("No simulated ERP evidence yet."),
+              settled: t("Simulated ERP evidence is unavailable for this run."),
+            },
+            locale,
+          )}
         </EmptyState>
       )}
     </section>
@@ -689,6 +866,8 @@ export function RunErpOutcomesPanel({
 }
 
 export function SystemStatusPanel({ recovery }: { recovery: BackendRead<DashboardProjection> }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const queue = data?.systemStatus?.queue ?? null;
   // This mode queues its orders in PostgreSQL, where BullMQ's counts would show none of them.
@@ -699,55 +878,75 @@ export function SystemStatusPanel({ recovery }: { recovery: BackendRead<Dashboar
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>Shared demo runtime</p>
-          <h2 className={panelTitleClassName}>Physical order queue</h2>
+          <p className={eyebrowClassName}>{t("Shared demo runtime")}</p>
+          <h2 className={panelTitleClassName}>{t("Physical order queue")}</h2>
           <p className="m-0 mt-1 text-xs text-muted">
             {postgresQueue
-              ? "In this run the order queue is in PostgreSQL: each order not yet confirmed waits there, counted from the run's order records."
-              : "Live BullMQ counts for the one shared order queue; global technical context, not evidence for the selected run."}
+              ? t(
+                  "In this run the order queue is in PostgreSQL: each order not yet confirmed waits there, counted from the run's order records.",
+                )
+              : t(
+                  "Live BullMQ counts for the one shared order queue; global technical context, not evidence for the selected run.",
+                )}
           </p>
         </div>
       </div>
       {postgresQueue ? (
         <dl className={factGridClassName}>
           <Fact
-            label="Orders waiting or being confirmed"
-            value={formatNumber(progress?.outstandingOrders)}
+            label={t("Orders waiting or being confirmed")}
+            value={formatNumber(progress?.outstandingOrders, locale)}
           />
           <Fact
-            label="Oldest wait"
-            value={formatDurationSeconds(progress?.oldestOutstandingAgeSeconds)}
+            label={t("Oldest wait")}
+            value={formatDurationSeconds(progress?.oldestOutstandingAgeSeconds, undefined, locale)}
           />
-          <Fact label="Last updated" value={formatExpectedTime(progress?.observedAt)} small />
+          <Fact
+            label={t("Last updated")}
+            value={formatExpectedTime(progress?.observedAt, locale)}
+            small
+          />
         </dl>
       ) : queue ? (
         <>
-          <h3 className="mb-3 mt-0 text-sm font-bold text-ink">Shared order-processing backlog</h3>
+          <h3 className="mb-3 mt-0 text-sm font-bold text-ink">
+            {t("Shared order-processing backlog")}
+          </h3>
           <dl className={factGridClassName}>
-            <Fact label="Connectivity" value={queueConnectivityLabel(queue.connectivity)} />
-            <Fact label="Depth (all runs)" value={formatNumber(queue.depth)} />
             <Fact
-              label="Oldest wait"
-              value={formatDurationSeconds(queue.oldestWaitingAgeSeconds)}
+              label={t("Connectivity")}
+              value={queueConnectivityLabel(queue.connectivity, locale)}
             />
-            <Fact label="Last updated" value={formatExpectedTime(queue.observedAt)} small />
+            <Fact label={t("Depth (all runs)")} value={formatNumber(queue.depth, locale)} />
+            <Fact
+              label={t("Oldest wait")}
+              value={formatDurationSeconds(queue.oldestWaitingAgeSeconds, undefined, locale)}
+            />
+            <Fact
+              label={t("Last updated")}
+              value={formatExpectedTime(queue.observedAt, locale)}
+              small
+            />
           </dl>
           <details className="mt-3 rounded border border-border px-3 py-2 text-sm">
-            <summary className="disclosure font-semibold text-ink">Backlog details</summary>
+            <summary className="disclosure font-semibold text-ink">{t("Backlog details")}</summary>
             <dl className={factGridClassName}>
-              <Fact label="Waiting" value={formatNumber(queue.counts.waiting)} />
-              <Fact label="Prioritized" value={formatNumber(queue.counts.prioritized)} />
-              <Fact label="Paused" value={formatNumber(queue.counts.paused)} />
-              <Fact label="Delayed" value={formatNumber(queue.counts.delayed)} />
-              <Fact label="Active" value={formatNumber(queue.counts.active)} />
+              <Fact label={t("Waiting")} value={formatNumber(queue.counts.waiting, locale)} />
+              <Fact
+                label={t("Prioritized")}
+                value={formatNumber(queue.counts.prioritized, locale)}
+              />
+              <Fact label={t("Paused")} value={formatNumber(queue.counts.paused, locale)} />
+              <Fact label={t("Delayed")} value={formatNumber(queue.counts.delayed, locale)} />
+              <Fact label={t("Active")} value={formatNumber(queue.counts.active, locale)} />
             </dl>
           </details>
           <p className="mb-0 mt-3 text-xs leading-5 text-muted">
-            Counts include work from all runs and visitors.
+            {t("Counts include work from all runs and visitors.")}
           </p>
         </>
       ) : (
-        <EmptyState>Shared demo-runtime status is unavailable.</EmptyState>
+        <EmptyState>{t("Shared demo-runtime status is unavailable.")}</EmptyState>
       )}
     </section>
   );
@@ -762,32 +961,42 @@ export function ConsistencyLagPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const lag = data?.consistencyLag ?? null;
-  const lagAbsence = runEvidenceAbsence(data?.currentRun?.status ?? null, {
-    source: "durable-processing",
-    pending: "not yet available",
-    settled: "Not recorded for this run",
-  });
+  const lagAbsence = runEvidenceAbsence(
+    data?.currentRun?.status ?? null,
+    {
+      source: "durable-processing",
+      pending: t("not yet available"),
+      settled: t("Not recorded for this run"),
+    },
+    locale,
+  );
   // A distribution over zero confirmations has no reading, so it states the absence of
   // confirmations rather than the absence of the measurement. "Yet" may only promise evidence that
   // can still arrive, so the lifecycle decides the wording; a pre-run zero is never called settled.
   const distributionAbsence =
     lag?.confirmedOrderCount === 0
-      ? runEvidenceAbsence(data?.currentRun?.status ?? null, {
-          source: "durable-processing",
-          pending: "No confirmations yet",
-          settled: "No confirmations were recorded for this run",
-        })
+      ? runEvidenceAbsence(
+          data?.currentRun?.status ?? null,
+          {
+            source: "durable-processing",
+            pending: t("No confirmations yet"),
+            settled: t("No confirmations were recorded for this run"),
+          },
+          locale,
+        )
       : lagAbsence;
 
   return (
     <section className={panelHalfClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>{publicVocabulary.consistencyLag}</p>
-          <h2 className={panelTitleClassName}>Fast reservation vs final confirmation</h2>
-          <p className="m-0 mt-1 text-xs text-muted">{lagMeasurementBoundaryCaption}</p>
+          <p className={eyebrowClassName}>{t(publicVocabulary.consistencyLag)}</p>
+          <h2 className={panelTitleClassName}>{t("Fast reservation vs final confirmation")}</h2>
+          <p className="m-0 mt-1 text-xs text-muted">{t(lagMeasurementBoundaryCaption)}</p>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -796,33 +1005,40 @@ export function ConsistencyLagPanel({
           <FreshnessLine freshness={freshness} />
           <dl className={factGridClassName}>
             <Fact
-              label="95% confirmed within"
-              value={formatMilliseconds(lag.p95LagMs, distributionAbsence)}
+              label={t("95% confirmed within")}
+              value={formatMilliseconds(lag.p95LagMs, distributionAbsence, locale)}
             />
             <Fact
-              label="Average"
-              value={formatMilliseconds(lag.averageLagMs, distributionAbsence)}
-            />
-            <Fact label="Longest" value={formatMilliseconds(lag.maxLagMs, distributionAbsence)} />
-            <Fact
-              label="Awaiting confirmation"
-              value={formatNumber(lag.pendingConfirmationCount)}
+              label={t("Average")}
+              value={formatMilliseconds(lag.averageLagMs, distributionAbsence, locale)}
             />
             <Fact
-              label="Oldest pending"
-              value={formatDurationSeconds(lag.oldestPendingAgeSeconds)}
+              label={t("Longest")}
+              value={formatMilliseconds(lag.maxLagMs, distributionAbsence, locale)}
             />
-            <Fact label="Confirmed" value={formatNumber(lag.confirmedOrderCount)} />
-            <Fact label="Measured" value={formatExpectedTime(lag.measuredAt)} />
+            <Fact
+              label={t("Awaiting confirmation")}
+              value={formatNumber(lag.pendingConfirmationCount, locale)}
+            />
+            <Fact
+              label={t("Oldest pending")}
+              value={formatDurationSeconds(lag.oldestPendingAgeSeconds, undefined, locale)}
+            />
+            <Fact label={t("Confirmed")} value={formatNumber(lag.confirmedOrderCount, locale)} />
+            <Fact label={t("Measured")} value={formatExpectedTime(lag.measuredAt, locale)} />
           </dl>
         </>
       ) : (
         <EmptyState>
-          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
-            source: "durable-processing",
-            pending: "No confirmation evidence yet.",
-            settled: "Confirmation evidence is unavailable for this run.",
-          })}
+          {runEvidenceAbsence(
+            data?.currentRun?.status ?? null,
+            {
+              source: "durable-processing",
+              pending: t("No confirmation evidence yet."),
+              settled: t("Confirmation evidence is unavailable for this run."),
+            },
+            locale,
+          )}
         </EmptyState>
       )}
     </section>
@@ -838,6 +1054,8 @@ export function RunOutcomesPanel({
   presentation: PresentationState;
   freshness: Freshness;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const data = recoveryData(recovery);
   const outcome = data?.businessOutcome ?? null;
 
@@ -845,9 +1063,9 @@ export function RunOutcomesPanel({
     <section className={panelFullClassName}>
       <div className={panelHeaderClassName}>
         <div>
-          <p className={eyebrowClassName}>{durableCheckoutLens.title}</p>
-          <h2 className={panelTitleClassName}>Reservation and confirmation summary</h2>
-          <p className="m-0 mt-1 text-xs text-muted">{durableCheckoutLens.caption}</p>
+          <p className={eyebrowClassName}>{t(durableCheckoutLens.title)}</p>
+          <h2 className={panelTitleClassName}>{t("Reservation and confirmation summary")}</h2>
+          <p className="m-0 mt-1 text-xs text-muted">{t(durableCheckoutLens.caption)}</p>
         </div>
         <StatusPill status={presentation} />
       </div>
@@ -856,38 +1074,42 @@ export function RunOutcomesPanel({
           <FreshnessLine freshness={freshness} />
           <dl className={wideFactGridClassName}>
             <Fact
-              label={publicVocabulary.uniqueReservationsSecured}
-              value={formatNumber(outcome.acceptedReservations)}
+              label={t(publicVocabulary.uniqueReservationsSecured)}
+              value={formatNumber(outcome.acceptedReservations, locale)}
             />
             <Fact
-              label={publicVocabulary.soldOutRejectionsRecorded}
-              value={formatNumber(outcome.soldOutRejections)}
+              label={t(publicVocabulary.soldOutRejectionsRecorded)}
+              value={formatNumber(outcome.soldOutRejections, locale)}
             />
             <Fact
-              label="Queued (awaiting first processing start)"
-              value={formatNumber(outcome.queuedOrders)}
+              label={t("Queued (awaiting first processing start)")}
+              value={formatNumber(outcome.queuedOrders, locale)}
             />
-            <Fact label="Processing" value={formatNumber(outcome.processingOrders)} />
-            <Fact label="Retrying" value={formatNumber(outcome.retryingOrders)} />
-            <Fact label="Confirmed" value={formatNumber(outcome.confirmedOrders)} />
-            <Fact label="Failed" value={formatNumber(outcome.failedOrders)} />
+            <Fact label={t("Processing")} value={formatNumber(outcome.processingOrders, locale)} />
+            <Fact label={t("Retrying")} value={formatNumber(outcome.retryingOrders, locale)} />
+            <Fact label={t("Confirmed")} value={formatNumber(outcome.confirmedOrders, locale)} />
+            <Fact label={t("Failed")} value={formatNumber(outcome.failedOrders, locale)} />
             <Fact
-              label={publicVocabulary.pendingReservations}
-              value={formatNumber(outcome.pendingPersistenceCount)}
+              label={t(publicVocabulary.pendingReservations)}
+              value={formatNumber(outcome.pendingPersistenceCount, locale)}
             />
             <Fact
-              label={publicVocabulary.notifications}
-              value={formatNumber(outcome.notificationsRecorded)}
+              label={t(publicVocabulary.notifications)}
+              value={formatNumber(outcome.notificationsRecorded, locale)}
             />
           </dl>
         </>
       ) : (
         <EmptyState>
-          {runEvidenceAbsence(data?.currentRun?.status ?? null, {
-            source: "durable-processing",
-            pending: "No checkout outcome evidence yet.",
-            settled: "Checkout outcome evidence is unavailable for this run.",
-          })}
+          {runEvidenceAbsence(
+            data?.currentRun?.status ?? null,
+            {
+              source: "durable-processing",
+              pending: t("No checkout outcome evidence yet."),
+              settled: t("Checkout outcome evidence is unavailable for this run."),
+            },
+            locale,
+          )}
         </EmptyState>
       )}
     </section>

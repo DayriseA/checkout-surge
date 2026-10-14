@@ -11,6 +11,10 @@ export default defineConfig({
     coverage: createV8CoverageConfig("web-unit"),
     environment: "node",
     include: ["test/**/*.test.{ts,tsx}"],
-    setupFiles: ["./test/dialog-test-shim.ts", "./test/scroll-test-shim.ts"],
+    setupFiles: [
+      "./test/dialog-test-shim.ts",
+      "./test/scroll-test-shim.ts",
+      "./test/locale-test-shim.ts",
+    ],
   },
 });

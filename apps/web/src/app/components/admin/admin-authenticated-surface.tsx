@@ -54,11 +54,13 @@ import {
   adminPresetSaveProxyPath,
   adminPublicRuntimePolicyProxyPath,
 } from "../../lib/control-paths";
+import { useLocale, useTranslation } from "../../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../../lib/i18n/translate";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import { adminFailureNotice } from "../../lib/presentation/admin-notice";
 import { mapErrorPresentation } from "../../lib/presentation/error-presentation";
 import { adminFieldHints } from "../../lib/presentation/field-hints";
-import { formatCount, formatInstantUtc, pluralize } from "../../lib/presentation/format";
+import { formatInstantUtc, pluralize } from "../../lib/presentation/format";
 import {
   dashboardUpdateExpected,
   deriveFreshness,
@@ -101,6 +103,8 @@ export interface AdminAuthenticatedSurfaceProps {
 }
 
 export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps) {
+  const t = useTranslation();
+  const locale = useLocale();
   const recoveryController = useDashboardRecovery(props.initialRecovery, {
     preserveAvailableRecoveryOnFailure: true,
   });
@@ -131,7 +135,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   const freshness = deriveAdminFreshness(recovery, realtimeStatus, now);
   const hasReadFailure = recovery.status === "unavailable" || recoveryController.hasSyncIssue;
   const startBlocked = isRunStartBlocked(recovery, freshness, hasReadFailure);
-  const startBlockedReason = runStartBlockedReason(recovery, freshness, hasReadFailure);
+  const startBlockedReason = runStartBlockedReason(recovery, freshness, hasReadFailure, locale);
   const hasPreservedAvailableRetryScheduled =
     recovery.status === "available" &&
     recoveryController.hasSyncIssue &&
@@ -141,7 +145,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
     hasPreservedAvailableRetryScheduled ||
     (recovery.status === "unavailable" && (recovery.retryAfterMs ?? 0) > 0);
   const refreshDisabledReason = hasPreservedAvailableRetryScheduled
-    ? "Wait for the automatic retry countdown before refreshing."
+    ? t("Wait for the automatic retry countdown before refreshing.")
     : undefined;
   const [runtimePolicy, setRuntimePolicy] = useState(props.initialRuntimePolicy);
 
@@ -156,7 +160,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
   return (
     <div className="grid grid-cols-[11rem_minmax(0,1fr)] items-start gap-6 max-[1100px]:grid-cols-1">
       <nav
-        aria-label="Admin console sections"
+        aria-label={t("Admin console sections")}
         className="sticky top-20 grid gap-0.5 text-sm max-[1100px]:static max-[1100px]:flex max-[1100px]:gap-1 max-[1100px]:overflow-x-auto max-[1100px]:pb-1"
       >
         {adminSections.map(([id, label]) => (
@@ -165,7 +169,7 @@ export function AdminAuthenticatedSurface(props: AdminAuthenticatedSurfaceProps)
             href={`#${id}`}
             key={id}
           >
-            {label}
+            {t(label)}
           </a>
         ))}
       </nav>
@@ -242,6 +246,7 @@ function AdminRoutineActions({
   onRefresh: () => Promise<void>;
   refreshDisabledReason?: string | undefined;
 }) {
+  const t = useTranslation();
   const refreshDisabledReasonId = useId();
 
   return (
@@ -250,9 +255,9 @@ function AdminRoutineActions({
       id="routine-actions"
     >
       <div>
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Routine actions</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">{t("Routine actions")}</h2>
         <p className="m-0 mt-0.5 text-sm text-muted">
-          Review shared state before using the controls in each section.
+          {t("Review shared state before using the controls in each section.")}
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -264,7 +269,7 @@ function AdminRoutineActions({
             onClick={() => void onRefresh()}
             type="button"
           >
-            {isRefreshing ? "Refreshing current run" : "Refresh current run"}
+            {isRefreshing ? t("Refreshing current run") : t("Refresh current run")}
           </button>
           {refreshDisabledReason ? (
             <p
@@ -276,10 +281,10 @@ function AdminRoutineActions({
           ) : null}
         </div>
         <a className={buttonClassName} href="#presets">
-          Start from a preset
+          {t("Start from a preset")}
         </a>
         <a className={buttonClassName} href="#maintenance">
-          Reset or clean up
+          {t("Reset or clean up")}
         </a>
       </div>
     </section>
@@ -287,18 +292,19 @@ function AdminRoutineActions({
 }
 
 function AdminDiagnosticsLinks() {
+  const t = useTranslation();
   return (
     <section
       className={`${panelClassName} flex flex-wrap items-center justify-between gap-x-6 gap-y-3 py-4 lg:col-span-2`}
       id="diagnostics-links"
     >
-      <h2 className="type-title m-0 text-base leading-tight text-ink">Diagnostics links</h2>
+      <h2 className="type-title m-0 text-base leading-tight text-ink">{t("Diagnostics links")}</h2>
       <div className="flex flex-wrap gap-2">
         <a className={buttonClassName} href="/watch">
-          Live dashboard
+          {t("Live dashboard")}
         </a>
         <a className={buttonClassName} href="/run-history">
-          Run history
+          {t("Run history")}
         </a>
       </div>
     </section>
@@ -318,9 +324,10 @@ const readinessCheckMarkers: Record<HealthStatus, string> = {
 };
 
 function ReadinessCheckStatusBadge({ status }: { status: HealthStatus }) {
+  const t = useTranslation();
   return (
     <span
-      aria-label={status}
+      aria-label={t(status)}
       className={`inline-flex min-h-6 items-center justify-center rounded-full px-2 py-0.5 text-xs font-semibold ${readinessCheckToneClassNames[status]}`}
       role="img"
     >
@@ -330,6 +337,7 @@ function ReadinessCheckStatusBadge({ status }: { status: HealthStatus }) {
 }
 
 function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
+  const t = useTranslation();
   const readiness =
     read.status === "available" && read.data.status !== "ok"
       ? read.data.status
@@ -342,10 +350,10 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
     <section className={panelClassName} id="readiness">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className={eyebrowClassName}>Readiness</p>
+          <p className={eyebrowClassName}>{t("Readiness")}</p>
           <h2 className={panelTitleClassName}>
-            Shared dependencies{" "}
-            <FieldHint label="Shared dependencies" text={adminFieldHints.sharedDependencies} />
+            {t("Shared dependencies")}{" "}
+            <FieldHint label={t("Shared dependencies")} text={adminFieldHints.sharedDependencies} />
           </h2>
         </div>
         <StatusPill
@@ -365,14 +373,16 @@ function AdminReadinessPanel({ read }: { read: BackendRead<HealthResponse> }) {
           className="mt-3 rounded-xl border border-border px-4 py-3 text-sm text-muted-strong"
           open
         >
-          <summary className="disclosure font-semibold text-ink">Readiness probe details</summary>
+          <summary className="disclosure font-semibold text-ink">
+            {t("Readiness probe details")}
+          </summary>
           <dl className="mb-0 mt-2 grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-4 gap-y-1">
             {checks.map((check) => (
               <div className="contents" key={check.name}>
                 <dt className="font-medium text-ink">{check.name}</dt>
                 <dd className="m-0 flex flex-wrap items-center gap-2 [overflow-wrap:anywhere]">
                   <ReadinessCheckStatusBadge status={check.status} />
-                  {check.message ? <span>— {check.message}</span> : null}
+                  {check.message ? <span>— {t(check.message)}</span> : null}
                 </dd>
               </div>
             ))}
@@ -410,6 +420,8 @@ export function AdminCurrentRunPanel({
   retryDelayMs: number | null;
   syncIssue: BackendRead<DashboardProjection> | null;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const refreshDisabledReasonId = useId();
   const startBlocked = isRunStartBlocked(recovery, freshness, hasSyncIssue);
   const readFailed = recovery.status === "unavailable" || hasSyncIssue;
@@ -423,9 +435,10 @@ export function AdminCurrentRunPanel({
     <section className={panelClassName} id="current-run">
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className={eyebrowClassName}>Live status</p>
+          <p className={eyebrowClassName}>{t("Live status")}</p>
           <h2 className={panelTitleClassName}>
-            Current run <FieldHint label="Current run" text={adminFieldHints.currentRun} />
+            {t("Current run")}{" "}
+            <FieldHint label={t("Current run")} text={adminFieldHints.currentRun} />
           </h2>
         </div>
         <StatusPill
@@ -434,7 +447,7 @@ export function AdminCurrentRunPanel({
             presentedFreshness.state === "retained-fresh" ||
             presentedFreshness.state === "not-applicable"
               ? {
-                  label: currentRunStatus(recovery),
+                  label: currentRunStatus(recovery, locale),
                   tone: startBlocked ? "progress" : "idle",
                 }
               : freshnessPresentation
@@ -444,15 +457,18 @@ export function AdminCurrentRunPanel({
       {recovery.status === "available" ? (
         <>
           <p className="m-0 mb-3 text-sm font-medium text-muted-strong" role="status">
-            Traffic: {recovery.data.currentRun?.trafficStatus ?? "not active"}
+            {t("Traffic:")} {t(recovery.data.currentRun?.trafficStatus ?? "not active")}
           </p>
           <RunnerRelocationNotice className="mb-3" recovery={recovery} />
           <dl className="m-0 grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-3">
-            <Fact label="Run" value={recovery.data.currentRun?.presetName ?? "No active run"} />
-            <Fact label="Status" value={recovery.data.currentRun?.status ?? "idle"} />
             <Fact
-              label="Last updated"
-              value={`${formatInstantUtc(recovery.data.recoveredAt) ?? "not yet available"}${freshnessSuffix(presentedFreshness)}`}
+              label={t("Run")}
+              value={recovery.data.currentRun?.presetName ?? t("No active run")}
+            />
+            <Fact label={t("Status")} value={recovery.data.currentRun?.status ?? "idle"} />
+            <Fact
+              label={t("Last updated")}
+              value={`${formatInstantUtc(recovery.data.recoveredAt, { locale }) ?? t("not yet available")}${freshnessSuffix(presentedFreshness, locale)}`}
             />
           </dl>
         </>
@@ -469,11 +485,11 @@ export function AdminCurrentRunPanel({
       >
         {isPending
           ? readFailed
-            ? "Retrying recovery"
-            : "Refreshing status"
+            ? t("Retrying recovery")
+            : t("Refreshing status")
           : readFailed
-            ? "Retry recovery"
-            : "Refresh status"}
+            ? t("Retry recovery")
+            : t("Refresh status")}
       </button>
       {refreshDisabledReason ? (
         <p className="m-0 mt-1 max-w-64 text-xs leading-4 text-muted" id={refreshDisabledReasonId}>
@@ -482,12 +498,12 @@ export function AdminCurrentRunPanel({
       ) : null}
       {isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 mt-2 text-sm text-muted">
-          Automatic retry {retryAttempt} in {Math.ceil(retryDelayMs / 1_000)}{" "}
-          {pluralize(Math.ceil(retryDelayMs / 1_000), "second")}.
+          {t("Automatic retry")} {retryAttempt} {t("in")} {Math.ceil(retryDelayMs / 1_000)}{" "}
+          {t(pluralize(Math.ceil(retryDelayMs / 1_000), "second"))}.
         </p>
       ) : retriesExhausted ? (
         <p className="m-0 mt-2 text-sm text-muted">
-          Automatic retries paused. Manual retry remains available.
+          {t("Automatic retries paused. Manual retry remains available.")}
         </p>
       ) : null}
     </section>
@@ -503,6 +519,8 @@ export function AdminRuntimePolicyController({
   latestRuntimePolicyRead?: BackendRead<AdminPublicRuntimePolicyResponse>;
   onRuntimePolicyAvailable?: (runtimePolicy: BackendRead<AdminPublicRuntimePolicyResponse>) => void;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const router = useRouter();
   const [runtimePolicy, setRuntimePolicy] = useState(initialRuntimePolicy);
   const [latestRead, setLatestRead] = useState(latestRuntimePolicyRead);
@@ -520,8 +538,17 @@ export function AdminRuntimePolicyController({
   const [proposedPolicy, setProposedPolicy] = useState<PublicRuntimePolicyMutable | null>(null);
   const [saveError, setSaveError] = useState<AdminNotice | null>(null);
   const isDraftDirtyRef = useRef(false);
+  const latestInitialRuntimePolicyRef = useRef(initialRuntimePolicy);
 
   useEffect(() => {
+    if (initialRuntimePolicy === latestInitialRuntimePolicyRef.current) return;
+    latestInitialRuntimePolicyRef.current = initialRuntimePolicy;
+    if (
+      runtimePolicy.status === "available" &&
+      initialRuntimePolicy.status === "available" &&
+      JSON.stringify(runtimePolicy.data.policy) === JSON.stringify(initialRuntimePolicy.data.policy)
+    )
+      return;
     setRuntimePolicy((current) =>
       initialRuntimePolicy.status === "available" || current.status !== "available"
         ? initialRuntimePolicy
@@ -535,7 +562,7 @@ export function AdminRuntimePolicyController({
     if (!isDraftDirtyRef.current && initialRuntimePolicy.status === "available") {
       setDraft(draftFromRuntimePolicy(initialRuntimePolicy.data.policy));
     }
-  }, [initialRuntimePolicy]);
+  }, [initialRuntimePolicy, runtimePolicy]);
 
   useEffect(() => setLatestRead(latestRuntimePolicyRead), [latestRuntimePolicyRead]);
 
@@ -666,9 +693,11 @@ export function AdminRuntimePolicyController({
         validationSummaryRevision={validationSummaryRevision}
       />
       <ConfirmationDialog
-        confirmLabel="Save public policy"
+        confirmLabel={t("Save public policy")}
         tone="default"
-        description="This shared public policy governs future public starts; already accepted runs are unaffected."
+        description={t(
+          "This shared public policy governs future public starts; already accepted runs are unaffected.",
+        )}
         error={saveError ? <AdminNoticeView notice={saveError} /> : null}
         onCancel={() => {
           setProposedPolicy(null);
@@ -677,11 +706,11 @@ export function AdminRuntimePolicyController({
         onConfirm={() => void confirmSave()}
         open={proposedPolicy !== null}
         pending={isPending}
-        title="Save the public runtime policy?"
+        title={t("Save the public runtime policy?")}
       >
         {runtimePolicy.status === "available" && proposedPolicy ? (
           <EffectiveChangeList
-            changes={policyChangeSummary(runtimePolicy.data.policy, proposedPolicy)}
+            changes={policyChangeSummary(runtimePolicy.data.policy, proposedPolicy, locale)}
           />
         ) : null}
       </ConfirmationDialog>
@@ -710,6 +739,8 @@ export function AdminPresetController({
   startBlocked?: boolean;
   startBlockedReason?: string | undefined;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const router = useRouter();
   const [acceptedRun, setAcceptedRun] = useState<DemoRunSnapshot | null>(null);
   const acceptedRecoveryRef = useRef(recovery);
@@ -799,6 +830,12 @@ export function AdminPresetController({
   useEffect(() => {
     if (initialPresets === latestInitialPresetsRef.current) return;
     latestInitialPresetsRef.current = initialPresets;
+    if (
+      presetsRead.status === "available" &&
+      initialPresets.status === "available" &&
+      JSON.stringify(presetsRead.data.presets) === JSON.stringify(initialPresets.data.presets)
+    )
+      return;
     if (isDirty) {
       setPendingTransition((current) => ({
         ...(current?.kind === "refresh" ? current : {}),
@@ -817,11 +854,18 @@ export function AdminPresetController({
     setFieldErrors({});
     setFormErrors([]);
     setShowValidationSummary(false);
-  }, [initialPresets, isDirty, selectedSlug]);
+  }, [initialPresets, isDirty, selectedSlug, presetsRead]);
 
   useEffect(() => {
     if (runtimePolicy === latestRuntimePolicyRef.current) return;
     latestRuntimePolicyRef.current = runtimePolicy;
+    if (
+      effectiveRuntimePolicy?.status === "available" &&
+      runtimePolicy?.status === "available" &&
+      JSON.stringify(effectiveRuntimePolicy.data.policy) ===
+        JSON.stringify(runtimePolicy.data.policy)
+    )
+      return;
     if (isDirty && runtimePolicy) {
       setPendingTransition((current) => ({
         ...(current?.kind === "refresh" ? current : {}),
@@ -831,7 +875,7 @@ export function AdminPresetController({
       return;
     }
     setEffectiveRuntimePolicy(runtimePolicy);
-  }, [isDirty, runtimePolicy]);
+  }, [isDirty, runtimePolicy, effectiveRuntimePolicy]);
 
   useEffect(() => {
     if (effectiveRuntimePolicy?.status !== "available") return;
@@ -1200,10 +1244,12 @@ export function AdminPresetController({
       />
       <ConfirmationDialog
         confirmDisabled={controlsBlocked || Boolean(acceptedRun) || estimate.blocksStart}
-        confirmLabel="Start run"
+        confirmLabel={t("Start run")}
         tone="default"
         wide
-        description="Start with this effective configuration and claim the one shared demo runtime. The accepted values become a frozen per-run snapshot."
+        description={t(
+          "Start with this effective configuration and claim the one shared demo runtime. The accepted values become a frozen per-run snapshot.",
+        )}
         error={
           <>
             {startConfirmation ? <RunEstimateNotice state={estimate.state} mode="admin" /> : null}
@@ -1224,36 +1270,42 @@ export function AdminPresetController({
         onConfirm={() => void confirmStart()}
         open={startConfirmation !== null}
         pending={isPending}
-        title="Start this run?"
+        title={t("Start this run?")}
       >
         {startConfirmation?.config ? (
           <EffectiveRunPreview config={startConfirmation.config} defaultOpen />
         ) : null}
       </ConfirmationDialog>
       <ConfirmationDialog
-        confirmLabel="Archive preset"
+        confirmLabel={t("Archive preset")}
         tone="default"
-        description={`Archive the "${selectedPreset?.display.name ?? "selected"}" preset. It will leave the active list while historical runs are retained.${isDirty ? " Your unsaved edits will be discarded." : ""}`}
+        description={t(
+          'Archive the "{value1}" preset. It will leave the active list while historical runs are retained.{value2}',
+          {
+            value1: t(selectedPreset?.display.name ?? "selected"),
+            value2: isDirty ? t(" Your unsaved edits will be discarded.") : "",
+          },
+        )}
         error={archiveError ? <AdminNoticeView notice={archiveError} /> : null}
         onCancel={() => setArchiveOpen(false)}
         onConfirm={() => void archive()}
         open={archiveOpen}
         pending={isPending}
-        title="Archive this preset?"
+        title={t("Archive this preset?")}
       />
       <ConfirmationDialog
-        confirmLabel="Discard unsaved edits"
-        description={`${discardDescription(pendingTransition)}${
+        confirmLabel={t("Discard unsaved edits")}
+        description={`${discardDescription(pendingTransition, locale)}${
           pendingTransition?.kind === "copy"
-            ? " Your unsaved edits will not be copied."
+            ? t(" Your unsaved edits will not be copied.")
             : pendingTransition?.kind === "duplicate"
-              ? " Your unsaved edits will not be duplicated."
+              ? t(" Your unsaved edits will not be duplicated.")
               : ""
         }`}
         onCancel={() => setPendingTransition(null)}
         onConfirm={confirmPendingTransition}
         open={pendingTransition !== null}
-        title="Discard unsaved edits?"
+        title={t("Discard unsaved edits?")}
       />
     </>
   );
@@ -1301,16 +1353,18 @@ export function AdminPresetController({
 
 function discardDescription(
   transition: { kind: "select" | "copy" | "duplicate" | "refresh" } | null,
+  locale: Locale = "en",
 ): string {
+  const t = getTranslation(locale);
   switch (transition?.kind) {
     case "select":
-      return "Switching presets will discard your unsaved edits.";
+      return t("Switching presets will discard your unsaved edits.");
     case "copy":
-      return "Copying the saved preset will replace this draft.";
+      return t("Copying the saved preset will replace this draft.");
     case "duplicate":
-      return "Duplicating the saved preset will replace this draft.";
+      return t("Duplicating the saved preset will replace this draft.");
     case "refresh":
-      return "Refreshing preset or policy data will discard your unsaved edits.";
+      return t("Refreshing preset or policy data will discard your unsaved edits.");
     default:
       return "";
   }
@@ -1323,6 +1377,7 @@ export function AdminMaintenancePanel({
   incomplete?: boolean;
   onResetComplete: () => Promise<void>;
 }) {
+  const t = useTranslation();
   const router = useRouter();
   const [isPending, setIsPending] = useState(false);
   const [notice, setNotice] = useState<AdminNotice | null>(null);
@@ -1366,13 +1421,23 @@ export function AdminMaintenancePanel({
         return;
       }
       if (intent === "reset" && "failedRunCount" in result.data) {
-        setNotice(
-          `Reset complete: ${formatMaintenanceCount(result.data.failedRunCount, "run")} failed, ${formatMaintenanceCount(result.data.closedSaleOfferCount, "sale offer")} closed, ${formatMaintenanceCount(result.data.cleanedQueueCount, "queue")} cleaned, ${formatMaintenanceCount(result.data.cleanedJobCount, "job")} cleaned.`,
-        );
+        setNotice({
+          kind: "message",
+          messageKey:
+            "Reset complete: {value1} failed, {value2} closed, {value3} cleaned, {value4} cleaned.",
+          values: {
+            value1: { count: result.data.failedRunCount, noun: "run" },
+            value2: { count: result.data.closedSaleOfferCount, noun: "sale offer" },
+            value3: { count: result.data.cleanedQueueCount, noun: "queue" },
+            value4: { count: result.data.cleanedJobCount, noun: "job" },
+          },
+        });
       } else if ("deletedRunCount" in result.data) {
-        setNotice(
-          `Cleanup complete: ${formatMaintenanceCount(result.data.deletedRunCount, "generated run")} removed.`,
-        );
+        setNotice({
+          kind: "message",
+          messageKey: "Cleanup complete: {value1} removed.",
+          values: { value1: { count: result.data.deletedRunCount, noun: "generated run" } },
+        });
       }
       await onResetComplete();
       setIntent(null);
@@ -1385,10 +1450,10 @@ export function AdminMaintenancePanel({
     <section className={`${panelClassName} lg:col-span-2`} id="maintenance">
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div>
-          <p className={eyebrowClassName}>Maintenance</p>
+          <p className={eyebrowClassName}>{t("Maintenance")}</p>
           <h2 className={panelTitleClassName}>
-            Recovery and cleanup{" "}
-            <FieldHint label="Recovery and cleanup" text={adminFieldHints.recovery} />
+            {t("Recovery and cleanup")}{" "}
+            <FieldHint label={t("Recovery and cleanup")} text={adminFieldHints.recovery} />
           </h2>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -1398,7 +1463,7 @@ export function AdminMaintenancePanel({
             onClick={() => openIntent("reset")}
             type="button"
           >
-            {incomplete ? "Retry Reset" : "Reset demo"}
+            {incomplete ? t("Retry Reset") : t("Reset demo")}
           </button>
           <button
             className={buttonClassName}
@@ -1406,7 +1471,7 @@ export function AdminMaintenancePanel({
             onClick={() => openIntent("cleanup")}
             type="button"
           >
-            Cleanup runs
+            {t("Cleanup runs")}
           </button>
         </div>
       </div>
@@ -1415,24 +1480,27 @@ export function AdminMaintenancePanel({
           className="mb-0 mt-3 rounded-lg bg-warning-soft px-3 py-2 text-sm text-warning"
           role="status"
         >
-          Operator stop decision recorded. Work cleanup and history are incomplete; worker work may
-          still settle. Starts are blocked. Retry Reset to complete recovery.
+          {t(
+            "Operator stop decision recorded. Work cleanup and history are incomplete; worker work may still settle. Starts are blocked. Retry Reset to complete recovery.",
+          )}
         </p>
       ) : null}
       <AdminNoticeView notice={notice} />
       <ConfirmationDialog
-        confirmLabel={intent === "reset" ? "Reset demo" : "Cleanup generated runs"}
+        confirmLabel={intent === "reset" ? t("Reset demo") : t("Cleanup generated runs")}
         description={
           intent === "reset"
-            ? "Resetting stops all demo work immediately, discards the current run's data, and frees the demo for the next run. One basic history line marked as cancelled remains."
-            : "Permanently remove generated runs older than 7 days while keeping the latest 15."
+            ? t(
+                "Resetting stops all demo work immediately, discards the current run's data, and frees the demo for the next run. One basic history line marked as cancelled remains.",
+              )
+            : t("Permanently remove generated runs older than 7 days while keeping the latest 15.")
         }
         error={error ? <AdminNoticeView notice={error} /> : null}
         onCancel={() => setIntent(null)}
         onConfirm={() => void run()}
         open={intent !== null}
         pending={isPending}
-        title={intent === "reset" ? "Reset the shared demo?" : "Cleanup generated runs?"}
+        title={intent === "reset" ? t("Reset the shared demo?") : t("Cleanup generated runs?")}
       />
     </section>
   );
@@ -1509,13 +1577,15 @@ function publicTrafficPolicyFields(traffic: AcceptedRunConfigSnapshot["trafficCo
 export function policyChangeSummary(
   current: PublicRuntimePolicy,
   proposed: PublicRuntimePolicyMutable,
+  locale: Locale = "en",
 ) {
+  const t = getTranslation(locale);
   const oldDefaults = current.publicCustomDefaults;
   const newDefaults = proposed.publicCustomDefaults;
 
   return [
     policyChangeRow(
-      "Budget enforcement",
+      t("Budget enforcement"),
       current.isPublicRunBudgetEnforced ? "on" : "off",
       proposed.isPublicRunBudgetEnforced ? "on" : "off",
     ),
@@ -1617,16 +1687,21 @@ function runStartBlockedReason(
   recovery: BackendRead<DashboardProjection>,
   freshness: Freshness,
   hasReadFailure: boolean,
+  locale: Locale = "en",
 ): string | undefined {
-  if (recovery.status === "loading") return "Status is loading — wait before starting";
-  if (recovery.status === "unavailable") return "Status is unavailable — refresh before starting";
+  const t = getTranslation(locale);
+  if (recovery.status === "loading") return t("Status is loading — wait before starting");
+  if (recovery.status === "unavailable")
+    return t("Status is unavailable — refresh before starting");
   if (isFreshnessBlockingStart(freshness, hasReadFailure)) {
-    return "Status is stale — refresh before starting";
+    return t("Status is stale — refresh before starting");
   }
   if (recovery.data.resetRecovery === "incomplete")
-    return "Work cleanup and history are incomplete — retry Reset before starting";
+    return t("Work cleanup and history are incomplete — retry Reset before starting");
   const status = recovery.data.currentRun?.status;
-  return isRunInProgress(status) ? `Run is ${status} — wait before starting another` : undefined;
+  return isRunInProgress(status)
+    ? t("Run is {value1} — wait before starting another", { value1: t(status ?? "idle") })
+    : undefined;
 }
 
 function isRunInProgress(
@@ -1635,19 +1710,24 @@ function isRunInProgress(
   return status === "starting" || status === "active" || status === "draining";
 }
 
-function freshnessSuffix(freshness: Freshness): string {
-  if (freshness.state === "stale") return " · stale";
-  if (freshness.state === "disconnected") return " · disconnected";
-  if (freshness.state === "unsupported") return " · live updates unsupported";
+function freshnessSuffix(freshness: Freshness, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  if (freshness.state === "stale") return t(" · stale");
+  if (freshness.state === "disconnected") return t(" · disconnected");
+  if (freshness.state === "unsupported") return t(" · live updates unsupported");
   return "";
 }
 
-function adminValidationMessage(): string {
+function adminValidationMessage(): AdminNotice {
   const presentation = mapErrorPresentation(
     { status: "unavailable", errorCode: "invalid_request" },
     "admin-operation",
   );
-  return [presentation.headline, presentation.explanation].filter(Boolean).join(". ");
+  return {
+    kind: "message",
+    messageKey: "{headline}. {explanation}",
+    values: { headline: presentation.headline, explanation: presentation.explanation ?? "" },
+  };
 }
 
 function isAdminSessionRequired(read: BackendRead<unknown>): boolean {
@@ -1683,11 +1763,6 @@ function reconcileAcceptedPresetMutation(
           : preset,
       )
     : [...refreshedPresets, acceptedPreset];
-}
-
-/** Maintenance receipts report counts, so they group like every other count on the product. */
-function formatMaintenanceCount(value: number, noun: string): string {
-  return `${formatCount(value) ?? "an unreported number of"} ${pluralize(value, noun)}`;
 }
 
 function clearChangedErrors(

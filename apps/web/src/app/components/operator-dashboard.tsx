@@ -11,6 +11,8 @@ import {
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BackendRead } from "../lib/api";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import type { Locale } from "../lib/i18n/translate";
 import type {
   AcceptedRunReportEvidence,
   AcceptedRunResult,
@@ -82,6 +84,7 @@ export function OperatorDashboard({
   invalidAcceptedRunContext?: boolean;
   latestCompletedRun?: BackendRead<RunHistoryListItem | null>;
 }) {
+  const locale = useLocale();
   const {
     recovery,
     isRefreshing,
@@ -151,16 +154,19 @@ export function OperatorDashboard({
     const interval = setInterval(() => setNow(new Date()), 2_000);
     return () => clearInterval(interval);
   }, []);
-  const composition = deriveWatchComposition({
-    acceptedResult: accepted.result,
-    recovery,
-    retainedTerminalRun:
-      resetRunId && retainedTerminalRun?.runId !== resetRunId ? null : retainedTerminalRun,
-    latestCompletedRun,
-    signalSamples,
-    transportStatus: realtimeStatus,
-    now,
-  });
+  const composition = deriveWatchComposition(
+    {
+      acceptedResult: accepted.result,
+      recovery,
+      retainedTerminalRun:
+        resetRunId && retainedTerminalRun?.runId !== resetRunId ? null : retainedTerminalRun,
+      latestCompletedRun,
+      signalSamples,
+      transportStatus: realtimeStatus,
+      now,
+    },
+    locale,
+  );
   const liveRun = "run" in composition ? composition.run : null;
   const trackedResult = accepted.result;
   const sameRunAccepted = Boolean(
@@ -313,6 +319,7 @@ export function WatchNarrative({
   savedEvidence?: AcceptedRunReportEvidence | null;
   sharedDemo?: boolean;
 }) {
+  const t = useTranslation();
   switch (composition.phase) {
     case "cancelled":
       return (
@@ -325,11 +332,11 @@ export function WatchNarrative({
     case "reset-recovery":
       return (
         <section className="col-span-12 rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
-          <h2>Operator stop recovery</h2>
+          <h2>{t("Operator stop recovery")}</h2>
           <p>
-            The operator stop decision is recorded. Work cleanup and history are incomplete, so this
-            report is unavailable. Worker work may still settle. New runs remain unavailable until
-            recovery completes.
+            {t(
+              "The operator stop decision is recorded. Work cleanup and history are incomplete, so this report is unavailable. Worker work may still settle. New runs remain unavailable until recovery completes.",
+            )}
           </p>
         </section>
       );
@@ -399,11 +406,13 @@ function RunCard({
   savedEvidence: AcceptedRunReportEvidence | null;
   sharedDemo: boolean;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const projection = composition.projection;
   const outcome = projection.businessOutcome;
   const inventory = projection.inventory;
   const terminal = composition.phase === "completed" || composition.phase === "failed";
-  const summary = terminal ? terminalSummary(composition, savedEvidence) : null;
+  const summary = terminal ? terminalSummary(composition, savedEvidence, locale) : null;
   const counts = {
     awaiting: summary
       ? summary.counts.pendingOrders
@@ -424,7 +433,7 @@ function RunCard({
     reserved: summary ? summary.counts.reservedUnits : (inventory?.reservedStock ?? null),
   };
   const reportState = terminal ? terminalReportState(accepted, composition.run.runId) : null;
-  const stripCharts = deriveGoldSignalCharts(goldSignalInput(composition));
+  const stripCharts = deriveGoldSignalCharts(goldSignalInput(composition), locale);
   const comparison = liveRunComparison(composition.run);
   const comparisonMode = composition.run.comparison?.mode;
   const pairEnded =
@@ -445,20 +454,20 @@ function RunCard({
   };
   return (
     <section
-      aria-label={terminal ? "Run conclusion" : undefined}
+      aria-label={terminal ? t("Run conclusion") : undefined}
       className="col-span-12 grid gap-4 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
     >
       <IdentityLine composition={composition} sharedDemo={sharedDemo} />
       <div>
         <p className="m-0 text-xs font-medium text-muted">
-          {terminal ? "Final result" : "In progress"}
+          {terminal ? t("Final result") : t("In progress")}
         </p>
         <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h2 className="type-title m-0 text-2xl leading-tight text-ink">
-            {terminal ? summary?.title : runPhaseTitle(composition.phase)}
+            {terminal ? summary?.title : t(runPhaseTitle(composition.phase))}
           </h2>
           <p className="m-0 text-sm leading-6 text-muted-strong">
-            {terminal ? summary?.sentence : runPhaseSentence(composition)}
+            {terminal ? summary?.sentence : t(runPhaseSentence(composition))}
           </p>
         </div>
         {savedEvidence?.failureExplanation ? (
@@ -513,24 +522,24 @@ function RunCard({
           ) : null}
           {reportState === "preparing" ? (
             <p className="m-0 text-sm text-muted" role="status">
-              Preparing saved report…
+              {t("Preparing saved report…")}
             </p>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2 min-[900px]:shrink-0">
           {reportState === "link" ? (
             <Link className={actionClassName} href={`/run-history/${composition.run.runId}`}>
-              View run report
+              {t("View run report")}
             </Link>
           ) : null}
           {reportState === "retry" && onAcceptedRetry ? (
             <button className={secondaryActionClassName} onClick={onAcceptedRetry} type="button">
-              Check again
+              {t("Check again")}
             </button>
           ) : null}
           {terminal ? (
             <Link className={secondaryActionClassName} href="/demo">
-              Try another scenario
+              {t("Try another scenario")}
             </Link>
           ) : null}
         </div>
@@ -556,11 +565,12 @@ function RunViewTabs({
   value: RunView;
   views: typeof runViews;
 }) {
+  const t = useTranslation();
   return (
     <fieldset
       className={`m-0 min-w-0 flex-wrap gap-1.5 border-0 border-b border-border p-0 ${everyScreen ? "flex" : "hidden compact-watch:flex"}`}
     >
-      <legend className="sr-only">Run view</legend>
+      <legend className="sr-only">{t("Run view")}</legend>
       {views.map(({ description, label, view }) => (
         <button
           aria-pressed={value === view}
@@ -579,9 +589,9 @@ function RunViewTabs({
               className="size-2 rounded-full bg-signal motion-safe:animate-pulse"
             />
           )}
-          {label}
+          {t(label)}
           <span className="text-xs font-normal text-muted-strong max-[560px]:hidden">
-            {description}
+            {t(description)}
           </span>
         </button>
       ))}
@@ -592,6 +602,7 @@ function RunViewTabs({
 function terminalSummary(
   composition: Extract<WatchComposition, { phase: "completed" | "failed" }>,
   savedEvidence: AcceptedRunReportEvidence | null,
+  locale: Locale,
 ): PublicRunSummary {
   const transportObservation = savedEvidence
     ? deriveTransportObservation(
@@ -604,12 +615,15 @@ function terminalSummary(
           composition.projection.httpSummary.transportFailures,
         )
       : null;
-  return derivePublicRunSummary({
-    result: composition.result,
-    trafficDeliveryStatus: savedEvidence?.trafficDeliveryStatus ?? null,
-    transportObservation,
-    hasFailureExplanation: Boolean(savedEvidence?.failureExplanation),
-  });
+  return derivePublicRunSummary(
+    {
+      result: composition.result,
+      trafficDeliveryStatus: savedEvidence?.trafficDeliveryStatus ?? null,
+      transportObservation,
+      hasFailureExplanation: Boolean(savedEvidence?.failureExplanation),
+    },
+    locale,
+  );
 }
 
 /** One outcome summary and one report action for the run on screen. */
@@ -658,21 +672,33 @@ function IdentityLine({
   composition: RunWatchComposition;
   sharedDemo: boolean;
 }) {
-  const facts = deriveRunConfigFacts(composition.run.configSnapshot);
+  const t = useTranslation();
+  const locale = useLocale();
+  const facts = deriveRunConfigFacts(composition.run.configSnapshot, locale);
   const step = phaseSteps[composition.phase];
   const comparisonMode = composition.run.comparison?.mode;
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border pb-3">
       <p className="m-0 text-sm font-semibold text-ink">
-        {composition.run.presetName} · {facts.surgeValue}{" "}
-        {pluralize(facts.uniqueAttempts, facts.surgeLabel === "Buyers" ? "buyer" : "attempt")} ·{" "}
-        {facts.startingStock}{" "}
-        {pluralize(composition.run.configSnapshot.inventoryConfig.startingStock, "unit")}
-        {comparisonMode ? ` · ${comparisonRunLabel(comparisonMode)}` : ""}
-        {sharedDemo ? " · Now running in the shared demo" : ""}
+        {t(composition.run.presetName)} · {facts.surgeValue}{" "}
+        {t(
+          pluralize(
+            facts.uniqueAttempts,
+            composition.run.configSnapshot.trafficConfig.mode === "buyer-spike"
+              ? "buyer"
+              : "attempt",
+          ),
+        )}{" "}
+        · {facts.startingStock}{" "}
+        {t(pluralize(composition.run.configSnapshot.inventoryConfig.startingStock, "unit"))}
+        {comparisonMode ? ` · ${comparisonRunLabel(comparisonMode, locale)}` : ""}
+        {sharedDemo ? t(" · Now running in the shared demo") : ""}
       </p>
       <div className="flex flex-wrap items-center gap-3">
-        <ol aria-label="Run phase" className="m-0 flex list-none items-center gap-1 p-0 text-xs">
+        <ol
+          aria-label={t("Run phase")}
+          className="m-0 flex list-none items-center gap-1 p-0 text-xs"
+        >
           {phaseStepNames.map((name, index) => (
             <li className="flex items-center gap-1" key={name}>
               {index > 0 ? (
@@ -691,12 +717,12 @@ function IdentityLine({
                       : "text-muted"
                 }`}
               >
-                {name}
+                {t(name)}
               </span>
             </li>
           ))}
         </ol>
-        <StatusPill status={deriveFreshnessPresentationState(composition.freshness)} />
+        <StatusPill status={deriveFreshnessPresentationState(composition.freshness, locale)} />
       </div>
     </div>
   );
@@ -717,7 +743,9 @@ function CountsRow({
   remainingStock: number | null;
   reserved: number | null;
 }) {
-  const format = (value: number | null): string => formatCount(value) ?? "—";
+  const t = useTranslation();
+  const locale = useLocale();
+  const format = (value: number | null): string => formatCount(value, locale) ?? "—";
   // A coherent same-run population only: contradictory counts (confirmed above the known
   // reservation total) still render, but never as a filled progress bar.
   const progress =
@@ -729,17 +757,24 @@ function CountsRow({
     <div className="grid grid-cols-4 gap-2 max-[700px]:grid-cols-2">
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(remainingStock)}</p>
-        <p className={tileLabelClassName}>Units left</p>
+        <p className={tileLabelClassName}>{t("Units left")}</p>
         {reserved !== null ? (
-          <p className="m-0 mt-1 text-xs text-muted">{format(reserved)} reserved</p>
+          <p className="m-0 mt-1 text-xs text-muted">
+            {format(reserved)}
+            {t(" reserved")}
+          </p>
         ) : null}
       </div>
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(confirmed)}</p>
-        <p className={tileLabelClassName}>Orders confirmed</p>
+        <p className={tileLabelClassName}>{t("Orders confirmed")}</p>
         {progress ? (
           <meter
-            aria-label={`${format(confirmed)} of ${format(progressDenominator)} ${pluralize(progressDenominator, "order")} confirmed`}
+            aria-label={t("{confirmed} of {total} {orders} confirmed", {
+              confirmed: format(confirmed),
+              total: format(progressDenominator),
+              orders: t(pluralize(progressDenominator, "order")),
+            })}
             className="meter mt-2.5 block h-1.5 w-full rounded-full border-0 bg-surface"
             max={progressDenominator}
             value={confirmed}
@@ -748,11 +783,11 @@ function CountsRow({
       </div>
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(awaiting)}</p>
-        <p className={tileLabelClassName}>Awaiting confirmation</p>
+        <p className={tileLabelClassName}>{t("Awaiting confirmation")}</p>
       </div>
       <div className={tileClassName}>
         <p className={tileValueClassName}>{format(failed)}</p>
-        <p className={tileLabelClassName}>Orders failed</p>
+        <p className={tileLabelClassName}>{t("Orders failed")}</p>
       </div>
     </div>
   );
@@ -807,6 +842,8 @@ function SyncNotice({
   retryDelayMs: number | null;
   syncIssue: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const inProgress =
     composition.phase === "starting" ||
     composition.phase === "active" ||
@@ -833,13 +870,16 @@ function SyncNotice({
     >
       {hasLastKnownSyncIssue ? (
         <>
-          <strong>Last-known-good data</strong>
+          <strong>{t("Last-known-good data")}</strong>
           <p className="m-0 text-sm">
             {isRefreshing
-              ? "Refreshing the latest run data now."
+              ? t("Refreshing the latest run data now.")
               : isRetryScheduled && retryDelayMs !== null
-                ? `Retry scheduled in ${formatDurationMs(retryDelayMs) ?? "—"} (attempt ${retryAttempt}).`
-                : "The latest authoritative data is unavailable."}
+                ? t("Retry scheduled in {delay} (attempt {attempt}).", {
+                    delay: formatDurationMs(retryDelayMs, locale) ?? "—",
+                    attempt: retryAttempt,
+                  })
+                : t("The latest authoritative data is unavailable.")}
           </p>
           {!retryWaitActive ? (
             <div>
@@ -849,7 +889,7 @@ function SyncNotice({
                 onClick={onRetry}
                 type="button"
               >
-                {isRefreshing ? "Refreshing" : "Refresh"}
+                {isRefreshing ? t("Refreshing") : t("Refresh")}
               </button>
             </div>
           ) : null}
@@ -861,21 +901,22 @@ function SyncNotice({
 }
 
 function InvalidAcceptedRunContext() {
+  const t = useTranslation();
   return (
     <section className="col-span-12 rounded-2xl border border-warning-line bg-warning-soft p-5">
-      <p className="m-0 text-xs font-medium text-muted">Saved run report</p>
+      <p className="m-0 text-xs font-medium text-muted">{t("Saved run report")}</p>
       <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
-        This Watch link is invalid
+        {t("This Watch link is invalid")}
       </h2>
       <p className="m-0 mt-2 leading-6 text-muted-strong">
-        This link does not identify a saved run. No result has been selected.
+        {t("This link does not identify a saved run. No result has been selected.")}
       </p>
       <div className="mt-3 flex flex-wrap gap-3">
         <Link className={secondaryActionClassName} href="/run-history">
-          Open run history
+          {t("Open run history")}
         </Link>
         <Link className={secondaryActionClassName} href="/demo">
-          Choose a simulation
+          {t("Choose a simulation")}
         </Link>
       </div>
     </section>
@@ -891,18 +932,20 @@ function CancelledResult({
   presetName: string;
   automatic: boolean;
 }) {
+  const t = useTranslation();
   return (
     <section className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-      <h2 className="type-title m-0 text-xl text-ink">Cancelled</h2>
+      <h2 className="type-title m-0 text-xl text-ink">{t("Cancelled")}</h2>
       <p>
-        {presetName} · <code>{runId}</code>
+        {t(presetName)} · <code>{runId}</code>
       </p>
       <p>
-        This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
-        data was discarded.
+        {t("This run was cancelled by ")}
+        {automatic ? t("an automatic") : t("an admin")}
+        {t(" reset. Its experiment data was discarded.")}
       </p>
       <Link className={secondaryActionClassName} href={`/run-history/${runId}`}>
-        View run report
+        {t("View run report")}
       </Link>
     </section>
   );
@@ -917,6 +960,8 @@ function AcceptedResultNarrative({
   result: AcceptedRunResult;
   retriesExhausted: boolean;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (result.status === "available" && result.cancellation)
     return (
       <CancelledResult
@@ -927,26 +972,29 @@ function AcceptedResultNarrative({
     );
   const reportEvidence = result.status === "available" ? result.reportEvidence : undefined;
   const summary = reportEvidence
-    ? derivePublicRunSummary({
-        result: reportEvidence.result,
-        trafficDeliveryStatus: reportEvidence.trafficDeliveryStatus,
-        hasFailureExplanation: Boolean(reportEvidence.failureExplanation),
-        transportObservation: deriveTransportObservation(
-          reportEvidence.transportAttemptCounts,
-          reportEvidence.transportFailures,
-        ),
-      })
+    ? derivePublicRunSummary(
+        {
+          result: reportEvidence.result,
+          trafficDeliveryStatus: reportEvidence.trafficDeliveryStatus,
+          hasFailureExplanation: Boolean(reportEvidence.failureExplanation),
+          transportObservation: deriveTransportObservation(
+            reportEvidence.transportAttemptCounts,
+            reportEvidence.transportFailures,
+          ),
+        },
+        locale,
+      )
     : null;
   const resultIdentity =
     result.status === "available"
-      ? `${result.presetName} · ${formatInstantUtc(result.endedAt) ?? result.endedAt}`
+      ? `${t(result.presetName)} · ${formatInstantUtc(result.endedAt, { locale }) ?? result.endedAt}`
       : null;
   return (
     <section
       className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       data-accepted-result=""
     >
-      <p className="m-0 text-xs font-medium text-muted">Your result</p>
+      <p className="m-0 text-xs font-medium text-muted">{t("Your result")}</p>
       {summary && resultIdentity ? (
         <>
           <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -961,27 +1009,31 @@ function AcceptedResultNarrative({
         </>
       ) : (
         <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
-          {result.status === "available" ? "Result available" : "Result being checked"}
+          {result.status === "available" ? t("Result available") : t("Result being checked")}
         </h2>
       )}
       {result.status === "available" ? (
         <div className="mt-3">
           <Link className={secondaryActionClassName} href={`/run-history/${result.runId}`}>
-            View run report
+            {t("View run report")}
           </Link>
         </div>
       ) : (
         <p className="m-0 mt-2 leading-6 text-muted-strong">
           {result.status === "awaiting"
-            ? "The saved result for this run is being checked. Watch will check again for a limited time."
+            ? t(
+                "The saved result for this run is being checked. Watch will check again for a limited time.",
+              )
             : retriesExhausted
-              ? "The saved result is still unavailable after the automatic checks."
-              : "The saved result is temporarily unavailable. Watch will check again for a limited time."}
+              ? t("The saved result is still unavailable after the automatic checks.")
+              : t(
+                  "The saved result is temporarily unavailable. Watch will check again for a limited time.",
+                )}
         </p>
       )}
       {result.status === "unavailable" && retriesExhausted ? (
         <button className={`${secondaryActionClassName} mt-3`} onClick={onRetry} type="button">
-          Check accepted result again
+          {t("Check accepted result again")}
         </button>
       ) : null}
     </section>
@@ -989,19 +1041,22 @@ function AcceptedResultNarrative({
 }
 
 function IdleNarrative() {
+  const t = useTranslation();
   return (
     <section className="col-span-12 rounded-2xl border border-border bg-surface p-6 max-[560px]:p-4">
-      <p className="m-0 text-xs font-medium text-muted">Ready when you are</p>
-      <h2 className="type-title m-0 mt-0.5 text-2xl leading-tight text-ink">Choose a simulation</h2>
+      <p className="m-0 text-xs font-medium text-muted">{t("Ready when you are")}</p>
+      <h2 className="type-title m-0 mt-0.5 text-2xl leading-tight text-ink">
+        {t("Choose a simulation")}
+      </h2>
       <p className="m-0 mt-3 max-w-[66ch] leading-6 text-muted">
-        Choose a scenario, then return here to follow it from setup through the final result.
+        {t("Choose a scenario, then return here to follow it from setup through the final result.")}
       </p>
       <div className="mt-4 flex flex-wrap gap-3">
         <Link className={actionClassName} href="/demo">
-          Choose a simulation
+          {t("Choose a simulation")}
         </Link>
         <Link className={secondaryActionClassName} href="/run-history">
-          See run history
+          {t("See run history")}
         </Link>
       </div>
     </section>
@@ -1030,6 +1085,8 @@ function TechnicalGroups({
   stoppedRun: boolean;
   syncIssue: Extract<BackendRead<DashboardProjection>, { status: "unavailable" }> | null;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (composition.phase === "cancelled") return null;
   // A composition carrying a projection is a run phase, so its run-owned evidence exists here.
   const runComposition = "projection" in composition ? composition : null;
@@ -1043,7 +1100,7 @@ function TechnicalGroups({
       runComposition.phase === "draining");
   const acceptedRunIdLine = acceptedResult ? (
     <p className="col-span-12 m-0 break-all text-sm text-muted">
-      {stoppedRun ? "Stopped run ID" : "Accepted run ID"}: <code>{acceptedResult.runId}</code>
+      {stoppedRun ? t("Stopped run ID") : t("Accepted run ID")}: <code>{acceptedResult.runId}</code>
     </p>
   ) : null;
   const connectionBody = (
@@ -1078,24 +1135,24 @@ function TechnicalGroups({
       <div className="grid grid-cols-12 gap-4">
         <ScenarioStrip configSnapshot={run.configSnapshot} />
         <section className="col-span-12 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-          <h2 className="type-title m-0 text-base leading-tight text-ink">Run identity</h2>
+          <h2 className="type-title m-0 text-base leading-tight text-ink">{t("Run identity")}</h2>
           <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[700px]:grid-cols-1">
             <div className="min-w-0">
-              <dt className="mb-0.5 text-xs font-medium text-muted">Run UUID</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">{t("Run UUID")}</dt>
               <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
                 <code>{run.runId}</code>
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="mb-0.5 text-xs font-medium text-muted">Started</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">{t("Started")}</dt>
               <dd className="m-0 text-sm font-semibold text-ink">
-                {formatInstantUtc(run.startedAt) ?? "—"}
+                {formatInstantUtc(run.startedAt, { locale }) ?? "—"}
               </dd>
             </div>
             <div className="min-w-0">
-              <dt className="mb-0.5 text-xs font-medium text-muted">Finalized</dt>
+              <dt className="mb-0.5 text-xs font-medium text-muted">{t("Finalized")}</dt>
               <dd className="m-0 text-sm font-semibold text-ink">
-                {formatInstantUtc(run.finalizedAt) ?? "—"}
+                {formatInstantUtc(run.finalizedAt, { locale }) ?? "—"}
               </dd>
             </div>
           </dl>
@@ -1110,7 +1167,7 @@ function TechnicalGroups({
       ref={detailsRef}
     >
       <summary className="disclosure type-title rounded-2xl px-5 py-3.5 text-base text-ink">
-        Technical details
+        {t("Technical details")}
       </summary>
       <div className="grid grid-cols-12 gap-4 border-t border-border p-4 max-[560px]:p-3">
         {runComposition && projection ? (
@@ -1119,8 +1176,9 @@ function TechnicalGroups({
               {scenarioGroup}
               {connectionGroup}
               <p className="col-span-12 m-0 text-sm leading-6 text-muted">
-                Full measurements, charts, and reconciliation proof appear here when the run
-                finishes.
+                {t(
+                  "Full measurements, charts, and reconciliation proof appear here when the run finishes.",
+                )}
               </p>
               {acceptedRunIdLine}
             </>
@@ -1140,12 +1198,13 @@ function TechnicalGroups({
                       outcome,
                       run,
                       composition.presentation,
+                      locale,
                     )}
                     recovery={composition.panelRecovery}
                   />
                   <RunErpOutcomesPanel
                     freshness={composition.freshness}
-                    presentation={deriveRunErpOutcomeState(projection.erp, run)}
+                    presentation={deriveRunErpOutcomeState(projection.erp, run, locale)}
                     recovery={composition.panelRecovery}
                   />
                   <ConsistencyLagPanel
@@ -1154,6 +1213,7 @@ function TechnicalGroups({
                       projection.consistencyLag?.pendingConfirmationCount ?? null,
                       projection.consistencyLag?.confirmedOrderCount ?? null,
                       run,
+                      locale,
                     )}
                     recovery={composition.panelRecovery}
                   />
@@ -1167,6 +1227,7 @@ function TechnicalGroups({
                       projection.inventory,
                       run,
                       outcome?.reservedUnits ?? null,
+                      locale,
                     )}
                     recovery={composition.panelRecovery}
                   />

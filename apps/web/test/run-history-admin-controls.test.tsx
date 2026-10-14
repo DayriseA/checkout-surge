@@ -8,6 +8,7 @@ import { RunHistoryAdminControls } from "../src/app/components/run-history-admin
 import { RunHistoryDeleteAllButton } from "../src/app/components/run-history-delete-all-button.js";
 import { RunHistoryRowControls } from "../src/app/components/run-history-row-controls.js";
 import { adminRunHistoryProxyPath } from "../src/app/lib/control-paths.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
 
 const refresh = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -19,6 +20,35 @@ afterEach(() => {
 });
 
 describe("RunHistoryAdminControls", () => {
+  it("localizes the destructive flow while preserving the API confirmation token", async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      successResponse(),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    const { rerender } = renderSurface("fr");
+    expect(
+      screen.getByRole("checkbox", { name: `Sélectionner la simulation ${summaries[0]?.runId}` }),
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Supprimer tous les résumés de simulation" }),
+    );
+    expect(
+      screen.getByRole("alertdialog", { name: "Supprimer tous les résumés de simulation ?" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Saisissez DELETE pour confirmer")).toBeTruthy();
+    await user.type(screen.getByRole("textbox"), "DELETE");
+    await user.click(screen.getByRole("button", { name: "Supprimer tous les résumés" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual({
+      deleteAllConfirmation: "DELETE",
+    });
+    expect(await screen.findByText("1 résumé de simulation supprimé.")).toBeTruthy();
+    rerender(surfaceElement("en"));
+    expect(screen.getByText("Deleted 1 run summary.")).toBeTruthy();
+    rerender(surfaceElement("fr"));
+    expect(screen.getByText("1 résumé de simulation supprimé.")).toBeTruthy();
+  });
   it("sends no request on trigger/cancel and requires the exact delete-all token", async () => {
     const user = userEvent.setup();
     const fetchMock = vi.fn();
@@ -253,18 +283,24 @@ describe("RunHistoryAdminControls", () => {
 });
 
 /** Rows stand in for the summary list, which browser-workflows covers end to end. */
-function renderSurface() {
-  return render(
-    <RunHistoryAdminControls visibleRunIds={summaries.map((summary) => summary.runId)}>
-      {summaries.map((summary) => (
-        <RunHistoryRowControls
-          key={summary.runId}
-          presetName={summary.presetName}
-          runId={summary.runId}
-        />
-      ))}
-      <RunHistoryDeleteAllButton />
-    </RunHistoryAdminControls>,
+function renderSurface(locale: "en" | "fr" = "en") {
+  return render(surfaceElement(locale));
+}
+
+function surfaceElement(locale: "en" | "fr") {
+  return (
+    <LocaleProvider locale={locale}>
+      <RunHistoryAdminControls visibleRunIds={summaries.map((summary) => summary.runId)}>
+        {summaries.map((summary) => (
+          <RunHistoryRowControls
+            key={summary.runId}
+            presetName={summary.presetName}
+            runId={summary.runId}
+          />
+        ))}
+        <RunHistoryDeleteAllButton />
+      </RunHistoryAdminControls>
+    </LocaleProvider>
   );
 }
 

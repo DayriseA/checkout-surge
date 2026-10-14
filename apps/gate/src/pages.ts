@@ -77,6 +77,58 @@ const pages: Record<GatePageState, PageContent> = {
   },
 };
 
+export type GateLocale = "en" | "fr";
+
+/** The same preference cookie is read by the web app once the core is ready. */
+export function gateLocale(cookieHeader: string | undefined): GateLocale {
+  return cookieHeader?.split(";").some((cookie) => cookie.trim() === "checkout-surge-locale=fr")
+    ? "fr"
+    : "en";
+}
+
+const frenchPages: Record<GatePageState, Pick<PageContent, "status" | "title" | "text">> = {
+  stopped: {
+    status: "En veille",
+    title: "La démo est en veille",
+    text: "Checkout-Surge est une démonstration en direct du système derrière une vente flash, où des milliers d’acheteurs simulés se disputent un stock limité. Ses serveurs se mettent en veille en l’absence de visiteurs pour réduire les coûts d’hébergement. Leur réveil prend généralement environ 15 secondes, puis la démo s’ouvre.",
+  },
+  booting: {
+    status: "Démarrage",
+    title: "Démarrage de la démo",
+    text: "Les serveurs démarrent, ce qui prend généralement moins d’une minute. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
+  },
+  updating: {
+    status: "Maintenance",
+    title: "Maintenance en cours",
+    text: "Les serveurs de la démo sont en maintenance, généralement pour une mise à jour, et ne peuvent pas démarrer pour le moment. Cela prend habituellement quelques minutes. Réessayez ensuite.",
+  },
+  relocating: {
+    status: "Déplacement",
+    title: "Déplacement de la démo vers de nouveaux serveurs",
+    text: "L’hébergeur ne dispose plus de place sur les serveurs actuels ou ceux-ci sont en panne. La démo est déplacée sur de nouveaux serveurs et repart avec une installation neuve et un historique vide. Cela prend généralement environ une minute. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
+  },
+  refreshing: {
+    status: "Réinstallation",
+    title: "Installation d’une nouvelle démo",
+    text: "La démo est réinstallée sur de nouveaux serveurs et repart avec un historique vide. Cela prend généralement environ une minute. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
+  },
+  no_capacity: {
+    status: "Hébergeur saturé",
+    title: "Plus de place chez l’hébergeur",
+    text: 'Fly.io, l’hébergeur de la démo, ne dispose plus de place pour ses serveurs en Europe actuellement. La démo fonctionne normalement et cette situation est généralement temporaire. Revenez plus tard ou consultez <a href="https://status.flyio.net/">l’état des services de Fly.io</a>.',
+  },
+  setup_failed: {
+    status: "Échec du démarrage",
+    title: "La démo n’a pas pu démarrer",
+    text: "La préparation de la base de données a échoué pendant le démarrage des serveurs. Le propriétaire du projet doit intervenir. Revenez plus tard.",
+  },
+  unavailable: {
+    status: "Indisponible",
+    title: "La démo est indisponible",
+    text: "La démo n’a pas pu être jointe ou démarrée, généralement parce que son hébergeur n’a pas répondu. Cette interruption est habituellement brève. Réessayez dans un instant.",
+  },
+};
+
 /**
  * The demo's light theme, copied from its `@theme` tokens in `apps/web/src/app/globals.css`: the
  * gate image does not contain the web app. Keep the values in step with that file.
@@ -112,6 +164,12 @@ body { margin: 0; min-height: 100vh; background: ${colors.page}; color: ${colors
   margin: 0 auto; padding: 0 1.5rem; }
 .band svg { flex: none; width: 1.5rem; height: 1.5rem; }
 .band strong { font-size: 1.0625rem; line-height: 1; font-weight: 800; font-stretch: 125%; }
+.language { display: inline-flex; align-items: center; gap: 0.375rem; margin-left: auto;
+  min-height: 2.75rem; padding: 0.5rem; border: 0; border-radius: 0.375rem;
+  background: transparent; color: #fff; font: inherit; cursor: pointer; }
+.language:hover { background: #17325a; }
+.language:focus-visible { outline-color: ${colors.signal}; }
+.language svg { width: 1rem; height: 1rem; }
 main { max-width: 38rem; margin: 0 auto; padding: 12vh 1.5rem 4rem; }
 .card { padding: 2rem; border: 1px solid ${colors.border}; border-radius: 1rem; background: ${colors.surface};
   overflow-wrap: anywhere; }
@@ -173,12 +231,18 @@ const toneMarkers: Record<Tone, string> = {
 };
 
 /** The page shown for any URL while the core is not ready. `returnPath` is that URL. */
-export function renderGatePage(state: GatePageState, returnPath: string): string {
-  const page = pages[state];
+export function renderGatePage(
+  state: GatePageState,
+  returnPath: string,
+  locale: GateLocale = "en",
+): string {
+  const page = locale === "fr" ? { ...pages[state], ...frenchPages[state] } : pages[state];
+  const nextLocale = locale === "en" ? "fr" : "en";
+  const languageLabel = locale === "en" ? "Switch to French" : "Passer en anglais";
   const reloads = page.refreshSeconds !== undefined;
   const refresh = reloads ? `<meta http-equiv="refresh" content="${page.refreshSeconds}">` : "";
   return `<!doctype html>
-<html lang="en">
+<html lang="${locale}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -188,30 +252,44 @@ ${refresh}
 <style>${styles}</style>
 </head>
 <body${reloads ? "" : ' class="enter"'}>
-<header class="band"><div>${brandMark}<strong>Checkout-Surge</strong></div></header>
+<header class="band"><div>${brandMark}<strong>Checkout-Surge</strong>
+<button id="language-switch" class="language" type="button" title="${languageLabel}" aria-label="${languageLabel}">
+<svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18M5 7h14M5 17h14"/></svg>
+<span lang="${nextLocale}">${nextLocale.toUpperCase()}</span></button></div></header>
 <main>
 <div class="card">
 <p class="status ${page.tone}"><span aria-hidden="true">${toneMarkers[page.tone]}</span>${page.status}</p>
 <h1>${page.title}</h1>
 <p class="text">${page.text}</p>
-${renderAction(page.action, returnPath)}
+${renderAction(page.action, returnPath, locale)}
 ${reloads ? '<div class="loader" aria-hidden="true"></div>' : ""}
 </div>
 </main>
+<script>
+document.getElementById("language-switch").addEventListener("click", function () {
+  document.cookie = "checkout-surge-locale=${nextLocale}; Path=/; Max-Age=31536000; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : "");
+  location.reload();
+});
+</script>
 </body>
 </html>
 `;
 }
 
-function renderAction(action: PageContent["action"], returnPath: string): string {
+function renderAction(
+  action: PageContent["action"],
+  returnPath: string,
+  locale: GateLocale,
+): string {
+  const retry = locale === "fr" ? "Réessayer" : "Try again";
   switch (action) {
     case "start":
     case "retry_start":
       return `<form method="post" action="${wakePath}?return=${encodeURIComponent(returnPath)}">
-<button class="button" type="submit">${action === "start" ? "Start the demo" : "Try again"}</button>
+<button class="button" type="submit">${action === "start" ? (locale === "fr" ? "Lancer la démo" : "Start the demo") : retry}</button>
 </form>`;
     case "reload":
-      return `<p class="action"><a class="button" href="${escapeHtml(returnPath)}">Try again</a></p>`;
+      return `<p class="action"><a class="button" href="${escapeHtml(returnPath)}">${retry}</a></p>`;
     default:
       return "";
   }

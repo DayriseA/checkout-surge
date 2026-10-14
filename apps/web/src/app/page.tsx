@@ -4,6 +4,8 @@ import { LinkRow, TextLink } from "./components/content-page";
 import { neutralLinkButtonClassName, primaryButtonClassName } from "./components/control-styles";
 import { Bar, FlowArrow, type StepTag, Tag } from "./components/diagrams/primitives";
 import { PurchasePathDiagram } from "./components/diagrams/purchase-path";
+import { getLocale } from "./lib/i18n/server";
+import { getTranslation, type Locale } from "./lib/i18n/translate";
 import {
   type ComparisonMeasurement,
   comparisonFiguresNote,
@@ -17,14 +19,16 @@ import {
 import { publicNarrative } from "./lib/presentation/public-vocabulary";
 import { comparisonExplanationLinks, presetCardLink, siteLink, sitePages } from "./lib/site-links";
 
-export const metadata: Metadata = {
-  title: { absolute: "Checkout-Surge: a live demo of the system behind a flash sale" },
-};
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return {
+    title: { absolute: t("Checkout-Surge: a live demo of the system behind a flash sale") },
+  };
+}
 export const dynamic = "force-dynamic";
 
 const headingClassName = "type-title m-0 text-2xl leading-tight text-ink";
 const leadClassName = "m-0 mt-2 max-w-[68ch] leading-7 text-muted-strong";
-const buyers = formatFigure(flashSale.buyers, "count");
 
 /** The three failures of a flash sale, each beside the practice that prevents it. */
 const practices: readonly {
@@ -46,7 +50,8 @@ const practices: readonly {
   },
   {
     marker: "②",
-    problem: `Winners stare at a spinner while a back office that confirms ${flashSale.backOfficePerSecond} orders a second is pushed past its limit.`,
+    problem:
+      "Winners stare at a spinner while a back office that confirms {pace} orders a second is pushed past its limit.",
     title: "“Yes” now, confirm later",
     text: "The order is saved and the buyer answered at once; a queue hands orders to the back office at its own pace.",
     tag: "compared",
@@ -62,23 +67,28 @@ const practices: readonly {
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+  const buyers = formatFigure(flashSale.buyers, "count", locale);
+
   return (
     <>
       <header className="grid gap-8 pb-14 pt-8 max-[560px]:gap-6 max-[560px]:pb-10 max-[560px]:pt-4">
         <h1 className="type-title m-0 max-w-[30ch] text-[clamp(1.625rem,2.6vw,2.25rem)] leading-[1.15] text-ink">
-          Checkout-Surge is a live demo of the system behind a flash sale.
+          {t("Checkout-Surge is a live demo of the system behind a flash sale.")}
         </h1>
-        <SurgeBand />
+        <SurgeBand locale={locale} />
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-6 max-[900px]:grid-cols-1">
           <p className="m-0 max-w-[52ch] text-lg leading-7 text-muted-strong">
-            Nobody gets a unit that does not exist, and the back office is never flooded. Start a
-            simulated sale and watch it live.
+            {t(
+              "Nobody gets a unit that does not exist, and the back office is never flooded. Start a simulated sale and watch it live.",
+            )}
           </p>
           <div className="flex flex-wrap gap-3">
-            <TryDemoLink />
+            <TryDemoLink locale={locale} />
             <Link className={`${neutralLinkButtonClassName} text-base`} href={sitePages.howItWorks}>
-              How it works
+              {t("How it works")}
             </Link>
           </div>
         </div>
@@ -86,20 +96,22 @@ export default function HomePage() {
 
       <section aria-labelledby="what-goes-wrong">
         <h2 className={headingClassName} id="what-goes-wrong">
-          What goes wrong, and the standard answer
+          {t("What goes wrong, and the standard answer")}
         </h2>
         <p className={leadClassName}>
-          Three things go wrong when demand far exceeds stock. Each has an answer that is{" "}
-          <TextLink href={sitePages.howItWorks}>standard in the industry</TextLink>, and the demo
-          runs all three.
+          {t("Three things go wrong when demand far exceeds stock. Each has an answer that is")}{" "}
+          <TextLink href={sitePages.howItWorks}>{t("standard in the industry")}</TextLink>
+          {t(", and the demo runs all three.")}
         </p>
         <ol className="m-0 mt-6 grid list-none gap-3 p-0">
           {practices.map((practice) => (
             <li
               className="grid grid-cols-[minmax(0,5fr)_auto_minmax(0,6fr)] items-center gap-x-5 gap-y-2 max-[900px]:grid-cols-1"
-              key={practice.title}
+              key={t(practice.title)}
             >
-              <p className="m-0 text-lg leading-7 text-ink">{practice.problem}</p>
+              <p className="m-0 text-lg leading-7 text-ink">
+                {t(practice.problem, { pace: flashSale.backOfficePerSecond })}
+              </p>
               <FlowArrow />
               <Link
                 className="grid content-start gap-2 rounded-xl border border-border bg-surface p-4 transition-colors hover:border-accent hover:bg-surface-muted"
@@ -107,9 +119,9 @@ export default function HomePage() {
               >
                 <span className="font-bold leading-5 text-ink">
                   <span className="mr-1.5">{practice.marker}</span>
-                  {practice.title}
+                  {t(practice.title)}
                 </span>
-                <span className="text-sm leading-6 text-muted-strong">{practice.text}</span>
+                <span className="text-sm leading-6 text-muted-strong">{t(practice.text)}</span>
                 <Tag kind={practice.tag} />
               </Link>
             </li>
@@ -117,9 +129,11 @@ export default function HomePage() {
         </ol>
         <p className="m-0 mt-5 flex flex-wrap items-center gap-2 text-sm leading-6 text-muted-strong">
           <span>
-            In front of all this, a{" "}
-            <TextLink href={siteLink("howItWorks", "waitingRoom")}>waiting room</TextLink> lets
-            buyers in at a pace the checkout can absorb. The demo is the checkout behind it.
+            {t("In front of all this, a")}{" "}
+            <TextLink href={siteLink("howItWorks", "waitingRoom")}>{t("waiting room")}</TextLink>
+            {t(
+              " lets buyers in at a pace the checkout can absorb. The demo is the checkout behind it.",
+            )}
           </span>
           <Tag kind="notModelled" />
         </p>
@@ -127,13 +141,13 @@ export default function HomePage() {
 
       <section aria-labelledby="in-one-picture" className="mt-14">
         <h2 className={headingClassName} id="in-one-picture">
-          The demo&apos;s checkout, in one picture
+          {t("The demo's checkout, in one picture")}
         </h2>
-        <p className={leadClassName}>The markers are the three answers above.</p>
+        <p className={leadClassName}>{t("The markers are the three answers above.")}</p>
         <PurchasePathDiagram />
         <p className="m-0 mt-4 text-sm leading-6 text-muted-strong">
-          The software is real; the buyers, the back office and the emails are{" "}
-          <TextLink href={siteLink("limits", "realAndSimulated")}>simulated</TextLink>.
+          {t("The software is real; the buyers, the back office and the emails are")}{" "}
+          <TextLink href={siteLink("limits", "realAndSimulated")}>{t("simulated")}</TextLink>.
         </p>
       </section>
 
@@ -142,57 +156,69 @@ export default function HomePage() {
         className="mt-14 rounded-2xl border border-border bg-surface p-8 max-[900px]:p-6 max-[560px]:p-4"
       >
         <h2 className={headingClassName} id="what-each-choice-buys">
-          What each choice buys, measured
+          {t("What each choice buys, measured")}
         </h2>
-        <p className={leadClassName}>Same workload, run twice, with one choice switched.</p>
+        <p className={leadClassName}>{t("Same workload, run twice, with one choice switched.")}</p>
         <div className="mt-6 grid grid-cols-2 gap-8 max-[900px]:grid-cols-1">
           <ChoiceCard
+            locale={locale}
             explanationHref={comparisonExplanationLinks.order_queue}
             figure={queueComparison.everyBuyerAnswered}
             presetSlug="queue-comparison"
-            reading={`Same ${queueComparison.ordersConfirmed} orders confirmed, at the same back-office pace: the queue moves the wait from the buyer to the back office.`}
+            reading={t(
+              "Same {value0} orders confirmed, at the same back-office pace: the queue moves the wait from the buyer to the back office.",
+              { value0: queueComparison.ordersConfirmed },
+            )}
             runLabels={queueComparison.runLabels}
-            title="With and without the order queue"
+            title={t("With and without the order queue")}
           />
           <ChoiceCard
+            locale={locale}
             explanationHref={comparisonExplanationLinks.redis}
             figure={redisComparison.cold.transactions}
             presetSlug="redis-comparison"
-            reading={`Same ${flashSale.units} units sold, and the same answers. With the stock in PostgreSQL, the database also does the turned-away crowd's work. Winners are not faster: at this scale, the database is not the bottleneck.`}
+            reading={t(
+              "Same {value0} units sold, and the same answers. With the stock in PostgreSQL, the database also does the turned-away crowd's work. Winners are not faster: at this scale, the database is not the bottleneck.",
+              { value0: flashSale.units },
+            )}
             runLabels={redisComparison.cold.runLabels}
-            title="With and without Redis"
+            title={t("With and without Redis")}
           />
         </div>
-        <p className="m-0 mt-6 text-sm leading-6 text-muted">{comparisonFiguresNote}</p>
+        <p className="m-0 mt-6 text-sm leading-6 text-muted">{t(comparisonFiguresNote)}</p>
       </section>
 
       <div className="mt-14 grid grid-cols-2 gap-10 border-t border-border pt-8 max-[900px]:grid-cols-1">
         <section aria-labelledby="demo-scale">
           <h2 className={headingClassName} id="demo-scale">
-            A demo, at demo scale
+            {t("A demo, at demo scale")}
           </h2>
           <ul className="mb-0 mt-3 grid gap-1 pl-5 leading-7 text-muted-strong">
             <li>
-              The whole system runs on one machine, for up to {buyers} buyers arriving in about a
-              second.
+              {t("The whole system runs on one machine, for up to ")}
+              {buyers}
+              {t(" buyers arriving in about a second.")}
             </li>
-            <li>No payment step and no bot protection.</li>
-            <li>Its databases sit on the same machine as its code, not across a network.</li>
+            <li>{t("No payment step and no bot protection.")}</li>
+            <li>{t("Its databases sit on the same machine as its code, not across a network.")}</li>
           </ul>
           <LinkRow links={[{ href: sitePages.limits, label: "Limits and known defects" }]} />
         </section>
         <section aria-labelledby="for-engineers">
           <h2 className={headingClassName} id="for-engineers">
-            For engineers
+            {t("For engineers")}
           </h2>
           <p className="m-0 mt-3 leading-7 text-muted-strong">
-            Node.js, Fastify, Redis, PostgreSQL, BullMQ, k6, Next.js, on Fly.io. The demo sleeps
-            when nobody uses it and wakes in about {hostedMeasurements.wakeSeconds} seconds.
+            {t(
+              "Node.js, Fastify, Redis, PostgreSQL, BullMQ, k6, Next.js, on Fly.io. The demo sleeps when nobody uses it and wakes in about ",
+            )}
+            {hostedMeasurements.wakeSeconds}
+            {t(" seconds.")}
           </p>
           <p className="m-0 mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
-            <TextLink href={sitePages.underTheHood}>Under the hood →</TextLink>
+            <TextLink href={sitePages.underTheHood}>{t("Under the hood →")}</TextLink>
             <TextLink external href={publicNarrative.repositoryUrl}>
-              Repository ↗
+              {t("Repository ↗")}
             </TextLink>
           </p>
         </section>
@@ -204,13 +230,13 @@ export default function HomePage() {
       >
         <div>
           <h2 className="type-title m-0 text-2xl text-white" id="try-demo-heading">
-            See it under load
+            {t("See it under load")}
           </h2>
           <p className="m-0 mt-1 leading-7 text-white/75">
-            Choose a simulation, start it, and watch the system handle a release of buyers.
+            {t("Choose a simulation, start it, and watch the system handle a release of buyers.")}
           </p>
         </div>
-        <TryDemoLink onDark />
+        <TryDemoLink locale={locale} onDark />
       </section>
     </>
   );
@@ -218,6 +244,7 @@ export default function HomePage() {
 
 /** One comparison's headline figure, its reading, and links to run it and to read about it. */
 function ChoiceCard({
+  locale = "en",
   explanationHref,
   figure,
   presetSlug,
@@ -225,6 +252,7 @@ function ChoiceCard({
   runLabels,
   title,
 }: {
+  locale?: Locale;
   explanationHref: string;
   figure: PairedFigure;
   presetSlug: string;
@@ -232,16 +260,18 @@ function ChoiceCard({
   runLabels: ComparisonMeasurement["runLabels"];
   title: string;
 }) {
+  const t = getTranslation(locale);
+
   return (
     <article className="grid grid-rows-[auto_auto_1fr_auto] gap-4">
       <h3 className="type-title m-0 text-lg leading-tight text-ink">{title}</h3>
-      <HeadlineFigure figure={figure} runLabels={runLabels} />
+      <HeadlineFigure locale={locale} figure={figure} runLabels={runLabels} />
       <p className="m-0 max-w-[48ch] text-sm leading-6 text-muted-strong">{reading}</p>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
         <Link className={neutralLinkButtonClassName} href={presetCardLink(presetSlug)}>
-          Run it
+          {t("Run it")}
         </Link>
-        <TextLink href={explanationHref}>How to read it →</TextLink>
+        <TextLink href={explanationHref}>{t("How to read it →")}</TextLink>
       </div>
     </article>
   );
@@ -249,12 +279,16 @@ function ChoiceCard({
 
 /** The two runs' medians of one figure, side by side, as the home page's loudest numbers. */
 function HeadlineFigure({
+  locale = "en",
   figure,
   runLabels,
 }: {
+  locale?: Locale;
   figure: PairedFigure;
   runLabels: ComparisonMeasurement["runLabels"];
 }) {
+  const t = getTranslation(locale);
+
   const runs = [
     { spread: figure.first, barClassName: "bg-accent" },
     { spread: figure.second, barClassName: "bg-muted" },
@@ -262,14 +296,14 @@ function HeadlineFigure({
   const largest = Math.max(figure.first[0], figure.second[0]);
   return (
     <div>
-      <p className="m-0 text-sm font-semibold leading-5 text-ink">{figure.label}</p>
+      <p className="m-0 text-sm font-semibold leading-5 text-ink">{t(figure.label)}</p>
       <dl className="m-0 mt-3 grid grid-cols-2 gap-5 max-[560px]:grid-cols-1">
         {runs.map(({ spread, barClassName }, index) => (
-          <div className="grid gap-2" key={runLabels[index]}>
-            <dt className="text-xs leading-4 text-muted-strong">{runLabels[index]}</dt>
+          <div className="grid gap-2" key={t(runLabels[index as 0 | 1])}>
+            <dt className="text-xs leading-4 text-muted-strong">{t(runLabels[index as 0 | 1])}</dt>
             <dd className="m-0 grid gap-2">
               <span className="type-display text-4xl leading-none text-ink">
-                {formatFigure(spread[0], figure.format)}
+                {formatFigure(spread[0], figure.format, locale)}
               </span>
               <Bar className={barClassName} share={spread[0] / largest} />
             </dd>
@@ -287,7 +321,10 @@ function HeadlineFigure({
  * 900 px the drawing shrinks to a strip above the figures. On load, the crowd drifts in towards
  * the gate, then the steady line steps out (keyframes in globals.css).
  */
-function SurgeBand() {
+function SurgeBand({ locale = "en" }: { locale?: Locale }) {
+  const t = getTranslation(locale);
+  const buyers = formatFigure(flashSale.buyers, "count", locale);
+
   return (
     <div className="grid gap-4">
       <div aria-hidden="true" className="flex h-12 items-center gap-3 min-[901px]:hidden">
@@ -296,13 +333,22 @@ function SurgeBand() {
         <SteadyLine />
       </div>
       <div className="grid grid-cols-[minmax(0,3fr)_0.75rem_minmax(0,2fr)] gap-x-5 gap-y-4 max-[900px]:grid-cols-1 max-[900px]:gap-y-3">
-        <Figure label="buyers press “Buy” within about a second" value={buyers} />
+        <Figure
+          locale={locale}
+          label={t("buyers press “Buy” within about a second")}
+          value={buyers}
+        />
         <Gate className="row-span-2 self-stretch max-[900px]:hidden" />
         <div className="flex justify-between gap-6 max-[900px]:contents">
-          <Figure label="units, and one checkout decides" value={String(flashSale.units)} />
           <Figure
+            locale={locale}
+            label={t("units, and one checkout decides")}
+            value={String(flashSale.units)}
+          />
+          <Figure
+            locale={locale}
             alignEnd
-            label="orders a second, the back office's pace"
+            label={t("orders a second, the back office's pace")}
             value={String(flashSale.backOfficePerSecond)}
           />
         </div>
@@ -319,14 +365,18 @@ function SurgeBand() {
 
 /** One figure of the flash sale, loud, over its caption. */
 function Figure({
+  locale = "en",
   alignEnd = false,
   label,
   value,
 }: {
+  locale?: Locale;
   alignEnd?: boolean;
   label: string;
   value: string;
 }) {
+  const t = getTranslation(locale);
+
   return (
     <p
       className={`m-0 grid gap-1 max-[900px]:flex max-[900px]:items-baseline max-[900px]:gap-3 ${
@@ -336,7 +386,7 @@ function Figure({
       <strong className="type-display text-[clamp(2.25rem,4.5vw,4rem)] leading-none text-ink">
         {value}
       </strong>
-      <span className="max-w-[22ch] text-sm leading-5 text-muted-strong">{label}</span>
+      <span className="max-w-[22ch] text-sm leading-5 text-muted-strong">{t(label)}</span>
     </p>
   );
 }
@@ -414,7 +464,9 @@ function SteadyLine() {
   );
 }
 
-function TryDemoLink({ onDark = false }: { onDark?: boolean }) {
+function TryDemoLink({ locale = "en", onDark = false }: { locale?: Locale; onDark?: boolean }) {
+  const t = getTranslation(locale);
+
   return (
     <Link
       className={
@@ -424,7 +476,7 @@ function TryDemoLink({ onDark = false }: { onDark?: boolean }) {
       }
       href={sitePages.demo}
     >
-      Try the demo
+      {t("Try the demo")}
     </Link>
   );
 }

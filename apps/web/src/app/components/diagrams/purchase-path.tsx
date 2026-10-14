@@ -1,44 +1,57 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { useTranslation } from "../../lib/i18n/locale-context";
 import { DiagramFigure, FlowArrow, Step } from "./primitives";
 
 /**
  * V1: one purchase and its answers. The markers ① ② ③ match the practices' cards beside it.
  */
 export function PurchasePathDiagram() {
+  const t = useTranslation();
+
   return (
-    <DiagramFigure caption="One purchase, three moments. Every buyer gets a stock decision made in memory, and a buyer turned away is answered right there, without the database. A buyer who gets a unit is answered once the order is saved. The order then waits in a queue, and a worker has the back office confirm it at the back office's own pace. The waiting room in front is not modelled, and the back office is simulated.">
+    <DiagramFigure
+      caption={t(
+        "One purchase, three moments. Every buyer gets a stock decision made in memory, and a buyer turned away is answered right there, without the database. A buyer who gets a unit is answered once the order is saved. The order then waits in a queue, and a worker has the back office confirm it at the back office's own pace. The waiting room in front is not modelled, and the back office is simulated.",
+      )}
+    >
       <div className="grid gap-3">
-        <Lane answer="“Sold out”" note="answered from memory" title="Every buyer">
-          <Step dashed detail="lets buyers in" tag="notModelled">
-            Waiting room
+        <Lane answer={t("“Sold out”")} note={t("answered from memory")} title={t("Every buyer")}>
+          <Step dashed detail={t("lets buyers in")} tag="notModelled">
+            {t("Waiting room")}
           </Step>
           <FlowArrow />
-          <Step detail="a repeat click gets the same answer" marker="③">
-            Checkout
+          <Step detail={t("a repeat click gets the same answer")} marker="③">
+            {t("Checkout")}
           </Step>
           <FlowArrow />
-          <Step detail="in memory, in one step" marker="①" tone="fast">
-            Stock decision
-          </Step>
-        </Lane>
-        <Lane answer="“You got it”" note="once the order is saved" title="If a unit is left">
-          <Step detail="in the database" tone="durable">
-            Order saved
+          <Step detail={t("in memory, in one step")} marker="①" tone="fast">
+            {t("Stock decision")}
           </Step>
         </Lane>
         <Lane
-          answer="“Confirmed”"
-          note="by email, simulated"
-          title="Then, at the back office's pace"
+          answer={t("“You got it”")}
+          note={t("once the order is saved")}
+          title={t("If a unit is left")}
+        >
+          <Step detail={t("in the database")} tone="durable">
+            {t("Order saved")}
+          </Step>
+        </Lane>
+        <Lane
+          answer={t("“Confirmed”")}
+          note={t("by email, simulated")}
+          title={t("Then, at the back office's pace")}
         >
           <Step marker="②" tone="slow">
-            Order queue
+            {t("Order queue")}
           </Step>
           <FlowArrow />
-          <Step tone="slow">Worker</Step>
+          <Step tone="slow">{t("Worker")}</Step>
           <FlowArrow />
           <Step dashed tag="simulated">
-            Back office
+            {t("Back office")}
           </Step>
         </Lane>
       </div>

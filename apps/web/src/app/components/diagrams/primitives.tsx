@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { useTranslation } from "../../lib/i18n/locale-context";
 
 /**
  * Shared pieces of the content pages' visuals. Colors come from the design tokens only: signal
@@ -64,11 +67,13 @@ const tagClassName: Record<StepTag, string> = {
 
 /** What the demo does with a practice or a step: shown, compared, simplified, simulated, or not. */
 export function Tag({ kind }: { kind: StepTag }) {
+  const t = useTranslation();
+
   return (
     <span
       className={`inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-semibold leading-4 ${tagClassName[kind]}`}
     >
-      {tagLabel[kind]}
+      {t(tagLabel[kind])}
     </span>
   );
 }
@@ -154,6 +159,8 @@ export function DiagramNode({
   x: number;
   y: number;
 }) {
+  const t = useTranslation();
+
   return (
     <g>
       <rect
@@ -174,7 +181,7 @@ export function DiagramNode({
         x={x + 60}
         y={y + 35}
       >
-        {label}
+        {t(label)}
       </text>
     </g>
   );

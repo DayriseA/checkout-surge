@@ -1,3 +1,6 @@
+"use client";
+
+import { useLocale, useTranslation } from "../../lib/i18n/locale-context";
 import {
   type ComparisonMeasurement,
   formatFigure,
@@ -19,6 +22,10 @@ export function MeasuredPair({
   runLabels: ComparisonMeasurement["runLabels"];
   showRange?: boolean;
 }) {
+  const locale = useLocale();
+
+  const t = useTranslation();
+
   const runs = [
     { spread: figure.first, barClassName: "bg-accent" },
     { spread: figure.second, barClassName: "bg-muted" },
@@ -26,23 +33,24 @@ export function MeasuredPair({
   const largest = Math.max(figure.first[0], figure.second[0]);
   return (
     <div className="min-w-0">
-      <p className="m-0 text-sm font-semibold leading-5 text-ink">{figure.label}</p>
+      <p className="m-0 text-sm font-semibold leading-5 text-ink">{t(figure.label)}</p>
       <dl className="m-0 mt-2 grid gap-2">
         {runs.map(({ spread, barClassName }, index) => (
-          <div className="grid gap-0.5" key={runLabels[index]}>
+          <div className="grid gap-0.5" key={t(runLabels[index as 0 | 1])}>
             <dt className="text-xs leading-4 text-muted-strong">
-              {runLabels[index]}
+              {t(runLabels[index as 0 | 1])}
               {showRange ? (
                 <span className="text-muted">
                   {" "}
-                  · pairs ranged {formatRange(spread, figure.format)}
+                  {t("· pairs ranged ")}
+                  {formatRange(spread, figure.format, locale)}
                 </span>
               ) : null}
             </dt>
             <dd className="m-0 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
               <Bar className={barClassName} share={spread[0] / largest} />
               <span className="text-sm font-semibold text-ink">
-                {formatFigure(spread[0], figure.format)}
+                {formatFigure(spread[0], figure.format, locale)}
               </span>
             </dd>
           </div>
@@ -62,6 +70,10 @@ export function MeasurementTable({
   figures: readonly PairedFigure[];
   runLabels: ComparisonMeasurement["runLabels"];
 }) {
+  const locale = useLocale();
+
+  const t = useTranslation();
+
   return (
     <div className="mt-4 overflow-x-auto">
       <table className="w-full min-w-[34rem] border-collapse text-left text-sm">
@@ -69,25 +81,34 @@ export function MeasurementTable({
         <thead>
           <tr className="border-b border-border text-xs text-muted">
             <th className="py-2 pr-4 font-semibold" scope="col">
-              Figure
+              {t("Figure")}
             </th>
             {runLabels.map((label) => (
-              <th className="py-2 pr-4 font-semibold" key={label} scope="col">
-                {label}, median (range)
+              <th className="py-2 pr-4 font-semibold" key={t(label)} scope="col">
+                {t(label)}
+                {t(", median (range)")}
               </th>
             ))}
           </tr>
         </thead>
         <tbody>
           {figures.map((figure) => (
-            <tr className="border-b border-border last:border-b-0" key={figure.label}>
+            <tr className="border-b border-border last:border-b-0" key={t(figure.label)}>
               <th className="py-2 pr-4 font-normal text-muted-strong" scope="row">
-                {figure.label}
+                {t(figure.label)}
               </th>
               {[figure.first, figure.second].map((spread, index) => (
-                <td className="whitespace-nowrap py-2 pr-4 text-ink" key={runLabels[index]}>
-                  <span className="font-semibold">{formatFigure(spread[0], figure.format)}</span>
-                  <span className="text-muted"> ({formatRange(spread, figure.format)})</span>
+                <td
+                  className="whitespace-nowrap py-2 pr-4 text-ink"
+                  key={t(runLabels[index as 0 | 1])}
+                >
+                  <span className="font-semibold">
+                    {formatFigure(spread[0], figure.format, locale)}
+                  </span>
+                  <span className="text-muted">
+                    {" "}
+                    ({formatRange(spread, figure.format, locale)})
+                  </span>
                 </td>
               ))}
             </tr>

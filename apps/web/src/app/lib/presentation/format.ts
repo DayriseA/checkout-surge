@@ -4,15 +4,24 @@
  * Application policy:
  * - Timezone: labelled UTC everywhere, 24-hour clock. Server rendering and client hydration
  *   therefore cannot disagree about a wall clock reading.
- * - Locale: `en-US` grouping through the one shared `Intl.NumberFormat` instance below.
+ * - Locale: English or French grouping, chosen explicitly by the caller.
  * - Units: durations are always plain milliseconds. The `Ms` suffix is the unit contract.
  *
  * Missing or unusable input returns `null` rather than a string, so each caller chooses a
  * field-specific missing-state label instead of collapsing missing into zero.
  */
 
-const groupedCountFormatter = new Intl.NumberFormat("en-US");
-const windowWidthFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+import { intlLocale, type Locale } from "../i18n/locale";
+import { getTranslation } from "../i18n/translate";
+
+const groupedCountFormatters = {
+  en: new Intl.NumberFormat(intlLocale("en")),
+  fr: new Intl.NumberFormat(intlLocale("fr")),
+};
+const windowWidthFormatters = {
+  en: new Intl.NumberFormat(intlLocale("en"), { maximumFractionDigits: 2 }),
+  fr: new Intl.NumberFormat(intlLocale("fr"), { maximumFractionDigits: 2 }),
+};
 
 const millisecondsPerSecond = 1_000;
 const secondsPerMinute = 60;
@@ -27,6 +36,7 @@ const hourTierThresholdSeconds = secondsPerMinute * minutesPerHour;
 const utcSuffix = "UTC";
 
 export interface FormatInstantOptions {
+  locale?: Locale;
   /**
    * `full` renders `2026-08-03 14:32:05 UTC`.
    * `timeOnly` renders `14:32:05 UTC` and is only correct where adjacent context already
@@ -59,9 +69,11 @@ export function formatInstantUtc(
     return `${clock} ${utcSuffix}`;
   }
 
-  const calendarDate = `${instant.getUTCFullYear().toString().padStart(4, "0")}-${padTwo(
-    instant.getUTCMonth() + 1,
-  )}-${padTwo(instant.getUTCDate())}`;
+  const year = instant.getUTCFullYear().toString().padStart(4, "0");
+  const month = padTwo(instant.getUTCMonth() + 1);
+  const day = padTwo(instant.getUTCDate());
+  const calendarDate =
+    options.locale === "fr" ? `${day}/${month}/${year}` : `${year}-${month}-${day}`;
 
   return `${calendarDate} ${clock} ${utcSuffix}`;
 }
@@ -79,7 +91,11 @@ export function formatInstantUtc(
  * This formatter says how long something took; it never says which boundaries were measured.
  * Callers keep the measurement name next to the value.
  */
-export function formatDurationMs(value: number | null | undefined): string | null {
+export function formatDurationMs(
+  value: number | null | undefined,
+  locale: Locale = "en",
+): string | null {
+  const groupedCountFormatter = groupedCountFormatters[locale];
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
 
   const wholeMilliseconds = Math.round(value);
@@ -120,10 +136,13 @@ export function formatDurationMs(value: number | null | undefined): string | nul
  * ratio, a percentage — must state its own `maximumFractionDigits` instead of inheriting this
  * formatter's default.
  */
-export function formatCount(value: number | null | undefined): string | null {
+export function formatCount(
+  value: number | null | undefined,
+  locale: Locale = "en",
+): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
 
-  return groupedCountFormatter.format(withoutNegativeZero(value));
+  return groupedCountFormatters[locale].format(withoutNegativeZero(value));
 }
 
 /**
@@ -147,8 +166,8 @@ export function pluralize(
  * grammatical form their sentence needs (`60s` as a value, `60-second` as an adjective), which
  * is the only difference between the two surfaces that render window widths.
  */
-export function formatWindowSeconds(seconds: number): string {
-  return windowWidthFormatter.format(seconds);
+export function formatWindowSeconds(seconds: number, locale: Locale = "en"): string {
+  return windowWidthFormatters[locale].format(seconds);
 }
 
 /**
@@ -156,8 +175,10 @@ export function formatWindowSeconds(seconds: number): string {
  * `formatWindowSeconds` returns (`60s`). It lives here rather than being concatenated at each call
  * site so the three surfaces that describe a window this way cannot drift apart.
  */
-export function formatWindowSecondsAdjective(seconds: number): string {
-  return `${formatWindowSeconds(seconds)}-second`;
+export function formatWindowSecondsAdjective(seconds: number, locale: Locale = "en"): string {
+  return getTranslation(locale)("{seconds}-second", {
+    seconds: formatWindowSeconds(seconds, locale),
+  });
 }
 
 function padTwo(value: number): string {

@@ -1,8 +1,12 @@
 "use client";
 
+import { useTranslation } from "../lib/i18n/locale-context";
+
 import { buttonClassName } from "./control-styles";
 
 export function SignalCsvDownload({ csv, fileName }: { csv: string; fileName: string }) {
+  const t = useTranslation();
+
   const download = () => {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const link = document.createElement("a");
@@ -13,7 +17,7 @@ export function SignalCsvDownload({ csv, fileName }: { csv: string; fileName: st
   };
   return (
     <button className={buttonClassName} onClick={download} type="button">
-      Download CSV
+      {t("Download CSV")}
     </button>
   );
 }

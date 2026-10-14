@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import type { CompletedBackendRead } from "../lib/backend-read";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { coreActivityProxyPath, coreIdleStatusProxyPath } from "../lib/control-paths";
+import { useTranslation } from "../lib/i18n/locale-context";
 import { buttonClassName } from "./control-styles";
 
 const statusPollIntervalMs = 30_000;
@@ -22,6 +23,7 @@ type CountdownView =
  * awake, a failed status read means it went to sleep: the page shows "Demo paused".
  */
 export function CoreIdleCountdown() {
+  const t = useTranslation();
   const [view, setView] = useState<CountdownView>({ kind: "hidden" });
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [stayAwakePending, setStayAwakePending] = useState(false);
@@ -75,11 +77,12 @@ export function CoreIdleCountdown() {
     return (
       <CountdownBar tone="paused">
         <p className="m-0">
-          <strong>Demo paused.</strong> The system went to sleep after a period without activity.
+          <strong>{t("Demo paused.")}</strong>
+          {t(" The system went to sleep after a period without activity.")}
         </p>
         {/* A full page load, so the gate can serve its start page. */}
         <a className={buttonClassName} href="/">
-          Back to the start page
+          {t("Back to the start page")}
         </a>
       </CountdownBar>
     );
@@ -87,7 +90,7 @@ export function CoreIdleCountdown() {
   if (view.kind === "run_in_progress") {
     return (
       <CountdownBar tone="normal">
-        <p className="m-0">Run in progress, the system stays awake.</p>
+        <p className="m-0">{t("Run in progress, the system stays awake.")}</p>
       </CountdownBar>
     );
   }
@@ -96,10 +99,10 @@ export function CoreIdleCountdown() {
   return (
     <CountdownBar tone={alerting ? "alert" : "normal"}>
       <p className="m-0">
-        {alerting ? <strong>Going to sleep soon. </strong> : null}
-        The system is awake and will sleep after{" "}
-        <strong className="tabular-nums">{formatCountdown(remainingSeconds)}</strong> without
-        activity.
+        {alerting ? <strong>{t("Going to sleep soon. ")}</strong> : null}
+        {t("The system is awake and will sleep after")}{" "}
+        <strong className="tabular-nums">{formatCountdown(remainingSeconds)}</strong>
+        {t(" without activity.")}
       </p>
       <button
         className={buttonClassName}
@@ -107,7 +110,7 @@ export function CoreIdleCountdown() {
         onClick={() => void stayAwake()}
         type="button"
       >
-        Stay awake
+        {t("Stay awake")}
       </button>
     </CountdownBar>
   );
@@ -144,10 +147,11 @@ function CountdownBar({
   tone: keyof typeof toneClassNames;
   children: ReactNode;
 }) {
+  const t = useTranslation();
   return (
     <div className="mx-auto max-w-[1280px] px-6 pt-4 max-[560px]:px-4">
       <section
-        aria-label="Demo availability"
+        aria-label={t("Demo availability")}
         aria-live="polite"
         className={`flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border px-4 py-2 text-sm leading-6 text-ink ${toneClassNames[tone]}`}
         data-core-idle={tone}

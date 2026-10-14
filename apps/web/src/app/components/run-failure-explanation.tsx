@@ -1,3 +1,5 @@
+"use client";
+
 import {
   k6GracefulStopSeconds,
   k6RequestTimeoutSeconds,
@@ -5,6 +7,8 @@ import {
   type TrafficHttpSummary,
   type TransportAttemptCounts,
 } from "@checkout-surge/contracts";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { formatCount, formatDurationMs, pluralize } from "../lib/presentation/format";
 import type { RunFailureExplanationEvidence } from "../lib/presentation/run-failure-explanation";
 import {
@@ -20,13 +24,15 @@ export function RunFailureExplanation({
   /** Only supplied by the authenticated history surface. */
   stderrLines?: string[];
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const diagnostic = evidence.failureDiagnostic;
   if (!diagnostic) return null;
   const counts = evidence.transportAttemptCounts;
   const http = evidence.httpSummary;
   const business = evidence.businessOutcomeSummary;
   const connectionP95 = evidence.httpTimingBreakdownSummary.connecting?.p95Ms;
-  const copy = causeCopy(diagnostic, counts, http);
+  const copy = causeCopy(diagnostic, counts, http, locale);
   const lateAnswersCause = diagnostic.cause === "interrupted_requests";
   const timeoutsCause = diagnostic.cause === "request_timeouts";
   const requestTimeouts = http.requestTimeouts ?? null;
@@ -48,29 +54,39 @@ export function RunFailureExplanation({
     settled && business.acceptedReservations === counts.startedRequests;
   const serverHandledLateAnswers = hasLateAnswers(counts) && everySentRequestSettled;
   return (
-    <section className="mt-3 text-sm leading-6 text-muted-strong" aria-label="Failure explanation">
-      <h2 className="type-title m-0 text-xl leading-tight text-ink">{copy.heading}</h2>
-      {countsUnknown ? <p className="m-0 mt-2">{trafficEvidenceUnavailableText}</p> : null}
-      <p className="m-0 mt-2">{copy.summary}</p>
+    <section
+      className="mt-3 text-sm leading-6 text-muted-strong"
+      aria-label={t("Failure explanation")}
+    >
+      <h2 className="type-title m-0 text-xl leading-tight text-ink">{t(copy.heading)}</h2>
+      {countsUnknown ? <p className="m-0 mt-2">{t(trafficEvidenceUnavailableText)}</p> : null}
+      <p className="m-0 mt-2">{t(copy.summary)}</p>
       {missingRequests > 0 ? (
         <div className="my-3 border-l-2 border-danger pl-3">
           {counts.unstartedRequests !== null && counts.unstartedRequests > 0 ? (
             <p className="m-0 font-semibold text-ink">
-              {unsentRequestsText(counts.unstartedRequests)}
+              {unsentRequestsText(counts.unstartedRequests, locale)}
             </p>
           ) : null}
           {lateAnswersCause ? (
             <p className="m-0">
-              {formatCount(counts.interruptedRequests)} of {formatCount(counts.startedRequests)}{" "}
-              {pluralize(counts.startedRequests, "answer")} arrived too late (
-              {formatShortfallPercent(counts.interruptedRequests ?? 0, counts.startedRequests ?? 0)}
+              {formatCount(counts.interruptedRequests, locale)} {t("of")}{" "}
+              {formatCount(counts.startedRequests, locale)}{" "}
+              {t(pluralize(counts.startedRequests, "answer"))} {t("arrived too late (")}
+              {formatShortfallPercent(
+                counts.interruptedRequests ?? 0,
+                counts.startedRequests ?? 0,
+                locale,
+              )}
               %).
             </p>
           ) : (
             <p className="m-0">
-              {formatCount(counts.completedRequests)} of {formatCount(counts.plannedRequests)}{" "}
-              {pluralize(counts.plannedRequests, "request")} completed (
-              {formatShortfallPercent(missingRequests, counts.plannedRequests)}% shortfall).
+              {formatCount(counts.completedRequests, locale)} {t("of")}{" "}
+              {formatCount(counts.plannedRequests, locale)}{" "}
+              {t(pluralize(counts.plannedRequests, "request"))} {t("completed (")}
+              {formatShortfallPercent(missingRequests, counts.plannedRequests, locale)}
+              {t("% shortfall).")}
             </p>
           )}
         </div>
@@ -79,62 +95,118 @@ export function RunFailureExplanation({
         <>
           <div className="my-3 border-l-2 border-danger pl-3">
             <p className="m-0">
-              {formatCount(requestTimeouts)} of {formatCount(counts.startedRequests)}{" "}
-              {pluralize(counts.startedRequests, "request")} timed out (
-              {formatShortfallPercent(requestTimeouts ?? 0, counts.startedRequests ?? 0)}%).
+              {formatCount(requestTimeouts, locale)} {t("of")}{" "}
+              {formatCount(counts.startedRequests, locale)}{" "}
+              {t(pluralize(counts.startedRequests, "request"))} {t("timed out (")}
+              {formatShortfallPercent(requestTimeouts ?? 0, counts.startedRequests ?? 0, locale)}%).
             </p>
           </div>
           <p className="m-0 mt-2">
             {everySentRequestSettled
-              ? `The server still handled ${pluralize(requestTimeouts, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only reservation was" : `every one of the ${formatCount(business.acceptedReservations)} reservations was`} secured and its order confirmed and notified. Only ${pluralize(requestTimeouts, "its answer", "their answers")} took too long. `
-              : `The server may still have handled ${pluralize(requestTimeouts, "that request", "those requests")}: a timeout only means that no answer arrived in time. `}
-            {pluralize(requestTimeouts, "This request", "These requests")} waited{" "}
-            {k6RequestTimeoutSeconds} seconds without an answer, so the run counts as failed.
+              ? t(
+                  "The server still handled {v0}: {v1} secured and its order confirmed and notified. Only {v2} took too long. ",
+                  {
+                    v0: String(
+                      t(pluralize(requestTimeouts, t("that request"), t("those requests"))),
+                    ),
+                    v1: String(
+                      business.acceptedReservations === 1
+                        ? t("the only reservation was")
+                        : t("every one of the {v0} reservations was", {
+                            v0: String(formatCount(business.acceptedReservations, locale)),
+                          }),
+                    ),
+                    v2: String(t(pluralize(requestTimeouts, t("its answer"), t("their answers")))),
+                  },
+                )
+              : t(
+                  "The server may still have handled {v0}: a timeout only means that no answer arrived in time. ",
+                  {
+                    v0: String(
+                      t(pluralize(requestTimeouts, t("that request"), t("those requests"))),
+                    ),
+                  },
+                )}
+            {t(
+              "{requests} waited {seconds} seconds without an answer, so the run counts as failed.",
+              {
+                requests: t(pluralize(requestTimeouts, "This request", "These requests")),
+                seconds: k6RequestTimeoutSeconds,
+              },
+            )}
           </p>
         </>
       ) : null}
       {lateAnswersCause ? (
         <p className="m-0 mt-2">
           {serverHandledLateAnswers
-            ? `The server still handled ${pluralize(counts.interruptedRequests, "that request", "those requests")}: ${business.acceptedReservations === 1 ? "the only reservation was" : `every one of the ${formatCount(business.acceptedReservations)} reservations was`} secured and its order confirmed and notified. Only ${pluralize(counts.interruptedRequests, "its answer", "their answers")} came too late to be recorded. `
+            ? t(
+                "The server still handled {v0}: {v1} secured and its order confirmed and notified. Only {v2} came too late to be recorded. ",
+                {
+                  v0: String(
+                    t(
+                      pluralize(counts.interruptedRequests, t("that request"), t("those requests")),
+                    ),
+                  ),
+                  v1: String(
+                    business.acceptedReservations === 1
+                      ? t("the only reservation was")
+                      : t("every one of the {v0} reservations was", {
+                          v0: String(formatCount(business.acceptedReservations, locale)),
+                        }),
+                  ),
+                  v2: String(
+                    t(pluralize(counts.interruptedRequests, t("its answer"), t("their answers"))),
+                  ),
+                },
+              )
             : null}
-          {pluralize(counts.interruptedRequests, "This buyer", "These buyers")} waited at least{" "}
-          {k6GracefulStopSeconds} seconds without an answer, so the run counts as failed.
+          {t(
+            "{buyers} waited at least {seconds} seconds without an answer, so the run counts as failed.",
+            {
+              buyers: t(pluralize(counts.interruptedRequests, "This buyer", "These buyers")),
+              seconds: k6GracefulStopSeconds,
+            },
+          )}
         </p>
       ) : null}
       {http.unexpectedResponses !== null && http.unexpectedResponses > 0 ? (
         <p className="m-0 mt-2">
-          Unexpected responses recorded: {formatCount(http.unexpectedResponses)}.
+          {t("Unexpected responses recorded:")} {formatCount(http.unexpectedResponses, locale)}.
         </p>
       ) : null}
       {http.transportFailures !== null && http.transportFailures > 0 ? (
         <p className="m-0 mt-2">
-          {formatCount(http.transportFailures)} {pluralize(http.transportFailures, "attempt")} ended
-          in transport failure.
+          {formatCount(http.transportFailures, locale)}{" "}
+          {t(pluralize(http.transportFailures, "attempt"))} {t("ended in transport failure.")}
         </p>
       ) : null}
       {!lateAnswersCause && hasLateAnswers(counts) ? (
-        <p className="m-0 mt-2">{lateAnswersClause(counts.interruptedRequests)}.</p>
+        <p className="m-0 mt-2">{lateAnswersClause(counts.interruptedRequests, locale)}.</p>
       ) : null}
       {settled ? (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3 font-semibold text-ink">
           {business.confirmedOrders === 1
-            ? "The only accepted order was"
-            : `All ${formatCount(business.confirmedOrders)} accepted orders were`}{" "}
-          confirmed and notified
+            ? t("The only accepted order was")
+            : t("All {v0} accepted orders were", {
+                v0: String(formatCount(business.confirmedOrders, locale)),
+              })}{" "}
+          {t("confirmed and notified")}
           {serverHandledLateAnswers
-            ? `, including ${pluralize(counts.interruptedRequests, "the one", "those")} whose answer arrived too late`
+            ? t(", including {v0} whose answer arrived too late", {
+                v0: String(t(pluralize(counts.interruptedRequests, t("the one"), "those"))),
+              })
             : null}
           .
         </p>
       ) : (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3">
-          Business outcomes: {formatCount(business.confirmedOrders)}{" "}
-          {pluralize(business.confirmedOrders, "order")} confirmed,{" "}
-          {formatCount(business.failedOrders)} failed,{" "}
-          {formatCount(business.queuedOrders + business.processingOrders)} pending;{" "}
-          {formatCount(business.notificationsRecorded)}{" "}
-          {pluralize(business.notificationsRecorded, "notification")} recorded.
+          {t("Business outcomes:")} {formatCount(business.confirmedOrders, locale)}{" "}
+          {t(pluralize(business.confirmedOrders, "order"))} {t("confirmed,")}{" "}
+          {formatCount(business.failedOrders, locale)} {t("failed,")}{" "}
+          {formatCount(business.queuedOrders + business.processingOrders, locale)} {t("pending;")}{" "}
+          {formatCount(business.notificationsRecorded, locale)}{" "}
+          {t(pluralize(business.notificationsRecorded, "notification"))} {t("recorded.")}
         </p>
       )}
       {counts.startedRequests !== null &&
@@ -143,51 +215,56 @@ export function RunFailureExplanation({
       http.transportFailures === 0 &&
       http.unexpectedResponses === 0 ? (
         <p className="m-0 mt-2">
-          All sent requests completed. No transport failures or unexpected responses were recorded.
+          {t(
+            "All sent requests completed. No transport failures or unexpected responses were recorded.",
+          )}
         </p>
       ) : null}
-      <h3 className="m-0 mt-4 text-sm font-bold text-ink">What to check next</h3>
-      <p className="m-0 mt-1">{copy.next}</p>
+      <h3 className="m-0 mt-4 text-sm font-bold text-ink">{t("What to check next")}</h3>
+      <p className="m-0 mt-1">{t(copy.next)}</p>
       <details className="mt-3 border-t border-border pt-2">
-        <summary className="disclosure font-semibold text-ink">Why this diagnosis?</summary>
-        <p className="m-0 mt-2">{copy.why}</p>
+        <summary className="disclosure font-semibold text-ink">{t("Why this diagnosis?")}</summary>
+        <p className="m-0 mt-2">{t(copy.why)}</p>
         <dl className="my-2 grid grid-cols-2 gap-2">
-          <dt>HTTP response latency, p95</dt>
+          <dt>{t("HTTP response latency, p95")}</dt>
           <dd className="m-0 text-right">
-            {formatDurationMs(http.p95LatencyMs ?? null) ?? "Unavailable"}
+            {formatDurationMs(http.p95LatencyMs ?? null, locale) ?? t("Unavailable")}
           </dd>
-          <dt>Connection time, p95</dt>
+          <dt>{t("Connection time, p95")}</dt>
           <dd className="m-0 text-right">
             {connectionP95 !== undefined &&
             connectionP95 !== null &&
             connectionP95 > 0 &&
             connectionP95 < 1
               ? "< 1 ms"
-              : (formatDurationMs(connectionP95) ?? "Unavailable")}
+              : (formatDurationMs(connectionP95, locale) ?? t("Unavailable"))}
           </dd>
         </dl>
         {stderrLines ? (
           <>
-            <h3 className="m-0 mt-3 text-sm font-bold text-ink">Recorded k6 output</h3>
+            <h3 className="m-0 mt-3 text-sm font-bold text-ink">{t("Recorded k6 output")}</h3>
             {stderrLines.length > 0 ? (
               <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded bg-surface-muted p-3 text-xs [overflow-wrap:anywhere]">
                 {stderrLines.join("\n")}
               </pre>
             ) : (
-              <p className="m-0 mt-1">No retained generator stderr lines.</p>
+              <p className="m-0 mt-1">{t("No retained generator stderr lines.")}</p>
             )}
           </>
         ) : null}
       </details>
       <details className="mt-2 border-t border-border pt-2">
-        <summary className="disclosure font-semibold text-ink">Measurement coverage</summary>
+        <summary className="disclosure font-semibold text-ink">{t("Measurement coverage")}</summary>
         <p className="m-0 mt-2">
-          {countsUnknown ? trafficEvidenceUnavailableText : measurementCoverageText(counts)}
+          {countsUnknown
+            ? t(trafficEvidenceUnavailableText)
+            : measurementCoverageText(counts, locale)}
         </p>
         {http.transportFailures !== null && http.transportFailures > 0 ? (
           <p className="m-0 mt-1">
-            {formatCount(http.transportFailures)}{" "}
-            {pluralize(http.transportFailures, "completed attempt")} ended in transport failure.
+            {formatCount(http.transportFailures, locale)}{" "}
+            {t(pluralize(http.transportFailures, t("completed attempt")))}{" "}
+            {t("ended in transport failure.")}
           </p>
         ) : null}
       </details>
@@ -199,68 +276,125 @@ function hasLateAnswers(counts: TransportAttemptCounts): boolean {
   return counts.interruptedRequests !== null && counts.interruptedRequests > 0;
 }
 
-function measurementCoverageText(counts: TransportAttemptCounts): string {
+function measurementCoverageText(counts: TransportAttemptCounts, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   const coverage = hasLateAnswers(counts)
-    ? `${lateAnswersClause(counts.interruptedRequests)}; outcomes and latency cover only the recorded answers.`
-    : "Outcomes and latency cover only the recorded answers.";
+    ? t("{v0}; outcomes and latency cover only the recorded answers.", {
+        v0: String(lateAnswersClause(counts.interruptedRequests, locale)),
+      })
+    : t("Outcomes and latency cover only the recorded answers.");
   return counts.unstartedRequests !== null && counts.unstartedRequests > 0
-    ? `${unsentRequestsText(counts.unstartedRequests)} ${coverage}`
+    ? `${unsentRequestsText(counts.unstartedRequests, locale)} ${coverage}`
     : coverage;
 }
 
-function unsentRequestsText(unstartedRequests: number | null): string {
-  return `${formatCount(unstartedRequests)} planned ${pluralize(unstartedRequests, "request was", "requests were")} never sent.`;
+function unsentRequestsText(unstartedRequests: number | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return t("{v0} planned {v1} never sent.", {
+    v0: String(formatCount(unstartedRequests, locale)),
+    v1: String(t(pluralize(unstartedRequests, t("request was"), t("requests were")))),
+  });
 }
 
-function lateAnswersClause(interruptedRequests: number | null): string {
-  return `${formatCount(interruptedRequests)} ${pluralize(interruptedRequests, "answer")} arrived too late to be recorded`;
+function lateAnswersClause(interruptedRequests: number | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return t("{v0} {v1} arrived too late to be recorded", {
+    v0: String(formatCount(interruptedRequests, locale)),
+    v1: String(t(pluralize(interruptedRequests, "answer"))),
+  });
 }
 
-function formatShortfallPercent(missingRequests: number, plannedRequests: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
-    (missingRequests / plannedRequests) * 100,
-  );
+function formatShortfallPercent(
+  missingRequests: number,
+  plannedRequests: number,
+  locale: Locale = "en",
+): string {
+  return new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format((missingRequests / plannedRequests) * 100);
 }
 
 function causeCopy(
   diagnostic: RunFailureDiagnostic,
   counts: TransportAttemptCounts,
   http: TrafficHttpSummary,
+  locale: Locale = "en",
 ): {
   heading: string;
   summary: string;
   next: string;
   why: string;
 } {
+  const t = getTranslation(locale);
   switch (diagnostic.cause) {
     case "virtual_user_limit":
       return {
-        heading: "Virtual user limit reached",
-        summary: `The load generator reached its limit of ${formatCount(diagnostic.maxVus)} concurrent ${pluralize(diagnostic.maxVus, "virtual user")} and could not maintain the requested traffic rate.`,
-        next: "For the same traffic target, investigate slow responses and review virtual-user capacity. A lower request rate would test a less demanding scenario.",
-        why: "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays.",
+        heading: t("Virtual user limit reached"),
+        summary: t(
+          "The load generator reached its limit of {v0} concurrent {v1} and could not maintain the requested traffic rate.",
+          {
+            v0: String(formatCount(diagnostic.maxVus, locale)),
+            v1: String(t(pluralize(diagnostic.maxVus, "virtual user"))),
+          },
+        ),
+        next: t(
+          "For the same traffic target, investigate slow responses and review virtual-user capacity. A lower request rate would test a less demanding scenario.",
+        ),
+        why: t(
+          "The generator explicitly reported that its virtual-user limit was reached. This identifies the delivery limit, but does not establish the exact source of response delays.",
+        ),
       };
     case "interrupted_requests":
       return {
-        heading: "Answers arrived too late",
-        summary: `The server needed more time than the load generator waits: ${formatCount(counts.interruptedRequests)} ${pluralize(counts.interruptedRequests, "buyer was", "buyers were")} still waiting for their answer when the generator stopped listening, ${k6GracefulStopSeconds} seconds after its sending window closed.`,
-        next: "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
-        why: "The load generator sent these requests but stopped listening before their answers arrived. The late answers alone are enough to fail the run, so they explain this failure. The report shows when answers arrived, not where the server spent its time.",
+        heading: t("Answers arrived too late"),
+        summary: t(
+          "The server needed more time than the load generator waits: {v0} {v1} still waiting for their answer when the generator stopped listening, {v2} seconds after its sending window closed.",
+          {
+            v0: String(formatCount(counts.interruptedRequests, locale)),
+            v1: String(t(pluralize(counts.interruptedRequests, t("buyer was"), t("buyers were")))),
+            v2: String(k6GracefulStopSeconds),
+          },
+        ),
+        next: t(
+          "Accepted orders are the slow path: each one is written to the database before the buyer gets an answer. A lower request rate or less stock lets the server answer everyone in time.",
+        ),
+        why: t(
+          "The load generator sent these requests but stopped listening before their answers arrived. The late answers alone are enough to fail the run, so they explain this failure. The report shows when answers arrived, not where the server spent its time.",
+        ),
       };
     case "request_timeouts":
       return {
-        heading: "Requests timed out",
-        summary: `${formatCount(http.requestTimeouts)} ${pluralize(http.requestTimeouts, "request")} got no answer within the load generator's ${k6RequestTimeoutSeconds}-second limit, so the generator gave up on ${pluralize(http.requestTimeouts, "it", "them")}.`,
-        next: `Fewer buyers, a smaller burst, or the same traffic spread over more time gives the server room to answer every request within ${k6RequestTimeoutSeconds} seconds.`,
-        why: `The load generator recorded these requests as timed out: it started each one but did not receive a complete response within ${k6RequestTimeoutSeconds} seconds. The timeouts alone are enough to fail the run, so they explain this failure. The report does not show where the server spent that time.`,
+        heading: t("Requests timed out"),
+        summary: t(
+          "{v0} {v1} got no answer within the load generator's {v2}-second limit, so the generator gave up on {v3}.",
+          {
+            v0: String(formatCount(http.requestTimeouts, locale)),
+            v1: String(t(pluralize(http.requestTimeouts, "request"))),
+            v2: String(k6RequestTimeoutSeconds),
+            v3: String(t(pluralize(http.requestTimeouts, "it", "them"))),
+          },
+        ),
+        next: t(
+          "Fewer buyers, a smaller burst, or the same traffic spread over more time gives the server room to answer every request within {v0} seconds.",
+          { v0: String(k6RequestTimeoutSeconds) },
+        ),
+        why: t(
+          "The load generator recorded these requests as timed out: it started each one but did not receive a complete response within {v0} seconds. The timeouts alone are enough to fail the run, so they explain this failure. The report does not show where the server spent that time.",
+          { v0: String(k6RequestTimeoutSeconds) },
+        ),
       };
     case "unidentified":
       return {
-        heading: "Traffic failed — exact cause not identified",
-        summary:
+        heading: t("Traffic failed — exact cause not identified"),
+        summary: t(
           "The recorded evidence does not identify a specific cause for this traffic failure.",
-        next: "Review the recorded traffic measurements and generator diagnostics before retrying. The report does not establish which setting or component caused the failure.",
-        why: "No recognized generator diagnostic explains this failure. Missing or truncated diagnostics cannot establish that no problem occurred.",
+        ),
+        next: t(
+          "Review the recorded traffic measurements and generator diagnostics before retrying. The report does not establish which setting or component caused the failure.",
+        ),
+        why: t(
+          "No recognized generator diagnostic explains this failure. Missing or truncated diagnostics cannot establish that no problem occurred.",
+        ),
       };
   }
 }

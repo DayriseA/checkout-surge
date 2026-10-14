@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useTranslation } from "../lib/i18n/locale-context";
 
 export function FieldHint({ label, text }: { label: string; text: string }) {
+  const t = useTranslation();
+
   const [open, setOpen] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [shiftLeft, setShiftLeft] = useState(0);
@@ -65,7 +68,7 @@ export function FieldHint({ label, text }: { label: string; text: string }) {
       <button
         aria-describedby={open ? id : undefined}
         aria-expanded={open}
-        aria-label={`About ${label}`}
+        aria-label={t("About {v0}", { v0: t(label) })}
         className="inline-flex size-5 cursor-help items-center justify-center rounded-full bg-surface-muted text-[0.6875rem] font-bold text-muted ring-1 ring-inset ring-border transition-colors hover:bg-accent hover:text-white hover:ring-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ink aria-expanded:bg-accent aria-expanded:text-white aria-expanded:ring-accent"
         onClick={(event) => {
           event.preventDefault();
@@ -107,7 +110,7 @@ export function FieldHint({ label, text }: { label: string; text: string }) {
           onMouseEnter={cancelClose}
           onMouseLeave={closeSoon}
         >
-          {text}
+          {t(text)}
         </span>
       ) : null}
     </span>

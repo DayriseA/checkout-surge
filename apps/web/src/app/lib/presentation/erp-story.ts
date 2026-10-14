@@ -1,4 +1,5 @@
 import type { RunErpOutcomeSummary } from "@checkout-surge/contracts";
+import { getTranslation, type Locale } from "../i18n/translate";
 
 /**
  * The one public sentence the run-scoped simulated-ERP surface leads with.
@@ -18,9 +19,10 @@ const erpStorySentence = {
   noActivity: "No recent simulated-ERP activity",
 } as const;
 
-export function deriveRunErpStory(erp: RunErpOutcomeSummary | null): string {
-  if (!erp || erp.recentAttemptCount === 0) return erpStorySentence.noActivity;
+export function deriveRunErpStory(erp: RunErpOutcomeSummary | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  if (!erp || erp.recentAttemptCount === 0) return t(erpStorySentence.noActivity);
   return erp.recentFailureCount + erp.recentTimeoutCount > 0
-    ? erpStorySentence.withFailures
-    : erpStorySentence.allSucceeded;
+    ? t(erpStorySentence.withFailures)
+    : t(erpStorySentence.allSucceeded);
 }

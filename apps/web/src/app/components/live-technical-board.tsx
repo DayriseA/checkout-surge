@@ -1,3 +1,5 @@
+"use client";
+
 import {
   type DashboardProjection,
   type DemoRunSnapshot,
@@ -6,6 +8,7 @@ import {
 } from "@checkout-surge/contracts";
 import { useRef } from "react";
 import { projectRequestSurge } from "../lib/dashboard-projection-state";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import { deriveRunErpStory } from "../lib/presentation/erp-story";
 import type { Freshness } from "../lib/presentation/freshness";
 import { downstreamErpStatusLabel, rateWindowLabel } from "../lib/presentation/public-vocabulary";
@@ -185,6 +188,8 @@ export function LiveTechnicalBoard({
   projection: DashboardProjection;
   run: DemoRunSnapshot;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const values = deriveLiveTechnicalBoardValues(projection, run);
   // OperatorDashboard re-renders every 2 s on its clock ticker. Markers recompute only when a
   // projection with a new recoveredAt arrives, so a clock-only re-render keeps the last markers.
@@ -210,134 +215,158 @@ export function LiveTechnicalBoard({
   const inventory = projection.inventory;
   const columns: BoardColumn[] = [
     {
-      heading: "1 · Arrival",
+      heading: t("1 · Arrival"),
       id: "watch-signal-arrival",
       primary: {
         key: "arrivalRate",
-        value: formatNumber(values.arrivalRate),
+        value: formatNumber(values.arrivalRate, locale),
         caption: "attempts/s",
       },
       rows: [
         {
           key: "dispatched",
-          label: "Dispatched",
-          value: `${formatNumber(values.dispatched[0])} / ${formatNumber(values.dispatched[1])}`,
+          label: t("Dispatched"),
+          value: `${formatNumber(values.dispatched[0], locale)} / ${formatNumber(values.dispatched[1], locale)}`,
         },
-        { key: "responseRate", label: "Responses", value: formatRate(values.responseRate, "/s") },
+        {
+          key: "responseRate",
+          label: t("Responses"),
+          value: formatRate(values.responseRate, "/s", undefined, locale),
+        },
         {
           key: "latency",
-          label: "Latency (mean)",
-          value: values.latency ? formatMetric(values.latency[0], values.latency[1]) : "—",
+          label: t("Latency (mean)"),
+          value: values.latency
+            ? formatMetric(values.latency[0], values.latency[1], undefined, locale)
+            : "—",
         },
         {
           key: "httpFailureRate",
-          label: "HTTP failures",
+          label: t("HTTP failures"),
           value: values.httpFailureRate
-            ? formatFailureSample(values.httpFailureRate[0], values.httpFailureRate[1])
+            ? formatFailureSample(values.httpFailureRate[0], values.httpFailureRate[1], locale)
             : "—",
         },
       ],
     },
     {
-      heading: "2 · Stock",
+      heading: t("2 · Stock"),
       id: "watch-signal-inventory",
       primary: {
         key: "remainingStock",
-        value: formatNumber(values.remainingStock),
-        caption: `of ${formatNumber(inventory?.allocatedStock ?? null)} left`,
+        value: formatNumber(values.remainingStock, locale),
+        caption: t("of {v0} left", {
+          v0: String(formatNumber(inventory?.allocatedStock ?? null, locale)),
+        }),
       },
       rows: [
-        { key: "reservedStock", label: "Reserved", value: formatNumber(values.reservedStock) },
+        {
+          key: "reservedStock",
+          label: t("Reserved"),
+          value: formatNumber(values.reservedStock, locale),
+        },
         {
           key: "soldOutRejections",
-          label: "Sold-out rejections",
-          value: formatNumber(values.soldOutRejections),
+          label: t("Sold-out rejections"),
+          value: formatNumber(values.soldOutRejections, locale),
         },
-        { key: "oversoldUnits", label: "Oversold", value: formatNumber(values.oversoldUnits) },
+        {
+          key: "oversoldUnits",
+          label: t("Oversold"),
+          value: formatNumber(values.oversoldUnits, locale),
+        },
         {
           key: "pendingPersistence",
-          label: "Awaiting storage",
-          value: formatNumber(values.pendingPersistence),
+          label: t("Awaiting storage"),
+          value: formatNumber(values.pendingPersistence, locale),
         },
       ],
     },
     {
-      heading: "3 · Processing",
+      heading: t("3 · Processing"),
       id: "watch-signal-backlog",
       primary: {
         key: "queuedOrders",
-        value: formatNumber(values.queuedOrders),
+        value: formatNumber(values.queuedOrders, locale),
         caption: "queued",
       },
       rows: [
         {
           key: "processingOrders",
-          label: "In progress",
-          value: formatNumber(values.processingOrders),
+          label: t("In progress"),
+          value: formatNumber(values.processingOrders, locale),
         },
-        { key: "retryingOrders", label: "Retrying", value: formatNumber(values.retryingOrders) },
+        {
+          key: "retryingOrders",
+          label: t("Retrying"),
+          value: formatNumber(values.retryingOrders, locale),
+        },
         {
           key: "erpFailures",
-          label: "ERP fail / timeout",
+          label: t("ERP fail / timeout"),
           value: values.erpFailures
-            ? `${formatNumber(values.erpFailures[0])} / ${formatNumber(values.erpFailures[1])}`
+            ? `${formatNumber(values.erpFailures[0], locale)} / ${formatNumber(values.erpFailures[1], locale)}`
             : "—",
         },
         {
           key: "erpProtection",
-          label: "ERP protection",
+          label: t("ERP protection"),
           value: values.erpProtection ?? "—",
         },
         {
           key: "downstreamErpStatus",
-          label: "Downstream ERP",
+          label: t("Downstream ERP"),
           value:
             values.downstreamErpStatus === null
               ? "—"
               : values.downstreamErpStatus === "unavailable"
-                ? "Status unavailable"
-                : downstreamErpStatusLabel(values.downstreamErpStatus),
+                ? t("Status unavailable")
+                : downstreamErpStatusLabel(values.downstreamErpStatus, locale),
         },
       ],
     },
     {
-      heading: "4 · Confirmation",
+      heading: t("4 · Confirmation"),
       id: "watch-signal-confirmation",
       primary: {
         key: "confirmedOrders",
-        value: formatNumber(values.confirmedOrders),
-        caption: `of ${formatNumber(outcome?.acceptedReservations ?? null)} confirmed`,
+        value: formatNumber(values.confirmedOrders, locale),
+        caption: t("of {v0} confirmed", {
+          v0: String(formatNumber(outcome?.acceptedReservations ?? null, locale)),
+        }),
       },
       rows: [
         {
           key: "confirmationRate",
           label: values.confirmationRate
-            ? `Confirmation rate (${rateWindowLabel(values.confirmationRate[1])})`
-            : "Confirmation rate",
+            ? t("Confirmation rate ({v0})", {
+                v0: String(rateWindowLabel(values.confirmationRate[1], locale)),
+              })
+            : t("Confirmation rate"),
           value: values.confirmationRate
-            ? formatRate(values.confirmationRate[0], "confirmations/s")
+            ? formatRate(values.confirmationRate[0], "confirmations/s", undefined, locale)
             : "—",
         },
         {
           key: "pendingConfirmation",
-          label: "Pending",
-          value: formatNumber(values.pendingConfirmation),
+          label: t("Pending"),
+          value: formatNumber(values.pendingConfirmation, locale),
         },
         {
           key: "oldestPending",
-          label: "Oldest pending",
-          value: formatDurationSeconds(values.oldestPending),
+          label: t("Oldest pending"),
+          value: formatDurationSeconds(values.oldestPending, undefined, locale),
         },
         {
           key: "failedOrders",
-          label: "Failed orders",
-          value: formatNumber(values.failedOrders),
+          label: t("Failed orders"),
+          value: formatNumber(values.failedOrders, locale),
         },
         {
           key: "lagP95Average",
-          label: "p95 · avg",
+          label: t("p95 · avg"),
           value: values.lagP95Average
-            ? `${formatNumber(values.lagP95Average[0])} · ${formatNumber(values.lagP95Average[1])} ms`
+            ? `${formatNumber(values.lagP95Average[0], locale)} · ${formatNumber(values.lagP95Average[1], locale)} ms`
             : "—",
         },
       ],
@@ -348,11 +377,11 @@ export function LiveTechnicalBoard({
     <section className="min-w-0 rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="mb-4 flex items-start justify-between gap-3">
         <FreshnessLine freshness={freshness} />
-        <StatusPill status={deriveFreshnessPresentationState(freshness)} />
+        <StatusPill status={deriveFreshnessPresentationState(freshness, locale)} />
       </div>
       {attemptsDispatched === null ? null : (
         <div
-          aria-label="Attempts dispatched"
+          aria-label={t("Attempts dispatched")}
           aria-valuemax={plannedAttempts}
           aria-valuenow={attemptsDispatched}
           className="mb-4 h-2 w-full overflow-hidden rounded-full bg-surface-muted"
@@ -369,19 +398,21 @@ export function LiveTechnicalBoard({
       <div className={columnCountClassName}>
         {columns.map((column) => (
           <section className="min-w-0" id={column.id} key={column.id} tabIndex={-1}>
-            <h3 className={columnHeadingClassName}>{column.heading}</h3>
+            <h3 className={columnHeadingClassName}>{t(column.heading)}</h3>
             <p className={columnPrimaryValueClassName}>
               <ChangedDot changed={changed.has(column.primary.key)} />
-              {column.primary.value}
+              {typeof column.primary.value === "string"
+                ? t(column.primary.value)
+                : column.primary.value}
             </p>
-            <p className={columnPrimaryCaptionClassName}>{column.primary.caption}</p>
+            <p className={columnPrimaryCaptionClassName}>{t(column.primary.caption)}</p>
             <dl className="m-0 mt-3 grid gap-2">
               {column.rows.map((row) => (
                 <div className="min-w-0" key={row.key}>
-                  <dt className={rowTermClassName}>{row.label}</dt>
+                  <dt className={rowTermClassName}>{t(row.label)}</dt>
                   <dd className={rowValueClassName}>
                     <ChangedDot changed={changed.has(row.key)} />
-                    {row.value}
+                    {typeof row.value === "string" ? t(row.value) : row.value}
                   </dd>
                 </div>
               ))}
@@ -391,7 +422,7 @@ export function LiveTechnicalBoard({
       </div>
       <p className="m-0 mt-3 text-xs leading-5 text-muted">
         <span aria-hidden="true" className="mr-1 inline-block size-2 rounded-full bg-accent" />
-        changed in the last update
+        {t("changed in the last update")}
       </p>
     </section>
   );

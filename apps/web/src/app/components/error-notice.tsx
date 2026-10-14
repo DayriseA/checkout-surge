@@ -1,5 +1,8 @@
+"use client";
+
 import type { ReactNode } from "react";
 import type { BackendRead } from "../lib/api";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import {
   type ErrorPresentation,
   type ErrorPresentationContext,
@@ -23,8 +26,10 @@ export function ErrorNotice({
   onRetry?: () => void;
   className?: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const resolvedPresentation =
-    presentation ?? mapErrorPresentation(read ?? { status: "loading" }, context);
+    presentation ?? mapErrorPresentation(read ?? { status: "loading" }, context, locale);
   const mayShowProtectedDetails =
     protectedDetails &&
     (typeof context === "string"
@@ -34,7 +39,7 @@ export function ErrorNotice({
         context.surface === "admin-operation");
   if (read?.status === "available" && resolvedPresentation.action.kind === "none") return null;
   if (read?.status === "loading" && !presentation) {
-    return <p className="m-0 text-muted">{resolvedPresentation.headline}.</p>;
+    return <p className="m-0 text-muted">{t(resolvedPresentation.headline)}.</p>;
   }
 
   const action = resolvedPresentation.action;
@@ -46,14 +51,14 @@ export function ErrorNotice({
       : "border-danger-line bg-danger-soft text-danger";
   const actionNode: ReactNode = action.href ? (
     <a className={neutralLinkButtonClassName} href={action.href}>
-      {action.label}
+      {t(action.label)}
     </a>
   ) : retryAction ? (
     <button className={neutralLinkButtonClassName} onClick={retryAction} type="button">
-      {action.label}
+      {t(action.label)}
     </button>
   ) : action.kind === "retry" || action.kind === "check" ? null : action.label ? (
-    <span className="font-semibold">{action.label}</span>
+    <span className="font-semibold">{t(action.label)}</span>
   ) : null;
 
   return (
@@ -62,13 +67,13 @@ export function ErrorNotice({
       className={`grid gap-1 rounded-xl border px-4 py-3 text-sm leading-6 ${toneClassName} ${className}`}
       role="alert"
     >
-      <strong>{resolvedPresentation.headline}</strong>
-      {resolvedPresentation.explanation ? <span>{resolvedPresentation.explanation}</span> : null}
+      <strong>{t(resolvedPresentation.headline)}</strong>
+      {resolvedPresentation.explanation ? <span>{t(resolvedPresentation.explanation)}</span> : null}
       {resolvedPresentation.fieldErrors && resolvedPresentation.fieldErrors.length > 0 ? (
         <ul className="m-0 list-disc pl-5">
           {resolvedPresentation.fieldErrors.map((fieldError) => (
             <li key={`${fieldError.field}:${fieldError.message}`}>
-              <strong>{fieldError.field}:</strong> {fieldError.message}
+              <strong>{t(fieldError.field)}:</strong> {t(fieldError.message)}
             </li>
           ))}
         </ul>
@@ -86,28 +91,32 @@ function TechnicalDetails({
 }: {
   details: ReturnType<typeof mapErrorPresentation>["technicalDetails"];
 }) {
+  const t = useTranslation();
+
   if (!details || Object.keys(details).length === 0) return null;
   return (
     <details className="mt-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted-strong">
-      <summary className="disclosure font-semibold">Technical details</summary>
+      <summary className="disclosure font-semibold">{t("Technical details")}</summary>
       <dl className="mt-2 grid gap-1">
-        {details.code ? <Detail label="Code" value={details.code} /> : null}
+        {details.code ? <Detail label={t("Code")} value={details.code} /> : null}
         {details.httpStatus ? (
-          <Detail label="HTTP status" value={String(details.httpStatus)} />
+          <Detail label={t("HTTP status")} value={String(details.httpStatus)} />
         ) : null}
         {details.correlationId ? (
-          <Detail label="Correlation" value={details.correlationId} />
+          <Detail label={t("Correlation")} value={details.correlationId} />
         ) : null}
-        {details.reason ? <Detail label="Reason" value={details.reason} /> : null}
+        {details.reason ? <Detail label={t("Reason")} value={details.reason} /> : null}
       </dl>
     </details>
   );
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
+  const t = useTranslation();
+
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
-      <dt>{label}</dt>
+      <dt>{t(label)}</dt>
       <dd className="m-0 [overflow-wrap:anywhere]">{value}</dd>
     </div>
   );

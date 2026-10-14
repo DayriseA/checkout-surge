@@ -1,3 +1,5 @@
+import { getTranslation, type Locale } from "../lib/i18n/translate";
+
 export type ChartPoint = { elapsedSeconds: number; value: number };
 
 /**
@@ -35,15 +37,28 @@ export function axisTicks(xMax: number): number[] {
 export function describeSeries(
   line: { label: string; points: ChartPoint[] },
   unit: string,
+  locale: Locale = "en",
 ): string {
+  const t = getTranslation(locale);
   const first = line.points[0];
   const last = line.points.at(-1);
-  if (!first || !last) return `${line.label}: no samples retained.`;
+  if (!first || !last) return t("{label}: no samples retained.", { label: t(line.label) });
   const at = (point: ChartPoint) =>
-    `${formatNumber(point.value)} ${unit} at ${formatSeconds(point.elapsedSeconds)}`;
-  if (line.points.length === 1) return `${line.label}: ${at(first)}.`;
+    t("{value} {unit} at {time}", {
+      value: formatNumber(point.value, locale),
+      unit: t(unit),
+      time: formatSeconds(point.elapsedSeconds, locale),
+    });
+  if (line.points.length === 1) {
+    return t("{label}: {sample}.", { label: t(line.label), sample: at(first) });
+  }
   const peak = line.points.reduce((best, point) => (point.value > best.value ? point : best));
-  return `${line.label}: starts at ${at(first)}, peaks at ${at(peak)}, ends at ${at(last)}.`;
+  return t("{label}: starts at {first}, peaks at {peak}, ends at {last}.", {
+    label: t(line.label),
+    first: at(first),
+    peak: at(peak),
+    last: at(last),
+  });
 }
 
 export function scale(value: number, maximum: number, range: number): number {
@@ -55,11 +70,13 @@ export function scale(value: number, maximum: number, range: number): number {
  * Chart-axis coordinates, not named measurements. They keep one fixed unit so ticks and readings
  * stay directly comparable; that is why this surface does not use the tiered duration policy.
  */
-export function formatSeconds(value: number): string {
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value)}s`;
+export function formatSeconds(value: number, locale: Locale = "en"): string {
+  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 2 }).format(value)}s`;
 }
 
 /** Signal magnitudes can be fractional (rates), so they keep two decimals with en-US grouping. */
-export function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+export function formatNumber(value: number, locale: Locale = "en"): string {
+  return new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
 }

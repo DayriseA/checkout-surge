@@ -8,6 +8,7 @@ import type {
   TrafficExecutionStatus,
 } from "@checkout-surge/contracts";
 import { liveTrafficMetricWindowSeconds } from "@checkout-surge/contracts";
+import { getTranslation, type Locale } from "../i18n/translate";
 
 /**
  * Public copy is intentionally a presentation boundary. Contracts keep the canonical enum and
@@ -44,74 +45,88 @@ export type PublicStatus =
   | { family: "traffic-delivery"; status: TrafficDeliveryStatus }
   | { family: "run"; status: DemoRunStatus; displayLabel?: string };
 
-export function trafficModeLabel(mode: "buyer-spike" | "constant-arrival-rate"): string {
-  return mode === "buyer-spike" ? "Everyone at once" : "Steady stream";
+export function trafficModeLabel(
+  mode: "buyer-spike" | "constant-arrival-rate",
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
+  return mode === "buyer-spike" ? t("Everyone at once") : t("Steady stream");
 }
 
-export function outcomeFocusLabel(focus: string): string {
+export function outcomeFocusLabel(focus: string, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   switch (focus) {
     case "happy_path":
-      return "Reservations confirm cleanly";
+      return t("Reservations confirm cleanly");
     case "sold_out":
-      return "Stock depletes without overselling";
+      return t("Stock depletes without overselling");
     case "queue_pressure":
-      return "The order backlog grows, then drains";
+      return t("The order backlog grows, then drains");
     case "run_history":
-      return "The final evidence remains available";
+      return t("The final evidence remains available");
     case "idempotency":
-      return "Duplicate clicks replay one reservation";
+      return t("Duplicate clicks replay one reservation");
     case "downstream_capacity":
-      return "A slow ERP sets the pace; orders wait in the queue";
+      return t("A slow ERP sets the pace; orders wait in the queue");
     case "downstream_latency":
-      return "Slow ERP responses limit orders in flight";
+      return t("Slow ERP responses limit orders in flight");
     case "confirmation_wait":
-      return "Without the queue, each winner waits for the ERP to confirm";
+      return t("Without the queue, each winner waits for the ERP to confirm");
     case "failure_path":
-      return "Failed orders and retries";
+      return t("Failed orders and retries");
     default:
       return focus.replaceAll("_", " ").replace(/^\w/, (letter) => letter.toUpperCase());
   }
 }
 
-export function erpAttemptStatusLabel(status: ErpAttemptStatus): string {
+export function erpAttemptStatusLabel(status: ErpAttemptStatus, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "succeeded":
-      return "Succeeded";
+      return t("Succeeded");
     case "failed":
-      return "Failed";
+      return t("Failed");
     case "timed_out":
-      return "Timed out";
+      return t("Timed out");
     default:
-      return "Status unavailable";
+      return t("Status unavailable");
   }
 }
 
-export function trafficExecutionStatusLabel(status: TrafficExecutionStatus): string {
+export function trafficExecutionStatusLabel(
+  status: TrafficExecutionStatus,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "not_started":
-      return "Not started";
+      return t("Not started");
     case "starting":
-      return "Starting";
+      return t("Starting");
     case "active":
-      return "Running";
+      return t("Running");
     case "succeeded":
-      return "Finished";
+      return t("Finished");
     case "failed":
-      return "Failed";
+      return t("Failed");
   }
 }
 
-export function trafficDeliveryStatusLabel(status: TrafficDeliveryStatus): string {
+export function trafficDeliveryStatusLabel(
+  status: TrafficDeliveryStatus,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "complete":
-      return "All planned attempts completed";
+      return t("All planned attempts completed");
     case "warning":
     case "degraded":
-      return "Partial delivery";
+      return t("Partial delivery");
     case "failed":
-      return "Delivery failed";
+      return t("Delivery failed");
     default:
-      return "Delivery status unavailable";
+      return t("Delivery status unavailable");
   }
 }
 
@@ -121,35 +136,37 @@ export function trafficDeliveryStatusTone(
   return status === "complete" ? "ok" : status === "failed" ? "danger" : "warning";
 }
 
-export function runLifecycleStatusLabel(status: DemoRunStatus): string {
+export function runLifecycleStatusLabel(status: DemoRunStatus, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "starting":
-      return "Starting";
+      return t("Starting");
     case "active":
-      return "Active";
+      return t("Active");
     case "draining":
-      return "Finishing";
+      return t("Finishing");
     case "completed":
-      return "Completed";
+      return t("Completed");
     case "failed":
-      return "Failed";
+      return t("Failed");
   }
 }
 
-export function runResultOutcomeLabel(outcome: RunResultOutcome): string {
+export function runResultOutcomeLabel(outcome: RunResultOutcome, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   switch (outcome) {
     case "completed-successfully":
-      return "Completed";
+      return t("Completed");
     case "completed-with-order-failures":
-      return "Completed with order failures";
+      return t("Completed with order failures");
     case "completed-with-unsettled-orders":
-      return "Completed with unsettled orders";
+      return t("Completed with unsettled orders");
     case "completed-with-oversell":
-      return "Oversell detected";
+      return t("Oversell detected");
     case "failed":
-      return "Failed";
+      return t("Failed");
     case "outcome-indeterminate":
-      return "Result not fully verified";
+      return t("Result not fully verified");
   }
 }
 
@@ -174,45 +191,52 @@ export function runResultOutcomeTone(
  * The one explanation of a failed run, shared by the run's verdict on every surface and by the
  * answer to a start that failed, so a visitor reads the same words at start time and later.
  */
-export function publicFailureExplanation(category: PublicRunFailureCategory): {
+export function publicFailureExplanation(
+  category: PublicRunFailureCategory,
+  locale: Locale = "en",
+): {
   explanation: string;
   action: string;
 } {
+  const t = getTranslation(locale);
   switch (category) {
     case "traffic":
       return {
-        explanation:
+        explanation: t(
           "The load generator could not deliver the planned traffic, so this run's evidence is incomplete.",
-        action: "Start a new run to try again.",
+        ),
+        action: t("Start a new run to try again."),
       };
     case "not_started":
       // A run refused while the demo is updated is stored with this category too: the stored
       // run cannot tell the two apart, so the text stays true for both.
       return {
-        explanation: "The load generator could not be started, so no traffic was sent.",
-        action: "Start a new run to try again.",
+        explanation: t("The load generator could not be started, so no traffic was sent."),
+        action: t("Start a new run to try again."),
       };
     case "provider_capacity":
       return {
-        explanation:
+        explanation: t(
           "The hosting provider (Fly.io) had no room for the load generator, so no traffic was sent.",
-        action: "Try again later.",
+        ),
+        action: t("Try again later."),
       };
     case "inventory":
       return {
-        explanation: "The run could not prepare its stock, so no traffic was sent.",
-        action: "Start a new run to try again.",
+        explanation: t("The run could not prepare its stock, so no traffic was sent."),
+        action: t("Start a new run to try again."),
       };
     case "automatic_reset":
       return {
-        explanation:
+        explanation: t(
           "The run was cancelled by an automatic reset. Its experiment data was discarded.",
-        action: "Start a new run when the demo is ready.",
+        ),
+        action: t("Start a new run when the demo is ready."),
       };
     case "operator":
       return {
-        explanation: "The run was stopped by an operator before a complete result was recorded.",
-        action: "Start a new run when the demo is ready.",
+        explanation: t("The run was stopped by an operator before a complete result was recorded."),
+        action: t("Start a new run when the demo is ready."),
       };
   }
 }
@@ -237,19 +261,22 @@ export function isRunEvidenceSettled(status: DemoRunStatus, source: RunEvidenceS
 export function runEvidenceAbsence(
   status: DemoRunStatus | null,
   evidence: { source: RunEvidenceSource; pending: string; settled: string },
+  locale: Locale = "en",
 ): string {
-  if (status === null) return "No run has started";
-  return isRunEvidenceSettled(status, evidence.source) ? evidence.settled : evidence.pending;
+  const t = getTranslation(locale);
+  if (status === null) return t("No run has started");
+  return t(isRunEvidenceSettled(status, evidence.source) ? evidence.settled : evidence.pending);
 }
 
-export function publicStatusLabel(input: PublicStatus): string {
+export function publicStatusLabel(input: PublicStatus, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   switch (input.family) {
     case "load-generator":
-      return `${publicVocabulary.loadGenerator}: ${trafficExecutionStatusLabel(input.status)}`;
+      return `${t(publicVocabulary.loadGenerator)}: ${trafficExecutionStatusLabel(input.status, locale)}`;
     case "traffic-delivery":
-      return `${publicVocabulary.trafficDelivery}: ${trafficDeliveryStatusLabel(input.status)}`;
+      return `${t(publicVocabulary.trafficDelivery)}: ${trafficDeliveryStatusLabel(input.status, locale)}`;
     case "run":
-      return `${publicVocabulary.runLifecycle}: ${input.displayLabel ?? runLifecycleStatusLabel(input.status)}`;
+      return `${t(publicVocabulary.runLifecycle)}: ${input.displayLabel ?? runLifecycleStatusLabel(input.status, locale)}`;
   }
 }
 
@@ -258,33 +285,40 @@ export function publicStatusLabel(input: PublicStatus): string {
  * server exposes — never cooldown times or protection internals — so the label carries the whole
  * explanation: a limited or unavailable downstream keeps processing and recovers on its own.
  */
-export function downstreamErpStatusLabel(status: DownstreamErpStatus): string {
+export function downstreamErpStatusLabel(
+  status: DownstreamErpStatus,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "nominal":
-      return "Processing normally";
+      return t("Processing normally");
     case "erp_limiting":
-      return "Still processing — the ERP is limiting the rate";
+      return t("Still processing — the ERP is limiting the rate");
     case "erp_unavailable":
-      return "ERP unavailable — processing resumes automatically";
+      return t("ERP unavailable — processing resumes automatically");
   }
 }
 
-export function queueConnectivityLabel(connectivity: string): string {
-  return connectivity === "reachable" ? "Available" : "Needs attention";
+export function queueConnectivityLabel(connectivity: string, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return connectivity === "reachable" ? t("Available") : t("Needs attention");
 }
 
-export function rateWindowLabel(windowSeconds: number): string {
-  const seconds = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
-    windowSeconds,
-  );
-  return `${seconds}-second window`;
+export function rateWindowLabel(windowSeconds: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  const seconds = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format(windowSeconds);
+  return t("{v0}-second window", { v0: String(seconds) });
 }
 
-export function trailingRateWindowLabel(windowSeconds: number): string {
-  const seconds = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
-    windowSeconds,
-  );
-  return `trailing ${seconds}-second measurement window`;
+export function trailingRateWindowLabel(windowSeconds: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  const seconds = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format(windowSeconds);
+  return t("trailing {v0}-second measurement window", { v0: String(seconds) });
 }
 
 export const liveTrafficWindowLabel = rateWindowLabel(liveTrafficMetricWindowSeconds);

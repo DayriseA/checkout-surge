@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useId, useRef } from "react";
+import { useTranslation } from "../lib/i18n/locale-context";
 import {
   buttonClassName,
   dangerLinkButtonClassName,
@@ -38,6 +39,7 @@ export function ConfirmationDialog({
   onCancel,
   onConfirm,
 }: ConfirmationDialogProps) {
+  const t = useTranslation();
   const titleId = useId();
   const descriptionId = useId();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -67,7 +69,8 @@ export function ConfirmationDialog({
       >
         {isDanger ? (
           <p className="m-0 mb-1 flex items-center gap-1.5 text-xs font-semibold text-danger">
-            <span aria-hidden="true">⚠</span>Destructive action
+            <span aria-hidden="true">⚠</span>
+            {t("Destructive action")}
           </p>
         ) : null}
         <h2 className="type-title m-0 text-xl leading-tight text-ink" id={titleId}>
@@ -100,7 +103,7 @@ export function ConfirmationDialog({
           onClick={onCancel}
           type="button"
         >
-          Cancel
+          {t("Cancel")}
         </button>
         <button
           className={isDanger ? dangerLinkButtonClassName : primaryButtonClassName}
@@ -108,7 +111,7 @@ export function ConfirmationDialog({
           onClick={onConfirm}
           type="button"
         >
-          {pending ? "Working…" : confirmLabel}
+          {pending ? t("Working…") : confirmLabel}
         </button>
       </div>
     </dialog>

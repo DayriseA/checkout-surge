@@ -1,10 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { intlLocale, type Locale } from "../lib/i18n/locale";
+import { useLocale } from "../lib/i18n/locale-context";
 
-const relativeFormatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+const relativeFormatters = {
+  en: new Intl.RelativeTimeFormat(intlLocale("en"), { numeric: "auto" }),
+  fr: new Intl.RelativeTimeFormat(intlLocale("fr"), { numeric: "auto" }),
+};
 
-export function formatRelativeTime(instant: string, nowMs = Date.now()): string | null {
+export function formatRelativeTime(
+  instant: string,
+  nowMs = Date.now(),
+  locale: Locale = "en",
+): string | null {
   const differenceSeconds = (Date.parse(instant) - nowMs) / 1_000;
   if (!Number.isFinite(differenceSeconds)) return null;
 
@@ -17,11 +26,12 @@ export function formatRelativeTime(instant: string, nowMs = Date.now()): string 
         : absoluteSeconds < 86_400
           ? [3_600, "hour"]
           : [86_400, "day"];
-  return relativeFormatter.format(Math.round(differenceSeconds / divisor), unit);
+  return relativeFormatters[locale].format(Math.round(differenceSeconds / divisor), unit);
 }
 
 export function RelativeTime({ instant }: { instant: string }) {
+  const locale = useLocale();
   const [label, setLabel] = useState<string | null>(null);
-  useEffect(() => setLabel(formatRelativeTime(instant)), [instant]);
+  useEffect(() => setLabel(formatRelativeTime(instant, Date.now(), locale)), [instant, locale]);
   return label ? <span aria-hidden="true"> · {label}</span> : null;
 }

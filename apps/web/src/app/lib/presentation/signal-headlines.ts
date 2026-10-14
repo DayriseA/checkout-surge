@@ -6,6 +6,7 @@ import {
   type RunSignalTimelineHeadline,
 } from "@checkout-surge/contracts";
 import type { RunSignalLiveSample } from "../dashboard-projection-state";
+import { getTranslation, type Locale } from "../i18n/translate";
 import { formatDurationMs } from "./format";
 import { isRunEvidenceSettled, runEvidenceAbsence } from "./public-vocabulary";
 
@@ -22,37 +23,49 @@ export function selectConfirmationLiveSamples(
   return liveSamples.filter((sample) => sample.hasBusinessOutcomeEvidence);
 }
 
-export function deriveSignalHeadlines({
-  acceptedReservations,
-  arrivalSummary,
-  failedOrders,
-  liveLag,
-  liveSamples = [],
-  oversoldUnits,
-  runStatus,
-  startingStock,
-  terminalSummary,
-}: {
-  acceptedReservations: number | null;
-  arrivalSummary: RequestArrivalSummary | null;
-  failedOrders: number | null;
-  liveLag: ConsistencyLagSummary | null;
-  liveSamples?: RunSignalLiveSample[];
-  oversoldUnits: number | null;
-  runStatus: DemoRunStatus | null;
-  startingStock: number | null;
-  terminalSummary: RunSignalTimelineHeadline | null;
-}): SignalHeadlines {
-  const trafficAbsence = runEvidenceAbsence(runStatus, {
-    source: "load-generator",
-    pending: "Not yet available",
-    settled: "Not recorded for this run",
-  });
-  const durableAbsence = runEvidenceAbsence(runStatus, {
-    source: "durable-processing",
-    pending: "Not yet available",
-    settled: "Not recorded for this run",
-  });
+export function deriveSignalHeadlines(
+  {
+    acceptedReservations,
+    arrivalSummary,
+    failedOrders,
+    liveLag,
+    liveSamples = [],
+    oversoldUnits,
+    runStatus,
+    startingStock,
+    terminalSummary,
+  }: {
+    acceptedReservations: number | null;
+    arrivalSummary: RequestArrivalSummary | null;
+    failedOrders: number | null;
+    liveLag: ConsistencyLagSummary | null;
+    liveSamples?: RunSignalLiveSample[];
+    oversoldUnits: number | null;
+    runStatus: DemoRunStatus | null;
+    startingStock: number | null;
+    terminalSummary: RunSignalTimelineHeadline | null;
+  },
+  locale: Locale = "en",
+): SignalHeadlines {
+  const t = getTranslation(locale);
+  const trafficAbsence = runEvidenceAbsence(
+    runStatus,
+    {
+      source: "load-generator",
+      pending: t("Not yet available"),
+      settled: t("Not recorded for this run"),
+    },
+    locale,
+  );
+  const durableAbsence = runEvidenceAbsence(
+    runStatus,
+    {
+      source: "durable-processing",
+      pending: t("Not yet available"),
+      settled: t("Not recorded for this run"),
+    },
+    locale,
+  );
   const arrival =
     arrivalSummary && hasObservedRequestArrivals(arrivalSummary) ? arrivalSummary : null;
   const liveArrivalRates = liveSamples.flatMap((sample) =>
@@ -82,62 +95,85 @@ export function deriveSignalHeadlines({
   const convergenceStatus = terminal
     ? terminal.convergenceDurationSeconds === null
       ? terminal.confirmationConvergence.pendingAtCaptureCount > 0
-        ? `Convergence incomplete · ${formatNumber(
-            terminal.confirmationConvergence.pendingAtCaptureCount,
-          )} pending`
-        : "Convergence duration unavailable"
-      : `Converged in ${formatDuration(terminal.convergenceDurationSeconds)}`
+        ? t("Convergence incomplete · {v0} pending", {
+            v0: String(
+              formatNumber(terminal.confirmationConvergence.pendingAtCaptureCount, locale),
+            ),
+          })
+        : t("Convergence duration unavailable")
+      : t("Converged in {v0}", {
+          v0: String(formatDuration(terminal.convergenceDurationSeconds, locale)),
+        })
     : runStatus !== null && isRunEvidenceSettled(runStatus, "durable-processing")
-      ? "Final convergence evidence unavailable"
+      ? t("Final convergence evidence unavailable")
       : null;
   const confirmationCounts =
     confirmed === null && pending === null
       ? durableAbsence
-      : `${formatOptionalNumber(confirmed, durableAbsence)}/${formatOptionalNumber(
-          acceptedReservations,
-          durableAbsence,
-        )} confirmed · ${formatOptionalNumber(pending, durableAbsence)} pending`;
+      : t("{v0}/{v1} confirmed · {v2} pending", {
+          v0: String(formatOptionalNumber(confirmed, durableAbsence, locale)),
+          v1: String(formatOptionalNumber(acceptedReservations, durableAbsence, locale)),
+          v2: String(formatOptionalNumber(pending, durableAbsence, locale)),
+        });
   const confirmationUnavailable = confirmed === null && pending === null;
   const confirmationP95 =
     lag?.p95LagMs === null || lag?.p95LagMs === undefined
       ? null
-      : formatMilliseconds(lag.p95LagMs, durableAbsence);
-  const arrivalValue = arrivalPeak === null ? trafficAbsence : `Peak ${formatRate(arrivalPeak)}`;
+      : formatMilliseconds(lag.p95LagMs, durableAbsence, locale);
+  const arrivalValue =
+    arrivalPeak === null
+      ? trafficAbsence
+      : t("Peak {v0}", { v0: String(formatRate(arrivalPeak, locale)) });
   const inventoryValue =
     remainingStock === null && initialStock === null
       ? durableAbsence
-      : `${formatOptionalNumber(remainingStock, durableAbsence)} of ${formatOptionalNumber(
-          initialStock,
-          durableAbsence,
-        )} left · ${
-          oversoldUnits === null ? "oversell unknown" : `${formatNumber(oversoldUnits)} oversold`
-        }`;
+      : t("{v0} of {v1} left · {v2}", {
+          v0: String(formatOptionalNumber(remainingStock, durableAbsence, locale)),
+          v1: String(formatOptionalNumber(initialStock, durableAbsence, locale)),
+          v2: String(
+            oversoldUnits === null
+              ? t("oversell unknown")
+              : t("{v0} oversold", { v0: String(formatNumber(oversoldUnits, locale)) }),
+          ),
+        });
   const backlogValue =
     peakBacklog === null
       ? durableAbsence
       : terminal
-        ? `Peak ${formatNumber(peakBacklog)} · ${
-            terminal.queueBacklog.drainDurationSeconds === null
-              ? "drain duration unavailable"
-              : `drained in ${formatDuration(terminal.queueBacklog.drainDurationSeconds)}`
-          }`
-        : `${formatOptionalNumber(currentBacklog, durableAbsence)} waiting · peak ${formatNumber(
-            peakBacklog,
-          )}`;
+        ? t("Peak {v0} · {v1}", {
+            v0: String(formatNumber(peakBacklog, locale)),
+            v1: String(
+              terminal.queueBacklog.drainDurationSeconds === null
+                ? t("drain duration unavailable")
+                : t("drained in {v0}", {
+                    v0: String(formatDuration(terminal.queueBacklog.drainDurationSeconds, locale)),
+                  }),
+            ),
+          })
+        : t("{v0} waiting · peak {v1}", {
+            v0: String(formatOptionalNumber(currentBacklog, durableAbsence, locale)),
+            v1: String(formatNumber(peakBacklog, locale)),
+          });
 
   return {
     arrival: {
       value: arrivalValue,
       summaryValue: arrivalValue,
-      detail: arrival ? `Dispatched in ${formatDuration(arrival.dispatchDurationSeconds)}` : null,
+      detail: arrival
+        ? t("Dispatched in {v0}", {
+            v0: String(formatDuration(arrival.dispatchDurationSeconds, locale)),
+          })
+        : null,
     },
     inventory: {
       value: inventoryValue,
       summaryValue: inventoryValue,
       detail: terminal
         ? terminal.inventoryDrain.timeToDepletionSeconds === null
-          ? "not depleted"
-          : `depleted in ${formatDuration(terminal.inventoryDrain.timeToDepletionSeconds)}`
+          ? t("not depleted")
+          : t("depleted in {v0}", {
+              v0: String(formatDuration(terminal.inventoryDrain.timeToDepletionSeconds, locale)),
+            })
         : null,
     },
     backlog: {
@@ -154,35 +190,42 @@ export function deriveSignalHeadlines({
       summaryValue: confirmationUnavailable
         ? durableAbsence
         : `${confirmationCounts}${
-            confirmationP95 ? ` · 95% of confirmed orders within ${confirmationP95}` : ""
+            confirmationP95
+              ? t(" · 95% of confirmed orders within {v0}", { v0: String(confirmationP95) })
+              : ""
           }${convergenceStatus ? ` · ${convergenceStatus}` : ""}`,
       detail:
         confirmed === null && pending === null
           ? null
-          : `${formatOptionalNumber(failed, durableAbsence)} failed · lag avg ${formatMilliseconds(
-              lag?.averageLagMs ?? null,
-              durableAbsence,
-            )}, max ${formatMilliseconds(lag?.maxLagMs ?? null, durableAbsence)}`,
+          : t("{v0} failed · lag avg {v1}, max {v2}", {
+              v0: String(formatOptionalNumber(failed, durableAbsence, locale)),
+              v1: String(formatMilliseconds(lag?.averageLagMs ?? null, durableAbsence, locale)),
+              v2: String(formatMilliseconds(lag?.maxLagMs ?? null, durableAbsence, locale)),
+            }),
     },
   };
 }
 
-function formatOptionalNumber(value: number | null, absent: string): string {
-  return value === null ? absent : formatNumber(value);
+function formatOptionalNumber(value: number | null, absent: string, locale: Locale = "en"): string {
+  return value === null ? absent : formatNumber(value, locale);
 }
 
-function formatRate(value: number): string {
-  return `${formatNumber(value)} attempts/s`;
+function formatRate(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return t("{v0} attempts/s", { v0: String(formatNumber(value, locale)) });
 }
 
-function formatDuration(value: number): string {
-  return formatDurationMs(value * 1_000) ?? "not yet available";
+function formatDuration(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatDurationMs(value * 1_000, locale) ?? t("not yet available");
 }
 
-function formatMilliseconds(value: number | null, absent: string): string {
-  return formatDurationMs(value) ?? absent;
+function formatMilliseconds(value: number | null, absent: string, locale: Locale = "en"): string {
+  return formatDurationMs(value, locale) ?? absent;
 }
 
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(value);
+function formatNumber(value: number, locale: Locale = "en"): string {
+  return new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  }).format(value);
 }

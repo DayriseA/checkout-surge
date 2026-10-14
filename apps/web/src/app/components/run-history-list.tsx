@@ -1,5 +1,9 @@
+"use client";
+
 import type { RunHistoryListItem, RunHistoryListResponse } from "@checkout-surge/contracts";
 import Link from "next/link";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { comparisonModeLabels } from "../lib/presentation/comparison";
 import {
   formatCount,
@@ -21,18 +25,19 @@ import { RunHistoryRowControls } from "./run-history-row-controls";
 import { StatusPill } from "./status-pill";
 
 export function RunHistoryList({ history }: { history: RunHistoryListResponse }) {
+  const t = useTranslation();
   if (history.summaries.length === 0) {
     return history.totalCount > 0 ? (
       <OutOfRangePageState history={history} />
     ) : (
       <section className="rounded-2xl border border-border bg-surface p-6">
-        <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
-        <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">No runs yet</h2>
+        <p className="m-0 text-xs font-medium text-muted">{t("Finished runs")}</p>
+        <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">{t("No runs yet")}</h2>
         <p className="m-0 mt-3 max-w-[66ch] text-sm leading-6 text-muted">
-          Finished runs appear here after their final evidence is recorded.
+          {t("Finished runs appear here after their final evidence is recorded.")}
         </p>
         <Link className={`${primaryButtonClassName} mt-4`} href="/demo">
-          Start a simulation
+          {t("Start a simulation")}
         </Link>
       </section>
     );
@@ -43,8 +48,9 @@ export function RunHistoryList({ history }: { history: RunHistoryListResponse })
     <div className="grid gap-2">
       <div className="px-1 pb-1">
         <p className="m-0 max-w-[90ch] text-sm leading-6 text-muted">
-          Convergence measures from the end of traffic dispatch until every reserved order reached a
-          confirmed or failed outcome. Overall duration covers the entire run.
+          {t(
+            "Convergence measures from the end of traffic dispatch until every reserved order reached a confirmed or failed outcome. Overall duration covers the entire run.",
+          )}
         </p>
       </div>
       {history.summaries.map((summary) => (
@@ -67,6 +73,8 @@ const resultStripeClassNames: Record<PresentationTone, string> = {
 };
 
 function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const tone = summary.dataDiscarded ? "idle" : runResultOutcomeTone(summary.resultOutcome);
   return (
     <article
@@ -75,30 +83,34 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="min-w-0 basis-full flex-1 sm:basis-auto">
           <h2 className="type-title m-0 break-words text-base leading-tight text-ink">
-            {summary.presetName}
-            {summary.comparisonMode ? ` · ${comparisonModeLabels[summary.comparisonMode]}` : null}
+            {t(summary.presetName)}
+            {summary.comparisonMode
+              ? ` · ${t(comparisonModeLabels[summary.comparisonMode])}`
+              : null}
           </h2>
           <p className="m-0 mt-0.5 flex flex-wrap gap-x-3 text-sm text-muted">
             {!summary.dataDiscarded ? (
               <span className="font-medium text-muted-strong">
-                {number(summary.plannedAttempts)} {pluralize(summary.plannedAttempts, "attempt")} ·{" "}
-                {number(summary.startingStock)} {pluralize(summary.startingStock, "unit")}
+                {number(summary.plannedAttempts, locale)}{" "}
+                {t(pluralize(summary.plannedAttempts, "attempt"))} ·{" "}
+                {number(summary.startingStock, locale)}{" "}
+                {t(pluralize(summary.startingStock, "unit"))}
               </span>
             ) : null}
             <time dateTime={summary.occurredAt}>
-              {formatInstantUtc(summary.occurredAt)}
+              {formatInstantUtc(summary.occurredAt, { locale })}
               <RelativeTime instant={summary.occurredAt} />
             </time>
           </p>
         </div>
         <div className="min-w-0 break-words">
-          <p className="sr-only">Result</p>
+          <p className="sr-only">{t("Result")}</p>
           <StatusPill
             status={
               summary.dataDiscarded
-                ? { label: "Cancelled", tone: "idle" }
+                ? { label: t("Cancelled"), tone: "idle" }
                 : {
-                    label: runResultOutcomeLabel(summary.resultOutcome),
+                    label: runResultOutcomeLabel(summary.resultOutcome, locale),
                     tone: runResultOutcomeTone(summary.resultOutcome),
                   }
             }
@@ -106,11 +118,11 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <Link className={neutralLinkButtonClassName} href={`/run-history/${summary.runId}`}>
-            View report{" "}
+            {t("View report")}{" "}
             <span className="sr-only">
               {" "}
-              for {summary.presetName} run from{" "}
-              {formatInstantUtc(summary.occurredAt) ?? summary.occurredAt}
+              {t("for")} {t(summary.presetName)} {t("run from")}{" "}
+              {formatInstantUtc(summary.occurredAt, { locale }) ?? summary.occurredAt}
             </span>
           </Link>
           <RunHistoryRowControls presetName={summary.presetName} runId={summary.runId} />
@@ -119,25 +131,29 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
       {!summary.dataDiscarded ? (
         <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-x-5 gap-y-3 border-t border-border pt-3">
           <div className="contents">
-            <Fact label="Confirmed orders" value={number(summary.confirmedOrders)} />
-            <Fact label="Failed orders" value={number(summary.failedOrders)} />
+            <Fact label={t("Confirmed orders")} value={number(summary.confirmedOrders, locale)} />
+            <Fact label={t("Failed orders")} value={number(summary.failedOrders, locale)} />
             <Fact
-              label="Overall duration"
-              value={formatDurationMs(summary.overallDurationMs) ?? "not recorded"}
+              label={t("Overall duration")}
+              value={formatDurationMs(summary.overallDurationMs, locale) ?? t("not recorded")}
             />
           </div>
           <div className="contents">
             <Fact
               label={publicVocabulary.uniqueReservationsSecured}
-              value={number(summary.uniqueReservations)}
+              value={number(summary.uniqueReservations, locale)}
             />
-            <Fact label="Sold-out rejections" value={number(summary.soldOutRejections)} />
             <Fact
-              label="Convergence duration"
+              label={t("Sold-out rejections")}
+              value={number(summary.soldOutRejections, locale)}
+            />
+            <Fact
+              label={t("Convergence duration")}
               value={
                 summary.convergenceDurationSeconds === null
-                  ? "not recorded"
-                  : (formatDurationMs(summary.convergenceDurationSeconds * 1_000) ?? "not recorded")
+                  ? t("not recorded")
+                  : (formatDurationMs(summary.convergenceDurationSeconds * 1_000, locale) ??
+                    t("not recorded"))
               }
             />
           </div>
@@ -148,42 +164,50 @@ function RunHistoryRow({ summary }: { summary: RunHistoryListItem }) {
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
+  const t = useTranslation();
   return (
     <div className="min-w-0">
-      <p className="m-0 text-xs text-muted">{label}</p>
+      <p className="m-0 text-xs text-muted">{t(label)}</p>
       <p className="m-0 mt-0.5 text-sm font-semibold text-ink">{value}</p>
     </div>
   );
 }
 
 function OutOfRangePageState({ history }: { history: RunHistoryListResponse }) {
+  const locale = useLocale();
+  const t = useTranslation();
   return (
     <section className="rounded-2xl border border-border bg-surface p-6">
-      <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
+      <p className="m-0 text-xs font-medium text-muted">{t("Finished runs")}</p>
       <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
-        Page {history.page} does not exist
+        {t("Page")} {history.page} {t("does not exist")}
       </h2>
       <p className="m-0 mt-3 text-sm text-muted">
-        {formatRunCount(history.totalCount)} {history.totalCount === 1 ? "exists" : "exist"}. Return
-        to page 1 to view the latest runs.
+        {formatRunCount(history.totalCount, undefined, locale)}{" "}
+        {history.totalCount === 1 ? t("exists") : t("exist")}
+        {t(". Return to page 1 to view the latest runs.")}
       </p>
       <Link className={`${neutralLinkButtonClassName} mt-3`} href="/run-history">
-        View page 1
+        {t("View page 1")}
       </Link>
     </section>
   );
 }
 
 function PaginationControls({ history }: { history: RunHistoryListResponse }) {
+  const locale = useLocale();
+  const t = useTranslation();
   const hasPrevious = history.page > 1;
   const hasNext = history.page * history.pageSize < history.totalCount;
   return (
-    <nav aria-label="Run history pages" className="ml-auto flex flex-wrap items-center gap-3">
+    <nav aria-label={t("Run history pages")} className="ml-auto flex flex-wrap items-center gap-3">
       <p className="m-0 text-sm font-semibold text-muted-strong">
-        Page {history.page} · {formatRunCount(history.totalCount)}
+        {t("Page")} {history.page} · {formatRunCount(history.totalCount, undefined, locale)}
       </p>
-      {hasPrevious ? <PaginationLink page={history.page - 1}>Previous</PaginationLink> : null}
-      {hasNext ? <PaginationLink page={history.page + 1}>Next</PaginationLink> : null}
+      {hasPrevious ? (
+        <PaginationLink page={history.page - 1}>{t("Previous")}</PaginationLink>
+      ) : null}
+      {hasNext ? <PaginationLink page={history.page + 1}>{t("Next")}</PaginationLink> : null}
     </nav>
   );
 }
@@ -196,6 +220,7 @@ function PaginationLink({ children, page }: { children: string; page: number }) 
   );
 }
 
-function number(value: number): string {
-  return formatCount(value) ?? "not recorded";
+function number(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatCount(value, locale) ?? t("not recorded");
 }

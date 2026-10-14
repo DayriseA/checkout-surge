@@ -4,9 +4,14 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DashboardNav } from "../src/app/components/dashboard-nav.js";
+import { localeCookieName } from "../src/app/lib/i18n/locale.js";
+import { LocaleProvider } from "../src/app/lib/i18n/locale-context.js";
 
-const pathname = vi.hoisted(() => ({ value: "/" }));
-vi.mock("next/navigation", () => ({ usePathname: () => pathname.value }));
+const pathname = vi.hoisted(() => ({ value: "/", refresh: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname.value,
+  useRouter: () => ({ refresh: pathname.refresh }),
+}));
 
 afterEach(cleanup);
 
@@ -15,6 +20,25 @@ function renderNavigation(children: React.ReactNode) {
 }
 
 describe("DashboardNav", () => {
+  it("switches languages, persists the preference, and keeps the current route", async () => {
+    const user = userEvent.setup();
+    pathname.value = "/watch";
+    const { rerender } = render(
+      <LocaleProvider locale="en">{renderNavigation(null)}</LocaleProvider>,
+    );
+    await user.click(screen.getByRole("button", { name: "Switch to French" }));
+    expect(document.cookie).toContain(`${localeCookieName}=fr`);
+    expect(pathname.refresh).toHaveBeenCalledOnce();
+
+    rerender(<LocaleProvider locale="fr">{renderNavigation(null)}</LocaleProvider>);
+    const current = screen.getByRole("link", { name: "Suivi en direct" });
+    expect(current.getAttribute("href")).toBe("/watch");
+    expect(current.getAttribute("aria-current")).toBe("page");
+    await user.click(screen.getByRole("button", { name: "Passer en anglais" }));
+    expect(document.cookie).toContain(`${localeCookieName}=en`);
+    expect(pathname.refresh).toHaveBeenCalledTimes(2);
+    pathname.refresh.mockClear();
+  });
   it.each([
     ["/watch", "Watch"],
     ["/run-history/some-run-id", "Run history"],

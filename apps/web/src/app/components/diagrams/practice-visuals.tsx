@@ -1,3 +1,6 @@
+"use client";
+
+import { useLocale, useTranslation } from "../../lib/i18n/locale-context";
 import {
   flashSale,
   formatFigure,
@@ -34,16 +37,22 @@ function DotGrid({ reachingDatabase }: { reachingDatabase: number }) {
 }
 
 function Legend({ className, label }: { className: string; label: string }) {
+  const t = useTranslation();
+
   return (
     <span className="inline-flex items-center gap-1.5">
       <span aria-hidden="true" className={`size-2.5 rounded-full ${className}`} />
-      {label}
+      {t(label)}
     </span>
   );
 }
 
 /** V5: who reaches the database, with and without the stock decided in memory. */
 export function StockDecisionDots() {
+  const locale = useLocale();
+
+  const t = useTranslation();
+
   const buyersPerDot = flashSale.buyers / dotCount;
   const winnerDots = flashSale.units / buyersPerDot;
   const [withRedis, withoutRedis] = redisComparison.cold.runLabels;
@@ -51,31 +60,41 @@ export function StockDecisionDots() {
     {
       label: withRedis,
       reachingDatabase: winnerDots,
-      summary: `${dotCount - winnerDots} stop in memory with “sold out”; ${winnerDots} reach the database`,
+      summary: t("{memory} stop in memory with “sold out”; {database} reach the database", {
+        memory: dotCount - winnerDots,
+        database: winnerDots,
+      }),
     },
     {
       label: withoutRedis,
       reachingDatabase: dotCount,
-      summary: `All ${dotCount} reach the database`,
+      summary: t("All {buyers} reach the database", { buyers: dotCount }),
     },
   ];
   return (
     <DiagramFigure
-      caption={`The Redis comparison's ${formatFigure(flashSale.buyers, "count")} buyers, one dot per ${buyersPerDot}. With Redis, the buyers turned away are answered from memory, and only the ${formatFigure(flashSale.units, "count")} winners reach the database. With the stock in PostgreSQL, every buyer does, if only for a quick read.`}
+      caption={t(
+        "The Redis comparison's {value0} buyers, one dot per {value1}. With Redis, the buyers turned away are answered from memory, and only the {value2} winners reach the database. With the stock in PostgreSQL, every buyer does, if only for a quick read.",
+        {
+          value0: formatFigure(flashSale.buyers, "count", locale),
+          value1: buyersPerDot,
+          value2: formatFigure(flashSale.units, "count", locale),
+        },
+      )}
     >
       <div className="grid gap-5">
         {rows.map((row) => (
-          <div className="grid gap-2" key={row.label}>
+          <div className="grid gap-2" key={t(row.label)}>
             <p className="m-0 text-sm leading-5">
-              <strong className="text-ink">{row.label}:</strong>{" "}
+              <strong className="text-ink">{t(row.label)}:</strong>{" "}
               <span className="text-muted-strong">{row.summary}</span>
             </p>
             <DotGrid reachingDatabase={row.reachingDatabase} />
           </div>
         ))}
         <p className="m-0 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-strong">
-          <Legend className="bg-signal" label="Answered from memory" />
-          <Legend className="bg-accent" label="Reaches the database" />
+          <Legend className="bg-signal" label={t("Answered from memory")} />
+          <Legend className="bg-accent" label={t("Reaches the database")} />
         </p>
       </div>
     </DiagramFigure>
@@ -84,6 +103,10 @@ export function StockDecisionDots() {
 
 /** V6: who waits for the back office, with and without the order queue. */
 export function WhoWaitsDiagram() {
+  const locale = useLocale();
+
+  const t = useTranslation();
+
   const { everyBuyerAnswered, slowestOrder, runLabels, ordersConfirmed } = queueComparison;
   const runs = [
     { label: runLabels[0], buyers: everyBuyerAnswered.first[0], backOffice: slowestOrder.first[0] },
@@ -96,29 +119,35 @@ export function WhoWaitsDiagram() {
   const scaleSeconds = Math.ceil(Math.max(...runs.map((run) => run.buyers)) / 10) * 10;
   return (
     <DiagramFigure
-      caption={`Who waits for the back office, in the queue comparison (medians of measured runs). Same ${formatFigure(ordersConfirmed, "count")} orders and the same back-office pace in both runs, so the back office takes as long either way. With the queue, buyers have their answer long before. Without it, winners wait for their turn at the back office.`}
+      caption={t(
+        "Who waits for the back office, in the queue comparison (medians of measured runs). Same {value0} orders and the same back-office pace in both runs, so the back office takes as long either way. With the queue, buyers have their answer long before. Without it, winners wait for their turn at the back office.",
+        { value0: formatFigure(ordersConfirmed, "count", locale) },
+      )}
     >
       <div className="grid gap-5">
         {runs.map((run) => (
-          <div className="grid gap-2" key={run.label}>
-            <p className="m-0 text-sm font-semibold text-ink">{run.label}</p>
+          <div className="grid gap-2" key={t(run.label)}>
+            <p className="m-0 text-sm font-semibold text-ink">{t(run.label)}</p>
             <Lane
               barClassName="bg-accent"
-              label="Every buyer has an answer within"
+              label={t("Every buyer has an answer within")}
               scaleSeconds={scaleSeconds}
               seconds={run.buyers}
             />
             <Lane
               barClassName="bg-signal"
-              label="The back office confirms the slowest order after"
+              label={t("The back office confirms the slowest order after")}
               scaleSeconds={scaleSeconds}
               seconds={run.backOffice}
             />
           </div>
         ))}
         <p className="m-0 flex justify-between text-xs text-muted" aria-hidden="true">
-          <span>0 s</span>
-          <span>{scaleSeconds} s</span>
+          <span>{t("0 s")}</span>
+          <span>
+            {scaleSeconds}
+            {t(" s")}
+          </span>
         </p>
       </div>
     </DiagramFigure>
@@ -136,10 +165,14 @@ function Lane({
   scaleSeconds: number;
   seconds: number;
 }) {
+  const locale = useLocale();
+
+  const t = useTranslation();
+
   return (
     <div className="grid gap-0.5">
       <p className="m-0 text-xs text-muted-strong">
-        {label} <strong className="text-ink">{formatFigure(seconds, "seconds")}</strong>
+        {t(label)} <strong className="text-ink">{formatFigure(seconds, "seconds", locale)}</strong>
       </p>
       <Bar className={barClassName} share={seconds / scaleSeconds} />
     </div>

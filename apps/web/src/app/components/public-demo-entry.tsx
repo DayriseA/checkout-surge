@@ -21,9 +21,12 @@ import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } fro
 import type { BackendRead, PublicDemoSurface } from "../lib/api";
 import { readProxyJson } from "../lib/client/proxy-json";
 import { demoRunStartProxyPath, healthReadyProxyPath } from "../lib/control-paths";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import {
   type CustomErrorGroup,
   type CustomRunSummaryEntry,
+  type InvalidCustomRunControl,
   presentCustomRunIssues,
   presentInvalidCustomRunControls,
 } from "../lib/presentation/custom-run-issue-presentation";
@@ -95,13 +98,79 @@ type CustomSubmissionFailure =
   | { kind: "validation"; entries: CustomRunSummaryEntry[]; notice?: ErrorPresentation }
   | { kind: "operation"; presentation: ErrorPresentation };
 
+type StartFailureSource = { read: BackendRead<unknown>; startRequestOutcome?: true };
+type CustomFailureSource =
+  | { kind: "operation"; read: BackendRead<unknown> }
+  | {
+      kind: "validation";
+      validation:
+        | { kind: "controls"; controls: InvalidCustomRunControl[] }
+        | { kind: "issues"; paths: ReadonlyArray<readonly unknown[]>; mode: TrafficMode }
+        | { kind: "traffic-limit"; limit: number };
+      notice?: BackendRead<unknown>;
+    };
+
+function totalAttemptsLimitMessage(limit: number, locale: Locale): string {
+  return getTranslation(locale)(
+    "Reduce the buyer count, rate, duration, or duplicate attempts to {count} planned attempts or fewer.",
+    { count: formatCount(limit, locale) ?? "—" },
+  );
+}
+
+function presentCustomFailure(
+  source: CustomFailureSource | null,
+  locale: Locale,
+): CustomSubmissionFailure | null {
+  if (!source) return null;
+  const context = { surface: "public-start", startRequestOutcome: true } as const;
+  if (source.kind === "operation") {
+    return { kind: "operation", presentation: mapErrorPresentation(source.read, context, locale) };
+  }
+  const validation = source.validation;
+  const entries =
+    validation.kind === "controls"
+      ? presentInvalidCustomRunControls(validation.controls, locale)
+      : validation.kind === "issues"
+        ? presentCustomRunIssues(validation.paths, locale).filter((entry) =>
+            customEntryAppliesToMode(entry, validation.mode),
+          )
+        : [
+            {
+              group: "traffic" as const,
+              key: "custom-traffic-error",
+              message: totalAttemptsLimitMessage(validation.limit, locale),
+              targetId: "custom-traffic-error",
+            },
+          ];
+  return {
+    kind: "validation",
+    entries,
+    ...(source.notice ? { notice: mapErrorPresentation(source.notice, context, locale) } : {}),
+  };
+}
+
 export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const [accepted, setAccepted] = useState(false);
   const [startingSlug, setStartingSlug] = useState<string | null>(null);
   // Only while the start request itself waits for its answer; the starting slug is held longer.
   const [startRequestInFlight, setStartRequestInFlight] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [startPresentation, setStartPresentation] = useState<ErrorPresentation | null>(null);
+  const [startFailureSource, setStartFailureSource] = useState<StartFailureSource | null>(null);
+  const startPresentation = useMemo(
+    () =>
+      startFailureSource
+        ? mapErrorPresentation(
+            startFailureSource.read,
+            startFailureSource.startRequestOutcome
+              ? { surface: "public-start", startRequestOutcome: true }
+              : "public-start",
+            locale,
+          )
+        : null,
+    [startFailureSource, locale],
+  );
   const [startConflictBlock, setStartConflictBlock] = useState<
     "active_run_exists" | "reset_incomplete" | null
   >(null);
@@ -125,8 +194,11 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   );
   const customModeRef = useRef(customDraft.mode);
   customModeRef.current = customDraft.mode;
-  const [customSubmissionFailure, setCustomSubmissionFailure] =
-    useState<CustomSubmissionFailure | null>(null);
+  const [customFailureSource, setCustomFailureSource] = useState<CustomFailureSource | null>(null);
+  const customSubmissionFailure = useMemo(
+    () => presentCustomFailure(customFailureSource, locale),
+    [customFailureSource, locale],
+  );
   const customValidationEntries =
     customSubmissionFailure?.kind === "validation" ? customSubmissionFailure.entries : [];
   const customSummaryRef = useRef<HTMLDivElement>(null);
@@ -242,17 +314,16 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     const remainingMs = Math.max(0, startRetryUntil - Date.now());
     const timer = setTimeout(() => {
       setStartRetryUntil(null);
-      setStartPresentation(
+      setStartFailureSource(
         startConflictBlock === null
           ? null
-          : mapErrorPresentation(
-              {
+          : {
+              read: {
                 status: "unavailable",
                 errorCode: "run_conflict",
                 details: { conflictReason: startConflictBlock },
               },
-              "public-start",
-            ),
+            },
       );
     }, remainingMs);
     return () => clearTimeout(timer);
@@ -267,17 +338,17 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
       return;
     }
     if (isRunStartBlocked(recovery)) {
-      setStartPresentation(null);
+      setStartFailureSource(null);
       return;
     }
     setStartConflictBlock(null);
-    setStartPresentation(null);
+    setStartFailureSource(null);
   }, [activeConflictRefreshComplete, recovery, startConflictBlock]);
 
   useEffect(() => {
     if (recovery.status !== "available" || !isRunStartBlocked(recovery)) return;
     if (startRetryUntil === null) {
-      if (startPresentation !== null) setStartPresentation(null);
+      if (startPresentation !== null) setStartFailureSource(null);
     }
   }, [recovery, startPresentation, startRetryUntil]);
 
@@ -310,7 +381,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     runtimePolicy &&
     plannedRequests !== null &&
     plannedRequests > runtimePolicy.publicCustomLimits.maxTotalRequests
-      ? `Reduce the buyer count, rate, duration, or duplicate attempts to ${formatCount(runtimePolicy.publicCustomLimits.maxTotalRequests)} planned attempts or fewer.`
+      ? totalAttemptsLimitMessage(runtimePolicy.publicCustomLimits.maxTotalRequests, locale)
       : null;
   const startDisabled =
     accepted ||
@@ -342,7 +413,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
   function updateCustomDraft(update: (draft: CustomDraft) => CustomDraft) {
     setCustomDraft(update);
     setCustomDraftEdited(true);
-    setCustomSubmissionFailure(null);
+    setCustomFailureSource(null);
   }
 
   function groupError(group: CustomErrorGroup) {
@@ -358,12 +429,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
 
     if (!parsed.success) {
       setStatusMessage(null);
-      setStartPresentation(
-        mapErrorPresentation(
-          { status: "unavailable", errorCode: "invalid_request", reason: "invalid request" },
-          "public-start",
-        ),
-      );
+      setStartFailureSource({
+        read: { status: "unavailable", errorCode: "invalid_request", reason: "invalid request" },
+      });
       return;
     }
     return await sendStartRequest(parsed.data, false);
@@ -373,8 +441,8 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
     const presetSlug = request.presetSlug;
     setStartingSlug(presetSlug);
     setStatusMessage(null);
-    setStartPresentation(null);
-    setCustomSubmissionFailure(null);
+    setStartFailureSource(null);
+    setCustomFailureSource(null);
     setStartRetryUntil(null);
 
     try {
@@ -412,31 +480,29 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         isCustom &&
         (result.errorCode === "invalid_request" || result.errorCode === "invalid_run_configuration")
       ) {
-        const entries = presentCustomRunIssues([customValidationPath(result.details?.path)]).filter(
-          (entry) => customEntryAppliesToMode(entry, customModeRef.current),
+        const paths = [customValidationPath(result.details?.path)];
+        const entries = presentCustomRunIssues(paths).filter((entry) =>
+          customEntryAppliesToMode(entry, customModeRef.current),
         );
         const infrastructureLimit = isInfrastructureRunLimitRejection(result);
         // An infrastructure limit with no form field to flag falls through to the operation notice.
         if (entries.length > 0 || !infrastructureLimit) {
-          const notice = infrastructureLimit
-            ? mapErrorPresentation(result, { surface: "public-start", startRequestOutcome: true })
-            : undefined;
-          setCustomSubmissionFailure(
+          setCustomFailureSource(
             entries.length > 0
-              ? { kind: "validation", entries, ...(notice ? { notice } : {}) }
+              ? {
+                  kind: "validation",
+                  validation: { kind: "issues", paths, mode: customModeRef.current },
+                  ...(infrastructureLimit ? { notice: result } : {}),
+                }
               : null,
           );
           return;
         }
       }
 
-      const presentation = mapErrorPresentation(result, {
-        surface: "public-start",
-        startRequestOutcome: true,
-      });
-      setStartPresentation(presentation);
+      setStartFailureSource({ read: result, startRequestOutcome: true });
       if (isCustom) {
-        setCustomSubmissionFailure({ kind: "operation", presentation });
+        setCustomFailureSource({ kind: "operation", read: result });
       }
       const conflictReason =
         result.status === "unavailable" &&
@@ -472,7 +538,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               className="type-title m-0 text-lg leading-tight text-ink"
               id="curated-presets-heading"
             >
-              Curated surge presets
+              {t("Curated surge presets")}
             </h2>
             <SharedRuntimeDisclosure />
           </div>
@@ -506,7 +572,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
         {surface.presets.status === "available" && curatedPresets.length > 0 ? (
           <div className="divide-y divide-border">
             {curatedPresets.map((preset) => {
-              const facts = derivePresetCardFacts(preset);
+              const facts = derivePresetCardFacts(preset, locale);
               const isRecommended = preset.slug === recommendedPresetSlug;
               const headingId = presetCardId(preset.slug);
               return (
@@ -522,35 +588,39 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="type-title m-0 text-base leading-snug text-ink" id={headingId}>
-                        {preset.display.name}
+                        {t(preset.display.name)}
                       </h3>
                       {isRecommended ? (
                         <span className="rounded-full bg-signal px-2 py-0.5 text-xs font-semibold text-ink">
-                          Recommended: start here
+                          {t("Recommended: start here")}
                         </span>
                       ) : null}
                     </div>
                     <p className="m-0 mt-1 text-sm leading-5 text-muted">
-                      {preset.display.description}
+                      {t(preset.display.description)}
                     </p>
                     {preset.comparison ? (
                       <Link
                         className={`${textLinkClassName} mt-1 inline-block text-sm`}
                         href={comparisonExplanationLinks[preset.comparison]}
                       >
-                        What this shows <span className="sr-only">for {preset.display.name}</span>
+                        {t("What this shows ")}
+                        <span className="sr-only">
+                          {t("for ")}
+                          {t(preset.display.name)}
+                        </span>
                       </Link>
                     ) : null}
                   </div>
                   <DemandGauge
                     demandLabel={facts.demandLabel}
-                    demandNoun={facts.surgeLabel === "Buyers" ? "buyers" : "attempts"}
+                    demandNoun={preset.trafficConfig.mode === "buyer-spike" ? "buyers" : "attempts"}
                     demandValue={facts.demandValue}
                     stock={preset.inventoryConfig.startingStock}
                     uniqueAttempts={facts.uniqueAttempts}
                   />
                   <dl className="m-0 max-[1100px]:col-start-1 max-[1100px]:row-start-2 max-[760px]:row-start-auto">
-                    <Fact label="What happens" value={facts.distinguishingBehavior} />
+                    <Fact label={t("What happens")} value={facts.distinguishingBehavior} />
                   </dl>
                   <PublicPresetStart
                     preset={preset}
@@ -560,37 +630,45 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   />
                   <details className="col-span-full -mt-1">
                     <summary className="disclosure rounded text-sm font-semibold text-accent">
-                      Technical details
-                      <span className="sr-only"> for {preset.display.name}</span>
+                      {t("Technical details")}
+                      <span className="sr-only">
+                        {t(" for ")}
+                        {t(preset.display.name)}
+                      </span>
                     </summary>
                     <div className="mt-3 grid gap-3 rounded-lg border border-border bg-surface p-4">
                       <dl className="m-0 grid grid-cols-4 gap-x-5 gap-y-3 text-sm max-[1100px]:grid-cols-3 max-[760px]:grid-cols-2 max-[420px]:grid-cols-1">
                         <Fact
-                          label="Scenario"
-                          value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode)}
+                          label={t("Scenario")}
+                          value={trafficModeLabel(preset.trafficConfig.mode as TrafficMode, locale)}
                         />
                         <Fact
-                          label="Simulated ERP capacity"
-                          value={`${formatCount(preset.erpConfig.maxTps) ?? "not configured"} orders/s`}
+                          label={t("Simulated ERP capacity")}
+                          value={`${formatCount(preset.erpConfig.maxTps, locale) ?? t("not configured")} ${t("orders/s")}`}
                         />
                         <Fact
-                          label="Simulated ERP delay per order"
-                          value={formatDurationMs(preset.erpConfig.latencyMs) ?? "not configured"}
+                          label={t("Simulated ERP delay per order")}
+                          value={
+                            formatDurationMs(preset.erpConfig.latencyMs, locale) ?? "not configured"
+                          }
                         />
                         <Fact
-                          label="Worker concurrency / backpressure"
-                          value={deriveRunConfigFacts(preset).workerBackpressure}
+                          label={t("Worker concurrency / backpressure")}
+                          value={deriveRunConfigFacts(preset, locale).workerBackpressure}
                         />
-                        <Fact label="Duplicate attempts" value={facts.duplicateAttempts} />
+                        <Fact label={t("Duplicate attempts")} value={facts.duplicateAttempts} />
                         <Fact
-                          label="Expected sold-out rejections"
-                          value={formatCount(facts.expectedSoldOutCount) ?? "not configured"}
+                          label={t("Expected sold-out rejections")}
+                          value={
+                            formatCount(facts.expectedSoldOutCount, locale) ?? "not configured"
+                          }
                         />
-                        <Fact label="Detailed assumptions" value={facts.outcomeFocus} />
+                        <Fact label={t("Detailed assumptions")} value={facts.outcomeFocus} />
                       </dl>
                       <ConditionalCaveat show={facts.hasDuplicateAttempts}>
-                        The API safely replays the same accepted reservation, so accepted responses
-                        can exceed unique reservations in the completed result.
+                        {t(
+                          "The API safely replays the same accepted reservation, so accepted responses can exceed unique reservations in the completed result.",
+                        )}
                       </ConditionalCaveat>
                     </div>
                   </details>
@@ -603,7 +681,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <Unavailable onRetry={reloadPage} read={surface.presets} />
           </div>
         ) : (
-          <p className="m-0 p-5 text-muted">No curated public presets are currently available.</p>
+          <p className="m-0 p-5 text-muted">
+            {t("No curated public presets are currently available.")}
+          </p>
         )}
       </section>
 
@@ -619,12 +699,14 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           >
             +
           </span>
-          <span className="type-title text-lg leading-tight text-ink">Customize a scenario</span>
+          <span className="type-title text-lg leading-tight text-ink">
+            {t("Customize a scenario")}
+          </span>
           {!customBuilderOpen && customDraftEdited ? (
-            <span className="text-sm font-normal text-muted">Edited settings retained</span>
+            <span className="text-sm font-normal text-muted">{t("Edited settings retained")}</span>
           ) : (
             <span className="text-sm font-normal text-muted max-[700px]:hidden">
-              Set your own buyers, stock, and ERP speed within the public limits.
+              {t("Set your own buyers, stock, and ERP speed within the public limits.")}
             </span>
           )}
         </summary>
@@ -632,7 +714,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
           <form
             aria-describedby={groupError("form") ? "custom-form-error" : undefined}
             aria-invalid={groupError("form") ? true : undefined}
-            aria-label="Custom run builder"
+            aria-label={t("Custom run builder")}
             className="grid border-t border-border"
             onSubmit={(event) => {
               event.preventDefault();
@@ -645,24 +727,20 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     ? [{ controlId: element.id, message: element.validationMessage }]
                     : [],
                 );
-                setCustomSubmissionFailure({
+                setCustomFailureSource({
                   kind: "validation",
-                  entries: presentInvalidCustomRunControls(controls),
+                  validation: { kind: "controls", controls },
                 });
                 return;
               }
 
               if (totalRequestsError) {
-                setCustomSubmissionFailure({
+                setCustomFailureSource({
                   kind: "validation",
-                  entries: [
-                    {
-                      group: "traffic",
-                      key: "custom-traffic-error",
-                      message: totalRequestsError,
-                      targetId: "custom-traffic-error",
-                    },
-                  ],
+                  validation: {
+                    kind: "traffic-limit",
+                    limit: runtimePolicy.publicCustomLimits.maxTotalRequests,
+                  },
                 });
                 return;
               }
@@ -672,9 +750,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 configOverride: customConfig,
               });
               if (!parsed.success) {
-                setCustomSubmissionFailure({
+                setCustomFailureSource({
                   kind: "validation",
-                  entries: presentCustomRunIssues(parsed.error.issues.map((issue) => issue.path)),
+                  validation: {
+                    kind: "issues",
+                    paths: parsed.error.issues.map((issue) => issue.path),
+                    mode: customModeRef.current,
+                  },
                 });
                 return;
               }
@@ -684,15 +766,15 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             noValidate
           >
             <p className="m-0 border-b border-border px-5 py-3 text-sm leading-5 text-muted max-[560px]:px-4">
-              These limits were chosen for the infrastructure running this demo.{" "}
-              {largerRunsGuidance}
+              {t("These limits were chosen for the infrastructure running this demo.")}{" "}
+              {t(largerRunsGuidance)}
             </p>
             <fieldset
               aria-describedby={`custom-traffic-total${totalRequestsError ? " custom-traffic-error" : ""}${groupError("traffic") ? " custom-traffic-validation-error" : ""}`}
               aria-invalid={totalRequestsError || groupError("traffic") ? true : undefined}
               className={customFieldsetClassName}
             >
-              <legend className={settingsLegendClassName}>Buyers</legend>
+              <legend className={settingsLegendClassName}>{t("Buyers")}</legend>
               <TrafficModeSelector
                 allowedModes={runtimePolicy.publicCustomLimits.allowedTrafficModes}
                 mode={customDraft.mode}
@@ -705,7 +787,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       hint={fieldHints.buyerCount}
                       id="custom-buyers"
                       key="buyer-count"
-                      label="Buyer count"
+                      label={t("Buyer count")}
                       max={runtimePolicy.publicCustomLimits.maxBuyers}
                       min={1}
                       onChange={(buyerCount) =>
@@ -729,14 +811,16 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                           }
                           type="checkbox"
                         />
-                        <label htmlFor="custom-duplicate">Duplicate each buyer attempt</label>
+                        <label htmlFor="custom-duplicate">
+                          {t("Duplicate each buyer attempt")}
+                        </label>
                         <FieldHint
-                          label="Duplicate each buyer attempt"
+                          label={t("Duplicate each buyer attempt")}
                           text={fieldHints.duplicateBuyerAttempt}
                         />
                       </div>
                       <span className={fieldHelpClassName} id="custom-duplicate-description">
-                        Doubles the planned attempts.
+                        {t("Doubles the planned attempts.")}
                       </span>
                     </div>
                   </>
@@ -746,7 +830,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                       hint={fieldHints.arrivalRate}
                       id="custom-rate"
                       key="arrival-rate"
-                      label="Arrival rate"
+                      label={t("Arrival rate")}
                       max={runtimePolicy.publicCustomLimits.maxRequestsPerSecond}
                       min={1}
                       onChange={(ratePerSecond) =>
@@ -759,7 +843,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                     <LabeledInput
                       hint={fieldHints.trafficDuration}
                       id="custom-duration"
-                      label="Traffic duration"
+                      label={t("Traffic duration")}
                       max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
                       min={1}
                       onChange={(durationSeconds) =>
@@ -776,12 +860,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 className="m-0 flex items-center gap-2 text-sm font-semibold text-ink"
                 id="custom-traffic-total"
               >
-                Planned total attempts: {formatCount(plannedRequests) ?? "—"}
-                <FieldHint label="Planned total attempts" text={fieldHints.plannedAttempts} />
+                {t("Planned total attempts: ")}
+                {formatCount(plannedRequests, locale) ?? "—"}
+                <FieldHint label={t("Planned total attempts")} text={fieldHints.plannedAttempts} />
               </p>
               {customDraft.mode === "constant-arrival-rate" ? (
                 <p className="m-0 text-sm text-muted">
-                  Planned attempts = arrival rate × duration.
+                  {t("Planned attempts = arrival rate × duration.")}
                 </p>
               ) : null}
               {totalRequestsError ? (
@@ -806,12 +891,12 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               aria-invalid={groupError("stock") ? true : undefined}
               className={customFieldsetClassName}
             >
-              <legend className={settingsLegendClassName}>Stock</legend>
+              <legend className={settingsLegendClassName}>{t("Stock")}</legend>
               <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
                 <LabeledInput
                   hint={fieldHints.startingStock}
                   id="custom-stock"
-                  label="Starting stock"
+                  label={t("Starting stock")}
                   max={runtimePolicy.publicCustomLimits.maxStartingStock}
                   min={0}
                   onChange={(startingStock) =>
@@ -835,16 +920,17 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               aria-invalid={groupError("erp") ? true : undefined}
               className={customFieldsetClassName}
             >
-              <legend className={settingsLegendClassName}>Slow ERP</legend>
+              <legend className={settingsLegendClassName}>{t("Slow ERP")}</legend>
               <p className="m-0 text-sm text-muted">
-                The ERP is the simulated back-office system that confirms each order after its stock
-                is reserved. Here it is deliberately slow and unreliable.
+                {t(
+                  "The ERP is the simulated back-office system that confirms each order after its stock is reserved. Here it is deliberately slow and unreliable.",
+                )}
               </p>
               <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
                 <LabeledInput
                   hint={fieldHints.erpDelay}
                   id="custom-erp-delay"
-                  label="Delay per order"
+                  label={t("Delay per order")}
                   max={runtimePolicy.publicCustomLimits.maxErpLatencyMs}
                   min={0}
                   onChange={(erpLatencyMs) =>
@@ -857,7 +943,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 <LabeledInput
                   hint={fieldHints.erpCapacity}
                   id="custom-erp-capacity"
-                  label="Capacity"
+                  label={t("Capacity")}
                   max={runtimePolicy.publicCustomLimits.maxErpMaxTps}
                   min={runtimePolicy.publicCustomLimits.minErpMaxTps}
                   onChange={(erpMaxTps) => updateCustomDraft((draft) => ({ ...draft, erpMaxTps }))}
@@ -869,7 +955,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   hint={fieldHints.erpFailureRate}
                   instruction="Enter 25 for 25%."
                   id="custom-erp-error-rate"
-                  label="Failure rate"
+                  label={t("Failure rate")}
                   max={ratioToPercent(runtimePolicy.publicCustomLimits.maxErpErrorRate)}
                   min={0}
                   onChange={(erpErrorRate) =>
@@ -892,9 +978,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               ref={advancedSettingsRef}
             >
               <summary className="disclosure text-sm font-semibold text-ink">
-                Advanced protection settings{" "}
+                {t("Advanced protection settings")}{" "}
                 <FieldHint
-                  label="Advanced protection settings"
+                  label={t("Advanced protection settings")}
                   text={fieldHints.advancedProtection}
                 />
               </summary>
@@ -905,13 +991,13 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                 aria-invalid={groupError("advanced") ? true : undefined}
                 className="m-0 mt-3 grid min-w-0 gap-3 border-0 p-0 min-[900px]:ml-44"
               >
-                <legend className="sr-only">Advanced protection settings</legend>
+                <legend className="sr-only">{t("Advanced protection settings")}</legend>
                 <div className="grid grid-cols-3 gap-3 max-[900px]:grid-cols-2 max-[560px]:grid-cols-1">
                   {customDraft.mode === "buyer-spike" ? (
                     <LabeledInput
                       hint={fieldHints.safetyCutoff}
                       id="custom-safety-cutoff"
-                      label="Safety cutoff"
+                      label={t("Safety cutoff")}
                       max={runtimePolicy.publicCustomLimits.maxTrafficDurationSeconds}
                       min={1}
                       onChange={(maxDurationSeconds) =>
@@ -925,7 +1011,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
                   <LabeledInput
                     hint={fieldHints.startDelay}
                     id="custom-start-delay"
-                    label="Start delay"
+                    label={t("Start delay")}
                     max={runtimePolicy.publicCustomLimits.maxTrafficStartDelaySeconds}
                     min={0}
                     onChange={(startDelaySeconds) =>
@@ -961,14 +1047,16 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               ) : null}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="m-0 text-sm leading-5 text-muted-strong">
-                  {publicRunBudgetCopy(runtimePolicy)}
+                  {publicRunBudgetCopy(runtimePolicy, locale)}
                 </p>
                 <button
                   className={`${primaryButtonClassName} min-w-44`}
                   disabled={customStartDisabled}
                   type="submit"
                 >
-                  {startingSlug === customPreset.slug ? "Starting custom run" : "Start custom run"}
+                  {startingSlug === customPreset.slug
+                    ? t("Starting custom run")
+                    : t("Start custom run")}
                 </button>
               </div>
             </div>
@@ -978,7 +1066,9 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
             <Unavailable onRetry={reloadPage} read={surface.runtimePolicy} />
           </div>
         ) : (
-          <p className="m-0 border-t border-border p-5 text-muted">Public custom is unavailable.</p>
+          <p className="m-0 border-t border-border p-5 text-muted">
+            {t("Public custom is unavailable.")}
+          </p>
         )}
       </details>
     </div>
@@ -1010,6 +1100,7 @@ function PublicPresetStart({
   starting: boolean;
   onStart: () => Promise<EstimateAdmissionRejectionDetails | undefined>;
 }) {
+  const t = useTranslation();
   const [rejection, setRejection] = useState<EstimateAdmissionRejectionDetails>();
   const blocked = disabled || rejection !== undefined;
   return (
@@ -1026,14 +1117,14 @@ function PublicPresetStart({
         }}
         type="button"
       >
-        {starting ? `Starting ${preset.display.name}` : `Start ${preset.display.name}`}
+        {t(starting ? "Starting {name}" : "Start {name}", { name: t(preset.display.name) })}
       </button>
     </div>
   );
 }
 
-export function derivePresetCardFacts(preset: DemoPresetContract) {
-  const configFacts = deriveRunConfigFacts(preset);
+export function derivePresetCardFacts(preset: DemoPresetContract, locale: Locale = "en") {
+  const configFacts = deriveRunConfigFacts(preset, locale);
   const uniqueAttempts = configFacts.uniqueAttempts;
 
   return {
@@ -1044,9 +1135,9 @@ export function derivePresetCardFacts(preset: DemoPresetContract) {
     duplicateAttempts: configFacts.duplicateAttempts,
     demandLabel: configFacts.demandLabel,
     demandValue: configFacts.demandValue,
-    distinguishingBehavior: presetDistinguishingBehavior(preset),
+    distinguishingBehavior: presetDistinguishingBehavior(preset, locale),
     expectedSoldOutCount: Math.max(0, uniqueAttempts - preset.inventoryConfig.startingStock),
-    outcomeFocus: presetOutcomeFocus(preset),
+    outcomeFocus: presetOutcomeFocus(preset, locale),
   };
 }
 
@@ -1120,24 +1211,37 @@ function fallbackDraft(): CustomDraft {
   };
 }
 
-function publicRunBudgetCopy({
-  isPublicRunBudgetEnforced,
-  publicRunBudget,
-}: Pick<PublicRuntimePolicy, "isPublicRunBudgetEnforced" | "publicRunBudget">): string {
+function publicRunBudgetCopy(
+  {
+    isPublicRunBudgetEnforced,
+    publicRunBudget,
+  }: Pick<PublicRuntimePolicy, "isPublicRunBudgetEnforced" | "publicRunBudget">,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   if (!isPublicRunBudgetEnforced) {
-    return "Public start budgets are not enforced right now.";
+    return t("Public start budgets are not enforced right now.");
   }
-  return `Up to ${formatCount(publicRunBudget.perVisitorMaxStarts)} ${pluralize(publicRunBudget.perVisitorMaxStarts, "start")} per visitor and ${formatCount(publicRunBudget.globalMaxStarts)} ${pluralize(publicRunBudget.globalMaxStarts, "start")} total every ${formatPolicyWindow(publicRunBudget.windowSeconds)}.`;
+  return t(
+    "Up to {visitorCount} {visitorStarts} per visitor and {globalCount} {globalStarts} total every {window}.",
+    {
+      visitorCount: formatCount(publicRunBudget.perVisitorMaxStarts, locale) ?? "—",
+      visitorStarts: t(pluralize(publicRunBudget.perVisitorMaxStarts, "start")),
+      globalCount: formatCount(publicRunBudget.globalMaxStarts, locale) ?? "—",
+      globalStarts: t(pluralize(publicRunBudget.globalMaxStarts, "start")),
+      window: formatPolicyWindow(publicRunBudget.windowSeconds, locale),
+    },
+  );
 }
 
-function formatPolicyWindow(seconds: number): string {
-  if (seconds % 60 !== 0) return formatSeconds(seconds);
+function formatPolicyWindow(seconds: number, locale: Locale = "en"): string {
+  if (seconds % 60 !== 0) return formatSeconds(seconds, locale);
   const minutes = seconds / 60;
-  return `${minutes} ${pluralize(minutes, "minute")}`;
+  return `${formatCount(minutes, locale)} ${getTranslation(locale)(pluralize(minutes, "minute"))}`;
 }
 
-function formatSeconds(seconds: number): string {
-  return `${seconds} ${pluralize(seconds, "second")}`;
+function formatSeconds(seconds: number, locale: Locale = "en"): string {
+  return `${formatCount(seconds, locale)} ${getTranslation(locale)(pluralize(seconds, "second"))}`;
 }
 
 function navigateToWatch(acceptedRunId: string) {
@@ -1168,10 +1272,11 @@ function CustomValidationError({
   error: { message: string } | undefined;
   id: string;
 }) {
+  const t = useTranslation();
   if (!error) return null;
   return (
     <p className="m-0 text-sm font-semibold text-danger" id={id} tabIndex={-1}>
-      {error.message}
+      {t(error.message)}
     </p>
   );
 }
@@ -1183,16 +1288,17 @@ function CustomErrorSummary({
   failure: CustomSubmissionFailure;
   summaryRef: RefObject<HTMLDivElement | null>;
 }) {
+  const t = useTranslation();
   if (failure.kind === "operation") {
     return (
       <div
-        aria-label="Operation failure"
+        aria-label={t("Operation failure")}
         className="grid gap-1 rounded-lg border border-danger-line bg-danger-soft p-3 text-danger"
         ref={summaryRef}
         role="alert"
         tabIndex={-1}
       >
-        <h3 className="m-0 text-base font-bold">Operation failure</h3>
+        <h3 className="m-0 text-base font-bold">{t("Operation failure")}</h3>
         <strong>{failure.presentation.headline}</strong>
         {failure.presentation.explanation ? <span>{failure.presentation.explanation}</span> : null}
       </div>
@@ -1208,7 +1314,7 @@ function CustomErrorSummary({
       tabIndex={-1}
     >
       <h3 className="m-0 text-base font-bold" id="custom-error-summary-title">
-        Fix these settings
+        {t("Fix these settings")}
       </h3>
       {failure.notice ? (
         <div className="grid gap-1">
@@ -1227,7 +1333,7 @@ function CustomErrorSummary({
                 document.getElementById(entry.targetId)?.focus();
               }}
             >
-              {entry.message}
+              {t(entry.message)}
             </a>
           </li>
         ))}
@@ -1237,11 +1343,12 @@ function CustomErrorSummary({
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
+  const t = useTranslation();
   return (
     <div className="min-w-0">
-      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dt className="text-xs font-medium text-muted">{t(label)}</dt>
       <dd className="m-0 mt-0.5 [overflow-wrap:anywhere] text-sm font-semibold leading-5 text-ink">
-        {value}
+        {t(value)}
       </dd>
     </div>
   );
@@ -1264,15 +1371,17 @@ function DemandGauge({
   stock: number;
   uniqueAttempts: number;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const sellableShare = uniqueAttempts > 0 ? Math.min(1, stock / uniqueAttempts) : 1;
   return (
     <div className="grid min-w-0 gap-1.5">
       <dl className="m-0 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <Fact label={demandLabel} value={demandValue} />
         <div className="min-w-0 text-right max-[760px]:text-left">
-          <dt className="text-xs font-medium text-muted">{publicVocabulary.startingStock}</dt>
+          <dt className="text-xs font-medium text-muted">{t(publicVocabulary.startingStock)}</dt>
           <dd className="m-0 mt-0.5 text-sm font-semibold leading-5 text-ink">
-            {formatCount(stock) ?? "not configured"}
+            {formatCount(stock, locale) ?? t("not configured")}
           </dd>
         </div>
       </dl>
@@ -1280,25 +1389,36 @@ function DemandGauge({
         <span className="block h-full bg-ink" style={{ width: `${sellableShare * 100}%` }} />
       </div>
       <p className="m-0 text-xs text-muted">
-        {demandPressureCopy(uniqueAttempts, stock, demandNoun)}
+        {demandPressureCopy(uniqueAttempts, stock, demandNoun, locale)}
       </p>
     </div>
   );
 }
 
-function demandPressureCopy(uniqueAttempts: number, stock: number, noun: string): string {
-  if (stock === 0) return "No stock to sell";
-  if (uniqueAttempts <= stock) return `Enough stock for all ${noun}`;
+function demandPressureCopy(
+  uniqueAttempts: number,
+  stock: number,
+  noun: string,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
+  if (stock === 0) return t("No stock to sell");
+  if (uniqueAttempts <= stock) return t("Enough stock for all {noun}", { noun: t(noun) });
   const ratio = uniqueAttempts / stock;
   const rounded = ratio < 10 ? Math.round(ratio * 10) / 10 : Math.round(ratio);
-  return `${rounded}× more ${noun} than units`;
+  return t("{ratio}× more {noun} than units", {
+    ratio: formatCount(rounded, locale) ?? "—",
+    noun: t(noun),
+  });
 }
 
 function SharedRuntimeDisclosure() {
+  const t = useTranslation();
   return (
     <p className="m-0 mt-1 max-w-[72ch] text-sm leading-5 text-muted">
-      Starting a bounded run uses the one shared demo runtime — other visitors can&apos;t start
-      until it finishes. A successful start opens the live view.
+      {t(
+        "Starting a bounded run uses the one shared demo runtime — other visitors can't start until it finishes. A successful start opens the live view.",
+      )}
     </p>
   );
 }
@@ -1349,10 +1469,12 @@ function StartGate({
   startRetryAfterMs: number | null;
   startOptionsAvailable: boolean;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const resetIncomplete =
     recovery.status === "available" && recovery.data.resetRecovery === "incomplete";
   const runInProgress = recovery.status === "available" && isRunStartBlocked(recovery);
-  const runPresentation = deriveRunPresentationState(recovery);
+  const runPresentation = deriveRunPresentationState(recovery, undefined, undefined, locale);
   const relocatingRunner = runPresentation.state === "relocating-load-generator";
   // The visitor's own pending start is not "another run in progress".
   const activeRunPresentation =
@@ -1364,6 +1486,7 @@ function StartGate({
             details: { conflictReason: resetIncomplete ? "reset_incomplete" : "active_run_exists" },
           },
           "public-start",
+          locale,
         )
       : null;
   const recoveryUnavailable = recovery.status === "unavailable";
@@ -1381,7 +1504,7 @@ function StartGate({
     <div className="grid max-w-[32rem] justify-items-end gap-2 text-right max-[700px]:w-full max-[700px]:max-w-none max-[700px]:justify-items-start max-[700px]:text-left">
       <div className="flex flex-wrap justify-end gap-2 max-[700px]:justify-start">
         {recovery.status !== "available" ? (
-          <StatusPill status={deriveRunPresentationState(recovery)} />
+          <StatusPill status={deriveRunPresentationState(recovery, undefined, undefined, locale)} />
         ) : resetIncomplete ? (
           <StatusPill status={{ label: "Recovery incomplete", tone: "warning" }} />
         ) : runInProgress ? (
@@ -1393,7 +1516,7 @@ function StartGate({
         ) : startRetryAfterMs !== null ? (
           <StatusPill status={{ label: "Cooldown", tone: "warning" }} />
         ) : readinessBlocked ? (
-          <StatusPill status={readinessPresentation(readiness)} />
+          <StatusPill status={readinessPresentation(readiness, locale)} />
         ) : !startOptionsAvailable ? (
           <StatusPill status={{ label: "Scenarios unavailable", tone: "warning" }} />
         ) : (
@@ -1423,23 +1546,28 @@ function StartGate({
       (recoveryUnavailable || readinessBlocked || startRetryAfterMs !== null) ? (
         shouldShowRetryWait && retryAfterMs !== undefined ? (
           <p className="m-0 text-sm text-muted">
-            Wait {formatSeconds(Math.ceil(retryAfterMs / 1_000))} before trying again.
+            {t("Wait ")}
+            {formatSeconds(Math.ceil(retryAfterMs / 1_000), locale)}
+            {t(" before trying again.")}
           </p>
         ) : null
       ) : null}
       {!activeRunPresentation && isRetryScheduled && retryDelayMs !== null ? (
         <p className="m-0 text-sm text-muted">
-          Automatic retry {retryAttempt} in {formatSeconds(Math.ceil(retryDelayMs / 1_000))}.
+          {t("Automatic retry ")}
+          {retryAttempt}
+          {t(" in ")}
+          {formatSeconds(Math.ceil(retryDelayMs / 1_000), locale)}.
         </p>
       ) : !activeRunPresentation && retriesExhausted ? (
         <p className="m-0 text-sm text-muted">
-          Automatic retries paused. Manual retry remains available.
+          {t("Automatic retries paused. Manual retry remains available.")}
         </p>
       ) : null}
       {!activeRunPresentation && presentation ? (
         <ErrorNotice context="public-start" onRetry={onRetry} presentation={presentation} />
       ) : !activeRunPresentation && statusMessage ? (
-        <p className="m-0 text-sm font-semibold text-muted-strong">{statusMessage}</p>
+        <p className="m-0 text-sm font-semibold text-muted-strong">{t(statusMessage)}</p>
       ) : null}
     </div>
   );
@@ -1454,6 +1582,7 @@ function customEntryAppliesToMode(entry: CustomRunSummaryEntry, mode: TrafficMod
 
 function readinessPresentation(
   readiness: BackendRead<HealthResponse>,
+  locale: Locale = "en",
 ): Pick<PresentationState, "label" | "tone"> {
   const readinessStatus =
     readiness.status === "unavailable" ||
@@ -1468,7 +1597,9 @@ function readinessPresentation(
           readiness: readinessStatus,
         });
   return {
-    label: readiness.status === "loading" ? "checking infrastructure" : "backend not ready",
+    label: getTranslation(locale)(
+      readiness.status === "loading" ? "checking infrastructure" : "backend not ready",
+    ),
     tone: presentation.tone,
   };
 }
@@ -1507,12 +1638,14 @@ function TrafficModeSelector({
   mode: TrafficMode;
   onChange: (mode: TrafficMode) => void;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-0 p-0">
       <legend className="float-left mr-1 flex min-h-11 items-center text-sm font-semibold text-ink">
-        Traffic pattern
+        {t("Traffic pattern")}
       </legend>
-      <FieldHint label="Traffic pattern" text={fieldHints.trafficPattern} />
+      <FieldHint label={t("Traffic pattern")} text={fieldHints.trafficPattern} />
       {(["buyer-spike", "constant-arrival-rate"] as const).map((trafficMode) => {
         const id = `custom-traffic-mode-${trafficMode}`;
         return (
@@ -1530,7 +1663,7 @@ function TrafficModeSelector({
               type="radio"
               value={trafficMode}
             />
-            {trafficModeLabel(trafficMode)}
+            {trafficModeLabel(trafficMode, locale)}
           </label>
         );
       })}
@@ -1563,6 +1696,8 @@ function LabeledInput({
   unit: string;
   value: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const [error, setError] = useState<string | null>(null);
   const descriptionId = `${id}-description`;
   const errorId = `${id}-error`;
@@ -1572,7 +1707,7 @@ function LabeledInput({
     <div className="grid min-w-0 content-start gap-1 text-sm text-muted-strong">
       <div className="flex min-h-6 items-center gap-1.5">
         <label className={fieldLabelClassName} htmlFor={id}>
-          {label} ({unit})
+          {t(label)} ({t(unit)})
         </label>
         <FieldHint label={label} text={hint} />
       </div>
@@ -1594,12 +1729,16 @@ function LabeledInput({
         value={value}
       />
       <span className={fieldHelpClassName} id={descriptionId}>
-        Unit: {unit}. Minimum: {formatCount(min)}. Maximum: {formatCount(max)}.
-        {instruction ? ` ${instruction}` : ""}
+        {t("Unit: ")}
+        {t(unit)}
+        {t(". Minimum: ")}
+        {formatCount(min, locale)}
+        {t(". Maximum: ")}
+        {formatCount(max, locale)}.{instruction ? ` ${t(instruction)}` : ""}
       </span>
       {visibleError ? (
         <span className="text-xs font-semibold text-danger" id={errorId}>
-          {visibleError}
+          {t(visibleError)}
         </span>
       ) : null}
     </div>

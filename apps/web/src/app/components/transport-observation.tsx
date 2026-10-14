@@ -1,3 +1,5 @@
+"use client";
+
 import type {
   HttpTimingBreakdownSummary,
   RequestArrivalSummary,
@@ -7,6 +9,8 @@ import type {
 } from "@checkout-surge/contracts";
 import { deriveRecordedReplyCount, hasObservedRequestArrivals } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import {
   formatCount,
   formatDurationMs,
@@ -96,20 +100,31 @@ function observationCoveragePercent(
 export function survivorshipWarningText(
   observation: TransportObservation,
   surface: ObservationSurface,
+  locale: Locale = "en",
 ): string {
-  if (hasUnknownTrafficCounts(observation.counts)) return trafficEvidenceUnavailableText;
-  const recorded = formatNumber(observation.repliesRecorded);
-  const planned = formatNumber(observation.counts.plannedRequests);
+  const t = getTranslation(locale);
+  if (hasUnknownTrafficCounts(observation.counts)) return t(trafficEvidenceUnavailableText);
+  const recorded = formatNumber(observation.repliesRecorded, locale);
+  const planned = formatNumber(observation.counts.plannedRequests, locale);
 
   if (surface === "list") {
-    return `Outcomes and latency cover ${recorded} of ${planned} attempts.`;
+    return t("Outcomes and latency cover {v0} of {v1} attempts.", {
+      v0: String(recorded),
+      v1: String(planned),
+    });
   }
 
   if (surface === "dashboard") {
-    return `Reply-dependent outcomes and latency cover ${recorded} of ${planned} attempts. The HTTP failure rate above is a separate load-generator measure and can include connection failures. Durable checkout records below are the authoritative record.`;
+    return t(
+      "Reply-dependent outcomes and latency cover {v0} of {v1} attempts. The HTTP failure rate above is a separate load-generator measure and can include connection failures. Durable checkout records below are the authoritative record.",
+      { v0: String(recorded), v1: String(planned) },
+    );
   }
 
-  return `Outcomes and latency above cover ${recorded} of ${planned} attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.`;
+  return t(
+    "Outcomes and latency above cover {v0} of {v1} attempts. The p95 describes replies received only. Durable checkout records are the authoritative record.",
+    { v0: String(recorded), v1: String(planned) },
+  );
 }
 
 /**
@@ -139,6 +154,8 @@ export function TransportObservationSection({
   surface: Extract<ObservationSurface, "list" | "detail">;
   trafficStartedAt?: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
   const preparation = deriveHarnessPreparation(arrivalSummary, trafficStartedAt, startDelaySeconds);
 
@@ -156,30 +173,30 @@ export function TransportObservationSection({
         {preparation ? (
           <>
             <ObservationRow
-              label="Configured start delay"
-              value={formatDuration(preparation.configuredDelaySeconds)}
+              label={t("Configured start delay")}
+              value={formatDuration(preparation.configuredDelaySeconds, locale)}
             />
             <ObservationRow
-              label="Startup overhead beyond configured delay"
-              value={formatDuration(preparation.startupOverheadSeconds)}
+              label={t("Startup overhead beyond configured delay")}
+              value={formatDuration(preparation.startupOverheadSeconds, locale)}
             />
             <ObservationRow
-              label="Time until checkout attempts begin"
-              value={formatDuration(preparation.totalPreparationSeconds)}
+              label={t("Time until checkout attempts begin")}
+              value={formatDuration(preparation.totalPreparationSeconds, locale)}
             />
           </>
         ) : null}
         <ObservationRow
           label={transportObservationLabels.planned}
-          value={formatNumber(counts.plannedRequests)}
+          value={formatNumber(counts.plannedRequests, locale)}
         />
         <ObservationRow
           label={transportObservationLabels.dispatched}
-          value={formatNumber(counts.startedRequests)}
+          value={formatNumber(counts.startedRequests, locale)}
         />
         <ObservationRow
           label={transportObservationLabels.repliesRecorded}
-          value={formatNumber(observation.repliesRecorded)}
+          value={formatNumber(observation.repliesRecorded, locale)}
         />
         {!hideZeroExceptions ||
         (observation.transportFailures !== null && observation.transportFailures > 0) ? (
@@ -191,7 +208,7 @@ export function TransportObservationSection({
                 : undefined
             }
             subordinate
-            value={formatNumber(observation.transportFailures)}
+            value={formatNumber(observation.transportFailures, locale)}
           />
         ) : null}
         {!hideZeroExceptions ||
@@ -204,7 +221,7 @@ export function TransportObservationSection({
                 : undefined
             }
             subordinate
-            value={formatNumber(counts.interruptedRequests)}
+            value={formatNumber(counts.interruptedRequests, locale)}
           />
         ) : null}
         {!hideZeroExceptions ||
@@ -213,32 +230,32 @@ export function TransportObservationSection({
             label={transportObservationLabels.neverDispatched}
             note={observation.hasUndispatchedAttempts ? undispatchedNote : undefined}
             subordinate
-            value={formatNumber(counts.unstartedRequests)}
+            value={formatNumber(counts.unstartedRequests, locale)}
           />
         ) : null}
       </dl>
       <div>
-        <h4 className="m-0 mt-4 text-xs font-medium text-muted">Load-generator outcomes</h4>
+        <h4 className="m-0 mt-4 text-xs font-medium text-muted">{t("Load-generator outcomes")}</h4>
         <dl className="m-0 mt-2 grid gap-2">
           <ObservationRow
-            label={publicVocabulary.acceptedResponses}
-            value={formatNumber(httpSummary.acceptedResponses)}
+            label={t(publicVocabulary.acceptedResponses)}
+            value={formatNumber(httpSummary.acceptedResponses, locale)}
           />
           <ObservationRow
-            label={publicVocabulary.soldOutRejectionsSeen}
-            value={formatNumber(httpSummary.soldOutResponses)}
+            label={t(publicVocabulary.soldOutRejectionsSeen)}
+            value={formatNumber(httpSummary.soldOutResponses, locale)}
           />
           {!hideZeroExceptions ||
           (httpSummary.unexpectedResponses !== null && httpSummary.unexpectedResponses > 0) ? (
             <ObservationRow
-              label="Unexpected"
-              value={formatNumber(httpSummary.unexpectedResponses)}
+              label={t("Unexpected")}
+              value={formatNumber(httpSummary.unexpectedResponses, locale)}
             />
           ) : null}
           <ObservationRow
-            label="Checkout response p95 (client-observed)"
+            label={t("Checkout response p95 (client-observed)")}
             note={observation.hasUnrecordedReplies ? biasedLatencyNote : undefined}
-            value={formatMilliseconds(httpSummary.p95LatencyMs)}
+            value={formatMilliseconds(httpSummary.p95LatencyMs, locale)}
           />
         </dl>
       </div>
@@ -273,22 +290,24 @@ export function deriveHarnessPreparation(
 }
 
 function FastReservationEvidence({ summary }: { summary: ServerReservationTimingSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <>
-      <h3 className="m-0 text-sm font-bold text-ink">Inventory reservation</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">{t("Inventory reservation")}</h3>
       <p className="m-0 mt-0.5 text-xs text-muted">
-        Inventory reservation start → reservation decision received
+        {t("Inventory reservation start → reservation decision received")}
       </p>
       <dl className="m-0 mt-3 grid gap-2">
         <ObservationRow
-          label="Observed reservation p95"
+          label={t("Observed reservation p95")}
           note="bounded p95 estimate"
-          value={formatHistogramBoundMilliseconds(summary.redisAtomicReservation.p95Ms)}
+          value={formatHistogramBoundMilliseconds(summary.redisAtomicReservation.p95Ms, locale)}
         />
         <ObservationRow
-          label="Reservation processing p95 bound"
+          label={t("Reservation processing p95 bound")}
           note="bounded p95 estimate; service entry → response ready"
-          value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms)}
+          value={formatHistogramBoundMilliseconds(summary.reserveOrderService.p95Ms, locale)}
         />
       </dl>
     </>
@@ -306,22 +325,26 @@ export function EnvironmentNote({
   runnerRegion: string | undefined;
   trafficStartedAt: string | undefined;
 }) {
+  const t = useTranslation();
+
   if (!runnerRegion && !trafficStartedAt) return null;
   return (
     <p
       className="m-0 mt-3 rounded-lg border border-border bg-surface-muted p-3 text-xs leading-5 text-muted"
       data-environment-note=""
     >
-      Environment note:{" "}
+      {t("Environment note:")}{" "}
       {runnerRegion ? (
         <>
-          this run was hosted, with the load generator on its own machine in region{" "}
+          {t("this run was hosted, with the load generator on its own machine in region")}{" "}
           <code>{runnerRegion}</code>.
         </>
       ) : (
-        "this run was local, with the load generator, API, database, order-processing service, and simulated ERP on one host."
+        t(
+          "this run was local, with the load generator, API, database, order-processing service, and simulated ERP on one host.",
+        )
       )}{" "}
-      These figures record one run in one environment, not a benchmark.
+      {t("These figures record one run in one environment, not a benchmark.")}
     </p>
   );
 }
@@ -339,27 +362,38 @@ export function deriveSendingEndedAt(arrivalSummary: RequestArrivalSummary): str
 }
 
 function ClientTimingBreakdown({ summary }: { summary: HttpTimingBreakdownSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <div className="mt-4 border-t border-border pt-3">
-      <h4 className="m-0 text-xs font-medium text-muted">Observed response timing</h4>
+      <h4 className="m-0 text-xs font-medium text-muted">{t("Observed response timing")}</h4>
       <p className="m-0 mt-0.5 text-xs text-muted">
-        Load-generator timing; waiting includes server and dependency queueing
+        {t("Load-generator timing; waiting includes server and dependency queueing")}
       </p>
       <dl className="m-0 mt-2 grid gap-2">
-        <ObservationRow label="Waiting p95" value={formatMilliseconds(summary.waiting?.p95Ms)} />
-        <ObservationRow label="Blocked p95" value={formatMilliseconds(summary.blocked?.p95Ms)} />
         <ObservationRow
-          label="Connecting p95"
-          value={formatMilliseconds(summary.connecting?.p95Ms)}
-        />
-        <ObservationRow label="Sending p95" value={formatMilliseconds(summary.sending?.p95Ms)} />
-        <ObservationRow
-          label="Receiving p95"
-          value={formatMilliseconds(summary.receiving?.p95Ms)}
+          label={t("Waiting p95")}
+          value={formatMilliseconds(summary.waiting?.p95Ms, locale)}
         />
         <ObservationRow
-          label="TLS handshake p95"
-          value={formatMilliseconds(summary.tlsHandshaking?.p95Ms)}
+          label={t("Blocked p95")}
+          value={formatMilliseconds(summary.blocked?.p95Ms, locale)}
+        />
+        <ObservationRow
+          label={t("Connecting p95")}
+          value={formatMilliseconds(summary.connecting?.p95Ms, locale)}
+        />
+        <ObservationRow
+          label={t("Sending p95")}
+          value={formatMilliseconds(summary.sending?.p95Ms, locale)}
+        />
+        <ObservationRow
+          label={t("Receiving p95")}
+          value={formatMilliseconds(summary.receiving?.p95Ms, locale)}
+        />
+        <ObservationRow
+          label={t("TLS handshake p95")}
+          value={formatMilliseconds(summary.tlsHandshaking?.p95Ms, locale)}
         />
       </dl>
     </div>
@@ -373,35 +407,41 @@ export function RequestArrivalEvidence({
   summary: RequestArrivalSummary;
   showSeries?: boolean;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   // A run whose generator never started an attempt still carries a summary; its zeros are an
   // absence of observation and must not be published as a measured peak or dispatch duration.
   const observed = hasObservedRequestArrivals(summary);
 
   return (
     <>
-      <h3 className="m-0 text-sm font-bold text-ink">Request arrival</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">{t("Request arrival")}</h3>
       <p className="m-0 mt-0.5 text-xs text-muted">
-        checkout attempts started by the load generator
+        {t("checkout attempts started by the load generator")}
       </p>
       {observed ? (
         <dl className="m-0 mt-3 grid gap-2">
           <ObservationRow
-            label={`Peak (${formatWindowSecondsAdjective(summary.peakArrivalWindowSeconds)} window)`}
-            value={`${formatNumber(summary.peakArrivalRatePerSecond)} attempts/s`}
+            label={t("Peak ({v0} window)", {
+              v0: String(formatWindowSecondsAdjective(summary.peakArrivalWindowSeconds, locale)),
+            })}
+            value={t("{v0} attempts/s", {
+              v0: String(formatNumber(summary.peakArrivalRatePerSecond, locale)),
+            })}
           />
           <ObservationRow
-            label="Checkout dispatch duration (observed)"
-            value={formatDuration(summary.dispatchDurationSeconds)}
+            label={t("Checkout dispatch duration (observed)")}
+            value={formatDuration(summary.dispatchDurationSeconds, locale)}
           />
         </dl>
       ) : (
         <p className="m-0 mt-3 text-sm font-semibold text-muted">
-          No checkout attempt was recorded for this run.
+          {t("No checkout attempt was recorded for this run.")}
         </p>
       )}
       {showSeries ? (
         <RequestArrivalRateSeries
-          emptyText="No arrival windows were recorded for this run."
+          emptyText={t("No arrival windows were recorded for this run.")}
           samples={summary.arrivalRateSeries}
         />
       ) : null}
@@ -419,14 +459,16 @@ export function RequestArrivalRateSeries({
   emptyText: string;
   samples: RequestArrivalSummary["arrivalRateSeries"];
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const visibleSamples = samples.slice(-arrivalSeriesDisplayLimit);
 
   return (
     <>
       {visibleSamples.length === 0 ? (
-        <p className="m-0 mt-3 text-xs text-muted">{emptyText}</p>
+        <p className="m-0 mt-3 text-xs text-muted">{t(emptyText)}</p>
       ) : (
-        <ol aria-label="Request arrival time series" className="m-0 mt-3 grid gap-1 p-0">
+        <ol aria-label={t("Request arrival time series")} className="m-0 mt-3 grid gap-1 p-0">
           {visibleSamples.map((sample) => (
             <li
               className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 text-xs text-muted"
@@ -435,10 +477,10 @@ export function RequestArrivalRateSeries({
               {/* Compact clock form: every sample sits inside one run whose dated lifecycle
                   boundaries are rendered alongside this series. */}
               <time dateTime={sample.windowStartedAt}>
-                {formatInstantUtc(sample.windowStartedAt, { variant: "timeOnly" }) ?? "n/a"}
+                {formatInstantUtc(sample.windowStartedAt, { variant: "timeOnly", locale }) ?? "n/a"}
               </time>
               <strong className="text-muted-strong">
-                {formatNumber(sample.ratePerSecond)} attempts/s
+                {formatNumber(sample.ratePerSecond, locale)} {t("attempts/s")}
               </strong>
             </li>
           ))}
@@ -459,6 +501,7 @@ export function TransportObservationPanelBlock({
   counts: TransportAttemptCounts;
   httpSummary: TrafficHttpSummary;
 }) {
+  const locale = useLocale();
   const observation = deriveTransportObservation(counts, httpSummary.transportFailures);
 
   return (
@@ -470,15 +513,15 @@ export function TransportObservationPanelBlock({
       <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[560px]:grid-cols-2">
         <PanelFact
           label={transportObservationLabels.planned}
-          value={formatNumber(counts.plannedRequests)}
+          value={formatNumber(counts.plannedRequests, locale)}
         />
         <PanelFact
           label={transportObservationLabels.dispatched}
-          value={formatNumber(counts.startedRequests)}
+          value={formatNumber(counts.startedRequests, locale)}
         />
         <PanelFact
           label={transportObservationLabels.repliesRecorded}
-          value={formatNumber(observation.repliesRecorded)}
+          value={formatNumber(observation.repliesRecorded, locale)}
         />
       </dl>
       <dl className="m-0 mt-3 grid grid-cols-3 gap-3 max-[560px]:grid-cols-1">
@@ -489,7 +532,7 @@ export function TransportObservationPanelBlock({
               ? transportFailureNote
               : undefined
           }
-          value={formatNumber(observation.transportFailures)}
+          value={formatNumber(observation.transportFailures, locale)}
         />
         <PanelFact
           label={transportObservationLabels.repliesNotRecorded}
@@ -498,12 +541,12 @@ export function TransportObservationPanelBlock({
               ? unrecordedReplyNote
               : undefined
           }
-          value={formatNumber(counts.interruptedRequests)}
+          value={formatNumber(counts.interruptedRequests, locale)}
         />
         <PanelFact
           label={transportObservationLabels.neverDispatched}
           note={observation.hasUndispatchedAttempts ? undispatchedNote : undefined}
-          value={formatNumber(counts.unstartedRequests)}
+          value={formatNumber(counts.unstartedRequests, locale)}
         />
       </dl>
       <SurvivorshipWarning observation={observation} surface="dashboard" />
@@ -512,15 +555,19 @@ export function TransportObservationPanelBlock({
 }
 
 function LensHeading() {
+  const t = useTranslation();
+
   return (
     <>
-      <h3 className="m-0 text-sm font-bold text-ink">{loadGeneratorLens.title}</h3>
-      <p className="m-0 mt-0.5 text-xs text-muted">{loadGeneratorLens.caption}</p>
+      <h3 className="m-0 text-sm font-bold text-ink">{t(loadGeneratorLens.title)}</h3>
+      <p className="m-0 mt-0.5 text-xs text-muted">{t(loadGeneratorLens.caption)}</p>
     </>
   );
 }
 
 function CoverageMeter({ observation }: { observation: TransportObservation }) {
+  const t = useTranslation();
+
   if (observation.coveragePercent === null || !observation.hasUnrecordedReplies) {
     return null;
   }
@@ -528,14 +575,15 @@ function CoverageMeter({ observation }: { observation: TransportObservation }) {
   return (
     <div className="mt-3 grid gap-1">
       <meter
-        aria-label="Observation coverage"
+        aria-label={t("Observation coverage")}
         className="meter block h-2 w-full rounded-full border-0 bg-surface-muted"
         max={100}
         min={0}
         value={observation.coveragePercent}
       />
       <p className="m-0 text-xs font-semibold text-muted">
-        {observation.coveragePercent}% of dispatched attempts recorded a reply
+        {observation.coveragePercent}
+        {t("% of dispatched attempts recorded a reply")}
       </p>
     </div>
   );
@@ -548,11 +596,12 @@ function SurvivorshipWarning({
   observation: TransportObservation;
   surface: ObservationSurface;
 }) {
+  const locale = useLocale();
   return (
     <ConditionalCaveat
       show={hasUnknownTrafficCounts(observation.counts) || observation.hasUnrecordedReplies}
     >
-      {survivorshipWarningText(observation, surface)}
+      {survivorshipWarningText(observation, surface, locale)}
     </ConditionalCaveat>
   );
 }
@@ -577,16 +626,18 @@ function ObservationRow({
   subordinate?: boolean;
   value: string;
 }) {
+  const t = useTranslation();
+
   const rowClassName = "grid grid-cols-[minmax(0,1fr)_auto] gap-3";
 
   return (
     <div className={subordinate ? `${rowClassName} border-l border-border pl-3` : rowClassName}>
       <dt className="text-sm text-muted">
-        {label}
-        {note ? <span className="mt-1 block text-xs leading-4 text-muted">{note}</span> : null}
+        {t(label)}
+        {note ? <span className="mt-1 block text-xs leading-4 text-muted">{t(note)}</span> : null}
       </dt>
       <dd className="m-0 max-w-48 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
-        {value}
+        {typeof value === "string" ? t(value) : value}
       </dd>
     </div>
   );
@@ -601,25 +652,31 @@ function PanelFact({
   note?: string | undefined;
   value: string;
 }) {
+  const t = useTranslation();
+
   return (
     <div className="min-w-0">
-      <dt className="mb-0.5 text-xs font-medium text-muted">{label}</dt>
+      <dt className="mb-0.5 text-xs font-medium text-muted">{t(label)}</dt>
       <dd className="m-0 [overflow-wrap:anywhere] text-base font-bold text-ink">
-        {value}
+        {typeof value === "string" ? t(value) : value}
         {note ? (
-          <span className="mt-1 block text-xs font-normal leading-4 text-muted">{note}</span>
+          <span className="mt-1 block text-xs font-normal leading-4 text-muted">{t(note)}</span>
         ) : null}
       </dd>
     </div>
   );
 }
 
-function formatNumber(value: number | null): string {
-  return formatCount(value) ?? "Unavailable";
+function formatNumber(value: number | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatCount(value, locale) ?? t("Unavailable");
 }
 
-export function formatMilliseconds(value: number | null | undefined): string {
-  return formatDurationMs(value) ?? "n/a";
+export function formatMilliseconds(
+  value: number | null | undefined,
+  locale: Locale = "en",
+): string {
+  return formatDurationMs(value, locale) ?? "n/a";
 }
 
 /**
@@ -630,10 +687,13 @@ export function formatMilliseconds(value: number | null | undefined): string {
  *
  * The bucket edges start at 0.25 ms, so `formatNumber` must keep fractional input.
  */
-export function formatHistogramBoundMilliseconds(value: number | null): string {
-  return value === null ? "n/a" : `≤ ${formatNumber(value)}ms`;
+export function formatHistogramBoundMilliseconds(
+  value: number | null,
+  locale: Locale = "en",
+): string {
+  return value === null ? "n/a" : `≤ ${formatNumber(value, locale)}ms`;
 }
 
-function formatDuration(seconds: number): string {
-  return formatDurationMs(seconds * 1_000) ?? "n/a";
+function formatDuration(seconds: number, locale: Locale = "en"): string {
+  return formatDurationMs(seconds * 1_000, locale) ?? "n/a";
 }

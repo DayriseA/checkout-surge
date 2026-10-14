@@ -7,6 +7,7 @@ import {
 } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
 import type { RetainedTerminalRun, RunSignalLiveSample } from "../dashboard-projection-state";
+import { getTranslation, type Locale } from "../i18n/translate";
 import type { AcceptedRunResult } from "./accepted-run-result";
 import {
   dashboardUpdateExpected,
@@ -53,15 +54,19 @@ export type WatchComposition =
   | TerminalWatchComposition<"completed">
   | TerminalWatchComposition<"failed">;
 
-export function deriveWatchComposition(input: {
-  acceptedResult?: AcceptedRunResult | undefined;
-  recovery: BackendRead<DashboardProjection>;
-  retainedTerminalRun: RetainedTerminalRun | null;
-  latestCompletedRun: BackendRead<RunHistoryListItem | null>;
-  signalSamples: RunSignalLiveSample[];
-  transportStatus: RealtimeConnectionStatus;
-  now: Date;
-}): WatchComposition {
+export function deriveWatchComposition(
+  input: {
+    acceptedResult?: AcceptedRunResult | undefined;
+    recovery: BackendRead<DashboardProjection>;
+    retainedTerminalRun: RetainedTerminalRun | null;
+    latestCompletedRun: BackendRead<RunHistoryListItem | null>;
+    signalSamples: RunSignalLiveSample[];
+    transportStatus: RealtimeConnectionStatus;
+    now: Date;
+  },
+  locale: Locale = "en",
+): WatchComposition {
+  const t = getTranslation(locale);
   const recoveredProjection = input.recovery.status === "available" ? input.recovery.data : null;
   const incompleteReset = recoveredProjection?.resetRecovery === "incomplete";
   const retainedProjection = input.retainedTerminalRun?.terminalRecap ?? null;
@@ -85,11 +90,11 @@ export function deriveWatchComposition(input: {
   const presentation: PresentationState = discarded
     ? {
         state: "cancelled",
-        label: "Cancelled",
+        label: t("Cancelled"),
         tone: "idle",
-        description: "Its experiment data was discarded.",
+        description: t("Its experiment data was discarded."),
       }
-    : deriveRunPresentationState(panelRecovery, projection);
+    : deriveRunPresentationState(panelRecovery, projection, undefined, locale);
   const freshness = deriveFreshness({
     transportStatus: input.transportStatus,
     recoveredAt: projection?.recoveredAt ?? input.now.toISOString(),

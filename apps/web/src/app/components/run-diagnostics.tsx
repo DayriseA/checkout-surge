@@ -1,8 +1,12 @@
+"use client";
+
 import {
   countUnavailableLoadRunDiagnosticProbes,
   type LoadRunDiagnosticsSummary,
 } from "@checkout-surge/contracts";
 import type { ReactNode } from "react";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { formatCount, formatInstantUtc } from "../lib/presentation/format";
 
 const unavailable = "Could not determine";
@@ -16,6 +20,8 @@ export function RunDiagnostics({
   apiDroppedLiveMetricBatchCount: number | null;
   warningCount?: number;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const unavailableCount = countUnavailableLoadRunDiagnosticProbes(summary);
   const fallbackCount = summary?.terminalMetricSources
     ? Object.values(summary.terminalMetricSources).filter((source) => source === "point_stream")
@@ -24,19 +30,19 @@ export function RunDiagnostics({
   return (
     <details className="rounded-2xl border border-border bg-surface">
       <summary className="disclosure flex-wrap px-5 py-3.5">
-        <h2 className="type-title m-0 inline text-base text-ink">Generator diagnostics</h2>
+        <h2 className="type-title m-0 inline text-base text-ink">{t("Generator diagnostics")}</h2>
         <span
           className={`text-xs font-semibold ${warningCount > 0 ? "text-warning" : "text-muted"}`}
         >
-          {formatNumber(warningCount)} warnings ·{" "}
-          {formatNumber(summary?.stderrLineCountRetained ?? 0)} stderr retained ·{" "}
+          {formatNumber(warningCount, locale)} {t("warnings ·")}{" "}
+          {formatNumber(summary?.stderrLineCountRetained ?? 0, locale)} {t("stderr retained ·")}{" "}
           {summary &&
           (summary.stderrLineTruncatedCount > 0 ||
             summary.stderrLineCountObserved > summary.stderrLineCountRetained)
-            ? "truncated"
-            : "not truncated"}{" "}
-          · {formatNumber(unavailableCount)} unavailable probes · {formatNumber(fallbackCount)}{" "}
-          fallback metric sources
+            ? t("truncated")
+            : t("not truncated")}{" "}
+          · {formatNumber(unavailableCount, locale)} {t("unavailable probes ·")}{" "}
+          {formatNumber(fallbackCount, locale)} {t("fallback metric sources")}
         </span>
       </summary>
       {summary ? (
@@ -60,7 +66,7 @@ export function RunDiagnostics({
         </div>
       ) : (
         <p className="m-0 border-t border-border p-4 text-sm font-semibold text-muted">
-          Generator diagnostics were unavailable for this run.
+          {t("Generator diagnostics were unavailable for this run.")}
         </p>
       )}
     </details>
@@ -68,12 +74,14 @@ export function RunDiagnostics({
 }
 
 function GeneratorHost({ summary }: { summary: LoadRunDiagnosticsSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   if (
     summary.nproc === null &&
     summary.ulimitNofile === null &&
     summary.processMaxOpenFiles === null
   ) {
-    return <UnavailableGroup title="Generator host" />;
+    return <UnavailableGroup title={t("Generator host")} />;
   }
 
   const cgroupCpuQuota = summary.generatorCapacity?.cgroupCpuQuota;
@@ -82,23 +90,26 @@ function GeneratorHost({ summary }: { summary: LoadRunDiagnosticsSummary }) {
     cgroupCpuQuota !== null &&
     cgroupCpuQuota !== undefined &&
     cgroupCpuQuota < summary.nproc
-      ? `Generator CPU scope differs: ${formatNumber(summary.nproc)} host logical CPUs; ${nullableNumber(cgroupCpuQuota)} cgroup CPU quota.`
+      ? t("Generator CPU scope differs: {v0} host logical CPUs; {v1} cgroup CPU quota.", {
+          v0: String(formatNumber(summary.nproc, locale)),
+          v1: String(nullableNumber(cgroupCpuQuota, locale)),
+        })
       : undefined;
 
   return (
     <DiagnosticGroup
-      title="Generator host"
+      title={t("Generator host")}
       {...(cpuScopeNote ? { note: cpuScopeNote } : {})}
       facts={[
-        ["Generator host logical CPUs", nullableNumber(summary.nproc)],
-        ["Generator process ulimit -n", nullableNumber(summary.ulimitNofile)],
+        [t("Generator host logical CPUs"), nullableNumber(summary.nproc, locale)],
+        [t("Generator process ulimit -n"), nullableNumber(summary.ulimitNofile, locale)],
         [
-          "k6 process open-files soft limit",
-          nullableNumber(summary.processMaxOpenFiles?.soft ?? null),
+          t("k6 process open-files soft limit"),
+          nullableNumber(summary.processMaxOpenFiles?.soft ?? null, locale),
         ],
         [
-          "k6 process open-files hard limit",
-          nullableNumber(summary.processMaxOpenFiles?.hard ?? null),
+          t("k6 process open-files hard limit"),
+          nullableNumber(summary.processMaxOpenFiles?.hard ?? null, locale),
         ],
       ]}
     />
@@ -110,26 +121,34 @@ function GeneratorCapacity({
 }: {
   capacity: LoadRunDiagnosticsSummary["generatorCapacity"];
 }) {
-  if (!capacity) return <UnavailableGroup title="Generator capacity" />;
+  const t = useTranslation();
+  const locale = useLocale();
+  if (!capacity) return <UnavailableGroup title={t("Generator capacity")} />;
 
   return (
     <DiagnosticGroup
-      title="Generator capacity"
+      title={t("Generator capacity")}
       facts={[
-        ["Generator host total memory", byteValue(capacity.memTotalBytes)],
-        ["Generator host available memory", byteValue(capacity.memAvailableBytes)],
-        ["Generator host swap", byteValue(capacity.swapTotalBytes)],
+        [t("Generator host total memory"), byteValue(capacity.memTotalBytes, locale)],
+        [t("Generator host available memory"), byteValue(capacity.memAvailableBytes, locale)],
+        [t("Generator host swap"), byteValue(capacity.swapTotalBytes, locale)],
         [
-          "Generator cgroup memory limit",
+          t("Generator cgroup memory limit"),
           limitValue(
             capacity.cgroupMemoryLimitBytes,
             capacity.cgroupMemoryLimitUnlimited,
             byteValue,
+            locale,
           ),
         ],
         [
-          "Generator cgroup CPU quota",
-          limitValue(capacity.cgroupCpuQuota, capacity.cgroupCpuQuotaUnlimited, nullableNumber),
+          t("Generator cgroup CPU quota"),
+          limitValue(
+            capacity.cgroupCpuQuota,
+            capacity.cgroupCpuQuotaUnlimited,
+            nullableNumber,
+            locale,
+          ),
         ],
       ]}
     />
@@ -143,34 +162,48 @@ function GeneratorUtilisation({
   utilisation: LoadRunDiagnosticsSummary["generatorUtilisation"];
   highEventsNotApplicable: boolean;
 }) {
-  if (!utilisation) return <UnavailableGroup title="Generator utilisation" />;
+  const t = useTranslation();
+  const locale = useLocale();
+  if (!utilisation) return <UnavailableGroup title={t("Generator utilisation")} />;
 
   return (
     <DiagnosticGroup
-      title="Generator utilisation"
+      title={t("Generator utilisation")}
       facts={[
-        ["k6 process peak RSS", byteValue(utilisation.peakK6RssBytes)],
-        ["Generator cgroup peak memory", byteValue(utilisation.peakCgroupMemoryBytes)],
+        [t("k6 process peak RSS"), byteValue(utilisation.peakK6RssBytes, locale)],
+        [t("Generator cgroup peak memory"), byteValue(utilisation.peakCgroupMemoryBytes, locale)],
         [
-          "Generator host minimum available memory",
-          byteValue(utilisation.minimumHostMemAvailableBytes),
+          t("Generator host minimum available memory"),
+          byteValue(utilisation.minimumHostMemAvailableBytes, locale),
         ],
-        ["k6 process peak CPU utilisation", percentValue(utilisation.peakCpuUtilisationPercent)],
-        ["k6 process mean CPU utilisation", percentValue(utilisation.meanCpuUtilisationPercent)],
-        ["Generator cgroup peak swap", byteValue(utilisation.peakCgroupSwapBytes)],
         [
-          "Generator cgroup memory high events",
+          t("k6 process peak CPU utilisation"),
+          percentValue(utilisation.peakCpuUtilisationPercent, locale),
+        ],
+        [
+          t("k6 process mean CPU utilisation"),
+          percentValue(utilisation.meanCpuUtilisationPercent, locale),
+        ],
+        [t("Generator cgroup peak swap"), byteValue(utilisation.peakCgroupSwapBytes, locale)],
+        [
+          t("Generator cgroup memory high events"),
           highEventsNotApplicable && utilisation.finalMemoryEventsHighCount === null
-            ? "Not applicable"
-            : nullableNumber(utilisation.finalMemoryEventsHighCount),
+            ? t("Not applicable")
+            : nullableNumber(utilisation.finalMemoryEventsHighCount, locale),
         ],
         [
-          "Generator cgroup memory max events",
-          nullableNumber(utilisation.finalMemoryEventsMaxCount),
+          t("Generator cgroup memory max events"),
+          nullableNumber(utilisation.finalMemoryEventsMaxCount, locale),
         ],
-        ["Generator cgroup OOM kills", nullableNumber(utilisation.finalMemoryEventsOomKillCount)],
-        ["Generator utilisation samples", formatNumber(utilisation.sampleCount)],
-        ["Generator sampling interval", `${formatNumber(utilisation.effectiveIntervalMs)}ms`],
+        [
+          t("Generator cgroup OOM kills"),
+          nullableNumber(utilisation.finalMemoryEventsOomKillCount, locale),
+        ],
+        [t("Generator utilisation samples"), formatNumber(utilisation.sampleCount, locale)],
+        [
+          t("Generator sampling interval"),
+          `${formatNumber(utilisation.effectiveIntervalMs, locale)}ms`,
+        ],
       ]}
     />
   );
@@ -181,60 +214,64 @@ function GeneratorNetwork({
 }: {
   network: LoadRunDiagnosticsSummary["networkDiagnostics"];
 }) {
-  if (!network) return <UnavailableGroup title="Generator network" />;
+  const t = useTranslation();
+  const locale = useLocale();
+  if (!network) return <UnavailableGroup title={t("Generator network")} />;
 
   return (
     <DiagnosticGroup
-      title="Generator network"
+      title={t("Generator network")}
       facts={[
-        ["Generator local TCP port range", network.ipLocalPortRange ?? unavailable],
-        ["Generator tcp_tw_reuse", nullableNumber(network.tcpTwReuse)],
-        ["Generator tcp_timestamps", nullableNumber(network.tcpTimestamps)],
+        [t("Generator local TCP port range"), network.ipLocalPortRange ?? unavailable],
+        [t("Generator tcp_tw_reuse"), nullableNumber(network.tcpTwReuse, locale)],
+        [t("Generator tcp_timestamps"), nullableNumber(network.tcpTimestamps, locale)],
       ]}
     />
   );
 }
 
 function K6Process({ summary }: { summary: LoadRunDiagnosticsSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const plan = summary.executionPlan;
   const planFacts: DiagnosticFact[] =
     plan.trafficMode === "buyer-spike"
       ? [
-          ["k6 traffic mode", "buyer spike"],
-          ["k6 buyer count", formatNumber(plan.buyerCount)],
-          ["k6 duplicate each buyer attempt", plan.duplicateEachBuyerAttempt ? "yes" : "no"],
-          ["k6 iterations per VU", formatNumber(plan.iterationsPerVu)],
-          ["k6 planned emitted attempts", formatNumber(plan.plannedEmittedAttempts)],
-          ["k6 start delay", `${formatNumber(plan.startDelaySeconds)}s`],
-          ["k6 maximum duration", `${formatNumber(plan.maxDurationSeconds)}s`],
+          [t("k6 traffic mode"), t("buyer spike")],
+          [t("k6 buyer count"), formatNumber(plan.buyerCount, locale)],
+          [t("k6 duplicate each buyer attempt"), plan.duplicateEachBuyerAttempt ? "yes" : "no"],
+          [t("k6 iterations per VU"), formatNumber(plan.iterationsPerVu, locale)],
+          [t("k6 planned emitted attempts"), formatNumber(plan.plannedEmittedAttempts, locale)],
+          [t("k6 start delay"), `${formatNumber(plan.startDelaySeconds, locale)}s`],
+          [t("k6 maximum duration"), `${formatNumber(plan.maxDurationSeconds, locale)}s`],
         ]
       : [
-          ["k6 traffic mode", "constant arrival rate"],
-          ["k6 scheduled rate", `${formatNumber(plan.ratePerSecond)}/s`],
-          ["k6 duration", `${formatNumber(plan.durationSeconds)}s`],
-          ["k6 planned emitted attempts", formatNumber(plan.plannedEmittedAttempts)],
-          ["k6 start delay", `${formatNumber(plan.startDelaySeconds)}s`],
-          ["k6 pre-allocated VUs", formatNumber(plan.preAllocatedVus)],
-          ["k6 maximum VUs", formatNumber(plan.maxVus)],
+          [t("k6 traffic mode"), t("constant arrival rate")],
+          [t("k6 scheduled rate"), `${formatNumber(plan.ratePerSecond, locale)}/s`],
+          [t("k6 duration"), `${formatNumber(plan.durationSeconds, locale)}s`],
+          [t("k6 planned emitted attempts"), formatNumber(plan.plannedEmittedAttempts, locale)],
+          [t("k6 start delay"), `${formatNumber(plan.startDelaySeconds, locale)}s`],
+          [t("k6 pre-allocated VUs"), formatNumber(plan.preAllocatedVus, locale)],
+          [t("k6 maximum VUs"), formatNumber(plan.maxVus, locale)],
         ];
 
   return (
     <DiagnosticGroup
-      title="k6 process"
+      title={t("k6 process")}
       facts={[
         [
-          "k6 started",
+          t("k6 started"),
           <time dateTime={summary.startedAt} key="started" title={summary.startedAt}>
-            {formatInstantUtc(summary.startedAt)}
+            {formatInstantUtc(summary.startedAt, { locale })}
           </time>,
         ],
         [
-          "k6 completed",
+          t("k6 completed"),
           <time dateTime={summary.completedAt} key="completed" title={summary.completedAt}>
-            {formatInstantUtc(summary.completedAt)}
+            {formatInstantUtc(summary.completedAt, { locale })}
           </time>,
         ],
-        ["k6 version", summary.k6Version ?? unavailable],
+        [t("k6 version"), summary.k6Version ?? unavailable],
         ...planFacts,
       ]}
     />
@@ -242,35 +279,37 @@ function K6Process({ summary }: { summary: LoadRunDiagnosticsSummary }) {
 }
 
 function MetricProvenance({ summary }: { summary: LoadRunDiagnosticsSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const sources = summary.terminalMetricSources;
   const warnings = summary.summaryExportWarnings;
 
   const facts: DiagnosticFact[] = sources
     ? [
-        ["k6 started-request source", metricSource(sources.startedRequests)],
-        ["k6 completed-request source", metricSource(sources.completedRequests)],
-        ["k6 accepted-response source", metricSource(sources.acceptedResponses)],
-        ["k6 sold-out-response source", metricSource(sources.soldOutResponses)],
-        ["k6 transport-failure source", metricSource(sources.transportFailures)],
-        ["k6 unexpected-response source", metricSource(sources.unexpectedResponses)],
-        ["k6 dropped-iteration source", metricSource(sources.droppedIterations)],
-        ["k6 completed-iteration source", metricSource(sources.completedIterations)],
+        [t("k6 started-request source"), metricSource(sources.startedRequests, locale)],
+        [t("k6 completed-request source"), metricSource(sources.completedRequests, locale)],
+        [t("k6 accepted-response source"), metricSource(sources.acceptedResponses, locale)],
+        [t("k6 sold-out-response source"), metricSource(sources.soldOutResponses, locale)],
+        [t("k6 transport-failure source"), metricSource(sources.transportFailures, locale)],
+        [t("k6 unexpected-response source"), metricSource(sources.unexpectedResponses, locale)],
+        [t("k6 dropped-iteration source"), metricSource(sources.droppedIterations, locale)],
+        [t("k6 completed-iteration source"), metricSource(sources.completedIterations, locale)],
       ]
-    : [["k6 terminal metric sources", unavailable]];
+    : [[t("k6 terminal metric sources"), unavailable]];
   if (warnings?.length) {
     facts.push([
-      "k6 summary-export warnings",
+      t("k6 summary-export warnings"),
       <ul className="m-0 list-none p-0" key="warnings">
         {warnings.map((warning) => (
           <li key={warning}>
-            {warningExplanation(warning)} <code>{warning}</code>
+            {warningExplanation(warning, locale)} <code>{warning}</code>
           </li>
         ))}
       </ul>,
     ]);
   }
 
-  return <DiagnosticGroup title="k6 metric provenance" facts={facts} />;
+  return <DiagnosticGroup title={t("k6 metric provenance")} facts={facts} />;
 }
 
 function LiveMetricStream({
@@ -280,33 +319,48 @@ function LiveMetricStream({
   runnerLoss: LoadRunDiagnosticsSummary["liveMetricLoss"];
   apiDroppedBatchCount: number | null;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <DiagnosticGroup
-      title="Live metric stream"
+      title={t("Live metric stream")}
       note="Only the live dashboard can miss these; the final report does not."
       facts={[
-        ["Runner dropped live metric batches", nullableNumber(runnerLoss?.batchCount ?? null)],
-        ["Runner dropped live metric samples", nullableNumber(runnerLoss?.sampleCount ?? null)],
-        ["API dropped live metric batches", nullableNumber(apiDroppedBatchCount)],
+        [
+          t("Runner dropped live metric batches"),
+          nullableNumber(runnerLoss?.batchCount ?? null, locale),
+        ],
+        [
+          t("Runner dropped live metric samples"),
+          nullableNumber(runnerLoss?.sampleCount ?? null, locale),
+        ],
+        [t("API dropped live metric batches"), nullableNumber(apiDroppedBatchCount, locale)],
       ]}
     />
   );
 }
 
 function K6Stderr({ summary }: { summary: LoadRunDiagnosticsSummary }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <section className="col-span-3 min-w-0 border-t border-border pt-3 max-[1100px]:col-span-2 max-[700px]:col-span-1">
-      <h3 className="m-0 text-sm font-bold text-ink">k6 stderr</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">{t("k6 stderr")}</h3>
       <DiagnosticFacts
         facts={[
-          ["k6 stderr lines observed", formatNumber(summary.stderrLineCountObserved)],
-          ["k6 stderr lines retained", formatNumber(summary.stderrLineCountRetained)],
-          ["k6 stderr retained-line limit", formatNumber(summary.stderrRetainedLineLimit)],
+          [t("k6 stderr lines observed"), formatNumber(summary.stderrLineCountObserved, locale)],
+          [t("k6 stderr lines retained"), formatNumber(summary.stderrLineCountRetained, locale)],
           [
-            "k6 stderr line-length limit",
-            `${formatNumber(summary.stderrLineTruncationLength)} characters`,
+            t("k6 stderr retained-line limit"),
+            formatNumber(summary.stderrRetainedLineLimit, locale),
           ],
-          ["k6 stderr lines truncated", formatNumber(summary.stderrLineTruncatedCount)],
+          [
+            t("k6 stderr line-length limit"),
+            t("{v0} characters", {
+              v0: String(formatNumber(summary.stderrLineTruncationLength, locale)),
+            }),
+          ],
+          [t("k6 stderr lines truncated"), formatNumber(summary.stderrLineTruncatedCount, locale)],
         ]}
       />
       {summary.stderrLines.length > 0 ? (
@@ -315,7 +369,7 @@ function K6Stderr({ summary }: { summary: LoadRunDiagnosticsSummary }) {
         </pre>
       ) : (
         <p className="m-0 mt-3 text-sm font-semibold text-muted">
-          No retained generator stderr lines.
+          {t("No retained generator stderr lines.")}
         </p>
       )}
     </section>
@@ -333,9 +387,11 @@ function DiagnosticGroup({
   note?: string;
   title: string;
 }) {
+  const t = useTranslation();
+
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">{t(title)}</h3>
       {note ? <p className="m-0 mt-1 text-xs text-muted">{note}</p> : null}
       <DiagnosticFacts facts={facts} />
     </section>
@@ -343,13 +399,15 @@ function DiagnosticGroup({
 }
 
 function DiagnosticFacts({ facts }: { facts: DiagnosticFact[] }) {
+  const t = useTranslation();
+
   return (
     <dl className="m-0 mt-3 grid gap-2">
       {facts.map(([label, value]) => (
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3" key={label}>
-          <dt className="text-sm text-muted">{label}</dt>
+          <dt className="text-sm text-muted">{t(label)}</dt>
           <dd className="m-0 max-w-56 [overflow-wrap:anywhere] text-right text-sm font-semibold text-muted-strong">
-            {value}
+            {typeof value === "string" ? t(value) : value}
           </dd>
         </div>
       ))}
@@ -358,86 +416,101 @@ function DiagnosticFacts({ facts }: { facts: DiagnosticFact[] }) {
 }
 
 function UnavailableGroup({ title }: { title: string }) {
+  const t = useTranslation();
+
   return (
     <section className="min-w-0 border-t border-border pt-3">
-      <h3 className="m-0 text-sm font-bold text-ink">{title}</h3>
+      <h3 className="m-0 text-sm font-bold text-ink">{t(title)}</h3>
       <p className="m-0 mt-3 text-sm font-semibold text-muted">
-        {title} diagnostics were unavailable.
+        {t(title)} {t("diagnostics were unavailable.")}
       </p>
     </section>
   );
 }
 
-function byteValue(value: number | null): ReactNode {
+function byteValue(value: number | null, locale: Locale = "en"): ReactNode {
+  const t = getTranslation(locale);
   return value === null ? (
     unavailable
   ) : (
-    <span title={`${value} bytes`}>{formatDiagnosticBytes(value)}</span>
+    <span title={t("{v0} bytes", { v0: String(value) })}>
+      {formatDiagnosticBytes(value, locale)}
+    </span>
   );
 }
 
-function percentValue(value: number | null): string {
-  return value === null ? unavailable : `${formatDecimal(value)}%`;
+function percentValue(value: number | null, locale: Locale = "en"): string {
+  return value === null ? unavailable : `${formatDecimal(value, locale)}%`;
 }
 
-function nullableNumber(value: number | null): string {
+function nullableNumber(value: number | null, locale: Locale = "en"): string {
   if (value === null) return unavailable;
-  return Number.isInteger(value) ? formatNumber(value) : formatDecimal(value);
+  return Number.isInteger(value) ? formatNumber(value, locale) : formatDecimal(value, locale);
 }
 
 function limitValue(
   value: number | null,
   unlimited: boolean | null,
-  formatter: (value: number | null) => ReactNode,
+  formatter: (value: number | null, locale: Locale) => ReactNode,
+  locale: Locale = "en",
 ): ReactNode {
-  if (value !== null) return formatter(value);
-  return unlimited === true ? "Unlimited" : unavailable;
+  const t = getTranslation(locale);
+  if (value !== null) return formatter(value, locale);
+  return unlimited === true ? t("Unlimited") : unavailable;
 }
 
-function metricSource(value: "summary_export" | "point_stream" | null): ReactNode {
+function metricSource(
+  value: "summary_export" | "point_stream" | null,
+  locale: Locale = "en",
+): ReactNode {
+  const t = getTranslation(locale);
   if (value === null) return unavailable;
   return (
     <>
-      {value === "summary_export" ? "k6 summary export" : "retained point-stream fallback"}{" "}
-      <code>{value}</code>
+      {value === "summary_export" ? t("k6 summary export") : t("retained point-stream fallback")}{" "}
+      <code>{typeof value === "string" ? t(value) : value}</code>
     </>
   );
 }
 
 function warningExplanation(
   value: NonNullable<LoadRunDiagnosticsSummary["summaryExportWarnings"]>[number],
+  locale: Locale = "en",
 ): string {
+  const t = getTranslation(locale);
   switch (value) {
     case "summary_export_missing":
-      return "The k6 summary export was not present.";
+      return t("The k6 summary export was not present.");
     case "summary_export_invalid":
-      return "The k6 summary export could not be validated.";
+      return t("The k6 summary export could not be validated.");
     case "summary_export_read_failed":
-      return "The k6 summary export could not be read.";
+      return t("The k6 summary export could not be read.");
     case "k6_outcome_counter_point_stream_fallback_used":
-      return "A retained point stream supplied an outcome counter.";
+      return t("A retained point stream supplied an outcome counter.");
     case "k6_outcome_counter_summary_export_unavailable":
-      return "A k6 outcome counter was unavailable from the summary export.";
+      return t("A k6 outcome counter was unavailable from the summary export.");
   }
 }
 
-function formatNumber(value: number): string {
-  return formatCount(value) ?? unavailable;
+function formatNumber(value: number, locale: Locale = "en"): string {
+  return formatCount(value, locale) ?? unavailable;
 }
 
 /**
  * Diagnostics is a technical-details block, so raw significant digits are retained here
  * deliberately: they support diagnosis rather than a public summary reading.
  */
-function formatDecimal(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumSignificantDigits: 4 }).format(value);
+function formatDecimal(value: number, locale: Locale = "en"): string {
+  return new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumSignificantDigits: 4,
+  }).format(value);
 }
 
-function formatDiagnosticBytes(value: number): string {
-  if (value < 1_024) return `${formatNumber(value)} B`;
+function formatDiagnosticBytes(value: number, locale: Locale = "en"): string {
+  if (value < 1_024) return `${formatNumber(value, locale)} B`;
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
   const exponent = Math.min(Math.floor(Math.log(value) / Math.log(1_024)), units.length - 1);
-  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(
-    value / 1_024 ** exponent,
-  )} ${units[exponent]}`;
+  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 1,
+  }).format(value / 1_024 ** exponent)} ${units[exponent]}`;
 }

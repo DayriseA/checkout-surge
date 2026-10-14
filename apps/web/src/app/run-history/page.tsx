@@ -5,10 +5,15 @@ import { RunHistoryAdminControls } from "../components/run-history-admin-control
 import { RunHistoryList } from "../components/run-history-list";
 import { StatusPill } from "../components/status-pill";
 import { getRunHistoryPage } from "../lib/api";
+import { getLocale } from "../lib/i18n/server";
+import { getTranslation } from "../lib/i18n/translate";
 import { formatRunCount } from "../lib/presentation/run-history-count";
 import { hasValidAdminPageSession } from "../lib/server/admin-page-session";
 
-export const metadata: Metadata = { title: "Run history" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return { title: t("Run history") };
+}
 export const dynamic = "force-dynamic";
 
 interface RunHistoryPageProps {
@@ -20,24 +25,28 @@ interface RunHistoryPageProps {
 const pageSize = 10;
 
 export default async function RunHistoryPage({ searchParams }: RunHistoryPageProps) {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+
   const resolvedSearchParams = await searchParams;
   const page = parsePositiveInteger(resolvedSearchParams?.page, 1);
   const history = await getRunHistoryPage(page, pageSize);
   const authenticated = await hasValidAdminPageSession();
   const runCount =
     history.status === "available"
-      ? formatRunCount(history.data.totalCount, "an unknown number of")
-      : "unavailable";
+      ? formatRunCount(history.data.totalCount, "an unknown number of", locale)
+      : t("unavailable");
   return (
     <>
       <header className="mb-5 grid grid-cols-[1fr_auto] items-end gap-x-8 gap-y-3 max-[900px]:grid-cols-1 max-[900px]:items-start">
         <div className="flex flex-wrap items-end gap-x-8 gap-y-2">
           <h1 className="type-display m-0 text-[clamp(2rem,4vw,2.75rem)] leading-none text-ink">
-            Run history
+            {t("Run history")}
           </h1>
           <p className="m-0 max-w-[60ch] leading-6 text-muted">
-            See which simulation ran, when it ran, and what happened, with one saved report for each
-            run.
+            {t(
+              "See which simulation ran, when it ran, and what happened, with one saved report for each run.",
+            )}
           </p>
         </div>
         <StatusPill
@@ -51,9 +60,9 @@ export default async function RunHistoryPage({ searchParams }: RunHistoryPagePro
         <HistorySurface authenticated={authenticated} history={history.data} />
       ) : (
         <section className="rounded-2xl border border-border bg-surface p-6">
-          <p className="m-0 text-xs font-medium text-muted">Finished runs</p>
+          <p className="m-0 text-xs font-medium text-muted">{t("Finished runs")}</p>
           <h2 className="type-title m-0 mt-0.5 text-lg leading-tight text-ink">
-            History unavailable
+            {t("History unavailable")}
           </h2>
           <ErrorNotice
             context={{ surface: "history-read", protected: authenticated }}

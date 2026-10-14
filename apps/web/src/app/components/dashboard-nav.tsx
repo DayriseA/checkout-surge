@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useTranslation } from "../lib/i18n/locale-context";
 import { publicNarrative } from "../lib/presentation/public-vocabulary";
 import { sitePages } from "../lib/site-links";
+import { LanguageSwitcher } from "./language-switcher";
 
 /** The logo links home; Admin and the detail pages other than How it works are in the footer. */
 const dashboardNavItems = [
@@ -25,6 +27,7 @@ function isCurrentRoute(pathname: string, href: string) {
 }
 
 export function DashboardNav({ children }: { children: ReactNode }) {
+  const t = useTranslation();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const navigationRef = useRef<HTMLElement>(null);
@@ -59,7 +62,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
 
   return (
     <nav
-      aria-label="Dashboard routes"
+      aria-label={t("Dashboard routes")}
       className="relative flex items-center justify-end gap-1"
       ref={navigationRef}
     >
@@ -88,7 +91,7 @@ export function DashboardNav({ children }: { children: ReactNode }) {
               href={item.href}
               key={item.href}
             >
-              {item.label}
+              {t(item.label)}
             </Link>
           );
         })}
@@ -98,11 +101,12 @@ export function DashboardNav({ children }: { children: ReactNode }) {
           rel="noopener noreferrer"
           target="_blank"
         >
-          Repository
-          <span className="sr-only"> (opens in a new tab)</span>
+          {t("Repository")}
+          <span className="sr-only">{t(" (opens in a new tab)")}</span>
         </a>
         {children}
       </div>
+      <LanguageSwitcher />
     </nav>
   );
 }

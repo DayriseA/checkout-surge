@@ -4,19 +4,18 @@ import {
   estimatedDemoOccupancyCeilingSeconds,
 } from "@checkout-surge/contracts";
 import type { Metadata } from "next";
+import { ContentPage, ContentSection, LinkRow, TextLink } from "../components/content-page";
 import {
-  ContentPage,
-  ContentSection,
-  LinkRow,
   listClassName,
   noteClassName,
   proseClassName,
   subheadingClassName,
-  TextLink,
-} from "../components/content-page";
+} from "../components/content-styles";
 import { ArchitectureDiagram } from "../components/diagrams/architecture-diagram";
 import { HostingTopologyDiagram } from "../components/diagrams/hosting-topology";
 import { MeasurementTable } from "../components/diagrams/measured-pair";
+import { getLocale } from "../lib/i18n/server";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import {
   hostedMeasurements,
   hostingSizes,
@@ -27,7 +26,10 @@ import {
 import { publicVocabulary } from "../lib/presentation/public-vocabulary";
 import { siteAnchors, siteLink } from "../lib/site-links";
 
-export const metadata: Metadata = { title: "Under the hood" };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = getTranslation(await getLocale());
+  return { title: t("Under the hood") };
+}
 export const dynamic = "force-dynamic";
 
 const anchors = siteAnchors.underTheHood;
@@ -46,194 +48,208 @@ const contents = [
   [anchors.glossary, "Glossary"],
 ] as const;
 
-export default function UnderTheHoodPage() {
+export default async function UnderTheHoodPage() {
+  const locale = await getLocale();
+  const t = getTranslation(locale);
+
   return (
     <ContentPage
       contents={contents}
-      lead="How Checkout-Surge is built, how a run works, how the comparisons are measured, and how the demo is hosted. Written for engineers."
-      title="Under the hood"
+      lead={t(
+        "How Checkout-Surge is built, how a run works, how the comparisons are measured, and how the demo is hosted. Written for engineers.",
+      )}
+      title={t("Under the hood")}
     >
-      <ContentSection id={anchors.architecture} title="Architecture">
+      <ContentSection id={anchors.architecture} title={t("Architecture")}>
         <p className={proseClassName}>
-          Five applications and two stores. The API owns the buy path. A worker owns everything
-          after a buyer&apos;s answer. A simulated ERP plays the back office, a load generator plays
-          the buyers, and the web app shows each run live.
+          {t(
+            "Five applications and two stores. The API owns the buy path. A worker owns everything after a buyer's answer. A simulated ERP plays the back office, a load generator plays the buyers, and the web app shows each run live.",
+          )}
         </p>
         <ArchitectureDiagram />
         <dl className="mb-0 mt-6 grid max-w-[68ch] grid-cols-[minmax(0,14rem)_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm leading-6 max-[560px]:grid-cols-1 max-[560px]:gap-y-0">
           {stack.map(([layer, technology]) => (
-            <div className="contents" key={layer}>
+            <div className="contents" key={t(layer)}>
               <dt className="text-muted max-[560px]:mt-2">{layer}</dt>
-              <dd className="m-0 font-semibold text-ink">{technology}</dd>
+              <dd className="m-0 font-semibold text-ink">{t(technology)}</dd>
             </div>
           ))}
         </dl>
       </ContentSection>
 
-      <ContentSection id={anchors.buyPath} title="The buy path">
+      <ContentSection id={anchors.buyPath} title={t("The buy path")}>
         <p className={proseClassName}>
-          Every checkout attempt first asks Redis to reserve its unit in one atomic operation, so
-          competing attempts cannot spend the same unit. Once the stock is gone, buyers turned away
-          are answered from Redis alone, without touching the database. A buyer who secures a unit
-          is answered only after the API has written its reservation and order to PostgreSQL in one
-          transaction and published the order to the queue.
+          {t(
+            "Every checkout attempt first asks Redis to reserve its unit in one atomic operation, so competing attempts cannot spend the same unit. Once the stock is gone, buyers turned away are answered from Redis alone, without touching the database. A buyer who secures a unit is answered only after the API has written its reservation and order to PostgreSQL in one transaction and published the order to the queue.",
+          )}
         </p>
         <p className={proseClassName}>
-          A buyer&apos;s answer includes more than the stock decision: waiting for a busy API and,
-          for successful buyers, the database write. Run history shows the two apart: the
-          reservation timing measures the decision, the response timing measures the whole answer.
+          {t(
+            "A buyer's answer includes more than the stock decision: waiting for a busy API and, for successful buyers, the database write. Run history shows the two apart: the reservation timing measures the decision, the response timing measures the whole answer.",
+          )}
         </p>
         <p className={proseClassName}>
-          Orders for unique reservations enter a BullMQ queue. Workers take that{" "}
-          <TextLink href="#backpressure">backlog</TextLink> at a safe rate instead of forwarding the
-          whole surge to the deliberately slow simulated ERP. Retries, worker limits, and the{" "}
-          <TextLink href="#circuit-breaker">circuit breaker</TextLink> keep downstream pressure
-          bounded. Reserved work waits in the queue rather than being dropped; the one deliberate
-          exception is a <TextLink href={`#${anchors.runs}`}>run reset</TextLink>, which discards
-          the whole run.
+          {t("Orders for unique reservations enter a BullMQ queue. Workers take that")}{" "}
+          <TextLink href="#backpressure">{t("backlog")}</TextLink>
+          {t(
+            " at a safe rate instead of forwarding the whole surge to the deliberately slow simulated ERP. Retries, worker limits, and the",
+          )}{" "}
+          <TextLink href="#circuit-breaker">{t("circuit breaker")}</TextLink>
+          {t(
+            " keep downstream pressure bounded. Reserved work waits in the queue rather than being dropped; the one deliberate exception is a ",
+          )}
+          <TextLink href={`#${anchors.runs}`}>{t("run reset")}</TextLink>
+          {t(", which discards the whole run.")}
         </p>
         <p className={proseClassName}>
-          The worker is configured with the ERP&apos;s declared capacity, as is common with
-          mainstream ERP and SaaS APIs that publish their limits. When a downstream limit is unknown
-          or variable, an adaptive client-side limiter, such as the adaptive retry mode of the AWS
-          SDKs, is the appropriate technique. This demo deliberately shows the common case of a
-          known limit.
+          {t(
+            "The worker is configured with the ERP's declared capacity, as is common with mainstream ERP and SaaS APIs that publish their limits. When a downstream limit is unknown or variable, an adaptive client-side limiter, such as the adaptive retry mode of the AWS SDKs, is the appropriate technique. This demo deliberately shows the common case of a known limit.",
+          )}
         </p>
         <p className={proseClassName}>
-          An ERP call can also end without a usable answer, such as a timeout. The worker never
-          retries such an <TextLink href="#uncertain-result">uncertain result</TextLink> blindly: it
-          first asks the ERP&apos;s durable confirmation ledger whether that idempotency key already
-          succeeded or was rejected, and replays the request with the same key only when the ERP has
-          no record of it. That is what keeps a retry from creating a second order.
+          {t(
+            "An ERP call can also end without a usable answer, such as a timeout. The worker never retries such an ",
+          )}
+          <TextLink href="#uncertain-result">{t("uncertain result")}</TextLink>
+          {t(
+            " blindly: it first asks the ERP's durable confirmation ledger whether that idempotency key already succeeded or was rejected, and replays the request with the same key only when the ERP has no record of it. That is what keeps a retry from creating a second order.",
+          )}
         </p>
       </ContentSection>
 
-      <ContentSection id={anchors.safetyNets} title="Safety nets">
-        <p className={proseClassName}>Each failure the demo expects, and what catches it.</p>
+      <ContentSection id={anchors.safetyNets} title={t("Safety nets")}>
+        <p className={proseClassName}>{t("Each failure the demo expects, and what catches it.")}</p>
         <dl className="mb-0 mt-4 grid max-w-[68ch] gap-3 text-base leading-7">
           {safetyNets.map(([failure, net]) => (
-            <div key={failure}>
-              <dt className="font-semibold text-ink">{failure}</dt>
-              <dd className="m-0 text-muted-strong">{net}</dd>
+            <div key={t(failure)}>
+              <dt className="font-semibold text-ink">{t(failure)}</dt>
+              <dd className="m-0 text-muted-strong">
+                {t(net, { minutes: automaticResetMinutes })}
+              </dd>
             </div>
           ))}
         </dl>
       </ContentSection>
 
-      <ContentSection id={anchors.runs} title="How a run works">
-        <h3 className={subheadingClassName}>Admission</h3>
+      <ContentSection id={anchors.runs} title={t("How a run works")}>
+        <h3 className={subheadingClassName}>{t("Admission")}</h3>
         <p className={proseClassName}>
-          One run at a time uses the demo, for every visitor. Before a run starts, the API estimates
-          how long the chosen configuration would occupy the demo and rejects it when that
-          conservative estimate exceeds the demo limit of at most {occupancyCeilingMinutes} minutes.
-          A visitor&apos;s custom run is also compared with the demo&apos;s measured capacity, and
-          refused if it is not expected to complete. The estimate serves admission only: an accepted
-          run that overruns it is neither stopped nor failed.
+          {t(
+            "One run at a time uses the demo, for every visitor. Before a run starts, the API estimates how long the chosen configuration would occupy the demo and rejects it when that conservative estimate exceeds the demo limit of at most ",
+          )}
+          {occupancyCeilingMinutes}
+          {t(
+            " minutes. A visitor's custom run is also compared with the demo's measured capacity, and refused if it is not expected to complete. The estimate serves admission only: an accepted run that overruns it is neither stopped nor failed.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>Finishing</h3>
+        <h3 className={subheadingClassName}>{t("Finishing")}</h3>
         <p className={proseClassName}>
-          Once the load generator has sent its last attempt, the run enters a finishing phase and
-          stops accepting new traffic. An empty queue is not the end. The run completes only when
-          nothing is queued, processing, or waiting to retry, every uncertain ERP call has been
-          resolved, every reservation has reached its durable record, and every confirmed order has
-          its {publicVocabulary.notifications}. This phase has no elapsed-time deadline; the only
-          time-based stop is the automatic reset below.
+          {t(
+            "Once the load generator has sent its last attempt, the run enters a finishing phase and stops accepting new traffic. An empty queue is not the end. The run completes only when nothing is queued, processing, or waiting to retry, every uncertain ERP call has been resolved, every reservation has reached its durable record, and every confirmed order has its ",
+          )}
+          {t(publicVocabulary.notifications)}
+          {t(
+            ". This phase has no elapsed-time deadline; the only time-based stop is the automatic reset below.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>Success</h3>
+        <h3 className={subheadingClassName}>{t("Success")}</h3>
         <p className={proseClassName}>
-          Every unique reservation must first reach a durable confirmed or failed order outcome. A
-          run completes successfully only when the finishing phase has settled every remaining
-          obligation and oversold units and failed or pending orders are all zero. Accepted
-          responses can outnumber unique reservations when an{" "}
-          <TextLink href="#idempotency">idempotent</TextLink> replay returns the original result;
-          the final result keeps those populations distinct and shows their invariant proof.
+          {t(
+            "Every unique reservation must first reach a durable confirmed or failed order outcome. A run completes successfully only when the finishing phase has settled every remaining obligation and oversold units and failed or pending orders are all zero. Accepted responses can outnumber unique reservations when an",
+          )}{" "}
+          <TextLink href="#idempotency">{t("idempotent")}</TextLink>
+          {t(
+            " replay returns the original result; the final result keeps those populations distinct and shows their invariant proof.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>Grace period and reset</h3>
+        <h3 className={subheadingClassName}>{t("Grace period and reset")}</h3>
         <p className={proseClassName}>
-          From {graceNoticeMinutes} minutes after acceptance the dashboard shows a grace-period
-          notice if the run is still unfinished. A run still unfinished at {automaticResetMinutes}{" "}
-          minutes is reset automatically so the next visitor can start. An admin can also reset a
-          run manually. Either reset stops all demo work immediately and discards the run&apos;s
-          data; one history line marked as cancelled remains.
+          {t("From ")}
+          {graceNoticeMinutes}
+          {t(
+            " minutes after acceptance the dashboard shows a grace-period notice if the run is still unfinished. A run still unfinished at ",
+          )}
+          {automaticResetMinutes}{" "}
+          {t(
+            "minutes is reset automatically so the next visitor can start. An admin can also reset a run manually. Either reset stops all demo work immediately and discards the run's data; one history line marked as cancelled remains.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>Comparisons: two runs in one slot</h3>
+        <h3 className={subheadingClassName}>{t("Comparisons: two runs in one slot")}</h3>
         <p className={proseClassName}>
-          A comparison preset runs its two modes as two chained runs on the same workload. The
-          second run starts as soon as the first completes, in the same slot, and the visitor&apos;s
-          run budget is charged once. Each run keeps its own time limit and automatic reset, and its
-          own report.
+          {t(
+            "A comparison preset runs its two modes as two chained runs on the same workload. The second run starts as soon as the first completes, in the same slot, and the visitor's run budget is charged once. Each run keeps its own time limit and automatic reset, and its own report.",
+          )}
         </p>
       </ContentSection>
 
-      <ContentSection id={anchors.signals} title="Live signals">
+      <ContentSection id={anchors.signals} title={t("Live signals")}>
         <ol className="mt-4 grid max-w-[68ch] list-none gap-4 p-0 leading-7 text-muted-strong [counter-reset:signal] [&>li]:relative [&>li]:pl-10 [&>li]:[counter-increment:signal] [&>li]:before:absolute [&>li]:before:left-0 [&>li]:before:top-0.5 [&>li]:before:grid [&>li]:before:size-7 [&>li]:before:place-items-center [&>li]:before:rounded-full [&>li]:before:bg-ink [&>li]:before:text-xs [&>li]:before:font-bold [&>li]:before:text-white [&>li]:before:content-[counter(signal)]">
           <li>
-            <strong className="text-ink">Request arrival</strong> shows checkout attempts starting
-            at the load generator, so the opening surge is visible rather than inferred from
-            completed responses.
+            <strong className="text-ink">{t("Request arrival")}</strong>
+            {t(
+              " shows checkout attempts starting at the load generator, so the opening surge is visible rather than inferred from completed responses.",
+            )}
           </li>
           <li>
-            <strong className="text-ink">Inventory drain</strong> shows remaining stock falling from
-            the starting amount as reservation quantities are secured, alongside the authoritative
-            oversell result.
+            <strong className="text-ink">{t("Inventory drain")}</strong>
+            {t(
+              " shows remaining stock falling from the starting amount as reservation quantities are secured, alongside the authoritative oversell result.",
+            )}
           </li>
           <li>
-            <strong className="text-ink">Processing backlog</strong> shows reserved orders waiting
-            for their first processing start, then draining as workers admit work safely.
+            <strong className="text-ink">{t("Processing backlog")}</strong>
+            {t(
+              " shows reserved orders waiting for their first processing start, then draining as workers admit work safely.",
+            )}
           </li>
           <li>
-            <strong className="text-ink">Confirmation convergence</strong> shows those reservations
-            reaching confirmed or failed durable outcomes; reservation-to-confirmation time explains
-            the expected lag.
+            <strong className="text-ink">{t("Confirmation convergence")}</strong>
+            {t(
+              " shows those reservations reaching confirmed or failed durable outcomes; reservation-to-confirmation time explains the expected lag.",
+            )}
           </li>
         </ol>
       </ContentSection>
 
-      <ContentSection id={anchors.measurement} title="How the comparisons are measured">
+      <ContentSection id={anchors.measurement} title={t("How the comparisons are measured")}>
         <p className={proseClassName}>
-          Each comparison runs one preset twice and switches one choice. A mode is a property of the
-          run, set only by its comparison preset.
+          {t(
+            "Each comparison runs one preset twice and switches one choice. A mode is a property of the run, set only by its comparison preset.",
+          )}
         </p>
         <ul className={`${listClassName} list-disc`}>
           {modes.map(([mode, description]) => (
-            <li key={mode}>
-              <strong className="text-ink">{mode}.</strong> {description}
+            <li key={t(mode)}>
+              <strong className="text-ink">{t(mode)}.</strong> {t(description)}
             </li>
           ))}
         </ul>
-        <h3 className={subheadingClassName}>Fairness rules</h3>
+        <h3 className={subheadingClassName}>{t("Fairness rules")}</h3>
         <ul className={`${listClassName} list-disc`}>
           {fairnessRules.map((rule) => (
-            <li key={rule}>{rule}</li>
+            <li key={t(rule)}>{t(rule)}</li>
           ))}
         </ul>
-        <h3 className={subheadingClassName}>The selling window</h3>
+        <h3 className={subheadingClassName}>{t("The selling window")}</h3>
         <p className={proseClassName}>
-          The Redis comparison&apos;s database figures cover the selling window: from the run&apos;s
-          start until every buyer has an answer. Transactions and time in queries come from
-          PostgreSQL&apos;s statistics for the whole database (the API&apos;s, the worker&apos;s and
-          recovery&apos;s work alike), and CPU time from PostgreSQL&apos;s own container. PostgreSQL
-          publishes a busy connection&apos;s statistics about once a second, so up to the
-          window&apos;s last second is left out, mostly the PostgreSQL run&apos;s decision reads:
-          the figures understate the gap.
+          {t(
+            "The Redis comparison's database figures cover the selling window: from the run's start until every buyer has an answer. Transactions and time in queries come from PostgreSQL's statistics for the whole database (the API's, the worker's and recovery's work alike), and CPU time from PostgreSQL's own container. PostgreSQL publishes a busy connection's statistics about once a second, so up to the window's last second is left out, mostly the PostgreSQL run's decision reads: the figures understate the gap.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>The buy-only pool</h3>
+        <h3 className={subheadingClassName}>{t("The buy-only pool")}</h3>
         <p className={proseClassName}>
-          Both runs of the Redis comparison are served by the same two buy-only API processes, while
-          one control process keeps run starts, resets, runner operations and recovery. With a
-          single process, that process was the bottleneck in both modes, so the comparison would
-          have measured the API rather than the stores. Ordinary runs and the queue comparison use
-          the single API process.
+          {t(
+            "Both runs of the Redis comparison are served by the same two buy-only API processes, while one control process keeps run starts, resets, runner operations and recovery. With a single process, that process was the bottleneck in both modes, so the comparison would have measured the API rather than the stores. Ordinary runs and the queue comparison use the single API process.",
+          )}
         </p>
-        <h3 className={subheadingClassName}>Pairs, medians and ranges</h3>
+        <h3 className={subheadingClassName}>{t("Pairs, medians and ranges")}</h3>
         <p className={proseClassName}>
-          Each comparison was started repeatedly on a copy of this demo with the same Machines. A
-          figure is the median across the pairs, with the lowest and highest pair in brackets, and a
-          difference is claimed only when every pair agrees. The run order is fixed, with the demo
-          as built first.
+          {t(
+            "Each comparison was started repeatedly on a copy of this demo with the same Machines. A figure is the median across the pairs, with the lowest and highest pair in brackets, and a difference is claimed only when every pair agrees. The run order is fixed, with the demo as built first.",
+          )}
         </p>
         <MeasurementTable
-          caption={`Queue comparison. ${queueComparison.method}`}
+          caption={t("Queue comparison. {value0}", { value0: t(queueComparison.method) })}
           figures={[
             queueComparison.everyBuyerAnswered,
             queueComparison.winnersP95,
@@ -245,7 +261,7 @@ export default function UnderTheHoodPage() {
         />
         {[redisComparison.cold, redisComparison.warm].map((measurement) => (
           <MeasurementTable
-            caption={`Redis comparison. ${measurement.method}`}
+            caption={t("Redis comparison. {value0}", { value0: t(measurement.method) })}
             figures={[
               measurement.transactions,
               measurement.timeInQueries,
@@ -259,10 +275,19 @@ export default function UnderTheHoodPage() {
           />
         ))}
         <p className={noteClassName}>
-          In every pair, all 500 orders were confirmed and no buyer went without an expected answer.
-          Over whole Redis comparison runs, the PostgreSQL order queue drains about{" "}
-          {postgresQueueDrain.postgres} orders per second against {postgresQueueDrain.bullmq} with
-          BullMQ; this happens after the selling window, so the figures above do not include it.
+          {t(
+            "In every pair, all 500 orders were confirmed and no buyer went without an expected answer. Over whole Redis comparison runs, the PostgreSQL order queue drains about",
+          )}{" "}
+          {new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US").format(
+            postgresQueueDrain.postgres,
+          )}
+          {t(" orders per second against ")}
+          {new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US").format(
+            postgresQueueDrain.bullmq,
+          )}
+          {t(
+            " with BullMQ; this happens after the selling window, so the figures above do not include it.",
+          )}
         </p>
         <LinkRow
           links={[
@@ -273,33 +298,43 @@ export default function UnderTheHoodPage() {
         />
       </ContentSection>
 
-      <ContentSection id={anchors.hosting} title="Hosting">
+      <ContentSection id={anchors.hosting} title={t("Hosting")}>
         <HostingTopologyDiagram />
         <ul className={`${listClassName} list-disc`}>
           <li>
-            <strong className="text-ink">Sleep and wake.</strong> The core stops itself after a
-            quiet period with no run. The next visitor wakes it through the gate, in about{" "}
-            {hostedMeasurements.wakeSeconds} seconds. A countdown under the header shows when it
-            will sleep, with a button to keep it awake.
+            <strong className="text-ink">{t("Sleep and wake.")}</strong>
+            {t(
+              " The core stops itself after a quiet period with no run. The next visitor wakes it through the gate, in about",
+            )}{" "}
+            {hostedMeasurements.wakeSeconds}
+            {t(
+              " seconds. A countdown under the header shows when it will sleep, with a button to keep it awake.",
+            )}
           </li>
           <li>
-            <strong className="text-ink">Sizes.</strong> The core Machine has {hostingSizes.core},
-            and the runner Machine has {hostingSizes.runner}, so the load generator never runs short
-            of CPU while it sends.
+            <strong className="text-ink">{t("Sizes.")}</strong>
+            {t(" The core Machine has ")}
+            {t(hostingSizes.core)}
+            {t(", and the runner Machine has ")}
+            {t(hostingSizes.runner)}
+            {t(", so the load generator never runs short of CPU while it sends.")}
           </li>
           <li>
-            <strong className="text-ink">A warm start.</strong> PostgreSQL saves the list of its
-            cached pages when it stops and reloads them when it starts (pg_prewarm), and each
-            buy-only process opens its connections before it accepts buyers.
+            <strong className="text-ink">{t("A warm start.")}</strong>
+            {t(
+              " PostgreSQL saves the list of its cached pages when it stops and reloads them when it starts (pg_prewarm), and each buy-only process opens its connections before it accepts buyers.",
+            )}
           </li>
           <li>
-            <strong className="text-ink">Disposable data.</strong> Run history and admin edits live
-            on the core&apos;s disk with no backup: a reinstall on new servers starts empty.
+            <strong className="text-ink">{t("Disposable data.")}</strong>
+            {t(
+              " Run history and admin edits live on the core's disk with no backup: a reinstall on new servers starts empty.",
+            )}
           </li>
         </ul>
       </ContentSection>
 
-      <PublicGlossary />
+      <PublicGlossary locale={locale} />
     </ContentPage>
   );
 }
@@ -344,7 +379,7 @@ const safetyNets = [
   ["A simulated email is missing", "A notification scanner queues it again."],
   [
     "A run never finishes",
-    `It is reset automatically at ${automaticResetMinutes} minutes, so the next visitor can start.`,
+    "It is reset automatically at {minutes} minutes, so the next visitor can start.",
   ],
 ] as const;
 
@@ -372,7 +407,9 @@ const fairnessRules = [
   "Equal groups: all winners, or all buyers, in both runs; never only those who got a given answer.",
 ] as const;
 
-function PublicGlossary() {
+function PublicGlossary({ locale = "en" }: { locale?: Locale }) {
+  const t = getTranslation(locale);
+
   const terms = [
     [
       "erp",
@@ -438,12 +475,12 @@ function PublicGlossary() {
   ] as const;
 
   return (
-    <ContentSection id={anchors.glossary} title="Glossary">
+    <ContentSection id={anchors.glossary} title={t("Glossary")}>
       <dl className="mb-0 mt-4 grid grid-cols-2 gap-x-10 max-[700px]:grid-cols-1">
         {terms.map(([id, term, definition]) => (
           <div className="scroll-mt-24 border-t border-border py-3" id={id} key={id} tabIndex={-1}>
-            <dt className="font-bold text-ink">{term}</dt>
-            <dd className="m-0 mt-1 text-sm leading-6 text-muted-strong">{definition}</dd>
+            <dt className="font-bold text-ink">{t(term)}</dt>
+            <dd className="m-0 mt-1 text-sm leading-6 text-muted-strong">{t(definition)}</dd>
           </div>
         ))}
       </dl>

@@ -17,7 +17,10 @@ import type {
   RunConfigDraft,
   RuntimePolicyDraft,
 } from "../../lib/admin-drafts";
+import { draftErrorMessage } from "../../lib/admin-drafts";
 import type { BackendRead } from "../../lib/api";
+import { useLocale, useTranslation } from "../../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../../lib/i18n/translate";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import {
   adminDraftFieldHints,
@@ -84,19 +87,23 @@ export function AdminRuntimePolicyView({
   showValidationSummary?: boolean;
   validationSummaryRevision?: number;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const policy = runtimePolicy.status === "available" ? runtimePolicy.data.policy : null;
   const latestRead = latestRuntimePolicyRead ?? runtimePolicy;
   return (
     <section className={`${panelClassName} lg:col-span-2`} id="public-runtime-policy">
       <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className={eyebrowClassName}>Public policy</p>
+          <p className={eyebrowClassName}>{t("Public policy")}</p>
           <h2 className={panelTitleClassName}>
-            Public runtime policy{" "}
-            <FieldHint label="Public runtime policy" text={adminFieldHints.publicPolicy} />
+            {t("Public runtime policy")}{" "}
+            <FieldHint label={t("Public runtime policy")} text={adminFieldHints.publicPolicy} />
           </h2>
           <p className="m-0 mt-1 text-sm text-muted">
-            Shared policy for future public starts. Already accepted runs keep their snapshots.
+            {t(
+              "Shared policy for future public starts. Already accepted runs keep their snapshots.",
+            )}
           </p>
         </div>
         <StatusPill
@@ -104,16 +111,16 @@ export function AdminRuntimePolicyView({
             label:
               policy && draft
                 ? draft.isPublicRunBudgetEnforced
-                  ? "budgeted"
-                  : "open"
-                : "not yet available",
+                  ? t("budgeted")
+                  : t("open")
+                : t("not yet available"),
             tone: policy && draft ? "ok" : "idle",
           }}
         />
       </div>
       <details className="rounded-xl border border-border px-4 py-3">
         <summary className="disclosure text-sm font-semibold text-ink">
-          Runtime budgets, custom limits, and deployment hard caps
+          {t("Runtime budgets, custom limits, and deployment hard caps")}
         </summary>
         <div className="mt-4">
           {policy && draft ? (
@@ -127,16 +134,16 @@ export function AdminRuntimePolicyView({
                 />
               ) : null}
               <div className="grid gap-3">
-                <p className={subheadingClassName}>Public budget</p>
+                <p className={subheadingClassName}>{t("Public budget")}</p>
                 <div className={fieldGridClassName}>
                   <Checkbox
-                    label="Enforce public budget"
+                    label={t("Enforce public budget")}
                     hint={adminFieldHints.publicBudget}
                     checked={draft.isPublicRunBudgetEnforced}
                     onChange={(value) => onUpdateDraft({ isPublicRunBudgetEnforced: value })}
                   />
                   <DraftInput
-                    label="Budget window seconds"
+                    label={t("Budget window seconds")}
                     draft={draft}
                     field="budgetWindowSeconds"
                     onUpdate={onUpdateDraft}
@@ -145,7 +152,7 @@ export function AdminRuntimePolicyView({
                     prefix="runtime-policy"
                   />
                   <DraftInput
-                    label="Per-visitor starts"
+                    label={t("Per-visitor starts")}
                     draft={draft}
                     field="perVisitorMaxStarts"
                     onUpdate={onUpdateDraft}
@@ -154,7 +161,7 @@ export function AdminRuntimePolicyView({
                     prefix="runtime-policy"
                   />
                   <DraftInput
-                    label="Global starts"
+                    label={t("Global starts")}
                     draft={draft}
                     field="globalMaxStarts"
                     onUpdate={onUpdateDraft}
@@ -166,11 +173,14 @@ export function AdminRuntimePolicyView({
               </div>
               <div className="grid gap-3">
                 <p className={subheadingClassName}>
-                  Public custom defaults{" "}
-                  <FieldHint label="Public custom defaults" text={adminFieldHints.publicDefaults} />
+                  {t("Public custom defaults")}{" "}
+                  <FieldHint
+                    label={t("Public custom defaults")}
+                    text={adminFieldHints.publicDefaults}
+                  />
                 </p>
                 <div className="border-y border-border">
-                  <ConfigFieldset legend="Traffic">
+                  <ConfigFieldset legend={t("Traffic")}>
                     <TrafficEditor
                       disabled={isPending}
                       draft={draft}
@@ -195,14 +205,17 @@ export function AdminRuntimePolicyView({
               </div>
               <div className="grid gap-3">
                 <p className={subheadingClassName}>
-                  Public custom limits{" "}
-                  <FieldHint label="Public custom limits" text={adminFieldHints.publicLimits} />
+                  {t("Public custom limits")}{" "}
+                  <FieldHint
+                    label={t("Public custom limits")}
+                    text={adminFieldHints.publicLimits}
+                  />
                 </p>
                 <div className={fieldGridClassName}>
                   {policyLimitFields.map(([field, label, step]) => (
                     <DraftInput
                       key={field}
-                      label={label}
+                      label={t(label)}
                       draft={draft}
                       field={field}
                       onUpdate={onUpdateDraft}
@@ -216,7 +229,7 @@ export function AdminRuntimePolicyView({
                 <div className="flex flex-wrap gap-x-8">
                   <Checkbox
                     alignWithInputs={false}
-                    label="Allow buyer spike"
+                    label={t("Allow buyer spike")}
                     hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowBuyerSpike"
                     checked={draft.allowBuyerSpike}
@@ -225,7 +238,7 @@ export function AdminRuntimePolicyView({
                   />
                   <Checkbox
                     alignWithInputs={false}
-                    label="Allow constant arrival"
+                    label={t("Allow constant arrival")}
                     hint={adminFieldHints.allowTrafficModes}
                     id="runtime-policy-allowConstantArrivalRate"
                     checked={draft.allowConstantArrivalRate}
@@ -236,39 +249,39 @@ export function AdminRuntimePolicyView({
               </div>
               <dl className="m-0 grid grid-cols-4 gap-3 rounded-xl bg-surface-muted p-4 max-[900px]:grid-cols-2">
                 <div className="col-span-full flex items-center gap-2 text-sm font-semibold text-ink">
-                  Deployment hard caps{" "}
+                  {t("Deployment hard caps")}{" "}
                   <FieldHint
-                    label="Deployment hard caps"
+                    label={t("Deployment hard caps")}
                     text={adminFieldHints.deploymentHardCaps}
                   />
                 </div>
                 <Fact
-                  label="Hard max buyers"
-                  value={formatCap(policy.deploymentHardCaps.maxBuyers)}
+                  label={t("Hard max buyers")}
+                  value={formatCap(policy.deploymentHardCaps.maxBuyers, locale)}
                 />
                 <Fact
-                  label="Hard max requests"
-                  value={formatCap(policy.deploymentHardCaps.maxTotalRequests)}
+                  label={t("Hard max requests")}
+                  value={formatCap(policy.deploymentHardCaps.maxTotalRequests, locale)}
                 />
                 <Fact
-                  label="Hard max requests/second"
-                  value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond)}
+                  label={t("Hard max requests/second")}
+                  value={formatCap(policy.deploymentHardCaps.maxRequestsPerSecond, locale)}
                 />
                 <Fact
-                  label="Hard max duration (seconds)"
-                  value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds)}
+                  label={t("Hard max duration (seconds)")}
+                  value={formatCap(policy.deploymentHardCaps.maxTrafficDurationSeconds, locale)}
                 />
                 <Fact
-                  label="Hard max start delay (seconds)"
-                  value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds)}
+                  label={t("Hard max start delay (seconds)")}
+                  value={formatCap(policy.deploymentHardCaps.maxTrafficStartDelaySeconds, locale)}
                 />
                 <Fact
-                  label="Hard max preallocated virtual users"
-                  value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus)}
+                  label={t("Hard max preallocated virtual users")}
+                  value={formatCap(policy.deploymentHardCaps.maxPreAllocatedVus, locale)}
                 />
                 <Fact
-                  label="Hard max virtual users"
-                  value={formatCap(policy.deploymentHardCaps.maxVus)}
+                  label={t("Hard max virtual users")}
+                  value={formatCap(policy.deploymentHardCaps.maxVus, locale)}
                 />
               </dl>
               <div className="flex flex-wrap gap-2">
@@ -278,7 +291,7 @@ export function AdminRuntimePolicyView({
                   onClick={onSave}
                   type="button"
                 >
-                  Save public policy
+                  {t("Save public policy")}
                 </button>
                 <button
                   className={buttonClassName}
@@ -286,7 +299,7 @@ export function AdminRuntimePolicyView({
                   onClick={onRefresh}
                   type="button"
                 >
-                  Refresh policy
+                  {t("Refresh policy")}
                 </button>
               </div>
               {latestRead.status === "unavailable" ? <Unavailable read={latestRead} /> : null}
@@ -300,7 +313,7 @@ export function AdminRuntimePolicyView({
                 onClick={onRefresh}
                 type="button"
               >
-                Refresh policy
+                {t("Refresh policy")}
               </button>
             </div>
           )}
@@ -318,8 +331,9 @@ export function AdminRuntimePolicyView({
  * among observed intervals in the run-history detail are operator-typed too and are tiered there.
  * Grouping still follows the one locale policy, so 100000 reads 100,000.
  */
-function formatCap(value: number): string {
-  return formatCount(value) ?? "not configured";
+function formatCap(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatCount(value, locale) ?? t("not configured");
 }
 
 const policyLimitFields: ReadonlyArray<[keyof RuntimePolicyDraft, string, string?]> = [
@@ -396,6 +410,8 @@ export function AdminPresetView({
   showValidationSummary: boolean;
   validationSummaryRevision: number;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const presetListPendingReasonId = useId();
   const startPendingReasonId = useId();
   const startBlockedReasonId = useId();
@@ -403,32 +419,32 @@ export function AdminPresetView({
   const copyPendingReasonId = useId();
   const archiveReasonId = useId();
   const duplicateReasonId = useId();
-  const actionPendingReason = isPending ? "A preset action is in progress." : null;
+  const actionPendingReason = isPending ? t("A preset action is in progress.") : null;
   const configLocked = isPending || Boolean(selectedPreset?.comparison);
   const saveReason = selectedPreset
-    ? (actionPendingReason ?? saveUnavailableReason(selectedPreset))
+    ? (actionPendingReason ?? saveUnavailableReason(selectedPreset, locale))
     : null;
   const archiveReason = selectedPreset
-    ? (actionPendingReason ?? archiveUnavailableReason(selectedPreset))
+    ? (actionPendingReason ?? archiveUnavailableReason(selectedPreset, locale))
     : null;
   const duplicateReason = selectedPreset
     ? (actionPendingReason ??
       (selectedPreset.slug === "public-custom"
-        ? "The public Custom scenario cannot be duplicated."
+        ? t("The public Custom scenario cannot be duplicated.")
         : null))
     : null;
   return (
     <section className={`${panelClassName} lg:col-span-2`} id="presets">
       <PanelHeading
-        eyebrow="Presets"
-        title="Inspection and starts"
+        eyebrow={t("Presets")}
+        title={t("Inspection and starts")}
         hint={adminFieldHints.presets}
         status={
           <StatusPill
             status={
               presetsRead.status === "unavailable"
-                ? { label: "unavailable", tone: "warning" }
-                : { label: `${presets.length} loaded`, tone: "ok" }
+                ? { label: t("unavailable"), tone: "warning" }
+                : { label: t("{value1} loaded", { value1: presets.length }), tone: "ok" }
             }
           />
         }
@@ -436,7 +452,7 @@ export function AdminPresetView({
       <div className="grid grid-cols-[minmax(11rem,14rem)_minmax(0,1fr)] gap-6 max-[800px]:grid-cols-1">
         {/* biome-ignore lint/a11y/useSemanticElements: Intentionally groups pressed buttons rather than native radios because preset changes may require confirmation. */}
         <div
-          aria-label="Preset selection"
+          aria-label={t("Preset selection")}
           className="grid content-start gap-1 min-[801px]:sticky min-[801px]:top-20"
           role="group"
         >
@@ -450,7 +466,7 @@ export function AdminPresetView({
               onClick={() => onSelect(preset.slug)}
               type="button"
             >
-              {preset.display.name}
+              {t(preset.display.name)}
             </button>
           ))}
           {actionPendingReason ? (
@@ -463,11 +479,11 @@ export function AdminPresetView({
         {selectedPreset && draft ? (
           <div className="grid min-w-0 gap-4 border-l border-border pl-6 max-[800px]:border-l-0 max-[800px]:pl-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h3 className="type-title m-0 text-xl text-ink">{selectedPreset.display.name}</h3>
+              <h3 className="type-title m-0 text-xl text-ink">{t(selectedPreset.display.name)}</h3>
               <span aria-live="polite" role="status">
                 <StatusPill
                   status={{
-                    label: isDirty ? "Unsaved" : "Saved",
+                    label: isDirty ? t("Unsaved") : t("Saved"),
                     tone: isDirty ? "warning" : "ok",
                   }}
                 />
@@ -475,12 +491,12 @@ export function AdminPresetView({
             </div>
             {selectedPreset.comparison ? (
               <p className="m-0 rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-sm font-semibold text-warning">
-                A comparison preset runs only as defined: its two runs share these values
+                {t("A comparison preset runs only as defined: its two runs share these values")}
               </p>
             ) : !selectedPreset.isEditable ? (
               <p className="m-0 rounded-lg border border-warning-line bg-warning-soft px-3 py-2 text-sm font-semibold text-warning">
-                You're editing values for a one-off run — {selectedPreset.display.name} itself can't
-                be changed
+                {t("You're editing values for a one-off run —")} {t(selectedPreset.display.name)}{" "}
+                {t("itself can't be changed")}
               </p>
             ) : null}
             {showValidationSummary ? (
@@ -491,23 +507,25 @@ export function AdminPresetView({
                 prefix="preset"
               />
             ) : null}
-            <ConfigGroup title="Preset identity">
-              <FieldRow label="Slug" value={selectedPreset.slug} hint={adminFieldHints.slug} />
+            <ConfigGroup title={t("Preset identity")}>
+              <FieldRow label={t("Slug")} value={selectedPreset.slug} hint={adminFieldHints.slug} />
               <FieldRow
-                label="Visibility"
+                label={t("Visibility")}
                 value={selectedPreset.visibility}
                 hint={adminFieldHints.visibility}
               />
               <FieldRow
-                label="Custom"
-                value={selectedPreset.isCustom ? "yes" : "no"}
+                label={t("Custom")}
+                value={selectedPreset.isCustom ? t("yes") : t("no")}
                 hint={adminFieldHints.custom}
               />
             </ConfigGroup>
-            <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">{draft.description}</p>
+            <p className="m-0 [overflow-wrap:anywhere] text-sm text-muted">
+              {t(draft.description)}
+            </p>
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)_8rem] gap-3 max-[1100px]:grid-cols-2 max-[560px]:grid-cols-1">
               <DraftInput
-                label="Name"
+                label={t("Name")}
                 hint={adminFieldHints.presetName}
                 draft={draft}
                 field="displayName"
@@ -519,7 +537,7 @@ export function AdminPresetView({
                 disabled={isPending || !selectedPreset.isEditable}
               />
               <DraftInput
-                label="Description"
+                label={t("Description")}
                 hint={adminFieldHints.presetDescription}
                 draft={draft}
                 field="description"
@@ -530,7 +548,7 @@ export function AdminPresetView({
                 disabled={isPending || !selectedPreset.isEditable}
               />
               <DraftInput
-                label="Sort order"
+                label={t("Sort order")}
                 hint={adminFieldHints.sortOrder}
                 draft={draft}
                 field="sortOrder"
@@ -542,7 +560,7 @@ export function AdminPresetView({
               />
             </div>
             <div className="border-y border-border">
-              <ConfigFieldset disabled={configLocked} legend="Traffic">
+              <ConfigFieldset disabled={configLocked} legend={t("Traffic")}>
                 <TrafficEditor
                   disabled={configLocked}
                   draft={draft}
@@ -553,7 +571,7 @@ export function AdminPresetView({
                   prefix="preset"
                 />
               </ConfigFieldset>
-              <ConfigFieldset disabled={configLocked} legend="Inventory">
+              <ConfigFieldset disabled={configLocked} legend={t("Inventory")}>
                 <RunConfigInputs
                   draft={draft}
                   errors={fieldErrors}
@@ -579,7 +597,7 @@ export function AdminPresetView({
                   prefix="preset"
                 />
                 <Checkbox
-                  label="ERP forced outage"
+                  label={t("ERP forced outage")}
                   hint={adminDraftFieldHints.erpForcedOutage}
                   disabled={configLocked}
                   id="preset-erpForcedOutage"
@@ -591,7 +609,7 @@ export function AdminPresetView({
               <ConfigFieldset
                 disabled={configLocked}
                 hint={adminFieldHints.workerBackpressure}
-                legend="Worker and backpressure"
+                legend={t("Worker and backpressure")}
               >
                 <RunConfigInputs
                   draft={draft}
@@ -621,7 +639,7 @@ export function AdminPresetView({
                   onClick={onStart}
                   type="button"
                 >
-                  Run once with these values
+                  {t("Run once with these values")}
                 </button>
                 {actionPendingReason ? (
                   <p className={reasonClassName} id={startPendingReasonId}>
@@ -646,7 +664,7 @@ export function AdminPresetView({
                   onClick={onSave}
                   type="button"
                 >
-                  Save preset
+                  {t("Save preset")}
                 </button>
                 {saveReason ? (
                   <p className={reasonClassName} id={saveReasonId}>
@@ -665,10 +683,10 @@ export function AdminPresetView({
                     onClick={onCopyToCustom}
                     type="button"
                   >
-                    Copy saved values to custom scenario
+                    {t("Copy saved values to custom scenario")}
                   </button>{" "}
                   <FieldHint
-                    label="Copy saved values to custom scenario"
+                    label={t("Copy saved values to custom scenario")}
                     text={adminFieldHints.copyToCustom}
                   />
                   {actionPendingReason ? (
@@ -685,7 +703,7 @@ export function AdminPresetView({
                     onClick={onArchive}
                     type="button"
                   >
-                    Archive preset
+                    {t("Archive preset")}
                   </button>
                   {archiveReason ? (
                     <p className={reasonClassName} id={archiveReasonId}>
@@ -706,9 +724,11 @@ export function AdminPresetView({
               >
                 <LabeledTextInput
                   disabled={isPending}
-                  help="Letters are lowercased and separators become hyphens, e.g. recruiter-demo."
+                  help={t(
+                    "Letters are lowercased and separators become hyphens, e.g. recruiter-demo.",
+                  )}
                   hint={adminFieldHints.duplicateSlug}
-                  label="Duplicate slug"
+                  label={t("Duplicate slug")}
                   name="duplicate-target-slug"
                   onChange={onDuplicateTargetSlugChange}
                   value={duplicateTargetSlug}
@@ -719,7 +739,7 @@ export function AdminPresetView({
                   disabled={isPending || selectedPreset.slug === "public-custom"}
                   type="submit"
                 >
-                  Duplicate saved preset
+                  {t("Duplicate saved preset")}
                 </button>
                 {duplicateReason ? (
                   <p className="col-span-full m-0 text-xs text-muted" id={duplicateReasonId}>
@@ -730,7 +750,7 @@ export function AdminPresetView({
             </div>
           </div>
         ) : presetsRead.status === "available" ? (
-          <p className="m-0 text-muted">No admin presets are available.</p>
+          <p className="m-0 text-muted">{t("No admin presets are available.")}</p>
         ) : null}
       </div>
       <AdminNoticeView notice={notice} />
@@ -739,7 +759,7 @@ export function AdminPresetView({
           className={`${buttonClassName} mt-4 inline-flex items-center`}
           href={acceptedRunId ? `/watch?${new URLSearchParams({ acceptedRunId })}` : "/watch"}
         >
-          Watch live
+          {t("Watch live")}
         </a>
       ) : null}
       <AdminNoticeView notice={syncNotice} />
@@ -747,18 +767,24 @@ export function AdminPresetView({
   );
 }
 
-function saveUnavailableReason(preset: AdminPresetListItem): string | null {
-  if (preset.visibility !== "admin") return "Public presets cannot be saved from the admin editor.";
-  if (!preset.isEditable) return "This read-only preset cannot be saved.";
+function saveUnavailableReason(preset: AdminPresetListItem, locale: Locale = "en"): string | null {
+  const t = getTranslation(locale);
+  if (preset.visibility !== "admin")
+    return t("Public presets cannot be saved from the admin editor.");
+  if (!preset.isEditable) return t("This read-only preset cannot be saved.");
   return null;
 }
 
-function archiveUnavailableReason(preset: AdminPresetListItem): string | null {
+function archiveUnavailableReason(
+  preset: AdminPresetListItem,
+  locale: Locale = "en",
+): string | null {
+  const t = getTranslation(locale);
   if (preset.canArchive) return null;
-  if (preset.isCustom) return "The Custom scratch scenario cannot be archived.";
-  if (preset.visibility !== "admin") return "Public presets cannot be archived.";
-  if (!preset.isEditable) return "Read-only and system presets cannot be archived.";
-  return "The server reports this preset can't be archived right now.";
+  if (preset.isCustom) return t("The Custom scratch scenario cannot be archived.");
+  if (preset.visibility !== "admin") return t("Public presets cannot be archived.");
+  if (!preset.isEditable) return t("Read-only and system presets cannot be archived.");
+  return t("The server reports this preset can't be archived right now.");
 }
 
 export function EffectiveRunPreview({
@@ -768,61 +794,68 @@ export function EffectiveRunPreview({
   config: AcceptedRunConfigSnapshot;
   defaultOpen?: boolean;
 }) {
+  const t = useTranslation();
   const traffic = config.trafficConfig;
   return (
     <details className="rounded-xl border border-border px-4 py-3" open={defaultOpen}>
       <summary className="disclosure text-sm font-semibold text-ink">
-        Effective run preview{" "}
-        <FieldHint label="Effective run preview" text={adminFieldHints.effectiveRunPreview} />
+        {t("Effective run preview")}{" "}
+        <FieldHint label={t("Effective run preview")} text={adminFieldHints.effectiveRunPreview} />
       </summary>
       <div className="mt-3 grid grid-cols-2 items-start gap-x-6 gap-y-3 max-[700px]:grid-cols-1">
         <div className="grid min-w-0 gap-3">
-          <ConfigGroup title="Traffic">
-            <FieldRow label="Mode" value={trafficModeLabel(traffic.mode)} />
+          <ConfigGroup title={t("Traffic")}>
+            <FieldRow label={t("Mode")} value={trafficModeLabel(traffic.mode)} />
             {traffic.mode === "buyer-spike" ? (
               <>
-                <FieldRow label="Buyer count" value={traffic.buyerCount} />
+                <FieldRow label={t("Buyer count")} value={traffic.buyerCount} />
                 <FieldRow
-                  label="Duplicate attempts"
-                  value={traffic.duplicateEachBuyerAttempt ? "yes" : "no"}
+                  label={t("Duplicate attempts")}
+                  value={traffic.duplicateEachBuyerAttempt ? t("yes") : t("no")}
                 />
-                <FieldRow label="Max duration seconds" value={traffic.maxDurationSeconds} />
+                <FieldRow label={t("Max duration seconds")} value={traffic.maxDurationSeconds} />
               </>
             ) : (
               <>
-                <FieldRow label="Requests per second" value={traffic.ratePerSecond} />
-                <FieldRow label="Duration seconds" value={traffic.durationSeconds} />
+                <FieldRow label={t("Requests per second")} value={traffic.ratePerSecond} />
+                <FieldRow label={t("Duration seconds")} value={traffic.durationSeconds} />
                 <FieldRow
-                  label="Preallocated VUs"
+                  label={t("Preallocated VUs")}
                   value={traffic.k6Vus?.preAllocatedVus ?? "automatic"}
                 />
-                <FieldRow label="Max VUs" value={traffic.k6Vus?.maxVus ?? "automatic"} />
+                <FieldRow label={t("Max VUs")} value={traffic.k6Vus?.maxVus ?? "automatic"} />
               </>
             )}
-            <FieldRow label="Start delay seconds" value={traffic.startDelaySeconds} />
-            <FieldRow label="Quantity per attempt" value={traffic.quantityPerAttempt} />
+            <FieldRow label={t("Start delay seconds")} value={traffic.startDelaySeconds} />
+            <FieldRow label={t("Quantity per attempt")} value={traffic.quantityPerAttempt} />
           </ConfigGroup>
-          <ConfigGroup title="Inventory">
-            <FieldRow label="Starting stock" value={config.inventoryConfig.startingStock} />
+          <ConfigGroup title={t("Inventory")}>
+            <FieldRow label={t("Starting stock")} value={config.inventoryConfig.startingStock} />
           </ConfigGroup>
         </div>
         <div className="grid min-w-0 gap-3">
-          <ConfigGroup title="Per-run ERP">
-            <FieldRow label="Latency ms" value={config.erpConfig.latencyMs} />
-            <FieldRow label="Max TPS" value={config.erpConfig.maxTps} />
-            <FieldRow label="Error rate" value={`${ratioToPercent(config.erpConfig.errorRate)}%`} />
-            <FieldRow label="Forced outage" value={config.erpConfig.forcedOutage ? "yes" : "no"} />
-          </ConfigGroup>
-          <ConfigGroup title="Worker and backpressure">
+          <ConfigGroup title={t("Per-run ERP")}>
+            <FieldRow label={t("Latency ms")} value={config.erpConfig.latencyMs} />
+            <FieldRow label={t("Max TPS")} value={config.erpConfig.maxTps} />
             <FieldRow
-              label="Physical queue name"
+              label={t("Error rate")}
+              value={`${ratioToPercent(config.erpConfig.errorRate)}%`}
+            />
+            <FieldRow
+              label={t("Forced outage")}
+              value={config.erpConfig.forcedOutage ? t("yes") : t("no")}
+            />
+          </ConfigGroup>
+          <ConfigGroup title={t("Worker and backpressure")}>
+            <FieldRow
+              label={t("Physical queue name")}
               value={config.backpressureConfig.physicalQueueName}
             />
             <FieldRow
-              label="Order process concurrency"
+              label={t("Order process concurrency")}
               value={config.backpressureConfig.orderProcessConcurrency}
             />
-            <FieldRow label="Queue name" value={config.backpressureConfig.queueName} />
+            <FieldRow label={t("Queue name")} value={config.backpressureConfig.queueName} />
           </ConfigGroup>
         </div>
       </div>
@@ -847,6 +880,8 @@ function TrafficEditor({
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
   prefix: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   return (
     <div className="col-span-full grid gap-3">
       <fieldset
@@ -857,11 +892,14 @@ function TrafficEditor({
         tabIndex={-1}
       >
         <legend className="float-left mr-1 flex min-h-10 items-center text-sm font-semibold text-ink">
-          Traffic pattern
+          {t("Traffic pattern")}
         </legend>
         <FieldHint
-          label="Traffic pattern"
-          text={`${fieldHints.trafficPattern} Technically, k6 per-vu-iterations (one virtual user per buyer) versus constant-arrival-rate.`}
+          label={t("Traffic pattern")}
+          text={t(
+            "{value1} Technically, k6 per-vu-iterations (one virtual user per buyer) versus constant-arrival-rate.",
+            { value1: fieldHints.trafficPattern },
+          )}
         />
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
           <label
@@ -876,13 +914,13 @@ function TrafficEditor({
               type="radio"
               value={mode}
             />
-            {trafficModeLabel(mode)}
+            {t(trafficModeLabel(mode))}
           </label>
         ))}
       </fieldset>
       {errors.mode ? (
         <span className="text-xs font-semibold text-danger" id={`${prefix}-mode-error`}>
-          {errors.mode.message}
+          {draftErrorMessage(errors.mode, locale)}
         </span>
       ) : null}
       <div className={fieldGridClassName}>
@@ -890,7 +928,7 @@ function TrafficEditor({
           <>
             <DraftInput
               disabled={disabled}
-              label="Buyer count"
+              label={t("Buyer count")}
               draft={draft}
               field="buyerCount"
               onUpdate={onUpdateDraft}
@@ -901,7 +939,7 @@ function TrafficEditor({
             />
             <DraftInput
               disabled={disabled}
-              label="Max duration seconds"
+              label={t("Max duration seconds")}
               draft={draft}
               field="maxDurationSeconds"
               onUpdate={onUpdateDraft}
@@ -911,7 +949,7 @@ function TrafficEditor({
               prefix={prefix}
             />
             <Checkbox
-              label="Duplicate attempts"
+              label={t("Duplicate attempts")}
               hint={adminDraftFieldHints.duplicateEachBuyerAttempt}
               disabled={disabled}
               id={`${prefix}-duplicateEachBuyerAttempt`}
@@ -924,7 +962,7 @@ function TrafficEditor({
           <>
             <DraftInput
               disabled={disabled}
-              label="Requests per second"
+              label={t("Requests per second")}
               draft={draft}
               field="ratePerSecond"
               onUpdate={onUpdateDraft}
@@ -935,7 +973,7 @@ function TrafficEditor({
             />
             <DraftInput
               disabled={disabled}
-              label="Duration seconds"
+              label={t("Duration seconds")}
               draft={draft}
               field="durationSeconds"
               onUpdate={onUpdateDraft}
@@ -946,7 +984,7 @@ function TrafficEditor({
             />
             <DraftInput
               disabled={disabled}
-              label="Preallocated VUs"
+              label={t("Preallocated VUs")}
               draft={draft}
               field="preAllocatedVus"
               onUpdate={onUpdateDraft}
@@ -957,7 +995,7 @@ function TrafficEditor({
             />
             <DraftInput
               disabled={disabled}
-              label="Max VUs"
+              label={t("Max VUs")}
               draft={draft}
               error={errors.maxVus}
               max={hardCaps?.maxVus}
@@ -970,7 +1008,7 @@ function TrafficEditor({
         )}
         <DraftInput
           disabled={disabled}
-          label="Start delay seconds"
+          label={t("Start delay seconds")}
           draft={draft}
           field="startDelaySeconds"
           onUpdate={onUpdateDraft}
@@ -1003,9 +1041,10 @@ function RunConfigFields({
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
   prefix: string;
 }) {
+  const t = useTranslation();
   return (
     <>
-      <ConfigFieldset legend="Inventory">
+      <ConfigFieldset legend={t("Inventory")}>
         <RunConfigInputs
           disabled={disabled}
           draft={draft}
@@ -1029,7 +1068,7 @@ function RunConfigFields({
         />
         {includeForcedOutage ? (
           <Checkbox
-            label="ERP forced outage"
+            label={t("ERP forced outage")}
             disabled={disabled}
             id={`${prefix}-erpForcedOutage`}
             checked={draft.erpForcedOutage}
@@ -1038,7 +1077,10 @@ function RunConfigFields({
           />
         ) : null}
       </ConfigFieldset>
-      <ConfigFieldset hint={adminFieldHints.workerBackpressure} legend="Worker and backpressure">
+      <ConfigFieldset
+        hint={adminFieldHints.workerBackpressure}
+        legend={t("Worker and backpressure")}
+      >
         <RunConfigInputs
           disabled={disabled}
           draft={draft}
@@ -1064,10 +1106,11 @@ function ConfigFieldset({
   hint?: string | undefined;
   legend: string;
 }) {
+  const t = useTranslation();
   return (
     <fieldset aria-disabled={disabled || undefined} className={settingsFieldsetClassName}>
       <legend className={settingsLegendClassName}>
-        {legend} {hint ? <FieldHint label={legend} text={hint} /> : null}
+        {t(legend)} {hint ? <FieldHint label={t(legend)} text={hint} /> : null}
       </legend>
       <div className={fieldGridClassName}>{children}</div>
     </fieldset>
@@ -1093,12 +1136,13 @@ function RunConfigInputs({
   onUpdateDraft: (next: Partial<RunConfigDraft>) => void;
   prefix: string;
 }) {
+  const t = useTranslation();
   return fields.map(([field, label, step]) => (
     <DraftInput
       disabled={disabled}
       max={field === "erpErrorRate" ? erpErrorRateMax : undefined}
       key={field}
-      label={label}
+      label={t(label)}
       draft={draft}
       field={field}
       onUpdate={onUpdateDraft}
@@ -1127,6 +1171,7 @@ export function EffectiveChangeList({
 }: {
   changes: ReadonlyArray<{ label: string; oldValue: ReactNode; proposedValue: ReactNode }>;
 }) {
+  const t = useTranslation();
   return (
     <ul className="m-0 grid list-none gap-2 p-0">
       {changes.map((change) => (
@@ -1136,13 +1181,15 @@ export function EffectiveChangeList({
         >
           <span className="font-semibold text-ink">{change.label}</span>
           <span>
-            <span className="sr-only">Old value: </span>
-            {change.oldValue}
+            <span className="sr-only">{t("Old value:")} </span>
+            {typeof change.oldValue === "string" ? t(change.oldValue) : change.oldValue}
           </span>
           <span aria-hidden="true">→</span>
           <span>
-            <span className="sr-only">Proposed value: </span>
-            {change.proposedValue}
+            <span className="sr-only">{t("Proposed value:")} </span>
+            {typeof change.proposedValue === "string"
+              ? t(change.proposedValue)
+              : change.proposedValue}
           </span>
         </li>
       ))}
@@ -1177,22 +1224,26 @@ function DraftInput<T extends object>({
   step?: string | undefined;
   type?: "number" | "text";
 }) {
-  const bounds = type === "number" ? intrinsicInputBounds(String(field)) : {};
+  const t = useTranslation();
+  const locale = useLocale();
+  const bounds = type === "number" ? intrinsicInputBounds(String(field), locale) : {};
   return (
     <LabeledTextInput
       disabled={disabled}
       error={error}
       help={
         field === "erpErrorRate" || String(field) === "maxErpErrorRate"
-          ? `Unit: percent. Minimum: 0. Maximum: ${max ?? 100}. Enter 25 for 25%.`
+          ? t("Unit: percent. Minimum: 0. Maximum: {value1}. Enter 25 for 25%.", {
+              value1: max ?? 100,
+            })
           : max === undefined
             ? bounds.help
-            : `${bounds.help ?? ""} Maximum: ${max}.`.trim()
+            : t("{value1} Maximum: {value2}.", { value1: bounds.help ?? "", value2: max }).trim()
       }
       hint={hint ?? adminDraftFieldHints[String(field)]}
       id={prefix ? `${prefix}-${String(field)}` : undefined}
       inputMode={type === "number" ? (step ? "decimal" : "numeric") : undefined}
-      label={label}
+      label={t(label)}
       name={String(field)}
       onChange={(value) => onUpdate({ [field]: value } as Partial<T>)}
       onBlur={() => onBlur?.(String(field))}
@@ -1202,12 +1253,16 @@ function DraftInput<T extends object>({
   );
 }
 
-function intrinsicInputBounds(field: string): {
+function intrinsicInputBounds(
+  field: string,
+  locale: Locale = "en",
+): {
   help?: string;
 } {
-  if (field === "sortOrder") return { help: "Whole number." };
+  const t = getTranslation(locale);
+  if (field === "sortOrder") return { help: t("Whole number.") };
   if (field.includes("ErrorRate") || field === "erpErrorRate")
-    return { help: "Unit: percent. Minimum: 0." };
+    return { help: t("Unit: percent. Minimum: 0.") };
   const unit =
     field === "maxRequestsPerSecond" || field === "ratePerSecond"
       ? "requests/second"
@@ -1220,11 +1275,11 @@ function intrinsicInputBounds(field: string): {
             : field.includes("Tps") || field.includes("TPS")
               ? "calls/second"
               : field.includes("Vus") || field.includes("VUs")
-                ? "virtual users"
+                ? t("virtual users")
                 : field.includes("Stock") || field === "startingStock"
-                  ? "units"
+                  ? t("units")
                   : field.includes("Buyer") || field === "buyerCount"
-                    ? "buyers"
+                    ? t("buyers")
                     : field === "maxTotalRequests"
                       ? "requests"
                       : field.includes("Concurrency")
@@ -1246,15 +1301,26 @@ function intrinsicInputBounds(field: string): {
     field === "erpLatencyMs" ||
     field === "maxErpLatencyMs"
   ) {
-    return { help: `Unit: ${unit}. Minimum: ${nonnegativeNumberMinimum}.` };
+    return {
+      help: t("Unit: {value1}. Minimum: {value2}.", {
+        value1: t(unit),
+        value2: nonnegativeNumberMinimum,
+      }),
+    };
   }
   if (field === "orderProcessConcurrency") {
     return {
-      help: `Unit: ${unit}. Minimum: ${formatCount(positiveIntegerMinimum)}. Maximum: ${formatCount(orderProcessConcurrencyHardCap)}.`,
+      help: t("Unit: {value1}. Minimum: {value2}. Maximum: {value3}.", {
+        value1: t(unit),
+        value2: formatCount(positiveIntegerMinimum, locale) ?? String(positiveIntegerMinimum),
+        value3:
+          formatCount(orderProcessConcurrencyHardCap, locale) ??
+          String(orderProcessConcurrencyHardCap),
+      }),
     };
   }
   return {
-    help: `Unit: ${unit}. Minimum: ${minimum}.`,
+    help: t("Unit: {value1}. Minimum: {value2}.", { value1: t(unit), value2: minimum }),
   };
 }
 
@@ -1277,6 +1343,8 @@ function Checkbox({
   hint?: string | undefined;
   onChange: (value: boolean) => void;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   // Beside inputs, skip the label row so the box centres on the neighbouring input.
   return (
     <div className={`grid content-start gap-1 ${alignWithInputs ? "min-[561px]:pt-7" : ""}`}>
@@ -1291,13 +1359,13 @@ function Checkbox({
             onChange={(event) => onChange(event.target.checked)}
             type="checkbox"
           />
-          {label}
+          {t(label)}
         </label>
-        {hint ? <FieldHint label={label} text={hint} /> : null}
+        {hint ? <FieldHint label={t(label)} text={hint} /> : null}
       </div>
       {error && id ? (
         <span className="text-xs font-semibold text-danger" id={`${id}-error`}>
-          {error.message}
+          {draftErrorMessage(error, locale)}
         </span>
       ) : null}
     </div>
@@ -1315,13 +1383,14 @@ function PanelHeading({
   status?: React.ReactNode;
   title: string;
 }) {
+  const t = useTranslation();
   return (
     <div className="mb-4 flex items-start justify-between gap-3">
       <div>
-        <p className={eyebrowClassName}>{eyebrow}</p>
+        <p className={eyebrowClassName}>{t(eyebrow)}</p>
         <h2 className={panelTitleClassName}>
-          {title}
-          {hint ? <FieldHint label={title} text={hint} /> : null}
+          {t(title)}
+          {hint ? <FieldHint label={t(title)} text={hint} /> : null}
         </h2>
       </div>
       <div className="shrink-0 whitespace-nowrap">{status}</div>
@@ -1330,11 +1399,12 @@ function PanelHeading({
 }
 
 export function Fact({ label, value }: { label: string; value: string }) {
+  const t = useTranslation();
   return (
     <div className="min-w-0">
-      <dt className="text-xs font-medium text-muted">{label}</dt>
+      <dt className="text-xs font-medium text-muted">{t(label)}</dt>
       <dd className="m-0 mt-0.5 [overflow-wrap:anywhere] text-sm font-semibold text-ink">
-        {value}
+        {t(value)}
       </dd>
     </div>
   );
@@ -1371,14 +1441,16 @@ function LabeledTextInput({
   type?: "number" | "password" | "text";
   value: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const controlId = id ?? name;
   return (
     <div className="grid min-w-0 content-start gap-1">
       <div className="flex min-h-6 items-center gap-1.5">
         <label className={fieldLabelClassName} htmlFor={controlId}>
-          {label}
+          {t(label)}
         </label>
-        {hint ? <FieldHint label={label} text={hint} /> : null}
+        {hint ? <FieldHint label={t(label)} text={hint} /> : null}
       </div>
       <input
         aria-describedby={
@@ -1402,12 +1474,12 @@ function LabeledTextInput({
       />
       {help && controlId ? (
         <span className={fieldHelpClassName} id={`${controlId}-help`}>
-          {help}
+          {t(help)}
         </span>
       ) : null}
       {error && controlId ? (
         <span className="text-xs font-semibold text-danger" id={`${controlId}-error`}>
-          {error.message}
+          {draftErrorMessage(error, locale)}
         </span>
       ) : null}
     </div>
@@ -1423,6 +1495,8 @@ function ValidationSummary({
   formErrors: DraftFormError[];
   prefix: string;
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const ref = useRef<HTMLDivElement>(null);
   const entries = Object.entries(errors);
   useEffect(() => {
@@ -1435,20 +1509,20 @@ function ValidationSummary({
       ref={ref}
       tabIndex={-1}
     >
-      <p className="m-0 font-bold">Correct the highlighted fields.</p>
+      <p className="m-0 font-bold">{t("Correct the highlighted fields.")}</p>
       <ul className="mb-0 mt-2 pl-5 [&_a]:font-semibold [&_a]:underline">
         {entries.map(([field, error]) => (
           <li key={field}>
-            <a href={`#${prefix}-${field}`}>{error.message}</a>
+            <a href={`#${prefix}-${field}`}>{draftErrorMessage(error, locale)}</a>
           </li>
         ))}
         {formErrors.map((error) => (
           <li key={`${error.message}-${error.fields.join("-")}`}>
-            {error.message}{" "}
+            {draftErrorMessage(error, locale)}{" "}
             {error.fields.map((field, index) => (
               <span key={field}>
                 {index ? ", " : ""}
-                <a href={`#${prefix}-${field}`}>{fieldLabel(field)}</a>
+                <a href={`#${prefix}-${field}`}>{t(fieldLabel(field))}</a>
               </span>
             ))}
           </li>
@@ -1496,8 +1570,10 @@ function fieldLabel(field: string): string {
 
 export function currentRunStatus(
   recovery: BackendRead<{ currentRun: { status: string } | null }>,
+  locale: Locale = "en",
 ): string {
+  const t = getTranslation(locale);
   return recovery.status === "available"
-    ? (recovery.data.currentRun?.status ?? "idle")
-    : "unavailable";
+    ? t(recovery.data.currentRun?.status ?? "idle")
+    : t("unavailable");
 }

@@ -1,3 +1,6 @@
+"use client";
+
+import { useTranslation } from "../lib/i18n/locale-context";
 import type {
   PresentationState,
   PresentationTone,
@@ -24,12 +27,14 @@ const toneMarkers: Record<PresentationTone, string> = {
 };
 
 export function StatusPill({ status }: StatusPillProps) {
+  const t = useTranslation();
+
   return (
     <span
       className={`inline-flex min-h-6 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${toneClassNames[status.tone]}`}
     >
       <span aria-hidden="true">{toneMarkers[status.tone]}</span>
-      {status.label}
+      {t(status.label)}
     </span>
   );
 }

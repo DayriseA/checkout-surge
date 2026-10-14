@@ -6,6 +6,7 @@ import {
   type PublicRunHistoryDetailResponse,
 } from "@checkout-surge/contracts";
 import type { CompletedBackendRead } from "../backend-read";
+import { getTranslation, type Locale } from "../i18n/translate";
 
 export const comparisonModeLabels: Record<ComparisonMode, string> = {
   demo: "With the order queue",
@@ -15,8 +16,12 @@ export const comparisonModeLabels: Record<ComparisonMode, string> = {
 };
 
 /** A comparison run's place in its pair and its mode: "Run 1 of 2 · With the order queue". */
-export function comparisonRunLabel(mode: ComparisonMode): string {
-  return `Run ${isFirstComparisonMode(mode) ? 1 : 2} of 2 · ${comparisonModeLabels[mode]}`;
+export function comparisonRunLabel(mode: ComparisonMode, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return t("Run {v0} of 2 · {v1}", {
+    v0: String(isFirstComparisonMode(mode) ? 1 : 2),
+    v1: t(comparisonModeLabels[mode]),
+  });
 }
 
 type DetailRead = CompletedBackendRead<PublicRunHistoryDetailResponse>;
@@ -119,8 +124,9 @@ function longestWait(cohorts: [BuyerWallLatency | null, number | null][]): numbe
   return longest;
 }
 
-export function formatPace(value: number | null): string | null {
-  return value === null ? null : `about ${Math.round(value)} per second`;
+export function formatPace(value: number | null, locale: Locale = "en"): string | null {
+  const t = getTranslation(locale);
+  return value === null ? null : t("about {v0} per second", { v0: String(Math.round(value)) });
 }
 
 /** One run of the Redis comparison; every count covers all buyers. Null means not recorded. */
@@ -159,12 +165,13 @@ export function redisComparisonRunFacts(detail: PublicRunHistoryDetailResponse) 
 export function formatMultiples(
   base: (number | null)[],
   amounts: (number | null)[],
+  locale: Locale = "en",
 ): string | null {
   const multiples = amounts.map((amount, index) => {
     const baseAmount = base[index] ?? null;
     return amount === null || baseAmount === null || baseAmount <= 0
       ? null
-      : `×${(amount / baseAmount).toFixed(1)}`;
+      : `×${(amount / baseAmount).toFixed(1).replace(".", locale === "fr" ? "," : ".")}`;
   });
   return multiples.every((multiple) => multiple !== null) ? multiples.join(" / ") : null;
 }

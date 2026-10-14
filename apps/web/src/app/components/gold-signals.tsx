@@ -1,3 +1,5 @@
+"use client";
+
 import type {
   ConsistencyLagSummary,
   DemoRunStatus,
@@ -6,6 +8,8 @@ import type {
 } from "@checkout-surge/contracts";
 import { hasObservedRequestArrivals } from "@checkout-surge/contracts";
 import type { RunSignalLiveSample } from "../lib/dashboard-projection-state";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { formatWindowSecondsAdjective } from "../lib/presentation/format";
 import { liveTrafficMetricWindowSeconds } from "../lib/presentation/public-vocabulary";
 import {
@@ -75,7 +79,10 @@ export type GoldSignalInput = {
  * The single sample-to-points selection shared by the full charts and the Watch signal strip, so
  * both presentations always describe the same evidence.
  */
-export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts {
+export function deriveGoldSignalCharts(
+  input: GoldSignalInput,
+  locale: Locale = "en",
+): GoldSignalCharts {
   const terminal = input.terminalSummary;
   const terminalRun = input.runStatus === "completed" || input.runStatus === "failed";
   const startingStock = input.startingStock ?? null;
@@ -101,23 +108,29 @@ export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts
         );
   const displayedLiveSamples = liveStartIndex < 0 ? [] : retainedLiveSamples.slice(liveStartIndex);
   const confirmationLiveSamples = selectConfirmationLiveSamples(displayedLiveSamples);
-  const headlines = deriveSignalHeadlines({
-    acceptedReservations: input.acceptedReservations,
-    arrivalSummary: input.arrivalSummary,
-    failedOrders: input.failedOrders ?? null,
-    liveLag: input.liveLag ?? null,
-    liveSamples: displayedLiveSamples,
-    oversoldUnits: input.oversoldUnits,
-    runStatus: input.runStatus,
-    startingStock,
-    terminalSummary: input.terminalSummary,
-  });
-  const axis = deriveSignalAxis({
-    arrival: arrivalEvidence,
-    firstLiveSampleAt: displayedLiveSamples[0]?.recoveredAt ?? null,
-    terminal,
-    terminalRun,
-  });
+  const headlines = deriveSignalHeadlines(
+    {
+      acceptedReservations: input.acceptedReservations,
+      arrivalSummary: input.arrivalSummary,
+      failedOrders: input.failedOrders ?? null,
+      liveLag: input.liveLag ?? null,
+      liveSamples: displayedLiveSamples,
+      oversoldUnits: input.oversoldUnits,
+      runStatus: input.runStatus,
+      startingStock,
+      terminalSummary: input.terminalSummary,
+    },
+    locale,
+  );
+  const axis = deriveSignalAxis(
+    {
+      arrival: arrivalEvidence,
+      firstLiveSampleAt: displayedLiveSamples[0]?.recoveredAt ?? null,
+      terminal,
+      terminalRun,
+    },
+    locale,
+  );
   const timelineOriginMs = axis.originMs;
   const toAxisElapsed = (timestamp: string) =>
     Number.isFinite(timelineOriginMs)
@@ -191,7 +204,7 @@ export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts
         ...displayedLiveSamples.map((sample) => toAxisElapsed(sample.recoveredAt)),
         ...arrivalPoints.map((point) => point.elapsedSeconds),
       );
-  const markers = terminal ? terminalEventMarkers(terminal, arrivalEvidence) : [];
+  const markers = terminal ? terminalEventMarkers(terminal, arrivalEvidence, locale) : [];
   const confirmationSecondary = Boolean(
     (terminal?.confirmationConvergence.failedOrderCount ?? input.failedOrders ?? 0) > 0,
   );
@@ -234,15 +247,17 @@ export function deriveGoldSignalCharts(input: GoldSignalInput): GoldSignalCharts
 }
 
 export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFileName?: string }) {
-  const derived = deriveGoldSignalCharts(input);
+  const t = useTranslation();
+  const locale = useLocale();
+  const derived = deriveGoldSignalCharts(input, locale);
   const { axis, charts, hasEvidence, headlines } = derived;
   const terminalRun = input.runStatus === "completed" || input.runStatus === "failed";
   if (!hasEvidence) {
     return (
       <section className="col-span-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-        <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
+        <p className="m-0 text-xs font-medium text-muted">{t("Sale evidence")}</p>
         <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
-          Arrival → reservation → backlog → confirmation
+          {t("Arrival → reservation → backlog → confirmation")}
         </h2>
         <SignalHeadlineGrid headlines={headlines} />
       </section>
@@ -250,11 +265,11 @@ export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFi
   }
   const markers = numberedMarkers(derived.markers);
   const confirmationSeries: ChartSeries[] = [
-    { label: "Confirmed", points: charts.confirmation.points, tone: "accent" },
+    { label: t("Confirmed"), points: charts.confirmation.points, tone: "accent" },
   ];
   if (charts.confirmation.secondary) {
     confirmationSeries.push({
-      label: "Settled",
+      label: t("Settled"),
       points: settledPoints(charts.confirmation.points),
       tone: "danger",
     });
@@ -263,18 +278,26 @@ export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFi
     <section className="col-span-full rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="m-0 text-xs font-medium text-muted">Sale evidence</p>
+          <p className="m-0 text-xs font-medium text-muted">{t("Sale evidence")}</p>
           <h2 className="type-title m-0 mt-0.5 text-xl leading-tight text-ink">
-            Arrival → reservation → backlog → confirmation
+            {t("Arrival → reservation → backlog → confirmation")}
           </h2>
           <p className="m-0 mt-1 text-xs leading-5 text-muted">
             {input.terminalSummary
               ? charts.arrival.available
-                ? `All panels cover the ${recordedRunDescriptor(input.runStatus)} from its first checkout attempt to its final timeline boundary.`
-                : `The timeline panels cover the ${recordedRunDescriptor(input.runStatus)} through its final timeline boundary; request-arrival evidence was not recorded.`
+                ? t(
+                    "All panels cover the {v0} from its first checkout attempt to its final timeline boundary.",
+                    { v0: String(recordedRunDescriptor(input.runStatus, locale)) },
+                  )
+                : t(
+                    "The timeline panels cover the {v0} through its final timeline boundary; request-arrival evidence was not recorded.",
+                    { v0: String(recordedRunDescriptor(input.runStatus, locale)) },
+                  )
               : terminalRun
-                ? "Final timeline evidence was not recorded; the run evidence that was recorded is shown where available."
-                : "Live panels show the available run updates."}
+                ? t(
+                    "Final timeline evidence was not recorded; the run evidence that was recorded is shown where available.",
+                  )
+                : t("Live panels show the available run updates.")}
           </p>
         </div>
         {csvFileName ? <SignalCsvDownload csv={signalCsv(charts)} fileName={csvFileName} /> : null}
@@ -284,51 +307,59 @@ export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFi
         <div className="grid gap-4">
           <SignalPanel
             available={charts.arrival.available}
-            ariaLabel="Request arrival timeline"
-            caption={`Checkout attempts started by the load generator in ${
-              input.arrivalSummary && hasObservedRequestArrivals(input.arrivalSummary)
-                ? formatWindowSecondsAdjective(input.arrivalSummary.peakArrivalWindowSeconds)
-                : formatWindowSecondsAdjective(liveTrafficMetricWindowSeconds)
-            } windows.`}
+            ariaLabel={t("Request arrival timeline")}
+            caption={t("Checkout attempts started by the load generator in {v0} windows.", {
+              v0: String(
+                input.arrivalSummary && hasObservedRequestArrivals(input.arrivalSummary)
+                  ? formatWindowSecondsAdjective(
+                      input.arrivalSummary.peakArrivalWindowSeconds,
+                      locale,
+                    )
+                  : formatWindowSecondsAdjective(liveTrafficMetricWindowSeconds, locale),
+              ),
+            })}
             headline={headlines.arrival.detail}
             id="watch-signal-arrival"
             markers={markers}
-            series={[{ label: "Arrivals", points: charts.arrival.points, tone: "accent" }]}
-            title="Request arrival"
+            series={[{ label: t("Arrivals"), points: charts.arrival.points, tone: "accent" }]}
+            title={t("Request arrival")}
             unit="attempts/s"
             xMax={charts.arrival.xMax}
           />
           <SignalPanel
             available={charts.backlog.available}
-            ariaLabel="Processing backlog timeline"
-            caption="Reserved orders waiting for their first processing start."
+            ariaLabel={t("Processing backlog timeline")}
+            caption={t("Reserved orders waiting for their first processing start.")}
             headline={headlines.backlog.detail}
-            hint={`Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are counted separately (${formatNumber(
-              input.retryingOrderCount ?? 0,
-            )}) because retries can return to processing without re-entering this backlog.`}
+            hint={t(
+              "Drain duration runs from the first queued order to final backlog zero. Run-owned retrying orders are counted separately ({v0}) because retries can return to processing without re-entering this backlog.",
+              { v0: String(formatNumber(input.retryingOrderCount ?? 0, locale)) },
+            )}
             id="watch-signal-backlog"
             markers={markers}
             series={[
-              { area: true, label: "Backlog", points: charts.backlog.points, tone: "accent" },
+              { area: true, label: t("Backlog"), points: charts.backlog.points, tone: "accent" },
             ]}
-            title="Processing backlog"
+            title={t("Processing backlog")}
             unit="orders"
             xMax={charts.backlog.xMax}
           />
           <SignalPanel
             available={charts.confirmation.available}
-            ariaLabel="Confirmation timeline"
+            ariaLabel={t("Confirmation timeline")}
             caption={
               charts.confirmation.secondary
-                ? "Cumulative confirmed orders; settled adds failed orders."
-                : "Cumulative confirmed orders."
+                ? t("Cumulative confirmed orders; settled adds failed orders.")
+                : t("Cumulative confirmed orders.")
             }
             headline={headlines.confirmation.detail}
-            hint="Reservation-to-confirmation time is elapsed from reservation secured to final confirmation."
+            hint={t(
+              "Reservation-to-confirmation time is elapsed from reservation secured to final confirmation.",
+            )}
             id="watch-signal-confirmation"
             markers={markers}
             series={confirmationSeries}
-            title="Reservation-to-confirmation"
+            title={t("Reservation-to-confirmation")}
             unit="orders"
             xMax={charts.confirmation.xMax}
           />
@@ -344,30 +375,39 @@ export function GoldSignals({ csvFileName, ...input }: GoldSignalInput & { csvFi
  * on one shared scale, so the drain and the convergence read as one story.
  */
 export function PublicSignalChart(input: GoldSignalInput) {
-  const { axis, charts, markers } = deriveGoldSignalCharts(input);
+  const t = useTranslation();
+  const locale = useLocale();
+  const { axis, charts, markers } = deriveGoldSignalCharts(input, locale);
   const series: ChartSeries[] = [
     ...(charts.backlog.available
-      ? [{ area: true, label: "Waiting", points: charts.backlog.points, tone: "accent" as const }]
+      ? [
+          {
+            area: true,
+            label: t("Waiting"),
+            points: charts.backlog.points,
+            tone: "accent" as const,
+          },
+        ]
       : []),
     ...(charts.confirmation.available
-      ? [{ label: "Confirmed", points: charts.confirmation.points, tone: "ok" as const }]
+      ? [{ label: t("Confirmed"), points: charts.confirmation.points, tone: "ok" as const }]
       : []),
   ];
   return (
     <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-      <h3 className="type-title m-0 text-base leading-tight text-ink">Orders over time</h3>
+      <h3 className="type-title m-0 text-base leading-tight text-ink">{t("Orders over time")}</h3>
       {series.length === 0 ? (
         <p className="m-0 mt-2 text-sm text-muted">
-          The order timeline was not recorded for this run.
+          {t("The order timeline was not recorded for this run.")}
         </p>
       ) : (
         <>
           <p className="m-0 mb-3 mt-1 text-xs leading-5 text-muted">
-            Reserved orders waiting to be processed, and orders confirmed so far.
+            {t("Reserved orders waiting to be processed, and orders confirmed so far.")}
           </p>
           <SignalCursorProvider>
             <SignalChart
-              ariaLabel="Orders over time"
+              ariaLabel={t("Orders over time")}
               markers={numberedMarkers(markers)}
               series={series}
               unit="orders"
@@ -407,6 +447,8 @@ function SignalPanel({
   unit: string;
   xMax: number;
 }) {
+  const t = useTranslation();
+
   return (
     <article
       className="grid grid-cols-[minmax(13rem,0.35fr)_minmax(0,1fr)] gap-4 border-t border-border pt-3 max-[700px]:grid-cols-1"
@@ -415,13 +457,13 @@ function SignalPanel({
     >
       <div>
         <h3 className="m-0 flex items-center gap-1.5 text-sm font-bold text-ink">
-          {title}
-          {hint ? <FieldHint label={title} text={hint} /> : null}
+          {t(title)}
+          {hint ? <FieldHint label={t(title)} text={hint} /> : null}
         </h3>
         {available && headline ? (
-          <p className="m-0 mt-1 text-xs font-semibold text-muted-strong">{headline}</p>
+          <p className="m-0 mt-1 text-xs font-semibold text-muted-strong">{t(headline)}</p>
         ) : null}
-        <p className="m-0 mt-1 text-xs leading-5 text-muted">{caption}</p>
+        <p className="m-0 mt-1 text-xs leading-5 text-muted">{t(caption)}</p>
       </div>
       {available ? (
         <SignalChart
@@ -446,6 +488,8 @@ function SignalAxisLegend({
   markers: EventMarker[];
   xMax: number;
 }) {
+  const t = useTranslation();
+
   return (
     <div className="mt-4 grid gap-1 text-xs text-muted">
       {markers.length > 0 ? (
@@ -461,7 +505,11 @@ function SignalAxisLegend({
         </ol>
       ) : null}
       <p className="m-0">
-        {`Shared axis: 0s ${axis.startLabel} · ${formatAxisSeconds(xMax)} ${axis.endLabel}`}
+        {t("Shared axis: 0s {v0} · {v1} {v2}", {
+          v0: String(axis.startLabel),
+          v1: String(formatAxisSeconds(xMax)),
+          v2: String(axis.endLabel),
+        })}
       </p>
     </div>
   );
@@ -577,17 +625,21 @@ function observedArrivalEvidence(
  * All four panels share one axis, so its origin is the earliest evidence any of them can plot and
  * the boundary phrases must name whichever source supplied it.
  */
-function deriveSignalAxis(input: {
-  arrival: RequestArrivalSummary | null;
-  firstLiveSampleAt: string | null;
-  terminal: RunSignalTimelineSummary | null;
-  terminalRun: boolean;
-}): SignalAxis {
+function deriveSignalAxis(
+  input: {
+    arrival: RequestArrivalSummary | null;
+    firstLiveSampleAt: string | null;
+    terminal: RunSignalTimelineSummary | null;
+    terminalRun: boolean;
+  },
+  locale: Locale = "en",
+): SignalAxis {
+  const t = getTranslation(locale);
   if (input.terminal) {
     return {
       originMs: Date.parse(input.terminal.window.anchoredAt),
-      startLabel: "first checkout attempt",
-      endLabel: "final timeline boundary",
+      startLabel: t("first checkout attempt"),
+      endLabel: t("final timeline boundary"),
     };
   }
   const arrivalOriginMs = Date.parse(
@@ -597,45 +649,50 @@ function deriveSignalAxis(input: {
   );
   const liveOriginMs = Date.parse(input.firstLiveSampleAt ?? "");
   const hasLiveOrigin = Number.isFinite(liveOriginMs);
-  const browserUpdate = input.terminalRun ? "retained run update" : "available update";
+  const browserUpdate = input.terminalRun ? t("retained run update") : t("available update");
   const arrivalStartsAxis =
     Number.isFinite(arrivalOriginMs) && (!hasLiveOrigin || arrivalOriginMs < liveOriginMs);
   if (arrivalStartsAxis) {
     return {
       originMs: arrivalOriginMs,
-      startLabel: "first checkout attempt",
-      endLabel: hasLiveOrigin ? `latest ${browserUpdate}` : "last recorded arrival window",
+      startLabel: t("first checkout attempt"),
+      endLabel: hasLiveOrigin
+        ? t("latest {v0}", { v0: String(browserUpdate) })
+        : t("last recorded arrival window"),
     };
   }
   return {
     originMs: liveOriginMs,
-    startLabel: `first ${browserUpdate}`,
-    endLabel: `latest ${browserUpdate}`,
+    startLabel: t("first {v0}", { v0: String(browserUpdate) }),
+    endLabel: t("latest {v0}", { v0: String(browserUpdate) }),
   };
 }
 
-function recordedRunDescriptor(status: DemoRunStatus | null): string {
-  if (status === "completed") return "completed run";
-  if (status === "failed") return "failed run";
-  return "recorded run window";
+function recordedRunDescriptor(status: DemoRunStatus | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  if (status === "completed") return t("completed run");
+  if (status === "failed") return t("failed run");
+  return t("recorded run window");
 }
 
 /** Interior events only: the axis ends are already named by the shared-axis legend. */
 function terminalEventMarkers(
   summary: RunSignalTimelineSummary,
   arrival: RequestArrivalSummary | null,
+  locale: Locale = "en",
 ): EventMarker[] {
+  const t = getTranslation(locale);
   const markers: EventMarker[] = [];
   if (summary.inventoryDrain.timeToDepletionSeconds !== null) {
     markers.push({
       elapsedSeconds: summary.inventoryDrain.timeToDepletionSeconds,
-      label: "Stock depleted",
+      label: t("Stock depleted"),
     });
   }
   if (arrival) {
     markers.push({
       elapsedSeconds: arrival.dispatchDurationSeconds,
-      label: "Last checkout attempt",
+      label: t("Last checkout attempt"),
     });
   }
   if (summary.queueBacklog.backlogDrainedAt) {
@@ -644,7 +701,7 @@ function terminalEventMarkers(
         summary.window.anchoredAt,
         summary.queueBacklog.backlogDrainedAt,
       ),
-      label: "Backlog drained",
+      label: t("Backlog drained"),
     });
   }
   return markers.sort((left, right) => left.elapsedSeconds - right.elapsedSeconds);
@@ -661,32 +718,38 @@ function Headline({
   label: string;
   value: string;
 }) {
+  const t = useTranslation();
+
   return (
     <div id={id} tabIndex={id ? -1 : undefined}>
-      <dt className="text-xs font-bold text-muted">{label}</dt>
-      <dd className="m-0 mt-1 font-semibold text-ink">{value}</dd>
-      {detail ? <dd className="m-0 mt-0.5 text-xs text-muted-strong">{detail}</dd> : null}
+      <dt className="text-xs font-bold text-muted">{t(label)}</dt>
+      <dd className="m-0 mt-1 font-semibold text-ink">
+        {typeof value === "string" ? t(value) : value}
+      </dd>
+      {detail ? <dd className="m-0 mt-0.5 text-xs text-muted-strong">{t(detail)}</dd> : null}
     </div>
   );
 }
 
 function SignalHeadlineGrid({ headlines }: { headlines: SignalHeadlines }) {
+  const t = useTranslation();
+
   return (
     <dl
       className="m-0 mb-4 grid grid-cols-4 gap-3 max-[900px]:grid-cols-2"
       data-signal-headlines=""
     >
-      <Headline label="Request arrival" value={headlines.arrival.value} />
+      <Headline label={t("Request arrival")} value={headlines.arrival.value} />
       {/* Inventory has no chart panel (it drains in a sliver of the axis), so its detail and the
           signal strip's focus target live here. */}
       <Headline
         detail={headlines.inventory.detail}
         id="watch-signal-inventory"
-        label="Inventory"
+        label={t("Inventory")}
         value={headlines.inventory.value}
       />
-      <Headline label="Processing backlog" value={headlines.backlog.value} />
-      <Headline label="Confirmation" value={headlines.confirmation.value} />
+      <Headline label={t("Processing backlog")} value={headlines.backlog.value} />
+      <Headline label={t("Confirmation")} value={headlines.confirmation.value} />
     </dl>
   );
 }

@@ -55,6 +55,20 @@ async function setup(
 }
 
 describe("gate server", () => {
+  it("uses the saved site language on gate pages and preserves the wake return path", async () => {
+    const { gate, wake } = await setup({ state: "stopped" });
+    const response = await gate.inject({
+      method: "GET",
+      url: "/demo?scenario=1",
+      headers: { cookie: "other=value; checkout-surge-locale=fr" },
+    });
+    expect(response.body).toContain('<html lang="fr">');
+    expect(response.body).toContain("La démo est en veille");
+    expect(response.body).toContain("Lancer la démo");
+    expect(response.body).toContain('aria-label="Passer en anglais"');
+    expect(response.body).toContain('action="/__gate/start?return=%2Fdemo%3Fscenario%3D1"');
+    expect(wake.wake).not.toHaveBeenCalled();
+  });
   it("answers any URL with its own page while the core sleeps, and a GET never wakes it", async () => {
     const { gate, wake } = await setup({ state: "stopped" });
 

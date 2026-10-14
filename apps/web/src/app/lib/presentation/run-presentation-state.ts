@@ -8,6 +8,7 @@ import type {
 } from "@checkout-surge/contracts";
 import { deriveOversoldUnits, deriveRunResult } from "@checkout-surge/contracts";
 import type { BackendRead } from "../api";
+import { getTranslation, type Locale } from "../i18n/translate";
 import type { Freshness } from "./freshness";
 import { publicVocabulary } from "./public-vocabulary";
 import { evidenceFromDashboard } from "./run-result-presentation";
@@ -109,40 +110,45 @@ export function deriveRunPresentationState(
   read: BackendRead<DashboardProjection>,
   projection: DashboardProjection | null = read.status === "available" ? read.data : null,
   result: RunResult | null = projection ? terminalResult(projection) : null,
+  locale: Locale = "en",
 ): PresentationState {
-  if (read.status === "loading") return states.checking;
-  if (read.status === "unavailable") return states.unavailable;
+  if (read.status === "loading") return translateState(states.checking, locale);
+  if (read.status === "unavailable") return translateState(states.unavailable, locale);
 
   const run = projection?.currentRun ?? null;
-  if (!projection) return states.ready;
+  if (!projection) return translateState(states.ready, locale);
   if (projection.resetRecovery === "incomplete" && !run) {
-    return states.resetRecoveryIncomplete;
+    return translateState(states.resetRecoveryIncomplete, locale);
   }
-  if (!run) return states.ready;
+  if (!run) return translateState(states.ready, locale);
   if (run.status === "starting")
-    return run.runnerRelocating ? states.relocatingRunner : states.starting;
+    return run.runnerRelocating
+      ? translateState(states.relocatingRunner, locale)
+      : translateState(states.starting, locale);
   if (run.status === "active") {
-    return run.trafficStatus === "starting" ? states.starting : states.active;
+    return run.trafficStatus === "starting"
+      ? translateState(states.starting, locale)
+      : translateState(states.active, locale);
   }
-  if (run.status === "draining") return states.draining;
+  if (run.status === "draining") return translateState(states.draining, locale);
 
   switch (result?.outcome ?? null) {
     case "completed-successfully":
-      return states.completed;
+      return translateState(states.completed, locale);
     case "completed-with-order-failures":
-      return states.orderFailures;
+      return translateState(states.orderFailures, locale);
     case "completed-with-unsettled-orders":
-      return states.unsettled;
+      return translateState(states.unsettled, locale);
     case "completed-with-oversell":
-      return states.oversell;
+      return translateState(states.oversell, locale);
     case "failed":
-      return states.failed;
+      return translateState(states.failed, locale);
     case "outcome-indeterminate":
       return result?.maximumClassification === "correctness_failure"
-        ? states.contradictoryOutcome
-        : states.outcomeIndeterminate;
+        ? translateState(states.contradictoryOutcome, locale)
+        : translateState(states.outcomeIndeterminate, locale);
     case null:
-      return states.outcomeIndeterminate;
+      return translateState(states.outcomeIndeterminate, locale);
   }
 }
 
@@ -152,27 +158,33 @@ function terminalResult(projection: DashboardProjection): RunResult | null {
   return deriveRunResult(evidenceFromDashboard(projection));
 }
 
-export function deriveTerminalSummaryPresentation(result: RunResult): PresentationState {
+export function deriveTerminalSummaryPresentation(
+  result: RunResult,
+  locale: Locale = "en",
+): PresentationState {
   return result.outcome === "outcome-indeterminate" &&
     result.maximumClassification === "correctness_failure"
-    ? states.contradictoryOutcome
-    : presentationForTerminalOutcome(result.outcome);
+    ? translateState(states.contradictoryOutcome, locale)
+    : presentationForTerminalOutcome(result.outcome, locale);
 }
 
-function presentationForTerminalOutcome(outcome: RunResult["outcome"]): PresentationState {
+function presentationForTerminalOutcome(
+  outcome: RunResult["outcome"],
+  locale: Locale = "en",
+): PresentationState {
   switch (outcome) {
     case "completed-successfully":
-      return states.completed;
+      return translateState(states.completed, locale);
     case "completed-with-order-failures":
-      return states.orderFailures;
+      return translateState(states.orderFailures, locale);
     case "completed-with-unsettled-orders":
-      return states.unsettled;
+      return translateState(states.unsettled, locale);
     case "completed-with-oversell":
-      return states.oversell;
+      return translateState(states.oversell, locale);
     case "failed":
-      return states.failed;
+      return translateState(states.failed, locale);
     case "outcome-indeterminate":
-      return states.outcomeIndeterminate;
+      return translateState(states.outcomeIndeterminate, locale);
   }
 }
 
@@ -180,103 +192,137 @@ export function deriveInventoryOutcomeState(
   inventory: InventoryStatus | null,
   run: DemoRunSnapshot | null,
   reservedUnits: number | null = null,
+  locale: Locale = "en",
 ): PresentationState {
+  const t = getTranslation(locale);
   const terminal = isTerminalRun(run);
   if (!inventory) {
-    if (!run) return states.ready;
+    if (!run) return translateState(states.ready, locale);
     if (terminal) {
       return state(
         "inventory-evidence-unavailable",
         "idle",
-        "inventory evidence unavailable",
-        "Final inventory evidence was unavailable for this run.",
+        t("inventory evidence unavailable"),
+        t("Final inventory evidence was unavailable for this run."),
+        locale,
       );
     }
     return state(
       "inventory-not-yet-available",
       "idle",
-      "no data",
-      "Inventory evidence is not yet available.",
+      t("no data"),
+      t("Inventory evidence is not yet available."),
+      locale,
     );
   }
   const oversoldUnits =
     reservedUnits === null
       ? null
       : deriveOversoldUnits({ reservedUnits, startingStock: inventory.allocatedStock });
-  if (oversoldUnits !== null && oversoldUnits > 0) return states.oversell;
+  if (oversoldUnits !== null && oversoldUnits > 0) return translateState(states.oversell, locale);
   if (reservedUnits === null && terminal) {
-    return states.inventoryReservationEvidenceUnavailable;
+    return translateState(states.inventoryReservationEvidenceUnavailable, locale);
   }
   if (oversoldUnits === 0 && inventory.allocatedStock > 0 && inventory.remainingStock === 0) {
     return state(
       "exact-sellout",
       "ok",
-      "exact sellout",
-      "All available stock was reserved without oversell.",
+      t("exact sellout"),
+      t("All available stock was reserved without oversell."),
+      locale,
     );
   }
   if (run?.status === "completed") {
     return state(
       "completed-with-stock-remaining",
       "idle",
-      "stock remaining",
-      "The run completed without selling out.",
+      t("stock remaining"),
+      t("The run completed without selling out."),
+      locale,
     );
   }
   if (run?.status === "failed") {
     return state(
       "final-inventory-recorded",
       "idle",
-      "final inventory recorded",
-      "Final inventory evidence was recorded for the failed run.",
+      t("final inventory recorded"),
+      t("Final inventory evidence was recorded for the failed run."),
+      locale,
     );
   }
   if (run) {
     return state(
       "inventory-draining",
       "progress",
-      "inventory draining",
-      "Stock is being reserved.",
+      t("inventory draining"),
+      t("Stock is being reserved."),
+      locale,
     );
   }
-  return state("inventory-ready", "idle", "inventory ready", "Inventory is ready.");
+  return state("inventory-ready", "idle", t("inventory ready"), t("Inventory is ready."), locale);
 }
 
-export function deriveFreshnessPresentationState(freshness: Freshness): PresentationState {
+export function deriveFreshnessPresentationState(
+  freshness: Freshness,
+  locale: Locale = "en",
+): PresentationState {
+  const t = getTranslation(locale);
   switch (freshness.state) {
     case "connecting":
-      return state("freshness-connecting", "idle", "connecting", "Connecting to live updates.");
+      return state(
+        "freshness-connecting",
+        "idle",
+        "connecting",
+        t("Connecting to live updates."),
+        locale,
+      );
     case "live":
-      return state("freshness-live", "progress", "live updates", "Live updates are arriving.");
+      return state(
+        "freshness-live",
+        "progress",
+        t("live updates"),
+        t("Live updates are arriving."),
+        locale,
+      );
     case "retained-fresh":
       return state(
         "freshness-retained",
         "idle",
         "connected",
-        "Connected; no projection update is expected.",
+        t("Connected; no projection update is expected."),
+        locale,
       );
     case "stale":
-      return state("freshness-stale", "idle", "updates stale", "Projection updates are stale.");
+      return state(
+        "freshness-stale",
+        "idle",
+        t("updates stale"),
+        t("Projection updates are stale."),
+        locale,
+      );
     case "disconnected":
       return state(
         "freshness-disconnected",
         "idle",
-        "updates disconnected",
-        "Live updates are disconnected.",
+        t("updates disconnected"),
+        t("Live updates are disconnected."),
+        locale,
       );
     case "unsupported":
       return state(
         "freshness-unsupported",
         "idle",
-        "live updates unsupported",
-        "Live updates are unsupported.",
+        t("live updates unsupported"),
+        t("Live updates are unsupported."),
+        locale,
       );
     case "not-applicable":
       return state(
         "freshness-not-applicable",
         "idle",
-        freshness.final ? "final" : "no active run",
-        "Live freshness does not apply.",
+        freshness.final ? "final" : t("no active run"),
+        t("Live freshness does not apply."),
+        locale,
       );
   }
 }
@@ -285,88 +331,115 @@ export function deriveLagPresentationState(
   pendingConfirmationCount: number | null,
   confirmedOrderCount: number | null,
   run: DemoRunSnapshot | null,
+  locale: Locale = "en",
 ): PresentationState {
+  const t = getTranslation(locale);
   if (pendingConfirmationCount === null || confirmedOrderCount === null) {
-    if (!run) return states.ready;
+    if (!run) return translateState(states.ready, locale);
     if (isTerminalRun(run)) {
       return state(
         "lag-evidence-unavailable",
         "idle",
-        "confirmation evidence unavailable",
-        "Final confirmation evidence was unavailable for this run.",
+        t("confirmation evidence unavailable"),
+        t("Final confirmation evidence was unavailable for this run."),
+        locale,
       );
     }
     return state(
       "lag-not-yet-available",
       "idle",
-      "no data",
-      "Confirmation evidence is not yet available.",
+      t("no data"),
+      t("Confirmation evidence is not yet available."),
+      locale,
     );
   }
-  if (run?.status === "failed") return states.failed;
+  if (run?.status === "failed") return translateState(states.failed, locale);
   if (pendingConfirmationCount > 0) {
-    return run?.status === "completed" ? states.unsettled : states.draining;
+    return run?.status === "completed"
+      ? translateState(states.unsettled, locale)
+      : translateState(states.draining, locale);
   }
   if (run?.status !== "completed") {
     return state(
       "lag-awaiting-outcomes",
       "idle",
-      "awaiting outcomes",
-      "No terminal confirmation result exists yet.",
+      t("awaiting outcomes"),
+      t("No terminal confirmation result exists yet."),
+      locale,
     );
   }
   return confirmedOrderCount > 0
-    ? states.completed
-    : state("no-confirmations", "idle", "no confirmations", "No confirmed orders were observed.");
+    ? translateState(states.completed, locale)
+    : state(
+        "no-confirmations",
+        "idle",
+        t("no confirmations"),
+        t("No confirmed orders were observed."),
+        locale,
+      );
 }
 
 export function deriveOutcomePresentationState(
   outcome: BusinessOutcomeSummary | null,
   run: DemoRunSnapshot | null,
   runState: PresentationState,
+  locale: Locale = "en",
 ): PresentationState {
+  const t = getTranslation(locale);
   if (!outcome) {
-    if (!run) return states.ready;
+    if (!run) return translateState(states.ready, locale);
     if (isTerminalRun(run)) {
       return state(
         "outcome-evidence-unavailable",
         "idle",
-        "checkout evidence unavailable",
-        "Final checkout outcome evidence was unavailable for this run.",
+        t("checkout evidence unavailable"),
+        t("Final checkout outcome evidence was unavailable for this run."),
+        locale,
       );
     }
     return state(
       "outcome-not-yet-available",
       "idle",
-      "no data",
-      "Outcome evidence is not yet available.",
+      t("no data"),
+      t("Outcome evidence is not yet available."),
+      locale,
     );
   }
   if (run?.status === "completed" || run?.status === "failed") return runState;
   return hasExpectedWork(outcome)
-    ? states.draining
-    : state("outcomes-observed", "idle", "outcomes observed", "Durable outcomes are available.");
+    ? translateState(states.draining, locale)
+    : state(
+        "outcomes-observed",
+        "idle",
+        t("outcomes observed"),
+        t("Durable outcomes are available."),
+        locale,
+      );
 }
 
 export function deriveRunErpOutcomeState(
   erp: RunErpOutcomeSummary | null,
   run: DemoRunSnapshot | null = null,
+  locale: Locale = "en",
 ): PresentationState {
+  const t = getTranslation(locale);
   if (!erp) {
-    if (!run) return states.ready;
+    if (!run) return translateState(states.ready, locale);
     if (isTerminalRun(run)) {
       return state(
         "run-erp-evidence-unavailable",
         "idle",
-        "ERP evidence unavailable",
-        "Final simulated ERP evidence was unavailable for this run.",
+        t("ERP evidence unavailable"),
+        t("Final simulated ERP evidence was unavailable for this run."),
+        locale,
       );
     }
     return state(
       "run-erp-not-yet-observed",
       "idle",
-      "not yet observed",
-      "ERP outcome evidence for this run is not yet available.",
+      t("not yet observed"),
+      t("ERP outcome evidence for this run is not yet available."),
+      locale,
     );
   }
   // The recent window is bounded; `latestAttempt` spans retained history, so only its absence
@@ -376,15 +449,17 @@ export function deriveRunErpOutcomeState(
       return state(
         "run-erp-not-recorded",
         "idle",
-        "no ERP calls recorded",
-        "No simulated ERP calls were recorded for this run.",
+        t("no ERP calls recorded"),
+        t("No simulated ERP calls were recorded for this run."),
+        locale,
       );
     }
     return state(
       "run-erp-no-calls-yet",
       "idle",
-      "no ERP calls yet",
-      "No simulated ERP calls have been recorded for this run yet.",
+      t("no ERP calls yet"),
+      t("No simulated ERP calls have been recorded for this run yet."),
+      locale,
     );
   }
   if (
@@ -396,15 +471,17 @@ export function deriveRunErpOutcomeState(
     return state(
       "run-erp-failures-observed",
       "warning",
-      "failures observed",
-      "This run has recorded ERP failures or timeouts.",
+      t("failures observed"),
+      t("This run has recorded ERP failures or timeouts."),
+      locale,
     );
   }
   return state(
     "run-erp-outcomes-observed",
     "ok",
-    "outcomes observed",
-    "ERP attempt outcomes for this run are available.",
+    t("outcomes observed"),
+    t("ERP attempt outcomes for this run are available."),
+    locale,
   );
 }
 
@@ -427,6 +504,13 @@ function state(
   tone: PresentationTone,
   label: string,
   description: string,
+  locale: Locale = "en",
 ): PresentationState {
-  return { state: stateName, tone, label, description };
+  const t = getTranslation(locale);
+  return { state: stateName, tone, label: t(label), description: t(description) };
+}
+
+function translateState(value: PresentationState, locale: Locale): PresentationState {
+  const t = getTranslation(locale);
+  return { ...value, label: t(value.label), description: t(value.description) };
 }

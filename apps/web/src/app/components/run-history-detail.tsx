@@ -1,3 +1,5 @@
+"use client";
+
 import type {
   AdminRunHistoryDetailResponse,
   PublicRunHistoryDetailResponse,
@@ -5,6 +7,8 @@ import type {
 import { deriveLoadExecutionPlan, deriveRunResult } from "@checkout-surge/contracts";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import { getTranslation, type Locale } from "../lib/i18n/translate";
 import {
   formatCount,
   formatDurationMs,
@@ -53,13 +57,15 @@ interface RunHistoryDetailProps {
 }
 
 export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistoryDetailProps) {
+  const t = useTranslation();
+  const locale = useLocale();
   const { run, summary } = detail;
   if (summary.dataDiscarded) {
     return (
       <DiscardedRunDetail
         actions={actions}
         navigation={navigation}
-        presetName={summary.presetName}
+        presetName={t(summary.presetName)}
         trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}
         automatic={summary.failureCategory === "automatic_reset"}
       />
@@ -67,12 +73,12 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
   }
   const config = run.configSnapshot;
   const result = deriveRunResult(evidenceFromRunHistoryDetail(detail));
-  const runPresentation = deriveTerminalSummaryPresentation(result);
+  const runPresentation = deriveTerminalSummaryPresentation(result, locale);
   const overallDuration =
-    formatDurationMs(detail.overallDurationMs) ??
-    (summary.startedAt ? "— unusable lifecycle boundary" : "— no recorded start");
+    formatDurationMs(detail.overallDurationMs, locale) ??
+    (summary.startedAt ? t("— unusable lifecycle boundary") : t("— no recorded start"));
   const failure = summary.failureCategory
-    ? publicFailureExplanation(summary.failureCategory)
+    ? publicFailureExplanation(summary.failureCategory, locale)
     : null;
 
   return (
@@ -81,9 +87,9 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       <header className="rounded-2xl border border-border bg-surface px-5 py-3.5 max-[560px]:px-4 min-[900px]:sticky min-[900px]:top-14 min-[900px]:z-[5] min-[900px]:shadow-[0_8px_24px_-18px_rgb(13_27_42/0.5)]">
         <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1">
-            <p className="sr-only">Run detail</p>
+            <p className="sr-only">{t("Run detail")}</p>
             <h1 className="type-display m-0 text-2xl leading-tight text-ink">
-              {summary.presetName}
+              {t(summary.presetName)}
             </h1>
             <p className="m-0 [overflow-wrap:anywhere] font-mono text-xs text-muted">
               {summary.runId}
@@ -93,18 +99,26 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             <StatusPill
               status={{
                 ...runPresentation,
-                label: publicStatusLabel({
-                  family: "run",
-                  status: summary.status,
-                  displayLabel: runPresentation.label,
-                }),
+                label: publicStatusLabel(
+                  {
+                    family: "run",
+                    status: summary.status,
+                    displayLabel: runPresentation.label,
+                  },
+                  locale,
+                ),
               }}
             />
-            <StatusPill status={{ label: `operator ${run.operatorMode}`, tone: "idle" }} />
+            <StatusPill
+              status={{ label: t("operator {value1}", { value1: run.operatorMode }), tone: "idle" }}
+            />
             {hasUnknownTrafficCounts(summary.transportAttemptCounts) ? null : (
               <StatusPill
                 status={{
-                  label: adminDeliveryLabel(summary.trafficDeliverySummary.trafficDeliveryStatus),
+                  label: adminDeliveryLabel(
+                    summary.trafficDeliverySummary.trafficDeliveryStatus,
+                    locale,
+                  ),
                   tone: trafficDeliveryStatusTone(
                     summary.trafficDeliverySummary.trafficDeliveryStatus,
                   ),
@@ -132,54 +146,68 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       ) : null}
 
       <section
-        aria-label="Run overview"
+        aria-label={t("Run overview")}
         className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       >
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Run overview</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">{t("Run overview")}</h2>
         <div className="mt-3 grid grid-cols-4 gap-x-6 gap-y-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
-              ["Started", formatDate(summary.startedAt)],
-              ["Overall run duration", overallDuration],
-              ["Traffic started", formatDate(run.trafficStartedAt)],
-              ["Sending ended", formatSendingEnd(summary)],
-              ["Finalized", formatDate(run.finalizedAt)],
-              ["Evidence recorded", formatDate(summary.capturedAt)],
+              [t("Started"), formatDate(summary.startedAt, locale)],
+              [t("Overall run duration"), overallDuration],
+              [t("Traffic started"), formatDate(run.trafficStartedAt, locale)],
+              [t("Sending ended"), formatSendingEnd(summary, locale)],
+              [t("Finalized"), formatDate(run.finalizedAt, locale)],
+              [t("Evidence recorded"), formatDate(summary.capturedAt, locale)],
               ...(run.runnerRegion
-                ? [["Load generator region", codeValue(run.runnerRegion)] as [string, ReactNode]]
+                ? [[t("Load generator region"), codeValue(run.runnerRegion)] as [string, ReactNode]]
                 : []),
               ...(detail.internalFailureReason
-                ? [["Failure code", codeValue(detail.internalFailureReason)] as [string, ReactNode]]
-                : []),
-            ]}
-            title="Lifecycle"
-          />
-          <FactList
-            caption={simulatedErpLens.caption}
-            facts={[
-              ["Simulated ERP call attempts", formatNumber(detail.erpAttemptSummary.totalCount)],
-              ["Succeeded attempts", formatNumber(detail.erpAttemptSummary.byStatus.succeeded)],
-              ...(detail.erpAttemptSummary.byStatus.failed > 0
                 ? [
-                    ["Failed attempts", formatNumber(detail.erpAttemptSummary.byStatus.failed)] as [
+                    [t("Failure code"), codeValue(detail.internalFailureReason)] as [
                       string,
                       ReactNode,
                     ],
                   ]
                 : []),
+            ]}
+            title={t("Lifecycle")}
+          />
+          <FactList
+            caption={simulatedErpLens.caption}
+            facts={[
+              [
+                t("Simulated ERP call attempts"),
+                formatNumber(detail.erpAttemptSummary.totalCount, locale),
+              ],
+              [
+                t("Succeeded attempts"),
+                formatNumber(detail.erpAttemptSummary.byStatus.succeeded, locale),
+              ],
+              ...(detail.erpAttemptSummary.byStatus.failed > 0
+                ? [
+                    [
+                      t("Failed attempts"),
+                      formatNumber(detail.erpAttemptSummary.byStatus.failed, locale),
+                    ] as [string, ReactNode],
+                  ]
+                : []),
               ...(detail.erpAttemptSummary.byStatus.timedOut > 0
                 ? [
                     [
-                      "Timed-out attempts",
-                      formatNumber(detail.erpAttemptSummary.byStatus.timedOut),
+                      t("Timed-out attempts"),
+                      formatNumber(detail.erpAttemptSummary.byStatus.timedOut, locale),
                     ] as [string, ReactNode],
                   ]
                 : []),
               [
-                "Simulated ERP call average",
-                nullableMetricMs(detail.erpAttemptSummary.averageLatencyMs),
+                t("Simulated ERP call average"),
+                nullableMetricMs(detail.erpAttemptSummary.averageLatencyMs, locale),
               ],
-              ["Simulated ERP call p95", nullableMetricMs(detail.erpAttemptSummary.p95LatencyMs)],
+              [
+                t("Simulated ERP call p95"),
+                nullableMetricMs(detail.erpAttemptSummary.p95LatencyMs, locale),
+              ],
             ]}
             title={simulatedErpLens.title}
           />
@@ -188,20 +216,26 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
             facts={[
               [
                 publicVocabulary.uniqueReservationsSecured,
-                formatNumber(summary.businessOutcomeSummary.acceptedReservations),
+                formatNumber(summary.businessOutcomeSummary.acceptedReservations, locale),
               ],
-              ["Queued", formatNumber(summary.businessOutcomeSummary.queuedOrders)],
-              ["Processing", formatNumber(summary.businessOutcomeSummary.processingOrders)],
-              ["Retrying", formatNumber(summary.businessOutcomeSummary.retryingOrders)],
+              [t("Queued"), formatNumber(summary.businessOutcomeSummary.queuedOrders, locale)],
               [
-                "Pending persistence",
-                formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount),
+                t("Processing"),
+                formatNumber(summary.businessOutcomeSummary.processingOrders, locale),
               ],
-              ["Confirmed", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-              ["Failed", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+              [t("Retrying"), formatNumber(summary.businessOutcomeSummary.retryingOrders, locale)],
+              [
+                t("Pending persistence"),
+                formatNumber(summary.businessOutcomeSummary.pendingPersistenceCount, locale),
+              ],
+              [
+                t("Confirmed"),
+                formatNumber(summary.businessOutcomeSummary.confirmedOrders, locale),
+              ],
+              [t("Failed"), formatNumber(summary.businessOutcomeSummary.failedOrders, locale)],
               [
                 publicVocabulary.notifications,
-                formatNumber(summary.businessOutcomeSummary.notificationsRecorded),
+                formatNumber(summary.businessOutcomeSummary.notificationsRecorded, locale),
               ],
             ]}
             title={durableCheckoutLens.title}
@@ -212,28 +246,31 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
                 ? [
                     [
                       publicVocabulary.startingStock,
-                      formatNumber(summary.terminalInventorySnapshot.startingStock),
+                      formatNumber(summary.terminalInventorySnapshot.startingStock, locale),
                     ],
                     [
-                      "Remaining stock",
-                      formatNumber(summary.terminalInventorySnapshot.remainingStock),
+                      t("Remaining stock"),
+                      formatNumber(summary.terminalInventorySnapshot.remainingStock, locale),
                     ],
                     [
-                      "Reserved stock",
-                      formatNumber(summary.terminalInventorySnapshot.reservedStock),
+                      t("Reserved stock"),
+                      formatNumber(summary.terminalInventorySnapshot.reservedStock, locale),
                     ],
                     [
                       publicVocabulary.soldOutRejectionsRecorded,
-                      formatNumber(summary.terminalInventorySnapshot.soldOutRejections),
+                      formatNumber(summary.terminalInventorySnapshot.soldOutRejections, locale),
                     ],
                     [
-                      "Held awaiting persistence",
-                      formatNumber(summary.terminalInventorySnapshot.pendingPersistenceCount),
+                      t("Held awaiting persistence"),
+                      formatNumber(
+                        summary.terminalInventorySnapshot.pendingPersistenceCount,
+                        locale,
+                      ),
                     ],
                   ]
-                : [["Terminal inventory", "not recorded"]]
+                : [[t("Terminal inventory"), t("not recorded")]]
             }
-            title="Terminal inventory"
+            title={t("Terminal inventory")}
           />
         </div>
         <TransportObservationSection
@@ -251,41 +288,57 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
       </section>
 
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Run configuration</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">
+          {t("Run configuration")}
+        </h2>
         <div className="mt-3 grid grid-cols-4 gap-x-6 gap-y-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
               [
-                "Planned demand",
-                formatNumber(deriveLoadExecutionPlan(config.trafficConfig).plannedEmittedAttempts),
+                t("Planned demand"),
+                formatNumber(
+                  deriveLoadExecutionPlan(config.trafficConfig).plannedEmittedAttempts,
+                  locale,
+                ),
               ],
-              ...trafficConfigFacts(config.trafficConfig),
+              ...trafficConfigFacts(config.trafficConfig, locale),
             ]}
-            title="Traffic"
+            title={t("Traffic")}
           />
           <FactList
-            facts={[["Starting stock", formatNumber(config.inventoryConfig.startingStock)]]}
-            title="Inventory"
+            facts={[
+              [t("Starting stock"), formatNumber(config.inventoryConfig.startingStock, locale)],
+            ]}
+            title={t("Inventory")}
           />
           <FactList
             facts={[
               [
-                "Simulated ERP delay per order",
-                formatDurationMs(config.erpConfig.latencyMs) ?? "n/a",
+                t("Simulated ERP delay per order"),
+                formatDurationMs(config.erpConfig.latencyMs, locale) ?? t("n/a"),
               ],
-              ["Simulated ERP capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
-              ["Simulated ERP failure rate (%)", formatPercent(config.erpConfig.errorRate)],
-              ["Simulated ERP outage", config.erpConfig.forcedOutage ? "yes" : "no"],
+              [
+                t("Simulated ERP capacity (orders/s)"),
+                formatNumber(config.erpConfig.maxTps, locale),
+              ],
+              [
+                t("Simulated ERP failure rate (%)"),
+                formatPercent(config.erpConfig.errorRate, locale),
+              ],
+              [t("Simulated ERP outage"), config.erpConfig.forcedOutage ? t("yes") : t("no")],
             ]}
-            title="Simulated ERP"
+            title={t("Simulated ERP")}
           />
           <FactList
             facts={[
-              ["Concurrency", formatNumber(config.backpressureConfig.orderProcessConcurrency)],
-              ["Logical queue", codeValue(config.backpressureConfig.queueName)],
-              ["Physical queue", codeValue(config.backpressureConfig.physicalQueueName)],
+              [
+                t("Concurrency"),
+                formatNumber(config.backpressureConfig.orderProcessConcurrency, locale),
+              ],
+              [t("Logical queue"), codeValue(config.backpressureConfig.queueName)],
+              [t("Physical queue"), codeValue(config.backpressureConfig.physicalQueueName)],
             ]}
-            title="Order processing"
+            title={t("Order processing")}
           />
         </div>
       </section>
@@ -299,8 +352,8 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
 
       {failure && !detail.failureDiagnostic ? (
         <section className="rounded-2xl border border-warning-line bg-warning-soft p-5">
-          <h2 className="type-title m-0 text-base text-ink">What happened</h2>
-          <p className="m-0 mt-2 text-sm text-muted-strong">{failure.explanation}</p>
+          <h2 className="type-title m-0 text-base text-ink">{t("What happened")}</h2>
+          <p className="m-0 mt-2 text-sm text-muted-strong">{t(failure.explanation)}</p>
           <p className="m-0 mt-1 text-sm font-semibold text-muted-strong">{failure.action}</p>
         </section>
       ) : null}
@@ -335,10 +388,11 @@ function FactList({
   facts: Array<[string, ReactNode]>;
   title: string;
 }) {
+  const t = useTranslation();
   return (
-    <ConfigGroup caption={caption} title={title}>
+    <ConfigGroup caption={caption} title={t(title)}>
       {facts.map(([label, value]) => (
-        <FieldRow key={label} label={label} value={value} />
+        <FieldRow key={label} label={t(label)} value={value} />
       ))}
     </ConfigGroup>
   );
@@ -351,14 +405,18 @@ function ExceptionSummary({
   outcome: ReturnType<typeof deriveRunResult>["outcome"];
   summary: AdminRunHistoryDetailResponse["exceptionSummary"];
 }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const exceptionEntries = [
-    [pluralize(summary.brokenInvariants, "broken invariant"), summary.brokenInvariants],
-    [pluralize(summary.failedOrders, "failed order"), summary.failedOrders],
-    ["pending work", summary.pendingWork],
-    [pluralize(summary.partialDelivery, "delivery exception"), summary.partialDelivery],
+    [t(pluralize(summary.brokenInvariants, "broken invariant")), summary.brokenInvariants],
+    [t(pluralize(summary.failedOrders, "failed order")), summary.failedOrders],
+    [t("pending work"), summary.pendingWork],
+    [t(pluralize(summary.partialDelivery, "delivery exception")), summary.partialDelivery],
   ] as const;
   const exceptions = exceptionEntries.filter(([, count]) => count > 0);
-  const limitationEntries = [["Instrumentation limitations", summary.generatorWarnings]] as const;
+  const limitationEntries = [
+    [t("Instrumentation limitations"), summary.generatorWarnings],
+  ] as const;
   const limitations = limitationEntries.filter(([, count]) => count > 0);
   const classification =
     summary.maximumClassification === "expected_population_difference"
@@ -366,13 +424,13 @@ function ExceptionSummary({
       : summary.maximumClassification;
   const classificationLabel =
     outcome === "failed"
-      ? "Run failed"
+      ? t("Run failed")
       : classification === "correctness_failure"
-        ? "Correctness failure"
+        ? t("Correctness failure")
         : classification === "warning"
-          ? "Reconciliation warning"
+          ? t("Reconciliation warning")
           : classification === "evidence_incomplete"
-            ? "Evidence incomplete"
+            ? t("Evidence incomplete")
             : null;
   const needsAttention = classificationLabel !== null || exceptions.length > 0;
   const isFailure = outcome === "failed" || classification === "correctness_failure";
@@ -385,27 +443,29 @@ function ExceptionSummary({
             ? "border-warning bg-warning-soft"
             : "border-border bg-surface"
       } flex flex-wrap items-baseline gap-x-4 gap-y-1`}
-      aria-label="Exception summary"
+      aria-label={t("Exception summary")}
     >
-      <h2 className="type-title m-0 text-base text-ink">Exception summary</h2>
+      <h2 className="type-title m-0 text-base text-ink">{t("Exception summary")}</h2>
       <p
         className={`m-0 text-sm font-semibold ${
           isFailure ? "text-danger" : needsAttention ? "text-warning" : "text-accent"
         }`}
       >
         {!needsAttention
-          ? "Clean run · no exceptions require attention."
+          ? t("Clean run · no exceptions require attention.")
           : [
               classificationLabel,
-              ...exceptions.map(([label, count]) => `${formatNumber(count)} ${label}`),
+              ...exceptions.map(([label, count]) => `${formatNumber(count, locale)} ${t(label)}`),
             ]
               .filter(Boolean)
               .join(" · ")}
       </p>
       {limitations.length > 0 ? (
         <p className="m-0 text-sm text-muted-strong">
-          Limitations ·{" "}
-          {limitations.map(([label, count]) => `${label}: ${formatNumber(count)}`).join(" · ")}
+          {t("Limitations ·")}{" "}
+          {limitations
+            .map(([label, count]) => `${t(label)}: ${formatNumber(count, locale)}`)
+            .join(" · ")}
         </p>
       ) : null}
     </section>
@@ -414,47 +474,54 @@ function ExceptionSummary({
 
 function trafficConfigFacts(
   config: AdminRunHistoryDetailResponse["run"]["configSnapshot"]["trafficConfig"],
+  locale: Locale = "en",
 ): Array<[string, ReactNode]> {
+  const t = getTranslation(locale);
   if (config.mode === "buyer-spike") {
     return [
-      ["Scenario", trafficModeLabel(config.mode)],
-      ["Buyer count", formatNumber(config.buyerCount)],
-      ["Duplicate attempts", config.duplicateEachBuyerAttempt ? "yes" : "no"],
-      ["Configured start delay", formatDurationSeconds(config.startDelaySeconds)],
-      ["Configured maximum dispatch time", formatDurationSeconds(config.maxDurationSeconds)],
-      ["Quantity", formatNumber(config.quantityPerAttempt)],
+      [t("Scenario"), trafficModeLabel(config.mode)],
+      [t("Buyer count"), formatNumber(config.buyerCount, locale)],
+      [t("Duplicate attempts"), config.duplicateEachBuyerAttempt ? t("yes") : t("no")],
+      [t("Configured start delay"), formatDurationSeconds(config.startDelaySeconds, locale)],
+      [
+        t("Configured maximum dispatch time"),
+        formatDurationSeconds(config.maxDurationSeconds, locale),
+      ],
+      [t("Quantity"), formatNumber(config.quantityPerAttempt, locale)],
     ];
   }
 
   return [
-    ["Scenario", trafficModeLabel(config.mode)],
-    ["Configured arrival rate (per second)", formatNumber(config.ratePerSecond)],
-    ["Configured start delay", formatDurationSeconds(config.startDelaySeconds)],
-    ["Configured traffic duration", formatDurationSeconds(config.durationSeconds)],
+    [t("Scenario"), trafficModeLabel(config.mode)],
+    [t("Configured arrival rate (per second)"), formatNumber(config.ratePerSecond, locale)],
+    [t("Configured start delay"), formatDurationSeconds(config.startDelaySeconds, locale)],
+    [t("Configured traffic duration"), formatDurationSeconds(config.durationSeconds, locale)],
     ...(config.k6Vus
       ? [
-          ["Pre-allocated k6 VUs", formatNumber(config.k6Vus.preAllocatedVus)] as [
+          [t("Pre-allocated k6 VUs"), formatNumber(config.k6Vus.preAllocatedVus, locale)] as [
             string,
             ReactNode,
           ],
-          ["Maximum k6 VUs", formatNumber(config.k6Vus.maxVus)] as [string, ReactNode],
+          [t("Maximum k6 VUs"), formatNumber(config.k6Vus.maxVus, locale)] as [string, ReactNode],
         ]
       : []),
-    ["Quantity", formatNumber(config.quantityPerAttempt)],
+    [t("Quantity"), formatNumber(config.quantityPerAttempt, locale)],
   ];
 }
 
 export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDetailResponse }) {
+  const t = useTranslation();
+  const locale = useLocale();
   const { run, summary } = detail;
   if (summary.dataDiscarded) {
     return (
       <DiscardedRunDetail
         navigation={
           <Link className={neutralLinkButtonClassName} href="/run-history">
-            Back to run history
+            {t("Back to run history")}
           </Link>
         }
-        presetName={summary.presetName}
+        presetName={t(summary.presetName)}
         trafficEvidenceUnavailable={hasUnknownTrafficCounts(summary.transportAttemptCounts)}
         automatic={summary.failureCategory === "automatic_reset"}
       />
@@ -466,42 +533,49 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
     summary.transportAttemptCounts,
     summary.httpSummary.transportFailures,
   );
-  const publicSummary = derivePublicRunSummary({
-    result,
-    trafficDeliveryStatus: summary.trafficDeliverySummary.trafficDeliveryStatus,
-    transportObservation,
-  });
+  const publicSummary = derivePublicRunSummary(
+    {
+      result,
+      trafficDeliveryStatus: summary.trafficDeliverySummary.trafficDeliveryStatus,
+      transportObservation,
+    },
+    locale,
+  );
   const finalCounts: Array<[string, number | null]> = [
-    ["Units left", publicSummary.counts.remainingStock],
-    ["Units reserved", publicSummary.counts.reservedUnits],
-    ["Orders confirmed", publicSummary.counts.confirmedOrders],
-    ["Awaiting confirmation", publicSummary.counts.pendingOrders],
-    ["Orders failed", publicSummary.counts.failedOrders],
-    ["Attempts turned away because stock ran out", publicSummary.counts.soldOutDecisions],
+    [t("Units left"), publicSummary.counts.remainingStock],
+    [t("Units reserved"), publicSummary.counts.reservedUnits],
+    [t("Orders confirmed"), publicSummary.counts.confirmedOrders],
+    [t("Awaiting confirmation"), publicSummary.counts.pendingOrders],
+    [t("Orders failed"), publicSummary.counts.failedOrders],
+    [t("Attempts turned away because stock ran out"), publicSummary.counts.soldOutDecisions],
   ];
   const deliveryFigures: Array<[string, string, string | undefined]> = [
     [
-      "Reply coverage",
+      t("Reply coverage"),
       transportObservation.coveragePercent === null
-        ? "n/a"
+        ? t("n/a")
         : `${transportObservation.coveragePercent}%`,
-      "of dispatched attempts",
+      t("of dispatched attempts"),
     ],
     [
-      "Observed reservation p95",
+      t("Observed reservation p95"),
       formatHistogramBoundMilliseconds(
         summary.serverReservationTimingSummary.redisAtomicReservation.p95Ms,
+        locale,
       ),
-      "bounded p95 estimate",
+      t("bounded p95 estimate"),
     ],
     [
-      "Checkout response p95 (client-observed)",
-      formatMilliseconds(summary.httpSummary.p95LatencyMs),
-      transportObservation.hasUnrecordedReplies ? "observed replies only" : undefined,
+      t("Checkout response p95 (client-observed)"),
+      formatMilliseconds(summary.httpSummary.p95LatencyMs, locale),
+      transportObservation.hasUnrecordedReplies ? t("observed replies only") : undefined,
     ],
     [
-      "Reservation-to-confirmation p95",
-      nullableMetricMs(detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null),
+      t("Reservation-to-confirmation p95"),
+      nullableMetricMs(
+        detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null,
+        locale,
+      ),
       undefined,
     ],
   ];
@@ -522,29 +596,29 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
       >
         <h2 id="report-final-counts" className="type-title m-0 text-base leading-tight text-ink">
-          Final stock and orders
+          {t("Final stock and orders")}
         </h2>
         <div className="mt-3 grid grid-cols-6 gap-3 max-[900px]:grid-cols-3 max-[600px]:grid-cols-2">
           {finalCounts.map(([label, value]) => (
             <div className="rounded-xl border border-border bg-surface-muted p-3" key={label}>
-              <p className="type-title m-0 text-xl text-ink">{formatCount(value) ?? "—"}</p>
-              <p className="m-0 mt-1 text-xs text-muted">{label}</p>
+              <p className="type-title m-0 text-xl text-ink">{formatCount(value, locale) ?? "—"}</p>
+              <p className="m-0 mt-1 text-xs text-muted">{t(label)}</p>
             </div>
           ))}
         </div>
       </section>
 
       <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
-        <h2 className="type-title m-0 text-base leading-tight text-ink">What happened</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">{t("What happened")}</h2>
         <ul className="mb-0 mt-3 grid gap-2 pl-5 text-sm leading-6 text-muted-strong">
-          {runRecap(detail, publicSummary.counts).map((line) => (
+          {runRecap(detail, publicSummary.counts, locale).map((line) => (
             <li key={line}>{line}</li>
           ))}
         </ul>
       </section>
 
       <section className="grid gap-3" id="report-advanced-signals">
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Signals</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">{t("Signals")}</h2>
         <PublicSignalChart
           acceptedReservations={summary.businessOutcomeSummary.acceptedReservations}
           arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
@@ -565,38 +639,46 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4"
         id="report-advanced-scenario"
       >
-        <h2 className="type-title m-0 text-base leading-tight text-ink">Scenario settings</h2>
+        <h2 className="type-title m-0 text-base leading-tight text-ink">
+          {t("Scenario settings")}
+        </h2>
         <div className="mt-3 grid grid-cols-4 gap-4 max-[1100px]:grid-cols-2 max-[700px]:grid-cols-1">
           <FactList
             facts={[
-              ["Planned demand", formatNumber(detail.plannedAttempts)],
-              ...trafficConfigFacts(config.trafficConfig),
+              [t("Planned demand"), formatNumber(detail.plannedAttempts, locale)],
+              ...trafficConfigFacts(config.trafficConfig, locale),
             ]}
-            title="Traffic"
-          />
-          <FactList
-            facts={[
-              [publicVocabulary.startingStock, formatNumber(config.inventoryConfig.startingStock)],
-            ]}
-            title="Inventory"
-          />
-          <FactList
-            facts={[
-              ["Delay per order", formatDurationMs(config.erpConfig.latencyMs) ?? "not recorded"],
-              ["Capacity (orders/s)", formatNumber(config.erpConfig.maxTps)],
-              ["Failure rate", formatPercent(config.erpConfig.errorRate)],
-              ["Forced outage", config.erpConfig.forcedOutage ? "yes" : "no"],
-            ]}
-            title="Simulated ERP"
+            title={t("Traffic")}
           />
           <FactList
             facts={[
               [
-                "Order-processing concurrency",
-                formatNumber(config.backpressureConfig.orderProcessConcurrency),
+                publicVocabulary.startingStock,
+                formatNumber(config.inventoryConfig.startingStock, locale),
               ],
             ]}
-            title="Backpressure"
+            title={t("Inventory")}
+          />
+          <FactList
+            facts={[
+              [
+                t("Delay per order"),
+                formatDurationMs(config.erpConfig.latencyMs, locale) ?? t("not recorded"),
+              ],
+              [t("Capacity (orders/s)"), formatNumber(config.erpConfig.maxTps, locale)],
+              [t("Failure rate"), formatPercent(config.erpConfig.errorRate, locale)],
+              [t("Forced outage"), config.erpConfig.forcedOutage ? t("yes") : t("no")],
+            ]}
+            title={t("Simulated ERP")}
+          />
+          <FactList
+            facts={[
+              [
+                t("Order-processing concurrency"),
+                formatNumber(config.backpressureConfig.orderProcessConcurrency, locale),
+              ],
+            ]}
+            title={t("Backpressure")}
           />
         </div>
       </section>
@@ -607,17 +689,20 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         tabIndex={-1}
       >
         <h2 className="type-title m-0 text-base leading-tight text-ink">
-          Delivery and measurements
+          {t("Delivery and measurements")}
         </h2>
         {hasUnknownTrafficCounts(summary.transportAttemptCounts) ? null : (
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-muted-strong">Delivery quality</span>
+            <span className="text-sm font-semibold text-muted-strong">{t("Delivery quality")}</span>
             <StatusPill
               status={{
-                label: publicStatusLabel({
-                  family: "traffic-delivery",
-                  status: summary.trafficDeliverySummary.trafficDeliveryStatus,
-                }),
+                label: publicStatusLabel(
+                  {
+                    family: "traffic-delivery",
+                    status: summary.trafficDeliverySummary.trafficDeliveryStatus,
+                  },
+                  locale,
+                ),
                 tone: trafficDeliveryStatusTone(
                   summary.trafficDeliverySummary.trafficDeliveryStatus,
                 ),
@@ -632,7 +717,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
           {deliveryFigures.map(([label, value, note]) => (
             <div className="rounded-xl border border-border bg-surface-muted p-3" key={label}>
               <p className="type-title m-0 text-xl text-ink">{value}</p>
-              <p className="m-0 mt-1 text-xs text-muted">{label}</p>
+              <p className="m-0 mt-1 text-xs text-muted">{t(label)}</p>
               {note ? <p className="m-0 mt-1 text-xs text-muted">{note}</p> : null}
             </div>
           ))}
@@ -642,17 +727,19 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             className="m-0 mt-3 rounded-lg border border-warning-line bg-warning-soft p-3 text-xs leading-5 text-warning"
             data-measurement-caveat=""
           >
-            Checkout response p95 (client-observed) covers only the{" "}
-            {formatCount(transportObservation.repliesRecorded) ?? "unavailable"} of{" "}
-            {formatCount(transportObservation.counts.plannedRequests) ?? "unavailable"} planned{" "}
-            {pluralize(transportObservation.counts.plannedRequests, "attempt")} that recorded a
-            reply. Server-observed reservation timing and durable reservation-to-confirmation timing
-            use separate evidence.
+            {t("Checkout response p95 (client-observed) covers only the")}{" "}
+            {formatCount(transportObservation.repliesRecorded, locale) ?? t("unavailable")}{" "}
+            {t("of")}{" "}
+            {formatCount(transportObservation.counts.plannedRequests, locale) ?? t("unavailable")}{" "}
+            {t("planned")} {t(pluralize(transportObservation.counts.plannedRequests, "attempt"))}{" "}
+            {t(
+              "that recorded a reply. Server-observed reservation timing and durable reservation-to-confirmation timing use separate evidence.",
+            )}
           </p>
         ) : null}
         <EnvironmentNote runnerRegion={run.runnerRegion} trafficStartedAt={run.trafficStartedAt} />
         <details className="mt-4 rounded border border-border px-3 py-2">
-          <summary className="disclosure font-semibold text-ink">All measurements</summary>
+          <summary className="disclosure font-semibold text-ink">{t("All measurements")}</summary>
           <div className="mt-3 grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
             <TransportObservationSection
               arrivalSummary={summary.trafficDeliverySummary.requestArrivalSummary}
@@ -668,33 +755,43 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             <FactList
               caption={simulatedErpLens.caption}
               facts={[
-                ["Simulated ERP call attempts", formatNumber(detail.erpAttempts.totalCount)],
-                ["Succeeded attempts", formatNumber(detail.erpAttempts.byStatus.succeeded)],
+                [
+                  t("Simulated ERP call attempts"),
+                  formatNumber(detail.erpAttempts.totalCount, locale),
+                ],
+                [
+                  t("Succeeded attempts"),
+                  formatNumber(detail.erpAttempts.byStatus.succeeded, locale),
+                ],
                 ...(detail.erpAttempts.byStatus.failed > 0
                   ? [
-                      ["Failed attempts", formatNumber(detail.erpAttempts.byStatus.failed)] as [
-                        string,
-                        ReactNode,
-                      ],
+                      [
+                        t("Failed attempts"),
+                        formatNumber(detail.erpAttempts.byStatus.failed, locale),
+                      ] as [string, ReactNode],
                     ]
                   : []),
                 ...(detail.erpAttempts.byStatus.timedOut > 0
                   ? [
                       [
-                        "Timed-out attempts",
-                        formatNumber(detail.erpAttempts.byStatus.timedOut),
+                        t("Timed-out attempts"),
+                        formatNumber(detail.erpAttempts.byStatus.timedOut, locale),
                       ] as [string, ReactNode],
                     ]
                   : []),
                 [
-                  "Simulated ERP call average",
-                  nullableMetricMs(detail.erpAttempts.averageLatencyMs),
+                  t("Simulated ERP call average"),
+                  nullableMetricMs(detail.erpAttempts.averageLatencyMs, locale),
                 ],
-                ["Simulated ERP call p95", nullableMetricMs(detail.erpAttempts.p95LatencyMs)],
                 [
-                  "Reservation-to-confirmation p95",
+                  t("Simulated ERP call p95"),
+                  nullableMetricMs(detail.erpAttempts.p95LatencyMs, locale),
+                ],
+                [
+                  t("Reservation-to-confirmation p95"),
                   nullableMetricMs(
                     detail.runSignalTimelineSummary?.confirmationConvergence.p95LagMs ?? null,
+                    locale,
                   ),
                 ],
               ]}
@@ -708,18 +805,18 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         <details className="rounded-2xl border border-border bg-surface px-5 py-3.5">
           <summary className="disclosure">
             <h2 className="type-title m-0 inline text-base leading-tight text-ink">
-              Lifecycle and reference
+              {t("Lifecycle and reference")}
             </h2>
           </summary>
           <div className="mt-3 grid grid-cols-2 gap-4 max-[800px]:grid-cols-1">
             <FactList
               facts={[
-                ["Run accepted", formatDate(summary.startedAt)],
-                ["Checkout traffic started", formatDate(run.trafficStartedAt)],
-                ["Sending ended", formatSendingEnd(summary)],
-                ["Run ended", formatDate(run.finalizedAt)],
+                [t("Run accepted"), formatDate(summary.startedAt, locale)],
+                [t("Checkout traffic started"), formatDate(run.trafficStartedAt, locale)],
+                [t("Sending ended"), formatSendingEnd(summary, locale)],
+                [t("Run ended"), formatDate(run.finalizedAt, locale)],
               ]}
-              title="Lifecycle"
+              title={t("Lifecycle")}
             />
             <FactList
               facts={[
@@ -727,57 +824,63 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
                   ? [
                       [
                         publicVocabulary.startingStock,
-                        formatNumber(summary.terminalInventorySnapshot.startingStock),
+                        formatNumber(summary.terminalInventorySnapshot.startingStock, locale),
                       ] as [string, ReactNode],
                       [
-                        "Remaining stock",
-                        formatNumber(summary.terminalInventorySnapshot.remainingStock),
+                        t("Remaining stock"),
+                        formatNumber(summary.terminalInventorySnapshot.remainingStock, locale),
                       ] as [string, ReactNode],
                       [
-                        "Reserved stock",
-                        formatNumber(summary.terminalInventorySnapshot.reservedStock),
+                        t("Reserved stock"),
+                        formatNumber(summary.terminalInventorySnapshot.reservedStock, locale),
                       ] as [string, ReactNode],
                     ]
                   : [
-                      [publicVocabulary.startingStock, "not recorded"] as [string, ReactNode],
-                      ["Remaining stock", "not recorded"] as [string, ReactNode],
-                      ["Reserved stock", "not recorded"] as [string, ReactNode],
+                      [publicVocabulary.startingStock, t("not recorded")] as [string, ReactNode],
+                      [t("Remaining stock"), t("not recorded")] as [string, ReactNode],
+                      [t("Reserved stock"), t("not recorded")] as [string, ReactNode],
                     ]),
                 [
                   publicVocabulary.uniqueReservationsSecured,
-                  formatNumber(summary.businessOutcomeSummary.acceptedReservations),
+                  formatNumber(summary.businessOutcomeSummary.acceptedReservations, locale),
                 ],
                 [
                   publicVocabulary.soldOutRejectionsRecorded,
-                  formatNumber(summary.businessOutcomeSummary.soldOutRejections),
+                  formatNumber(summary.businessOutcomeSummary.soldOutRejections, locale),
                 ],
-                ["Confirmed orders", formatNumber(summary.businessOutcomeSummary.confirmedOrders)],
-                ["Failed orders", formatNumber(summary.businessOutcomeSummary.failedOrders)],
+                [
+                  t("Confirmed orders"),
+                  formatNumber(summary.businessOutcomeSummary.confirmedOrders, locale),
+                ],
+                [
+                  t("Failed orders"),
+                  formatNumber(summary.businessOutcomeSummary.failedOrders, locale),
+                ],
               ]}
-              title="Final evidence"
+              title={t("Final evidence")}
             />
           </div>
           <dl className="m-0 mt-4 grid gap-2 sm:grid-cols-2">
             <div>
-              <dt className="text-sm text-muted">Run UUID</dt>
+              <dt className="text-sm text-muted">{t("Run UUID")}</dt>
               <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
                 <code>{summary.runId}</code>
               </dd>
             </div>
             <div>
-              <dt className="text-sm text-muted">Aggregate evidence recorded</dt>
+              <dt className="text-sm text-muted">{t("Aggregate evidence recorded")}</dt>
               <dd className="m-0 text-sm font-semibold text-muted-strong">
-                {formatDate(summary.capturedAt)}
+                {formatDate(summary.capturedAt, locale)}
               </dd>
             </div>
             <div>
-              <dt className="text-sm text-muted">Logical queue</dt>
+              <dt className="text-sm text-muted">{t("Logical queue")}</dt>
               <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
                 <code>{config.backpressureConfig.queueName}</code>
               </dd>
             </div>
             <div>
-              <dt className="text-sm text-muted">Physical queue</dt>
+              <dt className="text-sm text-muted">{t("Physical queue")}</dt>
               <dd className="m-0 [overflow-wrap:anywhere] text-sm font-semibold text-muted-strong">
                 <code>{config.backpressureConfig.physicalQueueName}</code>
               </dd>
@@ -786,15 +889,15 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
         </details>
       </section>
 
-      <nav aria-label="Report actions" className="flex flex-wrap gap-3">
+      <nav aria-label={t("Report actions")} className="flex flex-wrap gap-3">
         <Link className={neutralLinkButtonClassName} href="/run-history">
-          Back to run history
+          {t("Back to run history")}
         </Link>
         <Link className={neutralLinkButtonClassName} href="/demo">
-          Choose another scenario
+          {t("Choose another scenario")}
         </Link>
         <a className={neutralLinkButtonClassName} href="#main-content">
-          Back to top
+          {t("Back to top")}
         </a>
       </nav>
     </div>
@@ -814,44 +917,63 @@ function DiscardedRunDetail({
   presetName: string;
   automatic: boolean;
 }) {
+  const t = useTranslation();
   return (
     <section className="rounded-2xl border border-border bg-surface p-5 max-[560px]:p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         {navigation}
         {actions}
       </div>
-      <p className="m-0 mt-3 text-xs font-medium text-muted">Cancelled</p>
-      <h1 className="type-display m-0 mt-1 text-[1.875rem] leading-tight text-ink">{presetName}</h1>
+      <p className="m-0 mt-3 text-xs font-medium text-muted">{t("Cancelled")}</p>
+      <h1 className="type-display m-0 mt-1 text-[1.875rem] leading-tight text-ink">
+        {t(presetName)}
+      </h1>
       <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
-        This run was cancelled by {automatic ? "an automatic" : "an admin"} reset. Its experiment
-        data was discarded.
+        {t("This run was cancelled by")} {automatic ? t("an automatic") : t("an admin")}{" "}
+        {t("reset. Its experiment data was discarded.")}
       </p>
       {trafficEvidenceUnavailable ? (
         <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
-          {trafficEvidenceUnavailableText}
+          {t(trafficEvidenceUnavailableText)}
         </p>
       ) : null}
     </section>
   );
 }
 
-export function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
+export function scenarioRecap(
+  detail: PublicRunHistoryDetailResponse,
+  locale: Locale = "en",
+): string {
+  const t = getTranslation(locale);
   const { configSnapshot } = detail.run;
   const traffic = configSnapshot.trafficConfig;
   const demand =
     traffic.mode === "buyer-spike"
-      ? `${formatNumber(traffic.buyerCount)} ${pluralize(traffic.buyerCount, "buyer")}`
-      : `${formatNumber(detail.plannedAttempts)} planned ${pluralize(detail.plannedAttempts, "attempt")}`;
+      ? `${formatNumber(traffic.buyerCount, locale)} ${t(pluralize(traffic.buyerCount, "buyer"))}`
+      : t("{value1} planned {value2}", {
+          value1: formatNumber(detail.plannedAttempts, locale),
+          value2: t(pluralize(detail.plannedAttempts, "attempt")),
+        });
   const startingStock = configSnapshot.inventoryConfig.startingStock;
   const details = [
-    `${trafficModeLabel(traffic.mode)} · ${demand} · ${formatNumber(startingStock)} starting ${pluralize(startingStock, "unit")}`,
+    t("{value1} · {value2} · {value3} starting {value4}", {
+      value1: t(trafficModeLabel(traffic.mode)),
+      value2: demand,
+      value3: formatNumber(startingStock, locale),
+      value4: t(pluralize(startingStock, "unit")),
+    }),
   ];
   if (traffic.mode === "buyer-spike" && traffic.duplicateEachBuyerAttempt) {
-    details.push("duplicate attempts enabled");
+    details.push(t("duplicate attempts enabled"));
   }
-  if (configSnapshot.erpConfig.forcedOutage) details.push("simulated ERP outage forced");
+  if (configSnapshot.erpConfig.forcedOutage) details.push(t("simulated ERP outage forced"));
   if (configSnapshot.erpConfig.errorRate > 0) {
-    details.push(`${formatPercent(configSnapshot.erpConfig.errorRate)} simulated ERP failure rate`);
+    details.push(
+      t("{value1} simulated ERP failure rate", {
+        value1: formatPercent(configSnapshot.erpConfig.errorRate, locale),
+      }),
+    );
   }
   return details.join(" · ");
 }
@@ -859,44 +981,75 @@ export function scenarioRecap(detail: PublicRunHistoryDetailResponse): string {
 function runRecap(
   detail: PublicRunHistoryDetailResponse,
   counts: ReturnType<typeof derivePublicRunSummary>["counts"],
+  locale: Locale = "en",
 ): string[] {
+  const t = getTranslation(locale);
   const { run } = detail;
   const trafficSubject =
-    run.configSnapshot.trafficConfig.mode === "buyer-spike" ? "Buyer traffic" : "Checkout attempts";
+    run.configSnapshot.trafficConfig.mode === "buyer-spike"
+      ? t("Buyer traffic")
+      : t("Checkout attempts");
   const time = (value: string | undefined) =>
-    formatInstantUtc(value, { variant: "timeOnly" }) ?? "not recorded";
-  const value = (count: number | null) => formatCount(count) ?? "not recorded";
-  const count = (count: number | null, noun: string) => `${value(count)} ${pluralize(count, noun)}`;
+    formatInstantUtc(value, { variant: "timeOnly", locale }) ?? t("not recorded");
+  const value = (count: number | null) => formatCount(count, locale) ?? t("not recorded");
+  const count = (count: number | null, noun: string) =>
+    `${value(count)} ${t(pluralize(count, noun))}`;
   const sendingEndedAt = deriveSendingEndedAt(
     detail.summary.trafficDeliverySummary.requestArrivalSummary,
   );
   const sentNothing = sentNoAttempt(detail.summary);
   const trafficRecap = run.trafficStartedAt
     ? sendingEndedAt
-      ? `${trafficSubject} started at ${time(run.trafficStartedAt)}; sending ended at ${time(sendingEndedAt)}.`
+      ? t("{value1} started at {value2}; sending ended at {value3}.", {
+          value1: trafficSubject,
+          value2: time(run.trafficStartedAt),
+          value3: time(sendingEndedAt),
+        })
       : sentNothing
-        ? `${trafficSubject} started at ${time(run.trafficStartedAt)}; no checkout attempt was recorded.`
-        : `${trafficSubject} started at ${time(run.trafficStartedAt)}; the end of sending was not recorded.`
+        ? t("{value1} started at {value2}; no checkout attempt was recorded.", {
+            value1: trafficSubject,
+            value2: time(run.trafficStartedAt),
+          })
+        : t("{value1} started at {value2}; the end of sending was not recorded.", {
+            value1: trafficSubject,
+            value2: time(run.trafficStartedAt),
+          })
     : sendingEndedAt
-      ? `${trafficSubject} start was not recorded; sending ended at ${time(sendingEndedAt)}.`
+      ? t("{value1} start was not recorded; sending ended at {value2}.", {
+          value1: trafficSubject,
+          value2: time(sendingEndedAt),
+        })
       : sentNothing
-        ? "No checkout attempt was recorded for this run."
-        : `${trafficSubject} start and the end of sending were not recorded.`;
+        ? t("No checkout attempt was recorded for this run.")
+        : t("{value1} start and the end of sending were not recorded.", { value1: trafficSubject });
   const lines = [
     trafficRecap,
-    `${count(counts.reservedUnits, "unit")} reserved / ${count(counts.uniqueReservations, "unique reservation")}; ${count(counts.soldOutDecisions, "attempt")} turned away because stock ran out.`,
-    `Orders reached their recorded outcome: ${value(counts.confirmedOrders)} confirmed, ${value(counts.failedOrders)} failed, ${value(counts.pendingOrders)} awaiting confirmation.`,
-    `Run ended: ${time(run.finalizedAt)}.`,
+    t("{value1} reserved / {value2}; {value3} turned away because stock ran out.", {
+      value1: count(counts.reservedUnits, "unit"),
+      value2: count(counts.uniqueReservations, "unique reservation"),
+      value3: count(counts.soldOutDecisions, "attempt"),
+    }),
+    t(
+      "Orders reached their recorded outcome: {value1} confirmed, {value2} failed, {value3} awaiting confirmation.",
+      {
+        value1: value(counts.confirmedOrders),
+        value2: value(counts.failedOrders),
+        value3: value(counts.pendingOrders),
+      },
+    ),
+    t("Run ended: {value1}.", { value1: time(run.finalizedAt) }),
   ];
   return lines;
 }
 
-function nullableMetricMs(value: number | null): string {
-  return formatDurationMs(value) ?? "n/a";
+function nullableMetricMs(value: number | null, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatDurationMs(value, locale) ?? t("n/a");
 }
 
-function formatNumber(value: number): string {
-  return formatCount(value) ?? "n/a";
+function formatNumber(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatCount(value, locale) ?? t("n/a");
 }
 
 /**
@@ -904,10 +1057,11 @@ function formatNumber(value: number): string {
  * 0-100 reading never needs grouping, and its precision must not move if the shared count policy
  * changes.
  */
-const percentFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
-
-function formatPercent(value: number): string {
-  return `${percentFormatter.format(value * 100)}%`;
+function formatPercent(value: number, locale: Locale = "en"): string {
+  const formatter = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    maximumFractionDigits: 2,
+  });
+  return `${formatter.format(value * 100)}${locale === "fr" ? " %" : "%"}`;
 }
 
 /**
@@ -915,10 +1069,11 @@ function formatPercent(value: number): string {
  * value in `<time dateTime>` for assistive technology and technical inspection. Both parts derive
  * from the same server-supplied string under a fixed zone, so hydration cannot disagree.
  */
-function formatDate(value: string | undefined): ReactNode {
-  const text = formatInstantUtc(value);
+function formatDate(value: string | undefined, locale: Locale = "en"): ReactNode {
+  const t = getTranslation(locale);
+  const text = formatInstantUtc(value, { locale });
   if (value === undefined || text === null) {
-    return "n/a";
+    return t("n/a");
   }
 
   return <time dateTime={value}>{text}</time>;
@@ -929,13 +1084,15 @@ function formatSendingEnd(
     PublicRunHistoryDetailResponse["summary"],
     "trafficDeliverySummary" | "transportAttemptCounts"
   >,
+  locale: Locale = "en",
 ): ReactNode {
+  const t = getTranslation(locale);
   const endedAt = deriveSendingEndedAt(summary.trafficDeliverySummary.requestArrivalSummary);
   return endedAt
-    ? formatDate(endedAt)
+    ? formatDate(endedAt, locale)
     : sentNoAttempt(summary)
-      ? "no attempt recorded"
-      : "not recorded";
+      ? t("no attempt recorded")
+      : t("not recorded");
 }
 
 /**
@@ -949,22 +1106,25 @@ function sentNoAttempt(
 }
 
 /** Configured guards are stored in seconds but are presented under the one duration policy. */
-function formatDurationSeconds(value: number): string {
-  return formatDurationMs(value * 1000) ?? "n/a";
+function formatDurationSeconds(value: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
+  return formatDurationMs(value * 1000, locale) ?? t("n/a");
 }
 
 function adminDeliveryLabel(
   status: AdminRunHistoryDetailResponse["summary"]["trafficDeliverySummary"]["trafficDeliveryStatus"],
+  locale: Locale = "en",
 ): string {
+  const t = getTranslation(locale);
   switch (status) {
     case "complete":
-      return "Delivery complete";
+      return t("Delivery complete");
     case "warning":
-      return "Delivery warning";
+      return t("Delivery warning");
     case "degraded":
-      return "Delivery degraded";
+      return t("Delivery degraded");
     case "failed":
-      return "Delivery failed";
+      return t("Delivery failed");
   }
 }
 

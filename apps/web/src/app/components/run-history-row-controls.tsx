@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslation } from "../lib/i18n/locale-context";
+
 import { useRunHistoryRowAdmin } from "./run-history-admin-context";
 
 interface RunHistoryRowControlsProps {
@@ -13,6 +15,7 @@ export function RunHistoryRowControls({
   presetName,
   showSelection = true,
 }: RunHistoryRowControlsProps) {
+  const t = useTranslation();
   const admin = useRunHistoryRowAdmin();
   if (!admin) return null;
 
@@ -21,7 +24,7 @@ export function RunHistoryRowControls({
       {showSelection ? (
         <label className="inline-flex size-11 items-center justify-center">
           <input
-            aria-label={`Select run ${runId}`}
+            aria-label={t("Select run {value1}", { value1: runId })}
             checked={admin.isSelected(runId)}
             className="size-4 cursor-pointer accent-danger"
             onChange={() => admin.toggleSelection(runId)}
@@ -30,10 +33,10 @@ export function RunHistoryRowControls({
         </label>
       ) : null}
       <button
-        aria-label={`Delete run ${presetName} (${runId})`}
+        aria-label={t("Delete run {value1} ({value2})", { value1: t(presetName), value2: runId })}
         className="inline-flex size-11 items-center justify-center rounded-lg border border-transparent text-muted hover:border-danger hover:bg-danger-soft hover:text-danger"
         onClick={() => admin.requestRunDeletion(runId, presetName)}
-        title={`Delete run ${presetName}`}
+        title={t("Delete run {value1}", { value1: t(presetName) })}
         type="button"
       >
         <svg

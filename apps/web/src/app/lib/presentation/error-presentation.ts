@@ -1,5 +1,6 @@
 import type { ErrorPayloadCode, PublicRuntimePolicyViolationCode } from "@checkout-surge/contracts";
 import type { BackendRead } from "../backend-read";
+import { getTranslation, type Locale } from "../i18n/translate";
 import { pluralize } from "./format";
 import { publicFailureExplanation } from "./public-vocabulary";
 
@@ -63,13 +64,17 @@ export interface ErrorPresentationContext {
   readiness?: "degraded" | "unavailable";
 }
 
-const genericPresentation = {
-  headline: "Something didn't work on our side",
-  explanation:
-    "Try again shortly. If the problem continues, the demo may be temporarily unavailable.",
-  action: { kind: "retry", label: "Check again" } as const,
-  tone: "danger" as const,
-};
+function genericPresentation(locale: Locale): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
+  return {
+    headline: t("Something didn't work on our side"),
+    explanation: t(
+      "Try again shortly. If the problem continues, the demo may be temporarily unavailable.",
+    ),
+    action: { kind: "retry", label: t("Check again") },
+    tone: "danger",
+  };
+}
 
 /** The hosting provider's public status page, offered when it has no capacity for a run. */
 const providerStatusUrl = "https://status.flyio.net/";
@@ -128,7 +133,9 @@ const publicStartUncertainCodes = new Set<ErrorPayloadCode>([
 export function mapErrorPresentation(
   read: BackendRead<unknown>,
   context: ErrorPresentationContextName | ErrorPresentationContext,
+  locale: Locale = "en",
 ): ErrorPresentation {
+  const t = getTranslation(locale);
   const resolved = withBoundedCause(
     typeof context === "string" ? { surface: context } : context,
     read,
@@ -141,22 +148,22 @@ export function mapErrorPresentation(
 
   if (read.status === "loading") {
     return {
-      headline: "Checking availability",
-      explanation: "Checking the latest information now.",
+      headline: t("Checking availability"),
+      explanation: t("Checking the latest information now."),
       action: { kind: "none", label: "" },
       tone: "idle",
     };
   }
 
   if (resolved.readiness) {
-    return readinessPresentation(resolved.readiness, technicalDetails);
+    return readinessPresentation(resolved.readiness, technicalDetails, locale);
   }
 
   if (resolved.fieldErrors && resolved.fieldErrors.length > 0) {
     return {
-      headline: "Check the highlighted fields",
-      explanation: "Correct the values below and try again.",
-      action: { kind: "edit", label: "Edit fields" },
+      headline: t("Check the highlighted fields"),
+      explanation: t("Correct the values below and try again."),
+      action: { kind: "edit", label: t("Edit fields") },
       tone: "warning",
       fieldErrors: resolved.fieldErrors,
       technicalDetails,
@@ -165,8 +172,8 @@ export function mapErrorPresentation(
 
   if (read.status === "available") {
     return {
-      headline: "Ready",
-      explanation: "The latest information is available.",
+      headline: t("Ready"),
+      explanation: t("The latest information is available."),
       action: { kind: "none", label: "" },
       tone: "ok",
     };
@@ -174,9 +181,12 @@ export function mapErrorPresentation(
 
   if (isInfrastructureRunLimitRejection(read)) {
     return {
-      headline: "This run exceeds an infrastructure limit",
-      explanation: `This limit was deliberately chosen for the infrastructure running this demo. ${largerRunsGuidance}`,
-      action: { kind: "edit", label: "Edit values" },
+      headline: t("This run exceeds an infrastructure limit"),
+      explanation: t(
+        "This limit was deliberately chosen for the infrastructure running this demo. {v0}",
+        { v0: t(largerRunsGuidance) },
+      ),
+      action: { kind: "edit", label: t("Edit values") },
       tone: "warning",
       technicalDetails,
     };
@@ -188,12 +198,12 @@ export function mapErrorPresentation(
     resolved.surface === "public-start" && resolved.startRequestOutcome === true;
   const mapped = read.errorCode
     ? resolved.surface !== "public-start" || publicStartActionCodes.has(read.errorCode)
-      ? codePresentation(read.errorCode, retryAfterMs, resolved, read.details?.reason)
+      ? codePresentation(read.errorCode, retryAfterMs, resolved, read.details?.reason, locale)
       : isStartRequestOutcome && publicStartUncertainCodes.has(read.errorCode)
-        ? publicStartUncertainRetryPresentation(retryAfterMs)
-        : publicBackendRetryPresentation(retryAfterMs)
+        ? publicStartUncertainRetryPresentation(retryAfterMs, locale)
+        : publicBackendRetryPresentation(retryAfterMs, locale)
     : resolved.surface === "public-start" && !isStartRequestOutcome
-      ? publicBackendRetryPresentation(retryAfterMs)
+      ? publicBackendRetryPresentation(retryAfterMs, locale)
       : null;
   if (mapped) return { ...mapped, technicalDetails };
 
@@ -203,40 +213,46 @@ export function mapErrorPresentation(
   if (resolved.surface === "public-start") {
     return {
       ...(isStartRequestOutcome
-        ? publicStartUncertainPresentation()
-        : publicBackendUnavailablePresentation()),
+        ? publicStartUncertainPresentation(locale)
+        : publicBackendUnavailablePresentation(undefined, locale)),
       technicalDetails,
     };
   }
-  return { ...genericPresentation, technicalDetails };
+  return { ...genericPresentation(locale), technicalDetails };
 }
 
 function readinessPresentation(
   status: "degraded" | "unavailable",
   technicalDetails: ErrorTechnicalDetails | undefined,
+  locale: Locale = "en",
 ): ErrorPresentation {
   return {
-    ...publicBackendUnavailablePresentation(status),
+    ...publicBackendUnavailablePresentation(status, locale),
     technicalDetails,
   };
 }
 
 function publicBackendUnavailablePresentation(
   status: "degraded" | "unavailable" = "unavailable",
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   return {
-    headline: "The demo backend isn't ready yet — try again in a moment",
-    explanation: "Check again before starting a run.",
-    action: { kind: "check", label: "Check again" },
+    headline: t("The demo backend isn't ready yet — try again in a moment"),
+    explanation: t("Check again before starting a run."),
+    action: { kind: "check", label: t("Check again") },
     tone: status === "degraded" ? "warning" : "danger",
   };
 }
 
-function publicStartUncertainPresentation(): Omit<ErrorPresentation, "technicalDetails"> {
+function publicStartUncertainPresentation(
+  locale: Locale = "en",
+): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   return {
-    headline: "We couldn't confirm whether your run started",
-    explanation: "Check whether a run is already in progress before starting another one.",
-    action: { kind: "check", label: "Check again" },
+    headline: t("We couldn't confirm whether your run started"),
+    explanation: t("Check whether a run is already in progress before starting another one."),
+    action: { kind: "check", label: t("Check again") },
     tone: "warning",
   };
 }
@@ -246,128 +262,147 @@ function codePresentation(
   retryAfterMs: number | undefined,
   context: ErrorPresentationContext,
   detailsReason: unknown,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> | null {
+  const t = getTranslation(locale);
   switch (code) {
     case "run_conflict":
-      return conflictPresentation(context, retryAfterMs);
+      return conflictPresentation(context, retryAfterMs, locale);
     case "preset_conflict":
-      return presetConflictPresentation(context);
+      return presetConflictPresentation(context, locale);
     case "traffic_execution_conflict":
       return context.surface === "public-start"
-        ? publicBackendRetryPresentation(retryAfterMs)
-        : genericPresentation;
+        ? publicBackendRetryPresentation(retryAfterMs, locale)
+        : genericPresentation(locale);
     case "public_run_budget_exceeded":
       return waitPresentation(
         context.surface === "public-start" && context.budget === "visitor"
-          ? "You’ve reached your visitor start allowance"
+          ? t("You’ve reached your visitor start allowance")
           : context.surface === "public-start" && context.budget === "global"
-            ? "The shared demo has reached its start limit"
+            ? t("The shared demo has reached its start limit")
             : context.surface === "public-start"
-              ? "Public start limit reached for now — try again later"
-              : "The public run limit has been reached",
+              ? t("Public start limit reached for now — try again later")
+              : t("The public run limit has been reached"),
         retryAfterMs,
+        locale,
       );
     case "admin_login_rate_limited":
     case "dashboard_recovery_rate_limited":
-      return waitPresentation("Please wait before trying again", retryAfterMs);
+      return waitPresentation(t("Please wait before trying again"), retryAfterMs, locale);
     case "resource_not_found":
-      return resourceNotFoundPresentation(context);
+      return resourceNotFoundPresentation(context, locale);
     case "admin_session_required":
       return {
-        headline: "Sign in to continue",
-        explanation: "This operator action is protected.",
-        action: { kind: "sign-in", label: "Sign in", href: "/admin" },
+        headline: t("Sign in to continue"),
+        explanation: t("This operator action is protected."),
+        action: { kind: "sign-in", label: t("Sign in"), href: "/admin" },
         tone: "warning",
       };
     case "control_token_required":
       return {
-        headline: "Operator connection needs attention",
-        explanation: "The protected control connection is not configured.",
-        action: { kind: "contact-operator", label: "Review deployment" },
+        headline: t("Operator connection needs attention"),
+        explanation: t("The protected control connection is not configured."),
+        action: { kind: "contact-operator", label: t("Review deployment") },
         tone: "danger",
       };
     case "load_orchestrator_unavailable":
       // On a start, the API answers it only before any traffic was dispatched.
       if (context.startRequestOutcome === true) {
         return {
-          headline: "The run did not start",
-          explanation: failureSentences("not_started"),
-          action: { kind: "check", label: "Check again" },
+          headline: t("The run did not start"),
+          explanation: failureSentences("not_started", locale),
+          action: { kind: "check", label: t("Check again") },
           tone: "warning",
         };
       }
       return context.surface === "public-start"
-        ? publicBackendRetryPresentation(retryAfterMs)
-        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+        ? publicBackendRetryPresentation(retryAfterMs, locale)
+        : retryPresentation(
+            t("The latest information is temporarily unavailable"),
+            retryAfterMs,
+            locale,
+          );
     case "dashboard_recovery_unavailable":
-      if (context.surface === "public-start") return publicBackendRetryPresentation(retryAfterMs);
+      if (context.surface === "public-start")
+        return publicBackendRetryPresentation(retryAfterMs, locale);
       return isProtectedSurface(context.surface)
-        ? apiBusyPresentation(detailsReason, retryAfterMs)
-        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+        ? apiBusyPresentation(detailsReason, retryAfterMs, locale)
+        : retryPresentation(
+            t("The latest information is temporarily unavailable"),
+            retryAfterMs,
+            locale,
+          );
     case "queue_status_unavailable":
       return context.surface === "public-start"
-        ? publicBackendRetryPresentation(retryAfterMs)
-        : retryPresentation("The latest information is temporarily unavailable", retryAfterMs);
+        ? publicBackendRetryPresentation(retryAfterMs, locale)
+        : retryPresentation(
+            t("The latest information is temporarily unavailable"),
+            retryAfterMs,
+            locale,
+          );
     case "backend_unavailable":
       if (context.surface !== "public-start")
         return retryPresentation(
           isProtectedSurface(context.surface)
-            ? "The API cannot be reached"
-            : "The latest information is temporarily unavailable",
+            ? t("The API cannot be reached")
+            : t("The latest information is temporarily unavailable"),
           retryAfterMs,
+          locale,
         );
       return context.startRequestOutcome === true
-        ? publicStartUncertainRetryPresentation(retryAfterMs)
-        : publicBackendRetryPresentation(retryAfterMs);
+        ? publicStartUncertainRetryPresentation(retryAfterMs, locale)
+        : publicBackendRetryPresentation(retryAfterMs, locale);
     case "invalid_backend_response":
-      if (context.surface !== "public-start") return genericPresentation;
+      if (context.surface !== "public-start") return genericPresentation(locale);
       return context.startRequestOutcome === true
-        ? publicStartUncertainRetryPresentation(retryAfterMs)
-        : publicBackendRetryPresentation(retryAfterMs);
+        ? publicStartUncertainRetryPresentation(retryAfterMs, locale)
+        : publicBackendRetryPresentation(retryAfterMs, locale);
     case "internal_error":
       return context.surface === "public-start"
-        ? publicBackendRetryPresentation(retryAfterMs)
-        : genericPresentation;
+        ? publicBackendRetryPresentation(retryAfterMs, locale)
+        : genericPresentation(locale);
     case "invalid_request":
     case "invalid_run_configuration":
     case "invalid_runtime_policy":
     case "public_override_not_allowed":
     case "preset_operation_not_allowed":
       return {
-        headline: "Check the values and try again",
-        explanation: "Use the available fields and limits for this operation.",
-        action: { kind: "edit", label: "Edit values" },
+        headline: t("Check the values and try again"),
+        explanation: t("Use the available fields and limits for this operation."),
+        action: { kind: "edit", label: t("Edit values") },
         tone: "warning",
       };
     case "run_cleanup_conflict":
       if (context.cause === "projection_cleanup_incomplete")
         return {
-          headline: "Work cleanup and history completed",
-          explanation:
+          headline: t("Work cleanup and history completed"),
+          explanation: t(
             "Remaining dashboard or shared-state cleanup failed. Retry Reset to finish it; the completed reset does not block new runs.",
-          action: { kind: "contact-operator", label: "Retry Reset" },
+          ),
+          action: { kind: "contact-operator", label: t("Retry Reset") },
           tone: "warning",
         };
       return {
-        headline: "Work cleanup needs operator review",
-        explanation: "Review the cleanup conflict before retrying Reset.",
-        action: { kind: "contact-operator", label: "Review operation" },
+        headline: t("Work cleanup needs operator review"),
+        explanation: t("Review the cleanup conflict before retrying Reset."),
+        action: { kind: "contact-operator", label: t("Review operation") },
         tone: "danger",
       };
 
     case "runner_version_mismatch":
       return {
-        headline: "The demo is being updated",
-        explanation:
+        headline: t("The demo is being updated"),
+        explanation: t(
           "Its load generator and its backend run different versions, so runs are paused until the update completes. Try again later.",
-        action: { kind: "check", label: "Check again" },
+        ),
+        action: { kind: "check", label: t("Check again") },
         tone: "warning",
       };
     case "runner_capacity_unavailable":
       return {
-        headline: "No room at the hosting provider",
-        explanation: failureSentences("provider_capacity"),
-        action: { kind: "check", label: "Fly.io status", href: providerStatusUrl },
+        headline: t("No room at the hosting provider"),
+        explanation: failureSentences("provider_capacity", locale),
+        action: { kind: "check", label: t("Fly.io status"), href: providerStatusUrl },
         tone: "warning",
       };
     case "traffic_termination_unconfirmed":
@@ -376,9 +411,9 @@ function codePresentation(
     case "load_orchestrator_start_ambiguous":
     case "operator_mode_required":
       return {
-        headline: "The operator action could not be completed",
-        explanation: "Review the operation and try again, or contact an operator.",
-        action: { kind: "contact-operator", label: "Review operation" },
+        headline: t("The operator action could not be completed"),
+        explanation: t("Review the operation and try again, or contact an operator."),
+        action: { kind: "contact-operator", label: t("Review operation") },
         tone: "danger",
       };
     default:
@@ -387,8 +422,11 @@ function codePresentation(
 }
 
 /** The saved run's explanation and next step, so a failed start reads like the run it recorded. */
-function failureSentences(category: "not_started" | "provider_capacity"): string {
-  const { explanation, action } = publicFailureExplanation(category);
+function failureSentences(
+  category: "not_started" | "provider_capacity",
+  locale: Locale = "en",
+): string {
+  const { explanation, action } = publicFailureExplanation(category, locale);
   return `${explanation} ${action}`;
 }
 
@@ -396,13 +434,15 @@ function failureSentences(category: "not_started" | "provider_capacity"): string
 function apiBusyPresentation(
   reason: unknown,
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
-  const presentation = retryPresentation("The API is busy", retryAfterMs);
+  const t = getTranslation(locale);
+  const presentation = retryPresentation(t("The API is busy"), retryAfterMs, locale);
   const cause =
     reason === "at_capacity"
-      ? "It is already serving as many status reads as it can."
+      ? t("It is already serving as many status reads as it can.")
       : reason === "timed_out"
-        ? "Reading the current run took too long."
+        ? t("Reading the current run took too long.")
         : null;
   return cause
     ? { ...presentation, explanation: `${cause} ${presentation.explanation}` }
@@ -412,94 +452,101 @@ function apiBusyPresentation(
 function conflictPresentation(
   context: ErrorPresentationContext,
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   if (context.cause === "active_run_exists") {
     return {
-      headline: "A demo run is already in progress",
-      explanation: "Watch the current run, then try again when it finishes.",
-      action: { kind: "watch", label: "Watch live", href: "/watch" },
+      headline: t("A demo run is already in progress"),
+      explanation: t("Watch the current run, then try again when it finishes."),
+      action: { kind: "watch", label: t("Watch live"), href: "/watch" },
       tone: "warning",
     };
   }
   if (context.cause === "reset_incomplete") {
     return isProtectedSurface(context.surface)
       ? {
-          headline: "Recovery needs attention",
-          explanation: "Repair the prior reset before starting another run.",
+          headline: t("Recovery needs attention"),
+          explanation: t("Repair the prior reset before starting another run."),
           action: {
             kind: "retry",
-            label: "Retry recovery",
+            label: t("Retry recovery"),
             ...(retryAfterMs ? { retryAfterMs } : {}),
           },
           tone: "warning",
         }
       : {
-          headline: "The previous run is still recovering",
-          explanation:
+          headline: t("The previous run is still recovering"),
+          explanation: t(
             "Worker work may still settle. New runs remain unavailable until recovery completes.",
+          ),
           action: {
             kind: "check",
-            label: "Check again",
+            label: t("Check again"),
             ...(retryAfterMs ? { retryAfterMs } : {}),
           },
           tone: "warning",
         };
   }
   return context.surface === "public-start"
-    ? publicBackendUnavailablePresentation()
-    : genericPresentation;
+    ? publicBackendUnavailablePresentation(undefined, locale)
+    : genericPresentation(locale);
 }
 
 function presetConflictPresentation(
   context: ErrorPresentationContext,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   if (context.cause === "slug_in_use") {
     return {
-      headline: "That preset slug is already in use",
-      explanation: "Choose another slug before duplicating the preset.",
-      action: { kind: "edit", label: "Choose another slug" },
+      headline: t("That preset slug is already in use"),
+      explanation: t("Choose another slug before duplicating the preset."),
+      action: { kind: "edit", label: t("Choose another slug") },
       tone: "warning",
     };
   }
   if (context.cause === "not_archivable") {
     return {
-      headline: "This preset can no longer be archived",
-      explanation: "Refresh the preset list and review the available actions.",
-      action: { kind: "check", label: "Refresh presets", href: "/admin" },
+      headline: t("This preset can no longer be archived"),
+      explanation: t("Refresh the preset list and review the available actions."),
+      action: { kind: "check", label: t("Refresh presets"), href: "/admin" },
       tone: "warning",
     };
   }
   return context.surface === "public-start"
-    ? publicBackendUnavailablePresentation()
-    : genericPresentation;
+    ? publicBackendUnavailablePresentation(undefined, locale)
+    : genericPresentation(locale);
 }
 
 function resourceNotFoundPresentation(
   context: ErrorPresentationContext,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   if (context.surface === "history-detail") {
     return {
-      headline: "That saved report could not be found",
-      explanation: "Choose an available report from run history.",
-      action: { kind: "retry", label: "View run history", href: "/run-history" },
+      headline: t("That saved report could not be found"),
+      explanation: t("Choose an available report from run history."),
+      action: { kind: "retry", label: t("View run history"), href: "/run-history" },
       tone: "warning",
     };
   }
   if (context.surface === "public-start") {
-    return publicBackendUnavailablePresentation();
+    return publicBackendUnavailablePresentation(undefined, locale);
   }
   if (context.surface === "admin-operation") {
     return {
-      headline: "The requested item is no longer available",
-      explanation: "Review the operation and choose an available item.",
-      action: { kind: "contact-operator", label: "Review operation" },
+      headline: t("The requested item is no longer available"),
+      explanation: t("Review the operation and choose an available item."),
+      action: { kind: "contact-operator", label: t("Review operation") },
       tone: "warning",
     };
   }
   return {
-    headline: "That result is no longer available",
-    explanation: "Try another result.",
-    action: { kind: "retry", label: "Try again" },
+    headline: t("That result is no longer available"),
+    explanation: t("Try another result."),
+    action: { kind: "retry", label: t("Try again") },
     tone: "warning",
   };
 }
@@ -533,59 +580,70 @@ function withBoundedCause(
 function retryPresentation(
   headline: string,
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   return retryAfterMs === undefined
     ? {
         headline,
-        explanation: "Try again shortly.",
-        action: { kind: "retry", label: "Check again" },
+        explanation: t("Try again shortly."),
+        action: { kind: "retry", label: t("Check again") },
         tone: "danger",
       }
-    : waitPresentation(headline, retryAfterMs);
+    : waitPresentation(headline, retryAfterMs, locale);
 }
 
 function publicStartUncertainRetryPresentation(
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
   return retryAfterMs === undefined
-    ? publicStartUncertainPresentation()
-    : waitPresentation(publicStartUncertainPresentation().headline, retryAfterMs);
+    ? publicStartUncertainPresentation(locale)
+    : waitPresentation(publicStartUncertainPresentation(locale).headline, retryAfterMs, locale);
 }
 
 function publicBackendRetryPresentation(
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
   return retryAfterMs === undefined
-    ? publicBackendUnavailablePresentation()
-    : waitPresentation(publicBackendUnavailablePresentation().headline, retryAfterMs);
+    ? publicBackendUnavailablePresentation(undefined, locale)
+    : waitPresentation(
+        publicBackendUnavailablePresentation(undefined, locale).headline,
+        retryAfterMs,
+        locale,
+      );
 }
 
 function waitPresentation(
   headline: string,
   retryAfterMs: number | undefined,
+  locale: Locale = "en",
 ): Omit<ErrorPresentation, "technicalDetails"> {
+  const t = getTranslation(locale);
   const explanation =
     retryAfterMs === undefined
-      ? "Try again later."
-      : `Wait ${formatRetryDelay(retryAfterMs)} before trying again.`;
+      ? t("Try again later.")
+      : t("Wait {v0} before trying again.", { v0: String(formatRetryDelay(retryAfterMs, locale)) });
   return {
     headline,
     explanation,
     action: {
       kind: "wait",
-      label: retryAfterMs === undefined ? "Try again later" : "Wait before retrying",
+      label: retryAfterMs === undefined ? t("Try again later") : t("Wait before retrying"),
       ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     },
     tone: "warning",
   };
 }
 
-function formatRetryDelay(milliseconds: number): string {
+function formatRetryDelay(milliseconds: number, locale: Locale = "en"): string {
+  const t = getTranslation(locale);
   const seconds = Math.max(1, Math.ceil(milliseconds / 1_000));
   const minutes = Math.ceil(seconds / 60);
   return seconds < 60
-    ? `${seconds} ${pluralize(seconds, "second")}`
-    : `${minutes} ${pluralize(minutes, "minute")}`;
+    ? `${seconds} ${t(pluralize(seconds, "second"))}`
+    : `${minutes} ${t(pluralize(minutes, "minute"))}`;
 }
 
 function toTechnicalDetails(

@@ -4,12 +4,13 @@ import { adminDeleteRunHistoryResponseSchema, errorPayloadSchema } from "@checko
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 import { adminRunHistoryProxyPath } from "../lib/control-paths";
-import type { AdminNotice } from "../lib/presentation/admin-notice";
+import { useLocale, useTranslation } from "../lib/i18n/locale-context";
+import type { AdminMessage, AdminNotice } from "../lib/presentation/admin-notice";
 import { adminFailureNotice } from "../lib/presentation/admin-notice";
 import { formatCount } from "../lib/presentation/format";
 
 export type DeleteIntent =
-  | { kind: "runs"; runIds: string[]; description: string }
+  | { kind: "runs"; runIds: string[]; description: string | AdminMessage }
   | { kind: "all" };
 
 export interface RunHistoryDeletion {
@@ -29,12 +30,25 @@ export interface RunHistoryDeletion {
 }
 
 export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeletion {
+  const t = useTranslation();
+  const locale = useLocale();
   const router = useRouter();
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [intent, setIntent] = useState<DeleteIntent | null>(null);
   const [deleteAllConfirmation, setDeleteAllConfirmation] = useState("");
   const [error, setError] = useState<AdminNotice | null>(null);
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [deletedSummaryCount, setDeletedSummaryCount] = useState<number | null>(null);
+  const statusMessage =
+    deletedSummaryCount === null
+      ? null
+      : t(
+          deletedSummaryCount === 1
+            ? "Deleted {value1} run summary."
+            : "Deleted {value1} run summaries.",
+          {
+            value1: formatCount(deletedSummaryCount, locale) ?? t("an unreported number of"),
+          },
+        );
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const toggleSelection = useCallback((runId: string) => {
@@ -56,7 +70,7 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
 
   const openIntent = useCallback((next: DeleteIntent) => {
     setError(null);
-    setStatusMessage(null);
+    setDeletedSummaryCount(null);
     setIntent(next);
   }, []);
 
@@ -97,7 +111,7 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
         setSelectedRunIds(new Set());
         setDeleteAllConfirmation("");
         setError(null);
-        setStatusMessage(null);
+        setDeletedSummaryCount(null);
         router.refresh();
         return;
       }
@@ -117,9 +131,7 @@ export function useRunHistoryDeletion(visibleRunIds: string[]): RunHistoryDeleti
         return;
       }
 
-      setStatusMessage(
-        `Deleted ${formatCount(parsed.data.deletedSummaryCount) ?? "an unreported number of"} run summaries.`,
-      );
+      setDeletedSummaryCount(parsed.data.deletedSummaryCount);
       setSelectedRunIds((current) => remainingSelection(current, intent));
       setIntent(null);
       setDeleteAllConfirmation("");

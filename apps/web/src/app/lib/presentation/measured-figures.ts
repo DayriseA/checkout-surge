@@ -1,3 +1,5 @@
+import { getTranslation, type Locale } from "../i18n/translate";
+
 /**
  * Every figure the content pages quote, in one place. They are measurements of the hosted demo
  * or of its proof copy (same Machines and sizes), quoted as text and never read from the API.
@@ -203,25 +205,31 @@ export const comparisonFiguresNote =
 /** The PostgreSQL order queue's drain against BullMQ's, over whole Redis comparison runs. */
 export const postgresQueueDrain = { postgres: 15.5, bullmq: 17.7 } as const;
 
-const countFormat = new Intl.NumberFormat("en-US");
-const decimalFormat = new Intl.NumberFormat("en-US", {
-  minimumFractionDigits: 1,
-  maximumFractionDigits: 1,
-});
-
-export function formatFigure(value: number, format: FigureFormat): string {
+export function formatFigure(value: number, format: FigureFormat, locale: Locale = "en"): string {
+  const countFormat = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US");
+  const decimalFormat = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
   switch (format) {
     case "count":
       return countFormat.format(value);
     case "seconds":
       return `${decimalFormat.format(value)} s`;
     case "pace":
-      return `${decimalFormat.format(value)} per second`;
+      return `${decimalFormat.format(value)} ${getTranslation(locale)("per second")}`;
   }
 }
 
 /** "4.7–5.1 s": the lowest and highest value across the measured pairs. */
-export function formatRange([, min, max]: Spread, format: FigureFormat): string {
-  const unitless = format === "count" ? countFormat.format(min) : decimalFormat.format(min);
-  return `${unitless}–${formatFigure(max, format)}`;
+export function formatRange(
+  [, min, max]: Spread,
+  format: FigureFormat,
+  locale: Locale = "en",
+): string {
+  const unitless = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+    minimumFractionDigits: format === "count" ? 0 : 1,
+    maximumFractionDigits: format === "count" ? 0 : 1,
+  }).format(min);
+  return `${unitless}–${formatFigure(max, format, locale)}`;
 }
