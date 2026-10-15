@@ -46,11 +46,16 @@ export async function buildGateServer(options: BuildGateServerOptions) {
     const returnPath = safeReturnPath((request.query as { return?: unknown }).return);
     const outcome = await options.wake.wake();
     if (outcome === "starting" || outcome === "relocating") return reply.redirect(returnPath, 303);
-    return sendPage(reply, outcome, returnPath, gateLocale(request.headers.cookie));
+    return sendPage(
+      reply,
+      outcome,
+      returnPath,
+      gateLocale(request.headers.cookie, request.headers["accept-language"]),
+    );
   });
 
   app.all("/*", async (request, reply) => {
-    const locale = gateLocale(request.headers.cookie);
+    const locale = gateLocale(request.headers.cookie, request.headers["accept-language"]);
     const recovery = options.wake.recoveryState();
     if (recovery) return sendPage(reply, recovery, request.url, locale);
     const status = await options.status.current();

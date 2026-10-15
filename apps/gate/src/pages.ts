@@ -79,11 +79,39 @@ const pages: Record<GatePageState, PageContent> = {
 
 export type GateLocale = "en" | "fr";
 
-/** The same preference cookie is read by the web app once the core is ready. */
-export function gateLocale(cookieHeader: string | undefined): GateLocale {
-  return cookieHeader?.split(";").some((cookie) => cookie.trim() === "checkout-surge-locale=fr")
-    ? "fr"
-    : "en";
+const localeCookiePrefix = "checkout-surge-locale=";
+
+/**
+ * The language saved by the switcher, or else the one the browser prefers between the supported
+ * ones (its `Accept-Language` header). It mirrors how the web app picks it once the core is ready.
+ */
+export function gateLocale(
+  cookieHeader: string | undefined,
+  acceptLanguage: string | undefined,
+): GateLocale {
+  const saved = cookieHeader
+    ?.split(";")
+    .map((cookie) => cookie.trim())
+    .find((cookie) => cookie.startsWith(localeCookiePrefix))
+    ?.slice(localeCookiePrefix.length);
+  if (saved === "en" || saved === "fr") return saved;
+  return browserLocale(acceptLanguage);
+}
+
+function browserLocale(acceptLanguage: string | undefined): GateLocale {
+  const ranked = (acceptLanguage ?? "")
+    .split(",")
+    .map((entry) => {
+      const [tag = "", ...parameters] = entry.split(";").map((part) => part.trim());
+      const quality = parameters.find((parameter) => parameter.startsWith("q="));
+      return {
+        language: tag.toLowerCase().split("-")[0],
+        quality: quality === undefined ? 1 : Number(quality.slice(2)),
+      };
+    })
+    .filter(({ language, quality }) => (language === "en" || language === "fr") && quality > 0)
+    .sort((a, b) => b.quality - a.quality);
+  return ranked[0]?.language === "fr" ? "fr" : "en";
 }
 
 const frenchPages: Record<GatePageState, Pick<PageContent, "status" | "title" | "text">> = {

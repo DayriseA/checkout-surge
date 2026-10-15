@@ -12,13 +12,19 @@ import {
   formatInstantUtc,
 } from "../src/app/lib/presentation/format";
 
-const preference = vi.hoisted(() => ({ value: undefined as string | undefined }));
+const preference = vi.hoisted(() => ({
+  value: undefined as string | undefined,
+  acceptLanguage: null as string | null,
+}));
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) =>
       name === localeCookieName && preference.value !== undefined
         ? { value: preference.value }
         : undefined,
+  }),
+  headers: async () => ({
+    get: (name: string) => (name === "accept-language" ? preference.acceptLanguage : null),
   }),
 }));
 
@@ -28,7 +34,22 @@ describe("site language", () => {
     expect(await getLocale()).toBe("fr");
     preference.value = undefined;
     expect(await getLocale()).toBe("en");
-    expect(resolveLocale("unsupported")).toBe("en");
+    expect(resolveLocale("unsupported", null)).toBe("en");
+  });
+
+  it("follows the browser language until the visitor picks one", async () => {
+    preference.value = undefined;
+    preference.acceptLanguage = "fr-CA,fr;q=0.9,en;q=0.8";
+    expect(await getLocale()).toBe("fr");
+    preference.value = "en";
+    expect(await getLocale()).toBe("en");
+    preference.value = undefined;
+    preference.acceptLanguage = null;
+    expect(resolveLocale(undefined, "en-US,en;q=0.9,fr;q=0.8")).toBe("en");
+    expect(resolveLocale(undefined, "de-DE,fr;q=0.5")).toBe("fr");
+    expect(resolveLocale(undefined, "en;q=0.4,fr;q=0.6")).toBe("fr");
+    expect(resolveLocale(undefined, "fr;q=0,en")).toBe("en");
+    expect(resolveLocale(undefined, "de-DE")).toBe("en");
   });
 
   it("keeps translations isolated and interpolates a localized action", () => {

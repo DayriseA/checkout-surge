@@ -69,6 +69,15 @@ describe("gate server", () => {
     expect(response.body).toContain('action="/__gate/start?return=%2Fdemo%3Fscenario%3D1"');
     expect(wake.wake).not.toHaveBeenCalled();
   });
+  it("uses the browser language on gate pages before any language is saved", async () => {
+    const { gate } = await setup({ state: "stopped" });
+    const response = await gate.inject({
+      method: "GET",
+      url: "/demo",
+      headers: { "accept-language": "fr-FR,fr;q=0.9,en;q=0.8" },
+    });
+    expect(response.body).toContain('<html lang="fr">');
+  });
   it("answers any URL with its own page while the core sleeps, and a GET never wakes it", async () => {
     const { gate, wake } = await setup({ state: "stopped" });
 
