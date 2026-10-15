@@ -70,7 +70,7 @@ export default async function UnderTheHoodPage() {
         <dl className="mb-0 mt-6 grid max-w-[68ch] grid-cols-[minmax(0,14rem)_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm leading-6 max-[560px]:grid-cols-1 max-[560px]:gap-y-0">
           {stack.map(([layer, technology]) => (
             <div className="contents" key={t(layer)}>
-              <dt className="text-muted max-[560px]:mt-2">{layer}</dt>
+              <dt className="text-muted max-[560px]:mt-2">{t(layer)}</dt>
               <dd className="m-0 font-semibold text-ink">{t(technology)}</dd>
             </div>
           ))}

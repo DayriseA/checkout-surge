@@ -87,7 +87,7 @@ export function presentInvalidCustomRunControls(
             fieldError: message,
             group: field.group,
             key: controlId,
-            message: `${t(field.label)}: ${message}`,
+            message: `${t(field.label)}${t(": ")}${message}`,
             targetId: controlId,
           },
         ]
@@ -110,7 +110,7 @@ export function presentCustomRunIssues(
         fieldError,
         group: field.group,
         key: fieldId,
-        message: `${t(field.label)}: ${fieldError}`,
+        message: `${t(field.label)}${t(": ")}${fieldError}`,
         targetId: fieldId,
       };
     }

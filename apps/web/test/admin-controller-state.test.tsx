@@ -2119,7 +2119,7 @@ describe("admin feature controllers", () => {
     await user.type(screen.getByLabelText("Name"), "Edited locally");
     const presetBuyerCount = () => document.querySelector<HTMLInputElement>("#preset-buyerCount");
     expect(document.querySelector("#preset-buyerCount-help")?.textContent).not.toContain(
-      "Maximum: 1000.",
+      "Maximum:",
     );
 
     await user.click(screen.getByRole("button", { name: "Refresh policy" }));
@@ -2134,7 +2134,7 @@ describe("admin feature controllers", () => {
     await user.click(confirmationButton("Discard unsaved edits"));
     await waitFor(() =>
       expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
-        "Maximum: 1000.",
+        "Maximum: 1,000.",
       ),
     );
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Custom");
@@ -2145,7 +2145,7 @@ describe("admin feature controllers", () => {
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(
-      screen.getByText("Buyer count must be at most 1000.", {
+      screen.getByText("Buyer count must be at most 1,000.", {
         selector: "#preset-buyerCount-error",
       }),
     ).toBeTruthy();
@@ -2172,7 +2172,7 @@ describe("admin feature controllers", () => {
     await user.type(presetBuyerCount() as HTMLInputElement, "1001");
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(
-      screen.getByText("Buyer count must be at most 1000.", {
+      screen.getByText("Buyer count must be at most 1,000.", {
         selector: "#preset-buyerCount-error",
       }),
     ).toBeTruthy();
@@ -2182,18 +2182,18 @@ describe("admin feature controllers", () => {
     await user.click(confirmationButton("Discard unsaved edits"));
     await waitFor(() =>
       expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
-        "Maximum: 2000.",
+        "Maximum: 2,000.",
       ),
     );
     expect(presetBuyerCount()?.value).toBe("1000");
     expect(presetBuyerCount()?.getAttribute("aria-invalid")).toBeNull();
-    expect(screen.queryByText("Buyer count must be at most 1000.")).toBeNull();
+    expect(screen.queryByText("Buyer count must be at most 1,000.")).toBeNull();
 
     await user.clear(presetBuyerCount() as HTMLInputElement);
     await user.type(presetBuyerCount() as HTMLInputElement, "2001");
     await user.click(screen.getByRole("button", { name: "Run once with these values" }));
     expect(
-      screen.getByText("Buyer count must be at most 2000.", {
+      screen.getByText("Buyer count must be at most 2,000.", {
         selector: "#preset-buyerCount-error",
       }),
     ).toBeTruthy();
@@ -2432,7 +2432,7 @@ describe("admin feature controllers", () => {
     expect((screen.getByLabelText("Max buyers") as HTMLInputElement).value).toBe("4321");
     expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("Edited locally");
     expect(document.querySelector("#preset-buyerCount-help")?.textContent).toContain(
-      "Maximum: 1000.",
+      "Maximum: 1,000.",
     );
   });
 

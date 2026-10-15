@@ -36,7 +36,7 @@ describe("route metadata", () => {
       expect((await underTheHoodMetadata()).title).toBe("Sous le capot");
       expect((await watchMetadata()).title).toBe("Suivi en direct");
       expect((await runHistoryMetadata()).title).toBe("Historique des simulations");
-      expect((await runDetailMetadata()).title).toBe("Rapport d’exécution");
+      expect((await runDetailMetadata()).title).toBe("Rapport de simulation");
       expect((await notFoundMetadata()).title).toBe("Page introuvable");
     } finally {
       vi.mocked(getLocale).mockResolvedValue("en");

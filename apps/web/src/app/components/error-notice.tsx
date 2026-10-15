@@ -73,7 +73,11 @@ export function ErrorNotice({
         <ul className="m-0 list-disc pl-5">
           {resolvedPresentation.fieldErrors.map((fieldError) => (
             <li key={`${fieldError.field}:${fieldError.message}`}>
-              <strong>{t(fieldError.field)}:</strong> {t(fieldError.message)}
+              <strong>
+                {t(fieldError.field)}
+                {t(": ").trimEnd()}
+              </strong>{" "}
+              {t(fieldError.message)}
             </li>
           ))}
         </ul>

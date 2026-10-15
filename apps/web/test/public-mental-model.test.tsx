@@ -66,14 +66,17 @@ describe("public site", () => {
       const markup = pages.map((page) =>
         renderToStaticMarkup(<LocaleProvider locale="fr">{page}</LocaleProvider>),
       );
-      expect(markup[0]).toContain("système qui gère une vente flash");
+      expect(markup[0]).toContain("démo live du système derrière une vente flash");
       expect(markup[0]).toContain("4,8 s");
-      expect(markup[1]).toContain("Comment concevoir le système d’achat d’une vente flash");
+      expect(markup[1]).toContain("Comment on conçoit le système d’achat d’une vente flash");
       expect(markup[1]).toContain("Salle d’attente");
       expect(markup[2]).toContain("Limites et défauts connus");
+      expect(markup[2]).toContain("La file PostgreSQL confirme les commandes environ 12");
+      expect(markup[2]).not.toMatch(/\{\w+\}/);
       expect(markup[3]).toContain("Sous le capot");
       expect(markup[3]).toContain("Sur cette page");
       expect(markup[3]).toContain("Médiane de 4 paires");
+      expect(markup[3]).toContain("Pages web et suivi en direct");
       expect(markup.join("")).not.toContain("Shown live");
     } finally {
       vi.mocked(getLocale).mockResolvedValue("en");

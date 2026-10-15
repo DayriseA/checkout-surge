@@ -14,6 +14,7 @@ import {
   formatWindowSeconds,
 } from "../lib/presentation/format";
 import type { Freshness, RealtimeConnectionStatus } from "../lib/presentation/freshness";
+import { withPercentSign } from "../lib/presentation/percent";
 import {
   durableCheckoutLens,
   erpAttemptStatusLabel,
@@ -139,7 +140,12 @@ export function formatMetric(
 
 export function formatFailureSample(value: number, unit: string, locale: Locale = "en"): string {
   return unit === "ratio"
-    ? `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 2 }).format(value * 100)}%`
+    ? withPercentSign(
+        new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
+          maximumFractionDigits: 2,
+        }).format(value * 100),
+        locale,
+      )
     : formatMetric(value, unit, undefined, locale);
 }
 

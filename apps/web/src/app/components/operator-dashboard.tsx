@@ -760,8 +760,7 @@ function CountsRow({
         <p className={tileLabelClassName}>{t("Units left")}</p>
         {reserved !== null ? (
           <p className="m-0 mt-1 text-xs text-muted">
-            {format(reserved)}
-            {t(" reserved")}
+            {t("{count} reserved", { count: format(reserved) })}
           </p>
         ) : null}
       </div>
@@ -1100,7 +1099,9 @@ function TechnicalGroups({
       runComposition.phase === "draining");
   const acceptedRunIdLine = acceptedResult ? (
     <p className="col-span-12 m-0 break-all text-sm text-muted">
-      {stoppedRun ? t("Stopped run ID") : t("Accepted run ID")}: <code>{acceptedResult.runId}</code>
+      {stoppedRun ? t("Stopped run ID") : t("Accepted run ID")}
+      {t(": ")}
+      <code>{acceptedResult.runId}</code>
     </p>
   ) : null;
   const connectionBody = (

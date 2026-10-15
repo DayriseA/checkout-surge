@@ -23,16 +23,18 @@ describe("admin drafts", () => {
     draft.buyerCount = "";
     const missing = buildEffectiveRunConfig(draft, preset, undefined, "fr");
     expect(missing.fieldErrors.buyerCount?.message).toBe(
-      "Le champ « Nombre d’acheteurs » est obligatoire.",
+      "Le champ «\u00a0Nombre d’acheteurs\u00a0» est obligatoire.",
     );
     const error = missing.fieldErrors.buyerCount;
     if (!error) throw new Error("Expected the missing buyer count error.");
     expect(draftErrorMessage(error, "en")).toBe("Buyer count is required.");
-    expect(draftErrorMessage(error, "fr")).toBe("Le champ « Nombre d’acheteurs » est obligatoire.");
+    expect(draftErrorMessage(error, "fr")).toBe(
+      "Le champ «\u00a0Nombre d’acheteurs\u00a0» est obligatoire.",
+    );
     draft.buyerCount = "-1";
     const invalid = buildEffectiveRunConfig(draft, preset, undefined, "fr");
     expect(invalid.fieldErrors.buyerCount?.message).toBe(
-      "Le champ « Nombre d’acheteurs » doit être supérieur ou égal à 1.",
+      "Le champ «\u00a0Nombre d’acheteurs\u00a0» doit être supérieur ou égal à 1.",
     );
   });
   it.each([

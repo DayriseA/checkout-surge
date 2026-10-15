@@ -34,7 +34,7 @@ describe("RunHistoryAdminControls", () => {
       screen.getByRole("button", { name: "Supprimer tous les résumés de simulation" }),
     );
     expect(
-      screen.getByRole("alertdialog", { name: "Supprimer tous les résumés de simulation ?" }),
+      screen.getByRole("alertdialog", { name: "Supprimer tous les résumés de simulation\u202f?" }),
     ).toBeTruthy();
     expect(screen.getByText("Saisissez DELETE pour confirmer")).toBeTruthy();
     await user.type(screen.getByRole("textbox"), "DELETE");

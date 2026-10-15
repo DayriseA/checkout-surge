@@ -23,12 +23,13 @@ import { useLocale, useTranslation } from "../../lib/i18n/locale-context";
 import { getTranslation, type Locale } from "../../lib/i18n/translate";
 import type { AdminNotice } from "../../lib/presentation/admin-notice";
 import {
+  adminDraftFieldHint,
   adminDraftFieldHints,
   adminFieldHints,
   fieldHints,
 } from "../../lib/presentation/field-hints";
 import { formatCount } from "../../lib/presentation/format";
-import { ratioToPercent } from "../../lib/presentation/percent";
+import { ratioToPercent, withPercentSign } from "../../lib/presentation/percent";
 import { trafficModeLabel } from "../../lib/presentation/public-vocabulary";
 import { ConfigGroup, FieldRow } from "../config-presentation";
 import {
@@ -795,6 +796,7 @@ export function EffectiveRunPreview({
   defaultOpen?: boolean;
 }) {
   const t = useTranslation();
+  const locale = useLocale();
   const traffic = config.trafficConfig;
   return (
     <details className="rounded-xl border border-border px-4 py-3" open={defaultOpen}>
@@ -839,7 +841,7 @@ export function EffectiveRunPreview({
             <FieldRow label={t("Max TPS")} value={config.erpConfig.maxTps} />
             <FieldRow
               label={t("Error rate")}
-              value={`${ratioToPercent(config.erpConfig.errorRate)}%`}
+              value={withPercentSign(ratioToPercent(config.erpConfig.errorRate), locale)}
             />
             <FieldRow
               label={t("Forced outage")}
@@ -898,7 +900,7 @@ function TrafficEditor({
           label={t("Traffic pattern")}
           text={t(
             "{value1} Technically, k6 per-vu-iterations (one virtual user per buyer) versus constant-arrival-rate.",
-            { value1: fieldHints.trafficPattern },
+            { value1: t(fieldHints.trafficPattern) },
           )}
         />
         {(["buyer-spike", "constant-arrival-rate"] as const).map((mode) => (
@@ -1238,9 +1240,12 @@ function DraftInput<T extends object>({
             })
           : max === undefined
             ? bounds.help
-            : t("{value1} Maximum: {value2}.", { value1: bounds.help ?? "", value2: max }).trim()
+            : t("{value1} Maximum: {value2}.", {
+                value1: bounds.help ?? "",
+                value2: formatCount(max, locale) ?? String(max),
+              }).trim()
       }
-      hint={hint ?? adminDraftFieldHints[String(field)]}
+      hint={hint ?? adminDraftFieldHint(String(field), locale)}
       id={prefix ? `${prefix}-${String(field)}` : undefined}
       inputMode={type === "number" ? (step ? "decimal" : "numeric") : undefined}
       label={t(label)}

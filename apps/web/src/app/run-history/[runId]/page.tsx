@@ -9,7 +9,7 @@ import { RunHistoryAdminControls } from "../../components/run-history-admin-cont
 import {
   AdminRunHistoryDetail,
   PublicRunHistoryDetail,
-  scenarioRecap,
+  ScenarioRecap,
 } from "../../components/run-history-detail";
 import { RunHistoryRowControls } from "../../components/run-history-row-controls";
 import { StatusPill } from "../../components/status-pill";
@@ -92,7 +92,7 @@ export default async function RunHistoryDetailPage({ params }: RunHistoryDetailP
             {t(summary.presetName)}
           </h1>
           <p className="m-0 mt-2 max-w-[66ch] leading-6 text-muted">
-            {scenarioRecap(publicDetail.data, locale)}
+            <ScenarioRecap detail={publicDetail.data} />
           </p>
           <p className="m-0 mt-1 max-w-[66ch] text-sm leading-6 text-muted">
             {t(

@@ -90,7 +90,7 @@ const frenchPages: Record<GatePageState, Pick<PageContent, "status" | "title" | 
   stopped: {
     status: "En veille",
     title: "La démo est en veille",
-    text: "Checkout-Surge est une démonstration en direct du système derrière une vente flash, où des milliers d’acheteurs simulés se disputent un stock limité. Ses serveurs se mettent en veille en l’absence de visiteurs pour réduire les coûts d’hébergement. Leur réveil prend généralement environ 15 secondes, puis la démo s’ouvre.",
+    text: "Checkout-Surge est une démo live du système derrière une vente flash, où des milliers d’acheteurs simulés se ruent sur un stock limité. Ses serveurs se mettent en veille quand personne ne s’en sert, pour garder des coûts d’hébergement proches de zéro. Leur réveil prend généralement une quinzaine de secondes, puis la démo s’ouvre.",
   },
   booting: {
     status: "Démarrage",
@@ -103,31 +103,44 @@ const frenchPages: Record<GatePageState, Pick<PageContent, "status" | "title" | 
     text: "Les serveurs de la démo sont en maintenance, généralement pour une mise à jour, et ne peuvent pas démarrer pour le moment. Cela prend habituellement quelques minutes. Réessayez ensuite.",
   },
   relocating: {
-    status: "Déplacement",
-    title: "Déplacement de la démo vers de nouveaux serveurs",
-    text: "L’hébergeur ne dispose plus de place sur les serveurs actuels ou ceux-ci sont en panne. La démo est déplacée sur de nouveaux serveurs et repart avec une installation neuve et un historique vide. Cela prend généralement environ une minute. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
+    status: "Migration",
+    title: "La démo change de serveurs",
+    text: "L’hébergeur n’a plus de place pour la démo sur ses serveurs actuels, ou ceux-ci sont en panne : la démo migre donc vers de nouveaux serveurs et y repart sur une installation neuve, avec un historique des simulations vide. Cela prend généralement une minute environ. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
   },
   refreshing: {
     status: "Réinstallation",
-    title: "Installation d’une nouvelle démo",
-    text: "La démo est réinstallée sur de nouveaux serveurs et repart avec un historique vide. Cela prend généralement environ une minute. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
+    title: "Réinstallation de la démo",
+    text: "La démo est réinstallée sur de nouveaux serveurs et repart avec un historique vide. Cela prend généralement une minute environ. Cette page s’actualise automatiquement et ouvre la démo dès qu’elle est prête.",
   },
   no_capacity: {
     status: "Hébergeur saturé",
     title: "Plus de place chez l’hébergeur",
-    text: 'Fly.io, l’hébergeur de la démo, ne dispose plus de place pour ses serveurs en Europe actuellement. La démo fonctionne normalement et cette situation est généralement temporaire. Revenez plus tard ou consultez <a href="https://status.flyio.net/">l’état des services de Fly.io</a>.',
+    text: 'Fly.io, l’hébergeur de la démo, n’a plus de place pour elle en Europe pour le moment. Rien n’est cassé côté démo, et c’est généralement temporaire : revenez plus tard ou consultez <a href="https://status.flyio.net/">la page de statut de Fly.io</a>.',
   },
   setup_failed: {
     status: "Échec du démarrage",
     title: "La démo n’a pas pu démarrer",
-    text: "La préparation de la base de données a échoué pendant le démarrage des serveurs. Le propriétaire du projet doit intervenir. Revenez plus tard.",
+    text: "La préparation de la base de données a échoué au démarrage des serveurs. Le propriétaire du projet doit corriger le problème : revenez plus tard.",
   },
   unavailable: {
     status: "Indisponible",
     title: "La démo est indisponible",
-    text: "La démo n’a pas pu être jointe ou démarrée, généralement parce que son hébergeur n’a pas répondu. Cette interruption est habituellement brève. Réessayez dans un instant.",
+    text: "Impossible de joindre ou de démarrer la démo pour le moment, le plus souvent parce que son hébergeur n’a pas répondu. C’est généralement bref : réessayez dans un instant.",
   },
 };
+
+/** French typography keeps « », : ; ! ? and % on the same line as the word next to them. */
+function frenchSpacing(text: string): string {
+  return text
+    .replace(/« /g, "«\u00a0")
+    .replace(/ ([»:])/g, "\u00a0$1")
+    .replace(/ ([;!?%])/g, "\u202f$1");
+}
+
+function frenchPage(state: GatePageState): Pick<PageContent, "status" | "title" | "text"> {
+  const { status, title, text } = frenchPages[state];
+  return { status: frenchSpacing(status), title: frenchSpacing(title), text: frenchSpacing(text) };
+}
 
 /**
  * The demo's light theme, copied from its `@theme` tokens in `apps/web/src/app/globals.css`: the
@@ -236,7 +249,7 @@ export function renderGatePage(
   returnPath: string,
   locale: GateLocale = "en",
 ): string {
-  const page = locale === "fr" ? { ...pages[state], ...frenchPages[state] } : pages[state];
+  const page = locale === "fr" ? { ...pages[state], ...frenchPage(state) } : pages[state];
   const nextLocale = locale === "en" ? "fr" : "en";
   const languageLabel = locale === "en" ? "Switch to French" : "Passer en anglais";
   const reloads = page.refreshSeconds !== undefined;

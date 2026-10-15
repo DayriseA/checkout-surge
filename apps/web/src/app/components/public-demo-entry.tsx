@@ -578,7 +578,7 @@ export function PublicDemoEntry({ surface }: { surface: PublicDemoSurface }) {
               return (
                 <article
                   aria-labelledby={headingId}
-                  className={`relative grid min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_11.5rem] items-start gap-x-6 gap-y-2 px-5 py-3.5 max-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_11.5rem] max-[760px]:grid-cols-1 max-[560px]:px-4 ${
+                  className={`relative grid min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)_minmax(0,0.85fr)_13rem] items-start gap-x-6 gap-y-2 px-5 py-3.5 max-[1100px]:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_13rem] max-[760px]:grid-cols-1 max-[560px]:px-4 ${
                     isRecommended
                       ? "bg-signal-soft/45 before:absolute before:inset-y-0 before:left-0 before:w-1 before:bg-signal"
                       : ""
@@ -1406,10 +1406,10 @@ function demandPressureCopy(
   if (uniqueAttempts <= stock) return t("Enough stock for all {noun}", { noun: t(noun) });
   const ratio = uniqueAttempts / stock;
   const rounded = ratio < 10 ? Math.round(ratio * 10) / 10 : Math.round(ratio);
-  return t("{ratio}× more {noun} than units", {
-    ratio: formatCount(rounded, locale) ?? "—",
-    noun: t(noun),
-  });
+  const ratioText = formatCount(rounded, locale) ?? "—";
+  return noun === "buyers"
+    ? t("{ratio}× more buyers than units", { ratio: ratioText })
+    : t("{ratio}× more attempts than units", { ratio: ratioText });
 }
 
 function SharedRuntimeDisclosure() {

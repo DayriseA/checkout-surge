@@ -283,14 +283,12 @@ export default async function LimitsPage() {
       <ContentSection id={anchors.knownDefects} title={t("Known defects")}>
         <ul className={`${listClassName} list-disc`}>
           {knownDefects.map((defect) => (
-            <li
-              key={t(defect, {
+            <li key={defect}>
+              {t(defect, {
                 drain: slowerDrainPercent,
                 postgres: formatFigure(postgresQueueDrain.postgres, "pace", locale),
                 bullmq: formatFigure(postgresQueueDrain.bullmq, "pace", locale),
               })}
-            >
-              {defect}
             </li>
           ))}
         </ul>
@@ -300,7 +298,7 @@ export default async function LimitsPage() {
 }
 
 const knownDefects = [
-  "The PostgreSQL order queue confirms orders about {drain} % slower than BullMQ ({postgres} against {bullmq}), after the measured window: the Redis comparison's second run takes a little longer to finish.",
+  "The PostgreSQL order queue confirms orders about {drain}% slower than BullMQ ({postgres} against {bullmq}), after the measured window: the Redis comparison's second run takes a little longer to finish.",
   "A run started at the very moment the demo goes to sleep is interrupted, then settled at the next wake.",
   "Right after “stay awake”, the countdown can show the old deadline for a few seconds.",
   "Run history and admin edits are lost when the demo is reinstalled on new servers.",

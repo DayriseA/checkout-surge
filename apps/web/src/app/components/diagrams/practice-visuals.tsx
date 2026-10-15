@@ -86,7 +86,10 @@ export function StockDecisionDots() {
         {rows.map((row) => (
           <div className="grid gap-2" key={t(row.label)}>
             <p className="m-0 text-sm leading-5">
-              <strong className="text-ink">{t(row.label)}:</strong>{" "}
+              <strong className="text-ink">
+                {t(row.label)}
+                {t(": ").trimEnd()}
+              </strong>{" "}
               <span className="text-muted-strong">{row.summary}</span>
             </p>
             <DotGrid reachingDatabase={row.reachingDatabase} />

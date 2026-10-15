@@ -1,3 +1,5 @@
+import { getTranslation, type Locale } from "../i18n/translate";
+
 export const fieldHints = {
   trafficPattern:
     "How buyers arrive. Everyone at once: a waiting room releases a batch of buyers together. Steady stream: the waiting room lets new buyers through at a constant rate for a set time.",
@@ -83,16 +85,10 @@ export const adminFieldHints = {
 export const adminDraftFieldHints: Record<string, string> = {
   buyerCount: fieldHints.buyerCount,
   duplicateEachBuyerAttempt: fieldHints.duplicateBuyerAttempt,
-  maxDurationSeconds: `Shown to visitors as "Safety cutoff". ${fieldHints.safetyCutoff}`,
-  ratePerSecond: `Shown to visitors as "Arrival rate". ${fieldHints.arrivalRate}`,
-  durationSeconds: `Shown to visitors as "Traffic duration". ${fieldHints.trafficDuration}`,
   preAllocatedVus: adminFieldHints.vuserPool,
   maxVus: adminFieldHints.maxVus,
   startDelaySeconds: fieldHints.startDelay,
   startingStock: fieldHints.startingStock,
-  erpLatencyMs: `Shown to visitors as "Delay per order". ${fieldHints.erpDelay}`,
-  erpMaxTps: `Shown to visitors as "Capacity". ${fieldHints.erpCapacity} TPS means transactions (confirmation calls) per second. Over the limit the ERP answers HTTP 429 and the worker backs off.`,
-  erpErrorRate: `Shown to visitors as "Failure rate". ${fieldHints.erpFailureRate} Injected failures are HTTP 503. Runs declaring more than 30% are refused at start because their duration cannot be estimated.`,
   erpForcedOutage:
     "Makes the simulated ERP refuse every confirmation for this run. A run declared this way is refused at start because its duration cannot be estimated. It is kept for completeness of the snapshot, not as a working scenario.",
   orderProcessConcurrency:
@@ -118,3 +114,40 @@ export const adminDraftFieldHints: Record<string, string> = {
   maxErpMaxTps: 'Highest value visitors may enter for "Capacity".',
   maxErpErrorRate: 'Highest "Failure rate" visitors may choose.',
 };
+
+/** Admin hints that quote a visitor hint; both parts are translated when the hint is shown. */
+const visitorHintQuotes: Record<string, { template: string; visitorHint: string }> = {
+  maxDurationSeconds: {
+    template: 'Shown to visitors as "Safety cutoff". {v0}',
+    visitorHint: fieldHints.safetyCutoff,
+  },
+  ratePerSecond: {
+    template: 'Shown to visitors as "Arrival rate". {v0}',
+    visitorHint: fieldHints.arrivalRate,
+  },
+  durationSeconds: {
+    template: 'Shown to visitors as "Traffic duration". {v0}',
+    visitorHint: fieldHints.trafficDuration,
+  },
+  erpLatencyMs: {
+    template: 'Shown to visitors as "Delay per order". {v0}',
+    visitorHint: fieldHints.erpDelay,
+  },
+  erpMaxTps: {
+    template:
+      'Shown to visitors as "Capacity". {v0} TPS means transactions (confirmation calls) per second. Over the limit the ERP answers HTTP 429 and the worker backs off.',
+    visitorHint: fieldHints.erpCapacity,
+  },
+  erpErrorRate: {
+    template:
+      'Shown to visitors as "Failure rate". {v0} Injected failures are HTTP 503. Runs declaring more than 30% are refused at start because their duration cannot be estimated.',
+    visitorHint: fieldHints.erpFailureRate,
+  },
+};
+
+export function adminDraftFieldHint(field: string, locale: Locale = "en"): string | undefined {
+  const quote = visitorHintQuotes[field];
+  if (!quote) return adminDraftFieldHints[field];
+  const t = getTranslation(locale);
+  return t(quote.template, { v0: t(quote.visitorHint) });
+}

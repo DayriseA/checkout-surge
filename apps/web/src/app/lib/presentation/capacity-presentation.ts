@@ -93,7 +93,7 @@ function constantArrivalRefusal(capacity: ConstantArrivalCapacity, locale: Local
       v2: String(stockMention),
       v3: String(outcome),
     }),
-    fits.length === 0 ? null : capitalized(`${fits.join("; ")}.`),
+    fits.length === 0 ? null : capitalized(`${fits.join(t("; "))}.`),
     levers.length === 0
       ? capitalized(`${t(largerRuns)}.`)
       : t("Lower {v0}, or {v1}.", {

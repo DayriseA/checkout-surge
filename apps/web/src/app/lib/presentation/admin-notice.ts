@@ -27,7 +27,7 @@ export function adminMessageText(message: AdminMessage, locale: Locale): string 
   const values = Object.fromEntries(
     Object.entries(message.values ?? {}).map(([key, value]) => {
       if (typeof value === "string") return [key, t(value)];
-      if (typeof value === "number") return [key, value];
+      if (typeof value === "number") return [key, formatCount(value, locale) ?? String(value)];
       const count = formatCount(value.count, locale) ?? t("not recorded");
       return [key, value.noun ? `${count} ${t(pluralize(value.count, value.noun))}` : count];
     }),

@@ -15,6 +15,7 @@ import {
   formatInstantUtc,
   pluralize,
 } from "../lib/presentation/format";
+import { withPercentSign } from "../lib/presentation/percent";
 import { derivePublicRunSummary } from "../lib/presentation/public-run-summary";
 import {
   durableCheckoutLens,
@@ -110,7 +111,10 @@ export function AdminRunHistoryDetail({ actions, detail, navigation }: RunHistor
               }}
             />
             <StatusPill
-              status={{ label: t("operator {value1}", { value1: run.operatorMode }), tone: "idle" }}
+              status={{
+                label: t("operator {value1}", { value1: t(run.operatorMode) }),
+                tone: "idle",
+              }}
             />
             {hasUnknownTrafficCounts(summary.transportAttemptCounts) ? null : (
               <StatusPill
@@ -464,7 +468,7 @@ function ExceptionSummary({
         <p className="m-0 text-sm text-muted-strong">
           {t("Limitations ·")}{" "}
           {limitations
-            .map(([label, count]) => `${t(label)}: ${formatNumber(count, locale)}`)
+            .map(([label, count]) => `${t(label)}${t(": ")}${formatNumber(count, locale)}`)
             .join(" · ")}
         </p>
       ) : null}
@@ -554,7 +558,7 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
       t("Reply coverage"),
       transportObservation.coveragePercent === null
         ? t("n/a")
-        : `${transportObservation.coveragePercent}%`,
+        : withPercentSign(transportObservation.coveragePercent, locale),
       t("of dispatched attempts"),
     ],
     [
@@ -727,13 +731,15 @@ export function PublicRunHistoryDetail({ detail }: { detail: PublicRunHistoryDet
             className="m-0 mt-3 rounded-lg border border-warning-line bg-warning-soft p-3 text-xs leading-5 text-warning"
             data-measurement-caveat=""
           >
-            {t("Checkout response p95 (client-observed) covers only the")}{" "}
-            {formatCount(transportObservation.repliesRecorded, locale) ?? t("unavailable")}{" "}
-            {t("of")}{" "}
-            {formatCount(transportObservation.counts.plannedRequests, locale) ?? t("unavailable")}{" "}
-            {t("planned")} {t(pluralize(transportObservation.counts.plannedRequests, "attempt"))}{" "}
             {t(
-              "that recorded a reply. Server-observed reservation timing and durable reservation-to-confirmation timing use separate evidence.",
+              "Checkout response p95 (client-observed) covers only the {v0} of {v1} planned {v2} that recorded a reply. Server-observed reservation timing and durable reservation-to-confirmation timing use separate evidence.",
+              {
+                v0: formatCount(transportObservation.repliesRecorded, locale) ?? t("unavailable"),
+                v1:
+                  formatCount(transportObservation.counts.plannedRequests, locale) ??
+                  t("unavailable"),
+                v2: t(pluralize(transportObservation.counts.plannedRequests, "attempt")),
+              },
             )}
           </p>
         ) : null}
@@ -929,8 +935,9 @@ function DiscardedRunDetail({
         {t(presetName)}
       </h1>
       <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
-        {t("This run was cancelled by")} {automatic ? t("an automatic") : t("an admin")}{" "}
-        {t("reset. Its experiment data was discarded.")}
+        {automatic
+          ? t("This run was cancelled by an automatic reset. Its experiment data was discarded.")
+          : t("This run was cancelled by an admin reset. Its experiment data was discarded.")}
       </p>
       {trafficEvidenceUnavailable ? (
         <p className="m-0 mt-3 text-sm leading-6 text-muted-strong">
@@ -939,6 +946,12 @@ function DiscardedRunDetail({
       ) : null}
     </section>
   );
+}
+
+/** Lets server pages render the recap: they cannot call a function from this client module. */
+export function ScenarioRecap({ detail }: { detail: PublicRunHistoryDetailResponse }) {
+  const locale = useLocale();
+  return scenarioRecap(detail, locale);
 }
 
 export function scenarioRecap(
@@ -1061,7 +1074,7 @@ function formatPercent(value: number, locale: Locale = "en"): string {
   const formatter = new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", {
     maximumFractionDigits: 2,
   });
-  return `${formatter.format(value * 100)}${locale === "fr" ? " %" : "%"}`;
+  return withPercentSign(formatter.format(value * 100), locale);
 }
 
 /**

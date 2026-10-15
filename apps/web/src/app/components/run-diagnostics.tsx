@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import { getTranslation, type Locale } from "../lib/i18n/translate";
 import { formatCount, formatInstantUtc } from "../lib/presentation/format";
+import { withPercentSign } from "../lib/presentation/percent";
 
 const unavailable = "Could not determine";
 
@@ -392,7 +393,7 @@ function DiagnosticGroup({
   return (
     <section className="min-w-0 border-t border-border pt-3">
       <h3 className="m-0 text-sm font-bold text-ink">{t(title)}</h3>
-      {note ? <p className="m-0 mt-1 text-xs text-muted">{note}</p> : null}
+      {note ? <p className="m-0 mt-1 text-xs text-muted">{t(note)}</p> : null}
       <DiagnosticFacts facts={facts} />
     </section>
   );
@@ -422,7 +423,7 @@ function UnavailableGroup({ title }: { title: string }) {
     <section className="min-w-0 border-t border-border pt-3">
       <h3 className="m-0 text-sm font-bold text-ink">{t(title)}</h3>
       <p className="m-0 mt-3 text-sm font-semibold text-muted">
-        {t(title)} {t("diagnostics were unavailable.")}
+        {t("{title} diagnostics were unavailable.", { title: t(title) })}
       </p>
     </section>
   );
@@ -440,7 +441,7 @@ function byteValue(value: number | null, locale: Locale = "en"): ReactNode {
 }
 
 function percentValue(value: number | null, locale: Locale = "en"): string {
-  return value === null ? unavailable : `${formatDecimal(value, locale)}%`;
+  return value === null ? unavailable : withPercentSign(formatDecimal(value, locale), locale);
 }
 
 function nullableNumber(value: number | null, locale: Locale = "en"): string {

@@ -502,7 +502,10 @@ function ReadingGuide({
       <dl className="mb-0 mt-3 grid max-w-[68ch] gap-2 text-sm leading-6">
         {entries.map(([term, text]) => (
           <div key={t(term)}>
-            <dt className="inline font-semibold text-ink">{t(term)}: </dt>
+            <dt className="inline font-semibold text-ink">
+              {t(term)}
+              {t(": ")}
+            </dt>
             <dd className="m-0 inline text-muted-strong">{t(text)}</dd>
           </div>
         ))}

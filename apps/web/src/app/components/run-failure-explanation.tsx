@@ -70,23 +70,25 @@ export function RunFailureExplanation({
           ) : null}
           {lateAnswersCause ? (
             <p className="m-0">
-              {formatCount(counts.interruptedRequests, locale)} {t("of")}{" "}
-              {formatCount(counts.startedRequests, locale)}{" "}
-              {t(pluralize(counts.startedRequests, "answer"))} {t("arrived too late (")}
-              {formatShortfallPercent(
-                counts.interruptedRequests ?? 0,
-                counts.startedRequests ?? 0,
-                locale,
-              )}
-              %).
+              {t("{v0} of {v1} {v2} arrived too late ({v3}%).", {
+                v0: formatCount(counts.interruptedRequests, locale) ?? "",
+                v1: formatCount(counts.startedRequests, locale) ?? "",
+                v2: t(pluralize(counts.startedRequests, "answer")),
+                v3: formatShortfallPercent(
+                  counts.interruptedRequests ?? 0,
+                  counts.startedRequests ?? 0,
+                  locale,
+                ),
+              })}
             </p>
           ) : (
             <p className="m-0">
-              {formatCount(counts.completedRequests, locale)} {t("of")}{" "}
-              {formatCount(counts.plannedRequests, locale)}{" "}
-              {t(pluralize(counts.plannedRequests, "request"))} {t("completed (")}
-              {formatShortfallPercent(missingRequests, counts.plannedRequests, locale)}
-              {t("% shortfall).")}
+              {t("{v0} of {v1} {v2} completed ({v3}% shortfall).", {
+                v0: formatCount(counts.completedRequests, locale) ?? "",
+                v1: formatCount(counts.plannedRequests, locale) ?? "",
+                v2: t(pluralize(counts.plannedRequests, "request")),
+                v3: formatShortfallPercent(missingRequests, counts.plannedRequests, locale),
+              })}
             </p>
           )}
         </div>
@@ -95,10 +97,16 @@ export function RunFailureExplanation({
         <>
           <div className="my-3 border-l-2 border-danger pl-3">
             <p className="m-0">
-              {formatCount(requestTimeouts, locale)} {t("of")}{" "}
-              {formatCount(counts.startedRequests, locale)}{" "}
-              {t(pluralize(counts.startedRequests, "request"))} {t("timed out (")}
-              {formatShortfallPercent(requestTimeouts ?? 0, counts.startedRequests ?? 0, locale)}%).
+              {t("{v0} of {v1} {v2} timed out ({v3}%).", {
+                v0: formatCount(requestTimeouts, locale) ?? "",
+                v1: formatCount(counts.startedRequests, locale) ?? "",
+                v2: t(pluralize(counts.startedRequests, "request")),
+                v3: formatShortfallPercent(
+                  requestTimeouts ?? 0,
+                  counts.startedRequests ?? 0,
+                  locale,
+                ),
+              })}
             </p>
           </div>
           <p className="m-0 mt-2">
@@ -187,11 +195,10 @@ export function RunFailureExplanation({
       {settled ? (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3 font-semibold text-ink">
           {business.confirmedOrders === 1
-            ? t("The only accepted order was")
-            : t("All {v0} accepted orders were", {
+            ? t("The only accepted order was confirmed and notified")
+            : t("All {v0} accepted orders were confirmed and notified", {
                 v0: String(formatCount(business.confirmedOrders, locale)),
-              })}{" "}
-          {t("confirmed and notified")}
+              })}
           {serverHandledLateAnswers
             ? t(", including {v0} whose answer arrived too late", {
                 v0: String(t(pluralize(counts.interruptedRequests, t("the one"), "those"))),
@@ -202,11 +209,17 @@ export function RunFailureExplanation({
       ) : (
         <p className="m-0 mt-3 rounded-xl border border-border bg-surface-muted p-3">
           {t("Business outcomes:")} {formatCount(business.confirmedOrders, locale)}{" "}
-          {t(pluralize(business.confirmedOrders, "order"))} {t("confirmed,")}{" "}
+          {t(pluralize(business.confirmedOrders, "order confirmed,", "orders confirmed,"))}{" "}
           {formatCount(business.failedOrders, locale)} {t("failed,")}{" "}
           {formatCount(business.queuedOrders + business.processingOrders, locale)} {t("pending;")}{" "}
           {formatCount(business.notificationsRecorded, locale)}{" "}
-          {t(pluralize(business.notificationsRecorded, "notification"))} {t("recorded.")}
+          {t(
+            pluralize(
+              business.notificationsRecorded,
+              "notification recorded.",
+              "notifications recorded.",
+            ),
+          )}
         </p>
       )}
       {counts.startedRequests !== null &&
@@ -263,7 +276,7 @@ export function RunFailureExplanation({
         {http.transportFailures !== null && http.transportFailures > 0 ? (
           <p className="m-0 mt-1">
             {formatCount(http.transportFailures, locale)}{" "}
-            {t(pluralize(http.transportFailures, t("completed attempt")))}{" "}
+            {t(pluralize(http.transportFailures, "completed attempt", "completed attempts"))}{" "}
             {t("ended in transport failure.")}
           </p>
         ) : null}
@@ -298,10 +311,14 @@ function unsentRequestsText(unstartedRequests: number | null, locale: Locale = "
 
 function lateAnswersClause(interruptedRequests: number | null, locale: Locale = "en"): string {
   const t = getTranslation(locale);
-  return t("{v0} {v1} arrived too late to be recorded", {
-    v0: String(formatCount(interruptedRequests, locale)),
-    v1: String(t(pluralize(interruptedRequests, "answer"))),
-  });
+  return t(
+    pluralize(
+      interruptedRequests,
+      "{v0} answer arrived too late to be recorded",
+      "{v0} answers arrived too late to be recorded",
+    ),
+    { v0: String(formatCount(interruptedRequests, locale)) },
+  );
 }
 
 function formatShortfallPercent(

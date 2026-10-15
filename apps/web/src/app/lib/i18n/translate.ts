@@ -18,11 +18,21 @@ const frenchMessages: Record<string, string> = {
 const translators: Record<Locale, Translator> = {
   en: (message, values) => interpolate(message, values),
   fr: (message, values) =>
-    interpolate(
-      Object.hasOwn(frenchMessages, message) ? (frenchMessages[message] ?? message) : message,
-      values,
+    frenchSpacing(
+      interpolate(
+        Object.hasOwn(frenchMessages, message) ? (frenchMessages[message] ?? message) : message,
+        values,
+      ),
     ),
 };
+
+/** French typography keeps « », : ; ! ? and % on the same line as the word next to them. */
+function frenchSpacing(text: string): string {
+  return text
+    .replace(/« /g, "«\u00a0")
+    .replace(/ ([»:])/g, "\u00a0$1")
+    .replace(/ ([;!?%])/g, "\u202f$1");
+}
 
 export function getTranslation(locale: Locale): Translator {
   return translators[locale];

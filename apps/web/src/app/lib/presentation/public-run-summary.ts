@@ -217,8 +217,8 @@ function transportCaveats(
             },
           )
         : t("Reply observation incomplete: outcomes and latency cover {v0} of {v1} attempts.", {
-            v0: String(formatCount(observation.repliesRecorded, locale) ?? "unavailable"),
-            v1: String(formatCount(observation.counts.plannedRequests, locale) ?? "unavailable"),
+            v0: String(formatCount(observation.repliesRecorded, locale) ?? t("unavailable")),
+            v1: String(formatCount(observation.counts.plannedRequests, locale) ?? t("unavailable")),
           }),
       tone: "warning",
     },

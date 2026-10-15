@@ -489,6 +489,7 @@ function SignalAxisLegend({
   xMax: number;
 }) {
   const t = useTranslation();
+  const locale = useLocale();
 
   return (
     <div className="mt-4 grid gap-1 text-xs text-muted">
@@ -499,7 +500,7 @@ function SignalAxisLegend({
               <span className="grid size-4 place-items-center rounded-full bg-muted text-[10px] font-bold leading-none text-white">
                 {index + 1}
               </span>
-              {`${marker.label} · ${formatAxisSeconds(marker.elapsedSeconds)}`}
+              {`${marker.label} · ${formatAxisSeconds(marker.elapsedSeconds, locale)}`}
             </li>
           ))}
         </ol>
@@ -507,7 +508,7 @@ function SignalAxisLegend({
       <p className="m-0">
         {t("Shared axis: 0s {v0} · {v1} {v2}", {
           v0: String(axis.startLabel),
-          v1: String(formatAxisSeconds(xMax)),
+          v1: String(formatAxisSeconds(xMax, locale)),
           v2: String(axis.endLabel),
         })}
       </p>

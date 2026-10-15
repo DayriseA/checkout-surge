@@ -71,7 +71,7 @@ export function scale(value: number, maximum: number, range: number): number {
  * stay directly comparable; that is why this surface does not use the tiered duration policy.
  */
 export function formatSeconds(value: number, locale: Locale = "en"): string {
-  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 2 }).format(value)}s`;
+  return `${new Intl.NumberFormat(locale === "fr" ? "fr-FR" : "en-US", { maximumFractionDigits: 2 }).format(value)}${locale === "fr" ? "\u00a0s" : "s"}`;
 }
 
 /** Signal magnitudes can be fractional (rates), so they keep two decimals with en-US grouping. */

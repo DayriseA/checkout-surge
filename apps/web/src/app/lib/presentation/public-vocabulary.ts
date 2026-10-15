@@ -272,11 +272,11 @@ export function publicStatusLabel(input: PublicStatus, locale: Locale = "en"): s
   const t = getTranslation(locale);
   switch (input.family) {
     case "load-generator":
-      return `${t(publicVocabulary.loadGenerator)}: ${trafficExecutionStatusLabel(input.status, locale)}`;
+      return `${t(publicVocabulary.loadGenerator)}${t(": ")}${trafficExecutionStatusLabel(input.status, locale)}`;
     case "traffic-delivery":
-      return `${t(publicVocabulary.trafficDelivery)}: ${trafficDeliveryStatusLabel(input.status, locale)}`;
+      return `${t(publicVocabulary.trafficDelivery)}${t(": ")}${trafficDeliveryStatusLabel(input.status, locale)}`;
     case "run":
-      return `${t(publicVocabulary.runLifecycle)}: ${input.displayLabel ?? runLifecycleStatusLabel(input.status, locale)}`;
+      return `${t(publicVocabulary.runLifecycle)}${t(": ")}${input.displayLabel ?? runLifecycleStatusLabel(input.status, locale)}`;
   }
 }
 

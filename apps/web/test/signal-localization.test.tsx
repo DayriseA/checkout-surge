@@ -3,17 +3,18 @@
 import { emptyHttpTimingBreakdownSummary } from "@checkout-surge/contracts";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { formatRate } from "../src/app/components/dashboard-panels";
+import { formatFailureSample, formatRate } from "../src/app/components/dashboard-panels";
 import { ErrorNotice } from "../src/app/components/error-notice";
 import { FieldHint } from "../src/app/components/field-hint";
 import { RunFailureExplanation } from "../src/app/components/run-failure-explanation";
 import { describeSeries } from "../src/app/components/signal-chart-math";
 import { LocaleProvider } from "../src/app/lib/i18n/locale-context";
+import { getTranslation } from "../src/app/lib/i18n/translate";
 import { comparisonRunLabel } from "../src/app/lib/presentation/comparison";
 import { presentInvalidCustomRunControls } from "../src/app/lib/presentation/custom-run-issue-presentation";
 import { deriveRunErpStory } from "../src/app/lib/presentation/erp-story";
 import { mapErrorPresentation } from "../src/app/lib/presentation/error-presentation";
-import { fieldHints } from "../src/app/lib/presentation/field-hints";
+import { adminDraftFieldHint, fieldHints } from "../src/app/lib/presentation/field-hints";
 import type { RunFailureExplanationEvidence } from "../src/app/lib/presentation/run-failure-explanation";
 import { deriveRunPresentationState } from "../src/app/lib/presentation/run-presentation-state";
 
@@ -25,7 +26,7 @@ describe("French signal presentation", () => {
     expect(state.state).toBe("checking-availability");
     expect(state.label).toBe("vérification de la disponibilité");
     expect(comparisonRunLabel("synchronous_confirmation", "fr")).toBe(
-      "Exécution 2 sur 2 · Sans la file de commandes",
+      "Simulation 2 sur 2 · Sans la file de commandes",
     );
     expect(deriveRunErpStory(null, "fr")).toBe("Aucune activité récente de l’ERP simulé");
   });
@@ -34,6 +35,7 @@ describe("French signal presentation", () => {
     expect(formatRate(null, "attempts/s", undefined, "fr")).toBe("—");
     expect(formatRate(1.5, "attempts/s", undefined, "fr")).toBe("1,5 tentatives/s");
     expect(formatRate(0, "attempts/s", undefined, "fr")).toBe("0 tentatives/s");
+    expect(formatFailureSample(0.25, "ratio", "fr")).toBe("25\u202f%");
   });
 
   it("translates accessible chart descriptions including units and fractional times", () => {
@@ -43,9 +45,9 @@ describe("French signal presentation", () => {
         "attempts/s",
         "fr",
       ),
-    ).toBe("Arrivées : 3 tentatives/s à 1,5s.");
+    ).toBe("Arrivées\u00a0: 3 tentatives/s à 1,5 s.");
     expect(describeSeries({ label: "Arrivals", points: [] }, "attempts/s", "fr")).toBe(
-      "Arrivées : aucun échantillon conservé.",
+      "Arrivées\u00a0: aucun échantillon conservé.",
     );
   });
 
@@ -58,7 +60,7 @@ describe("French signal presentation", () => {
     expect(entry).toMatchObject({
       fieldId: "custom-buyers",
       fieldError: message,
-      message: `Nombre d’acheteurs: ${message}`,
+      message: `Nombre d’acheteurs\u00a0: ${message}`,
       targetId: "custom-buyers",
     });
   });
@@ -101,7 +103,7 @@ describe("French signal presentation", () => {
       </LocaleProvider>,
     );
     expect(container.textContent).toContain("utilisateurs virtuels simultanés");
-    expect(container.textContent).toContain("8,52%");
+    expect(container.textContent).toContain("8,52\u202f%");
 
     const oneUnsent: RunFailureExplanationEvidence = {
       ...evidence,
@@ -119,7 +121,7 @@ describe("French signal presentation", () => {
         <RunFailureExplanation evidence={oneUnsent} />
       </LocaleProvider>,
     );
-    expect(screen.getByText("Requêtes prévues jamais envoyées : 1.")).toBeTruthy();
+    expect(container.textContent).toContain("Requêtes prévues jamais envoyées\u00a0: 1.");
 
     rerender(
       <LocaleProvider locale="en">
@@ -127,6 +129,36 @@ describe("French signal presentation", () => {
       </LocaleProvider>,
     );
     expect(screen.getByText("1 planned request was never sent.")).toBeTruthy();
+
+    const singleOutcomes: RunFailureExplanationEvidence = {
+      ...evidence,
+      httpSummary: { ...evidence.httpSummary, transportFailures: 1 },
+      businessOutcomeSummary: {
+        ...evidence.businessOutcomeSummary,
+        acceptedReservations: 2,
+        confirmedOrders: 1,
+        notificationsRecorded: 1,
+        failedOrders: 1,
+      },
+    };
+    rerender(
+      <LocaleProvider locale="fr">
+        <RunFailureExplanation evidence={singleOutcomes} />
+      </LocaleProvider>,
+    );
+    expect(container.textContent).toContain("1 commande confirmée,");
+    expect(container.textContent).toContain("1 notification enregistrée.");
+    expect(container.textContent).toContain("1 tentative terminée en échec de transport.");
+  });
+
+  it("translates admin hints that quote a visitor hint", () => {
+    expect(adminDraftFieldHint("ratePerSecond", "fr")).not.toContain(fieldHints.arrivalRate);
+    expect(adminDraftFieldHint("ratePerSecond", "fr")).toBe(
+      `Nom côté visiteurs\u00a0: «\u00a0Débit d’arrivée\u00a0». ${getTranslation("fr")(fieldHints.arrivalRate)}`,
+    );
+    expect(adminDraftFieldHint("ratePerSecond")).toBe(
+      `Shown to visitors as "Arrival rate". ${fieldHints.arrivalRate}`,
+    );
   });
 
   it("renders translated hints and protected error details without changing diagnostic codes", () => {

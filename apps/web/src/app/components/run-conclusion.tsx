@@ -3,6 +3,7 @@
 import type { DemoRunStatus, RunResult, TrafficDeliveryStatus } from "@checkout-surge/contracts";
 import { useLocale, useTranslation } from "../lib/i18n/locale-context";
 import { getTranslation, type Locale } from "../lib/i18n/translate";
+import { formatCount } from "../lib/presentation/format";
 import {
   derivePublicRunSummary,
   type PublicRunCaveat,
@@ -319,10 +320,10 @@ function ConclusionEvidence({
             key={invariant.name}
           >
             <span className="text-muted-strong">
-              {invariant.expression}
+              {t(invariant.expression)}
               <span className="mt-1 block text-xs text-muted">
-                {t("actual:")} {invariant.actual ?? t("unavailable")} {t("· expected:")}{" "}
-                {invariant.expected ?? t("unavailable")}
+                {t("actual:")} {formatCount(invariant.actual, locale) ?? t("unavailable")}{" "}
+                {t("· expected:")} {formatCount(invariant.expected, locale) ?? t("unavailable")}
               </span>
             </span>
             <span
@@ -349,9 +350,9 @@ function ConclusionEvidence({
                 <span className="font-semibold text-muted-strong">
                   {publicPopulationLabel(item, "left", locale)}
                 </span>{" "}
-                ({item.leftValue ?? t("unavailable")}
+                ({formatCount(item.leftValue, locale) ?? t("unavailable")}
                 {t(") vs")} {publicPopulationLabel(item, "right", locale)} (
-                {item.rightValue ?? t("unavailable")}):{" "}
+                {formatCount(item.rightValue, locale) ?? t("unavailable")}):{" "}
                 {showCanonicalCodes ? (
                   <>
                     {classificationExplanation(item.classification, locale)}{" "}
@@ -426,7 +427,9 @@ function ReconciliationStatus({ result }: { result: RunResult }) {
       className="m-0 mt-3 rounded border border-warning bg-warning-soft px-3 py-2 text-sm font-semibold text-muted-strong"
       role="status"
     >
-      {incomplete ? t("Evidence incomplete") : t("Reconciliation warning")}: {explanation}
+      {incomplete ? t("Evidence incomplete") : t("Reconciliation warning")}
+      {t(": ")}
+      {explanation}
     </p>
   );
 }

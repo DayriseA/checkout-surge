@@ -764,7 +764,7 @@ describe("public browser starts", () => {
     view.rerender(localizedEntry("fr"));
     const frenchSummary = screen.getByRole("alert", { name: "Corrigez ces paramètres" });
     expect(
-      within(frenchSummary).getByText("Cette exécution dépasse une limite de l’infrastructure"),
+      within(frenchSummary).getByText("Cette simulation dépasse une limite de l’infrastructure"),
     ).toBeTruthy();
     expect(within(frenchSummary).getByRole("link", { name: /Nombre d’acheteurs/ })).toBeTruthy();
     expect(screen.getByRole("form", { name: "Configuration d’une simulation personnalisée" })).toBe(
@@ -877,7 +877,7 @@ describe("public browser starts", () => {
     const card = screen.getByRole("article", { name: "Flux continu" });
     expect(
       within(card).getByText(
-        "Une salle d’attente laisse passer 50 acheteurs par seconde pendant 40 secondes, pour 500 unités. Même stock et même ERP que dans Afflux 5k : seul le profil d’arrivée change. Le stock s’épuise après environ 10 secondes pendant que les commandes s’accumulent, puis Redis refuse tous les acheteurs suivants.",
+        "Une salle d’attente laisse passer 50 acheteurs par seconde pendant 40 secondes, pour 500 unités. Même stock et même ERP que dans Afflux 5k : seul le profil d’arrivée change. Le stock est épuisé au bout d’environ 10 secondes pendant que les commandes en attente s’accumulent, puis Redis refoule tous les acheteurs suivants.",
       ),
     ).toBeTruthy();
     expect(within(card).queryByText(description)).toBeNull();

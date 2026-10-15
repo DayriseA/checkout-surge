@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { historyMessages } from "../src/app/lib/i18n/history-messages";
 import { localeCookieName, resolveLocale } from "../src/app/lib/i18n/locale";
+import { pageMessages } from "../src/app/lib/i18n/page-messages";
+import { rootMessages } from "../src/app/lib/i18n/root-messages";
 import { getLocale } from "../src/app/lib/i18n/server";
+import { signalMessages } from "../src/app/lib/i18n/signal-messages";
 import { getTranslation } from "../src/app/lib/i18n/translate";
 import {
   formatCount,
@@ -35,6 +39,11 @@ describe("site language", () => {
     for (const name of ["My custom preset", "constructor", "toString", "__proto__"]) {
       expect(fr(name)).toBe(name);
     }
+  });
+
+  it("defines each French message in exactly one dictionary, so none is silently overridden", () => {
+    const keys = [pageMessages, historyMessages, signalMessages, rootMessages].flatMap(Object.keys);
+    expect(keys.filter((key, index) => keys.indexOf(key) !== index)).toEqual([]);
   });
 
   it("formats French counts, durations, and dates while retaining the UTC timezone", () => {

@@ -79,7 +79,7 @@ export function RunHistoryAdminControls({
       {showSelectionToolbar && selectedCount > 0 ? (
         <div className="sticky bottom-6 z-40 ml-auto mt-3 w-fit flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface px-4 py-3 shadow-xl">
           <p className="m-0 text-sm font-semibold text-muted-strong">
-            {selectedCount} {t("selected")}
+            {t("{count} selected", { count: selectedCount })}
           </p>
           <button
             className={`${buttonClassName} px-3 py-2 text-sm`}
